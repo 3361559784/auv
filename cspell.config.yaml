@@ -1,0 +1,56 @@
+version: "0.2"
+ignorePaths: []
+dictionaryDefinitions: []
+dictionaries: []
+words:
+  - alaya
+  - antfu
+  - apalis
+  - clippy
+  - conv
+  - cust
+  - direnv
+  - dotenv
+  - fsrs
+  - graphiti
+  - haru
+  - hnsw
+  - iden
+  - insel
+  - kwaa
+  - locomo
+  - moeru
+  - msvc
+  - nemori
+  - nixpkgs
+  - ollama
+  - oper
+  - paradedb
+  - pgvector
+  - picospinner
+  - pkgs
+  - pkill
+  - plast
+  - plastmem
+  - pname
+  - prefs
+  - qwen
+  - retrievability
+  - rustc
+  - rustls
+  - schemars
+  - seaql
+  - serde
+  - sonarjs
+  - sqlx
+  - utoipa
+  - uuidv
+  - vchord
+  - vite
+  - vitejs
+  - vitest
+  - waifu
+  - xiaowu
+  - xsai
+ignoreWords: []
+import: []

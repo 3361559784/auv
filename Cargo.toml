@@ -13,7 +13,7 @@ documentation = "https://github.com/moeru-ai/auv"
 readme = "README.md"
 homepage = "https://github.com/moeru-ai/auv"
 repository = "https://github.com/moeru-ai/auv"
-# license = ""
+license = ""
 publish = false
 
 [package]

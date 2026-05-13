@@ -10,7 +10,10 @@ impl CommandCatalog {
   }
 
   pub fn resolve(&self, command_id: &str) -> Option<&CommandSpec> {
-    self.commands.iter().find(|command| command.id == command_id)
+    self
+      .commands
+      .iter()
+      .find(|command| command.id == command_id)
   }
 
   pub fn all(&self) -> &[CommandSpec] {

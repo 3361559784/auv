@@ -1,9 +1,12 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::process;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub type AuvResult<T> = Result<T, String>;
+
+static RUN_ID_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Debug)]
 pub struct CommandSpec {
@@ -121,5 +124,19 @@ pub fn now_millis() -> u128 {
 }
 
 pub fn new_run_id() -> String {
-  format!("run_{}_{}", now_millis(), process::id())
+  let sequence = RUN_ID_COUNTER.fetch_add(1, Ordering::Relaxed);
+  format!("run_{}_{}_{}", now_millis(), process::id(), sequence)
+}
+
+#[cfg(test)]
+mod tests {
+  use super::new_run_id;
+
+  #[test]
+  fn new_run_id_is_unique_within_process() {
+    let first = new_run_id();
+    let second = new_run_id();
+
+    assert_ne!(first, second);
+  }
 }

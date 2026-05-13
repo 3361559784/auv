@@ -8,12 +8,7 @@ use std::thread;
 use std::time::Duration;
 
 use crate::model::{
-  AuvResult,
-  DriverCall,
-  DriverDescriptor,
-  DriverResponse,
-  ProducedArtifact,
-  now_millis,
+  AuvResult, DriverCall, DriverDescriptor, DriverResponse, ProducedArtifact, now_millis,
 };
 
 const PROBE_ACCESSIBILITY_SCRIPT: &str = r#"
@@ -390,10 +385,7 @@ impl Driver for MacOsDesktopDriver {
 fn capture_screen(call: &DriverCall) -> AuvResult<DriverResponse> {
   let label = optional_string(call, "label").unwrap_or_else(|| "desktop".to_string());
   let temporary_path = screenshot_temp_path(&label);
-  let args = vec![
-    "-x".to_string(),
-    temporary_path.display().to_string(),
-  ];
+  let args = vec!["-x".to_string(), temporary_path.display().to_string()];
   run_command(SCREEN_CAPTURE_BINARY, &args)?;
 
   if !temporary_path.exists() {
@@ -411,13 +403,16 @@ fn capture_screen(call: &DriverCall) -> AuvResult<DriverResponse> {
         "Temporary screenshot created at {} before artifact ingestion.",
         temporary_path.display()
       ),
-      "This remains a driver-level primitive instead of an AIRI-style desktop tool wrapper.".to_string(),
+      "This remains a driver-level primitive instead of an AIRI-style desktop tool wrapper."
+        .to_string(),
     ],
     artifacts: vec![ProducedArtifact {
       kind: "screenshot".to_string(),
       source_path: temporary_path,
       preferred_name: format!("{}.png", sanitize_file_component(&label)),
-      note: Some("Phase-1 screenshot artifact captured through the macOS desktop driver.".to_string()),
+      note: Some(
+        "Phase-1 screenshot artifact captured through the macOS desktop driver.".to_string(),
+      ),
     }],
   })
 }
@@ -430,31 +425,42 @@ fn observe_windows(call: &DriverCall) -> AuvResult<DriverResponse> {
     .unwrap_or("0")
     .parse::<usize>()
     .unwrap_or(0);
-  let frontmost_app = report_value(&report, "frontmostAppName=").unwrap_or("").to_string();
-  let frontmost_window = report_value(&report, "frontmostWindowTitle=").unwrap_or("").to_string();
-  let observed_at = report_value(&report, "observedAt=").unwrap_or("").to_string();
+  let frontmost_app = report_value(&report, "frontmostAppName=")
+    .unwrap_or("")
+    .to_string();
+  let frontmost_window = report_value(&report, "frontmostWindowTitle=")
+    .unwrap_or("")
+    .to_string();
+  let observed_at = report_value(&report, "observedAt=")
+    .unwrap_or("")
+    .to_string();
   let artifact = build_text_artifact(
     "observe-windows",
     "txt",
-    &format!("observe-windows-{}", sanitize_file_component(&frontmost_app)),
+    &format!(
+      "observe-windows-{}",
+      sanitize_file_component(&frontmost_app)
+    ),
     report.clone(),
     "Captured window observation report from the macOS desktop driver.",
   )?;
   let mut notes = vec![format!("observedAt={observed_at}")];
-  for line in report.lines().filter(|line| line.starts_with("window\t")).take(5) {
+  for line in report
+    .lines()
+    .filter(|line| line.starts_with("window\t"))
+    .take(5)
+  {
     notes.push(line.to_string());
   }
 
   let summary = if frontmost_app.is_empty() {
     format!("Observed {} visible macOS window(s).", window_count)
-  }
-  else if frontmost_window.is_empty() {
+  } else if frontmost_window.is_empty() {
     format!(
       "Observed {} visible macOS window(s); frontmost app is {}.",
       window_count, frontmost_app
     )
-  }
-  else {
+  } else {
     format!(
       "Observed {} visible macOS window(s); frontmost app is {} ({})",
       window_count, frontmost_app, frontmost_window
@@ -470,8 +476,12 @@ fn observe_windows(call: &DriverCall) -> AuvResult<DriverResponse> {
 }
 
 fn probe_permissions(_call: &DriverCall) -> AuvResult<DriverResponse> {
-  let screen_recording = run_swift_script(PROBE_SCREEN_RECORDING_SCRIPT)?.trim().to_string();
-  let accessibility = run_swift_script(PROBE_ACCESSIBILITY_SCRIPT)?.trim().to_string();
+  let screen_recording = run_swift_script(PROBE_SCREEN_RECORDING_SCRIPT)?
+    .trim()
+    .to_string();
+  let accessibility = run_swift_script(PROBE_ACCESSIBILITY_SCRIPT)?
+    .trim()
+    .to_string();
   let automation = probe_automation_to_system_events();
   let launch_host = launch_host_process();
 
@@ -524,7 +534,10 @@ fn focus_app(call: &DriverCall) -> AuvResult<DriverResponse> {
   run_command(OPEN_BINARY, &open_args)?;
   let activate_args = vec![
     "-e".to_string(),
-    format!("tell application {} to activate", apple_script_string(&resolved)),
+    format!(
+      "tell application {} to activate",
+      apple_script_string(&resolved)
+    ),
   ];
   run_command(OSASCRIPT_BINARY, &activate_args)?;
 
@@ -567,7 +580,10 @@ fn type_text(call: &DriverCall) -> AuvResult<DriverResponse> {
   run_swift_script(
     &TYPE_TEXT_SCRIPT_TEMPLATE
       .replace("__TEXT__", &swift_string_literal(&text))
-      .replace("__PRESS_ENTER__", if press_enter { "true" } else { "false" }),
+      .replace(
+        "__PRESS_ENTER__",
+        if press_enter { "true" } else { "false" },
+      ),
   )?;
 
   Ok(DriverResponse {
@@ -595,13 +611,11 @@ fn press_keys(call: &DriverCall) -> AuvResult<DriverResponse> {
     normalized[..normalized.len() - 1]
       .iter()
       .map(|modifier| {
-        modifier_flag(modifier)
-          .ok_or_else(|| format!("unsupported modifier key: {}", modifier))
+        modifier_flag(modifier).ok_or_else(|| format!("unsupported modifier key: {}", modifier))
       })
       .collect::<AuvResult<Vec<_>>>()?
       .join(" | ")
-  }
-  else {
+  } else {
     "[]".to_string()
   };
 
@@ -635,7 +649,10 @@ fn scroll(call: &DriverCall) -> AuvResult<DriverResponse> {
   )?;
 
   Ok(DriverResponse {
-    summary: format!("Scrolled on the local macOS desktop with deltaX={}, deltaY={}.", delta_x, delta_y),
+    summary: format!(
+      "Scrolled on the local macOS desktop with deltaX={}, deltaY={}.",
+      delta_x, delta_y
+    ),
     backend: Some("macos.swift.quartz-scroll".to_string()),
     notes: vec![format!("hasPoint={has_point}")],
     artifacts: Vec::new(),
@@ -678,8 +695,12 @@ fn probe_automation_to_system_events() -> String {
 
 fn run_swift_script(source: &str) -> AuvResult<String> {
   let script_path = temp_file_path("swift-script", "swift");
-  fs::write(&script_path, source)
-    .map_err(|error| format!("failed to write Swift script {}: {error}", script_path.display()))?;
+  fs::write(&script_path, source).map_err(|error| {
+    format!(
+      "failed to write Swift script {}: {error}",
+      script_path.display()
+    )
+  })?;
 
   let result = run_swift_script_with_fallback(&script_path);
   let _ = fs::remove_file(&script_path);
@@ -687,10 +708,7 @@ fn run_swift_script(source: &str) -> AuvResult<String> {
 }
 
 fn run_swift_script_with_fallback(script_path: &PathBuf) -> AuvResult<String> {
-  let xcrun_args = vec![
-    "swift".to_string(),
-    script_path.display().to_string(),
-  ];
+  let xcrun_args = vec!["swift".to_string(), script_path.display().to_string()];
 
   match run_command(XCRUN_BINARY, &xcrun_args) {
     Ok(output) => Ok(output.stdout),
@@ -722,8 +740,7 @@ fn run_command(binary: &str, args: &[String]) -> AuvResult<CommandOutput> {
       output.status,
       if trimmed_stderr.is_empty() {
         "no stderr output"
-      }
-      else {
+      } else {
         trimmed_stderr
       }
     ));
@@ -750,8 +767,12 @@ fn build_text_artifact(
   note: &str,
 ) -> AuvResult<ProducedArtifact> {
   let source_path = temp_file_path(label, extension);
-  fs::write(&source_path, content)
-    .map_err(|error| format!("failed to write artifact source {}: {error}", source_path.display()))?;
+  fs::write(&source_path, content).map_err(|error| {
+    format!(
+      "failed to write artifact source {}: {error}",
+      source_path.display()
+    )
+  })?;
 
   Ok(ProducedArtifact {
     kind: kind.to_string(),
@@ -776,12 +797,18 @@ fn require_macos() -> AuvResult<()> {
 fn required_app(call: &DriverCall) -> AuvResult<String> {
   app_identifier(call)
     .filter(|value| !value.trim().is_empty())
-    .ok_or_else(|| "operation requires --app <Application Name> or --target <Application Name>".to_string())
+    .ok_or_else(|| {
+      "operation requires --app <Application Name> or --target <Application Name>".to_string()
+    })
 }
 
 fn app_identifier(call: &DriverCall) -> Option<String> {
   optional_string(call, "app").or_else(|| {
-    call.target.application_id.clone().filter(|value| !value.trim().is_empty())
+    call
+      .target
+      .application_id
+      .clone()
+      .filter(|value| !value.trim().is_empty())
   })
 }
 
@@ -796,16 +823,23 @@ fn optional_string(call: &DriverCall, key: &str) -> Option<String> {
 }
 
 fn required_f64(call: &DriverCall, key: &str) -> AuvResult<f64> {
-  optional_f64(call, key)?
-    .ok_or_else(|| format!("operation requires --{} <number>", key))
+  optional_f64(call, key)?.ok_or_else(|| format!("operation requires --{} <number>", key))
 }
 
 fn optional_f64(call: &DriverCall, key: &str) -> AuvResult<Option<f64>> {
   match call.inputs.get(key) {
-    Some(value) => value
-      .parse::<f64>()
-      .map(Some)
-      .map_err(|error| format!("invalid --{} value {}: {}", key, value, error)),
+    Some(value) => {
+      let parsed = value
+        .parse::<f64>()
+        .map_err(|error| format!("invalid --{} value {}: {}", key, value, error))?;
+      if !parsed.is_finite() {
+        return Err(format!(
+          "invalid --{} value {}: expected a finite number",
+          key, value
+        ));
+      }
+      Ok(Some(parsed))
+    }
     None => Ok(None),
   }
 }
@@ -822,7 +856,10 @@ fn optional_i64(call: &DriverCall, key: &str) -> AuvResult<Option<i64>> {
 
 fn optional_bool(call: &DriverCall, key: &str) -> Option<bool> {
   call.inputs.get(key).map(|value| {
-    matches!(value.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on")
+    matches!(
+      value.trim().to_ascii_lowercase().as_str(),
+      "1" | "true" | "yes" | "on"
+    )
   })
 }
 
@@ -912,6 +949,15 @@ fn modifier_flag(key: &str) -> Option<String> {
 }
 
 fn resolve_installed_app_name(app: &str) -> String {
+  let trimmed = app.trim();
+  if trimmed.is_empty() {
+    return app.to_string();
+  }
+
+  if trimmed.ends_with(".app") || trimmed.contains('/') {
+    return trimmed.to_string();
+  }
+
   let mut roots = vec![PathBuf::from("/Applications")];
   if let Some(home) = env::var_os("HOME") {
     roots.push(PathBuf::from(home).join("Applications"));
@@ -937,7 +983,7 @@ fn resolve_installed_app_name(app: &str) -> String {
     }
   }
 
-  app.to_string()
+  trimmed.to_string()
 }
 
 fn launch_host_process() -> String {
@@ -984,16 +1030,19 @@ fn sanitize_file_component(raw: &str) -> String {
 
   if sanitized.is_empty() {
     "artifact".to_string()
-  }
-  else {
+  } else {
     sanitized
   }
 }
 
 pub fn copy_file(source: &PathBuf, destination: &PathBuf) -> AuvResult<()> {
   if let Some(parent) = destination.parent() {
-    fs::create_dir_all(parent)
-      .map_err(|error| format!("failed to create artifact directory {}: {error}", parent.display()))?;
+    fs::create_dir_all(parent).map_err(|error| {
+      format!(
+        "failed to create artifact directory {}: {error}",
+        parent.display()
+      )
+    })?;
   }
 
   fs::copy(source, destination).map_err(|error| {
@@ -1013,4 +1062,43 @@ pub fn sanitized_artifact_name(raw: &str) -> String {
 
 struct CommandOutput {
   stdout: String,
+}
+
+#[cfg(test)]
+mod tests {
+  use std::collections::BTreeMap;
+  use std::path::PathBuf;
+
+  use super::{optional_f64, resolve_installed_app_name};
+  use crate::model::{DriverCall, ExecutionTarget};
+
+  #[test]
+  fn optional_f64_rejects_non_finite_numbers() {
+    let call = build_call([("x", "NaN")]);
+    let error = optional_f64(&call, "x").expect_err("NaN should be rejected");
+    assert!(error.contains("finite number"));
+  }
+
+  #[test]
+  fn resolve_installed_app_name_keeps_bundle_paths_without_scanning() {
+    assert_eq!(
+      resolve_installed_app_name("/Applications/Preview.app"),
+      "/Applications/Preview.app"
+    );
+    assert_eq!(resolve_installed_app_name("Preview.app"), "Preview.app");
+  }
+
+  fn build_call<const N: usize>(entries: [(&str, &str); N]) -> DriverCall {
+    let mut inputs = BTreeMap::new();
+    for (key, value) in entries {
+      inputs.insert(key.to_string(), value.to_string());
+    }
+
+    DriverCall {
+      operation: "test".to_string(),
+      target: ExecutionTarget::default(),
+      inputs,
+      working_directory: PathBuf::from("."),
+    }
+  }
 }

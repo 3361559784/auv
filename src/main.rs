@@ -17,8 +17,8 @@ fn main() {
 fn run() -> Result<(), String> {
   let arguments = env::args().skip(1).collect::<Vec<_>>();
   let command = parse_cli(&arguments)?;
-  let project_root = env::current_dir()
-    .map_err(|error| format!("failed to resolve current directory: {error}"))?;
+  let project_root =
+    env::current_dir().map_err(|error| format!("failed to resolve current directory: {error}"))?;
   let runtime = build_default_runtime(project_root)?;
 
   match command {
@@ -59,10 +59,7 @@ fn run() -> Result<(), String> {
       }
 
       if result.status == RunStatus::Failed {
-        return Err(format!(
-          "run {} finished in failed state",
-          result.run_id
-        ));
+        return Err(format!("run {} finished in failed state", result.run_id));
       }
     }
     CliCommand::Inspect { run_id } => {

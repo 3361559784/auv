@@ -1,9 +1,9 @@
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::driver::{copy_file, sanitized_artifact_name};
-use crate::model::{ArtifactRecord, AuvResult, ProducedArtifact, RunRecord};
+use crate::model::{ArtifactRecord, AuvResult, ProducedArtifact, RunRecord, now_millis};
 
 pub struct LocalStore {
   root: PathBuf,
@@ -55,36 +55,43 @@ impl LocalStore {
   }
 
   pub fn persist_run(&self, run: &RunRecord) -> AuvResult<()> {
-    let run_directory = self.root.join("runs").join(&run.run_id);
-    fs::create_dir_all(&run_directory).map_err(|error| {
-      format!(
-        "failed to create run directory {}: {error}",
+    let runs_root = self.root.join("runs");
+    let run_directory = runs_root.join(&run.run_id);
+    if run_directory.exists() {
+      return Err(format!(
+        "run directory {} already exists",
         run_directory.display()
+      ));
+    }
+
+    let staging_directory = runs_root.join(format!(".{}-tmp-{}", run.run_id, now_millis()));
+    fs::create_dir_all(&staging_directory).map_err(|error| {
+      format!(
+        "failed to create staging run directory {}: {error}",
+        staging_directory.display()
       )
     })?;
 
-    fs::write(run_directory.join("meta.txt"), render_meta(run))
-      .map_err(|error| format!("failed to write run metadata: {error}"))?;
-    fs::write(run_directory.join("inputs.txt"), render_inputs(&run.inputs))
-      .map_err(|error| format!("failed to write run inputs: {error}"))?;
-    fs::write(run_directory.join("events.log"), render_events(run))
-      .map_err(|error| format!("failed to write run events: {error}"))?;
-    fs::write(run_directory.join("artifacts.txt"), render_artifacts(run))
-      .map_err(|error| format!("failed to write artifact manifest: {error}"))?;
-    fs::write(run_directory.join("output.txt"), format!("{}\n", run.output_summary))
-      .map_err(|error| format!("failed to write run output: {error}"))?;
-    fs::write(run_directory.join("inspect.txt"), render_inspection(run))
-      .map_err(|error| format!("failed to write inspect snapshot: {error}"))?;
+    let write_result = write_run_snapshot(run, &staging_directory);
+    if let Err(error) = write_result {
+      let _ = fs::remove_dir_all(&staging_directory);
+      return Err(error);
+    }
+
+    fs::rename(&staging_directory, &run_directory).map_err(|error| {
+      let _ = fs::remove_dir_all(&staging_directory);
+      format!(
+        "failed to publish run directory {} from {}: {error}",
+        run_directory.display(),
+        staging_directory.display()
+      )
+    })?;
 
     Ok(())
   }
 
   pub fn render_inspection(&self, run_id: &str) -> AuvResult<String> {
-    let inspection_path = self
-      .root
-      .join("runs")
-      .join(run_id)
-      .join("inspect.txt");
+    let inspection_path = self.root.join("runs").join(run_id).join("inspect.txt");
 
     fs::read_to_string(&inspection_path).map_err(|error| {
       format!(
@@ -93,6 +100,45 @@ impl LocalStore {
       )
     })
   }
+}
+
+fn write_run_snapshot(run: &RunRecord, directory: &Path) -> AuvResult<()> {
+  write_snapshot_file(
+    &directory.join("meta.txt"),
+    render_meta(run),
+    "run metadata",
+  )?;
+  write_snapshot_file(
+    &directory.join("inputs.txt"),
+    render_inputs(&run.inputs),
+    "run inputs",
+  )?;
+  write_snapshot_file(
+    &directory.join("events.log"),
+    render_events(run),
+    "run events",
+  )?;
+  write_snapshot_file(
+    &directory.join("artifacts.txt"),
+    render_artifacts(run),
+    "artifact manifest",
+  )?;
+  write_snapshot_file(
+    &directory.join("output.txt"),
+    format!("{}\n", run.output_summary),
+    "run output",
+  )?;
+  write_snapshot_file(
+    &directory.join("inspect.txt"),
+    render_inspection(run),
+    "inspect snapshot",
+  )?;
+  Ok(())
+}
+
+fn write_snapshot_file(path: &Path, content: String, label: &str) -> AuvResult<()> {
+  fs::write(path, content)
+    .map_err(|error| format!("failed to write {} {}: {error}", label, path.display()))
 }
 
 fn render_meta(run: &RunRecord) -> String {

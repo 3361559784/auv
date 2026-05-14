@@ -8,6 +8,7 @@ const FOREGROUND_KEYBOARD_CLIPBOARD: &[DisturbanceClass] = &[
   DisturbanceClass::Keyboard,
   DisturbanceClass::Clipboard,
 ];
+const FOREGROUND_ONLY: &[DisturbanceClass] = &[DisturbanceClass::ForegroundApp];
 const FOCUS_POINTER_ENTRY: &[DisturbanceClass] = &[
   DisturbanceClass::Focus,
   DisturbanceClass::ForegroundApp,
@@ -119,6 +120,14 @@ pub fn default_command_catalog() -> CommandCatalog {
       operation: "probe_permissions",
       disturbance_classes: NONE,
       max_disturbance: DisturbanceClass::None,
+    },
+    CommandSpec {
+      id: "debug.activateApp",
+      summary: "Bring a target macOS app to the foreground before a foreground-dependent step.",
+      driver_id: "macos.observe",
+      operation: "activate_app",
+      disturbance_classes: FOREGROUND_ONLY,
+      max_disturbance: DisturbanceClass::ForegroundApp,
     },
     CommandSpec {
       id: "debug.focusTextInput",

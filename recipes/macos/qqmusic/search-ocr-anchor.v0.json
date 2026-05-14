@@ -21,8 +21,8 @@
     },
     "anchor_text": {
       "type": "string",
-      "default": "I DRINK THE LIGHT",
-      "note": "A visible OCR anchor from the QQ音乐 search results list."
+      "default": "Cure For Me",
+      "note": "A visible OCR row-title anchor from the QQ音乐 search results list."
     },
     "reveal_shortcut": {
       "type": "string",
@@ -35,6 +35,15 @@
     "submit_settle_ms": {
       "type": "integer",
       "default": 900
+    },
+    "dismiss_overlay_key": {
+      "type": "string",
+      "default": "escape",
+      "note": "Dismiss the lingering search suggestion overlay so OCR sees a cleaner result-list surface."
+    },
+    "dismiss_overlay_settle_ms": {
+      "type": "integer",
+      "default": 300
     },
     "max_depth": {
       "type": "integer",
@@ -86,6 +95,7 @@
     ],
     "notes": [
       "The search-entry phase now avoids pointer primitives by using a shortcut plus clipboard-backed paste.",
+      "The broader baseline explicitly dismisses the lingering search overlay before OCR inspects the row-anchor surface.",
       "Stable concrete result selection is not yet proven without OCR/pointer fallback.",
       "This recipe must not be advertised as non-disturbing."
     ]
@@ -127,6 +137,23 @@
         "submit_settle_ms": "${submit_settle_ms}"
       },
       "purpose": "Paste the query through the clipboard, then submit it and restore the prior clipboard snapshot."
+    },
+    {
+      "id": "dismiss-search-overlay",
+      "disturbance": {
+        "classes": [
+          "foreground_app",
+          "keyboard"
+        ],
+        "max": "keyboard"
+      },
+      "command_id": "debug.pressKey",
+      "args": {
+        "target": "${app_id}",
+        "key": "${dismiss_overlay_key}",
+        "settle_ms": "${dismiss_overlay_settle_ms}"
+      },
+      "purpose": "Dismiss the QQ音乐 search suggestion overlay before OCR inspects the result-list region."
     },
     {
       "id": "resolve-ocr-anchor",

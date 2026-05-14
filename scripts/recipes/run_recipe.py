@@ -4,6 +4,8 @@ import json
 import os
 import subprocess
 import sys
+import time
+from contextlib import nullcontext
 from pathlib import Path
 from string import Template
 
@@ -15,6 +17,23 @@ DISTURBANCE_ORDER = [
   "clipboard",
   "pointer",
 ]
+
+
+class LiveAppRecipeLock:
+  def __init__(self, path: Path):
+    self.path = path
+
+  def release(self) -> None:
+    try:
+      self.path.unlink()
+    except FileNotFoundError:
+      pass
+
+  def __enter__(self):
+    return self
+
+  def __exit__(self, exc_type, exc, exc_tb):
+    self.release()
 
 
 def load_recipe(path: Path) -> dict:
@@ -113,6 +132,45 @@ def validate_disturbance_policy(recipe: dict, max_disturbance: str | None) -> st
   return active_max
 
 
+def sanitize_lock_component(raw: str) -> str:
+  collapsed = "".join(character if character.isalnum() else "-" for character in raw)
+  cleaned = "-".join(segment for segment in collapsed.split("-") if segment)
+  return cleaned or "unknown"
+
+
+def maybe_acquire_live_app_lock(recipe: dict, variables: dict[str, str], dry_run: bool) -> LiveAppRecipeLock | None:
+  if dry_run:
+    return None
+
+  target_app = recipe.get("target_app", {})
+  if target_app.get("display_mode") != "live-desktop":
+    return None
+
+  bundle_id = Template(target_app.get("bundle_id", "")).safe_substitute(variables).strip()
+  if not bundle_id:
+    return None
+
+  timeout_ms = int(os.environ.get("AUV_RECIPE_LOCK_TIMEOUT_MS", "10000"))
+  lock_path = Path("/tmp") / f"auv-live-app-{sanitize_lock_component(bundle_id)}.lock"
+  started_at = time.monotonic()
+
+  while True:
+    try:
+      fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+      with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(f"pid={os.getpid()}\n")
+        handle.write(f"recipe={recipe.get('recipe_id', 'unknown')}\n")
+        handle.write(f"bundleId={bundle_id}\n")
+      return LiveAppRecipeLock(lock_path)
+    except FileExistsError:
+      elapsed_ms = int((time.monotonic() - started_at) * 1000)
+      if elapsed_ms > timeout_ms:
+        raise SystemExit(
+          f"timed out waiting for live-app recipe lock for {bundle_id!r} after {timeout_ms} ms"
+        )
+      time.sleep(0.05)
+
+
 def run_recipe(
   recipe_path: Path,
   dry_run: bool,
@@ -123,24 +181,26 @@ def run_recipe(
   variables = default_inputs(recipe)
   variables.update(overrides)
   active_max_disturbance = validate_disturbance_policy(recipe, max_disturbance)
+  lock = maybe_acquire_live_app_lock(recipe, variables, dry_run)
 
   print(f"recipe: {recipe['recipe_id']}")
   print(f"objective: {recipe['objective']}")
   print(f"target: {Template(recipe['target_app']['bundle_id']).safe_substitute(variables)}")
   print(f"max disturbance: {active_max_disturbance}")
 
-  for index, step in enumerate(recipe.get("steps", []), start=1):
-    command = build_command(step, variables)
-    disturbance = step.get("disturbance", {})
-    step_max = disturbance.get("max", "none")
-    step_classes = ", ".join(disturbance.get("classes", [])) or "none"
-    print(
-      f"[{index}/{len(recipe['steps'])}] {step['id']} "
-      f"(disturbance max={step_max}; classes={step_classes}) -> {' '.join(command)}"
-    )
-    if dry_run:
-      continue
-    subprocess.run(command, check=True)
+  with lock or nullcontext():
+    for index, step in enumerate(recipe.get("steps", []), start=1):
+      command = build_command(step, variables)
+      disturbance = step.get("disturbance", {})
+      step_max = disturbance.get("max", "none")
+      step_classes = ", ".join(disturbance.get("classes", [])) or "none"
+      print(
+        f"[{index}/{len(recipe['steps'])}] {step['id']} "
+        f"(disturbance max={step_max}; classes={step_classes}) -> {' '.join(command)}"
+      )
+      if dry_run:
+        continue
+      subprocess.run(command, check=True)
 
   return 0
 

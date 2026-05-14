@@ -1496,6 +1496,15 @@ pub(super) fn render_type_text_report(
   lines.join("\n")
 }
 
+pub(super) fn render_activate_app_report(app: &str, settle_ms: u64) -> String {
+  [
+    format!("activatedAt={}", now_millis()),
+    format!("app={app}"),
+    format!("settleMs={settle_ms}"),
+  ]
+  .join("\n")
+}
+
 pub(super) fn looks_like_bundle_identifier(raw: &str) -> bool {
   raw.contains('.')
     && raw

@@ -16,6 +16,26 @@ func sanitize(_ raw: String) -> String {
     .trimmingCharacters(in: .whitespacesAndNewlines)
 }
 
+func foldConfusableScalar(_ scalar: UnicodeScalar) -> UnicodeScalar {
+  switch scalar {
+  case "|", "!", "l", "I":
+    return "i"
+  default:
+    return scalar
+  }
+}
+
+func normalizeForAnchorMatch(_ raw: String) -> String {
+  let sanitized = sanitize(raw)
+  let folded = String(String.UnicodeScalarView(sanitized.unicodeScalars.map(foldConfusableScalar)))
+  let lowercased = caseSensitive ? folded : folded.lowercased()
+  return String(
+    lowercased.unicodeScalars.filter { scalar in
+      CharacterSet.alphanumerics.contains(scalar)
+    }
+  )
+}
+
 let imageURL = URL(fileURLWithPath: imagePath)
 guard
   let imageSource = CGImageSourceCreateWithURL(imageURL as CFURL, nil),
@@ -26,13 +46,16 @@ else {
 }
 
 let normalizedQuery = caseSensitive ? rawQuery : rawQuery.lowercased()
+let normalizedAnchorQuery = normalizeForAnchorMatch(rawQuery)
 
 func matches(_ text: String) -> Bool {
   let normalizedText = caseSensitive ? text : text.lowercased()
+  let normalizedAnchorText = normalizeForAnchorMatch(text)
   if exact {
-    return normalizedText == normalizedQuery
+    return normalizedText == normalizedQuery || normalizedAnchorText == normalizedAnchorQuery
   }
   return normalizedText.contains(normalizedQuery)
+    || normalizedAnchorText.contains(normalizedAnchorQuery)
 }
 
 let request = VNRecognizeTextRequest()
@@ -56,6 +79,7 @@ print("imageHeight=\(image.height)")
 print("query=\(sanitize(rawQuery))")
 print("exact=\(exact ? "true" : "false")")
 print("caseSensitive=\(caseSensitive ? "true" : "false")")
+print("normalizedQuery=\(normalizedAnchorQuery)")
 
 var matchCount = 0
 for observation in observations.prefix(maxObservations) {

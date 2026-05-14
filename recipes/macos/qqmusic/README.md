@@ -6,6 +6,7 @@ validation slices.
 Current baseline:
 
 - `open-search-submit-query.v0.json`
+- `select-result-anchor.v0.json`
 - `search-ocr-anchor.v0.json`
 
 The lower-disturbance baseline proves only the following chain:
@@ -29,11 +30,23 @@ The broader result-selection baseline proves the following chain:
 
 1. open the QQ音乐 search surface through a keyboard shortcut
 2. paste and submit a query while restoring the clipboard
-3. resolve a known OCR anchor inside the result-list region
-4. click the OCR anchor
-5. capture post-click evidence
+3. dismiss the lingering search suggestion overlay
+4. resolve a known OCR anchor inside the result-list region
+5. click the OCR anchor
+6. capture post-click evidence
+
+The modular result-selection skill proves only:
+
+1. reactivate QQ音乐 so OCR does not accidentally inspect a different frontmost app
+2. resolve a result-list OCR anchor inside the constrained visual region
+3. click that anchor
+4. capture post-click evidence
 
 It does **not** prove playback activation yet.
+
+The recipe runner now applies a per-app live-desktop lock, so QQ音乐 recipes
+for the same app instance do not execute concurrently through
+`scripts/recipes/run_recipe.py`.
 
 Current disturbance truth:
 
@@ -83,8 +96,11 @@ DRY_RUN=1 ./scripts/local/qqmusic-search-entry.sh aa
 
 ./scripts/local/qqmusic-search-entry-sentinel.sh
 
-DRY_RUN=1 ./scripts/local/qqmusic-select-result.sh aa "I DRINK THE LIGHT"
-./scripts/local/qqmusic-select-result.sh aa "I DRINK THE LIGHT"
+DRY_RUN=1 ./scripts/local/qqmusic-select-result.sh aa "Cure For Me"
+./scripts/local/qqmusic-select-result.sh aa "Cure For Me"
+
+DRY_RUN=1 ./scripts/local/qqmusic-select-visible-anchor.sh "Cure For Me"
+./scripts/local/qqmusic-select-visible-anchor.sh "Cure For Me"
 ```
 
 ## Why This Exists

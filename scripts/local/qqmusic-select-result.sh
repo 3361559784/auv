@@ -2,7 +2,7 @@
 set -euo pipefail
 
 QUERY="${1:-aa}"
-ANCHOR="${2:-I DRINK THE LIGHT}"
+ANCHOR="${2:-Cure For Me}"
 CLICK_COUNT="${CLICK_COUNT:-1}"
 APP_ID="${APP_ID:-com.tencent.QQMusicMac}"
 REVEAL_SHORTCUT="${REVEAL_SHORTCUT:-cmd+f}"

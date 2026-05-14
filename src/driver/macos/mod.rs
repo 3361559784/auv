@@ -18,7 +18,7 @@ mod support;
 mod tests;
 
 use self::control::{
-  click_point, click_screen_text, click_window_point, focus_text_input,
+  activate_app, click_point, click_screen_text, click_window_point, focus_text_input,
   paste_text_preserve_clipboard, press_button, press_key, scroll_point, type_text,
 };
 use self::observe::{
@@ -61,6 +61,7 @@ impl Driver for MacOsObserveDriver {
         "observe.project-screenshot-point",
         "observe.coordinate-readiness",
         "observe.screen-text",
+        "control.activate-app",
         "control.focus-text-input",
         "control.press-button",
         "control.type-text",
@@ -88,6 +89,7 @@ impl Driver for MacOsObserveDriver {
       "observe_window_tree" => observe_window_tree(call),
       "find_screen_text" => find_screen_text(call),
       "probe_permissions" => probe_permissions(call),
+      "activate_app" => activate_app(call),
       "focus_text_input" => focus_text_input(call),
       "press_button" => press_button(call),
       "type_text" => type_text(call),

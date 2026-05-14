@@ -32,6 +32,16 @@ fn run() -> Result<(), String> {
           command.id, command.driver_id, command.operation
         );
         println!("  {}", command.summary);
+        println!(
+          "  disturbance: {} (max: {})",
+          command
+            .disturbance_classes
+            .iter()
+            .map(|class| class.as_str())
+            .collect::<Vec<_>>()
+            .join(", "),
+          command.max_disturbance.as_str()
+        );
       }
     }
     CliCommand::ListDrivers => {

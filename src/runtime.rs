@@ -265,6 +265,8 @@ mod tests {
         summary: "Test invoke",
         driver_id: "test.driver",
         operation: "test_operation",
+        disturbance_classes: &[crate::model::DisturbanceClass::None],
+        max_disturbance: crate::model::DisturbanceClass::None,
       }]),
       DriverRegistry::new(vec![Box::new(ArtifactFailureDriver)]),
       LocalStore::new(store_root.clone()).expect("store should initialize"),

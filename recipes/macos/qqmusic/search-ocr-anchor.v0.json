@@ -1,0 +1,181 @@
+{
+  "recipe_id": "macos.qqmusic.search_ocr_anchor.v0",
+  "version": "0.1.0",
+  "status": "validated-recipe",
+  "platform": "macOS",
+  "target_app": {
+    "name": "QQ音乐",
+    "bundle_id": "${app_id}",
+    "display_mode": "live-desktop"
+  },
+  "objective": "Reach QQ Music search results, resolve a known OCR text anchor, click that anchor, and capture post-action evidence.",
+  "inputs": {
+    "app_id": {
+      "type": "string",
+      "default": "com.tencent.QQMusicMac"
+    },
+    "query": {
+      "type": "string",
+      "default": "aa",
+      "note": "ASCII baseline avoids IME ambiguity during the first validation pass."
+    },
+    "anchor_text": {
+      "type": "string",
+      "default": "I DRINK THE LIGHT",
+      "note": "A visible OCR anchor from the QQ音乐 search results list."
+    },
+    "reveal_shortcut": {
+      "type": "string",
+      "default": "cmd+f"
+    },
+    "reveal_settle_ms": {
+      "type": "integer",
+      "default": 300
+    },
+    "submit_settle_ms": {
+      "type": "integer",
+      "default": 900
+    },
+    "max_depth": {
+      "type": "integer",
+      "default": 5
+    },
+    "max_children": {
+      "type": "integer",
+      "default": 20
+    },
+    "click_count": {
+      "type": "integer",
+      "default": 1
+    }
+  },
+  "preconditions": [
+    "The host is macOS.",
+    "QQ音乐 is installed and can be addressed by ${app_id}.",
+    "Screen Recording and Accessibility permissions are already granted.",
+    "The recipe runs on the live desktop and may briefly take pointer control."
+  ],
+  "disturbance_policy": {
+    "max_disturbance": "pointer",
+    "declared_classes": [
+      "none",
+      "focus",
+      "foreground_app",
+      "keyboard",
+      "pointer"
+    ],
+    "notes": [
+      "Probe evidence suggests QQ音乐 may admit a keyboard-first search-entry path, but the current validated recipe still uses pointer-level focus through debug.focusTextInput.",
+      "Stable concrete result selection is not yet proven without OCR/pointer fallback.",
+      "This recipe must not be advertised as non-disturbing."
+    ]
+  },
+  "steps": [
+    {
+      "id": "focus-search-input",
+      "command_id": "debug.focusTextInput",
+      "disturbance": {
+        "classes": [
+          "focus",
+          "foreground_app",
+          "keyboard",
+          "pointer"
+        ],
+        "max": "pointer"
+      },
+      "args": {
+        "target": "${app_id}",
+        "query": "搜索",
+        "max_depth": "${max_depth}",
+        "max_children": "${max_children}",
+        "reveal_shortcut": "${reveal_shortcut}",
+        "reveal_settle_ms": "${reveal_settle_ms}"
+      },
+      "purpose": "Reveal and focus the QQ音乐 search box through AX."
+    },
+    {
+      "id": "type-query",
+      "command_id": "debug.typeText",
+      "disturbance": {
+        "classes": [
+          "foreground_app",
+          "keyboard"
+        ],
+        "max": "keyboard"
+      },
+      "args": {
+        "target": "${app_id}",
+        "text": "${query}",
+        "replace_existing": true,
+        "submit_key": "return",
+        "submit_settle_ms": "${submit_settle_ms}"
+      },
+      "purpose": "Submit the query and wait for the result-list state."
+    },
+    {
+      "id": "resolve-ocr-anchor",
+      "command_id": "debug.findScreenText",
+      "disturbance": {
+        "classes": [
+          "none"
+        ],
+        "max": "none"
+      },
+      "args": {
+        "query": "${anchor_text}"
+      },
+      "purpose": "Resolve a known OCR text anchor in screenshot pixel space."
+    },
+    {
+      "id": "click-ocr-anchor",
+      "command_id": "debug.clickScreenText",
+      "disturbance": {
+        "classes": [
+          "pointer"
+        ],
+        "max": "pointer"
+      },
+      "args": {
+        "query": "${anchor_text}",
+        "click_count": "${click_count}"
+      },
+      "purpose": "Project the OCR anchor back to logical coordinates and click it."
+    },
+    {
+      "id": "capture-evidence",
+      "command_id": "debug.captureScreen",
+      "disturbance": {
+        "classes": [
+          "none"
+        ],
+        "max": "none"
+      },
+      "args": {
+        "label": "qqmusic-result-anchor-${query}"
+      },
+      "purpose": "Capture post-click evidence for inspect and later distillation."
+    }
+  ],
+  "verification": {
+    "expected_signals": [
+      "debug.focusTextInput succeeds for query 搜索.",
+      "debug.typeText submits the chosen query with return.",
+      "debug.findScreenText reports at least one match for ${anchor_text}.",
+      "debug.clickScreenText emits a logicalPoint note and completes the click.",
+      "The post-click screenshot shows the target row selected or highlighted."
+    ],
+    "success_criteria": [
+      "The result row is visually selected after the click.",
+      "A post-click screenshot artifact exists."
+    ],
+    "non_goals": [
+      "Playback activation is not yet proven.",
+      "This recipe does not assert that the selected row starts playing."
+    ]
+  },
+  "known_limits": {
+    "black_box_region": "QQ音乐 result rows remain visually accessible but weakly exposed through AX.",
+    "user_disturbance": "clickScreenText is still an intrusive pointer-level primitive on a live desktop.",
+    "fallback_needed": "If OCR cannot find the anchor, the caller must retry with a different visible anchor or a stronger visual strategy."
+  }
+}

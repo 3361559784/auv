@@ -9,12 +9,37 @@ pub type AuvResult<T> = Result<T, String>;
 
 static RUN_ID_COUNTER: AtomicU64 = AtomicU64::new(0);
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum DisturbanceClass {
+  None,
+  Focus,
+  ForegroundApp,
+  Keyboard,
+  Clipboard,
+  Pointer,
+}
+
+impl DisturbanceClass {
+  pub fn as_str(&self) -> &'static str {
+    match self {
+      Self::None => "none",
+      Self::Focus => "focus",
+      Self::ForegroundApp => "foreground_app",
+      Self::Keyboard => "keyboard",
+      Self::Clipboard => "clipboard",
+      Self::Pointer => "pointer",
+    }
+  }
+}
+
 #[derive(Clone, Debug)]
 pub struct CommandSpec {
   pub id: &'static str,
   pub summary: &'static str,
   pub driver_id: &'static str,
   pub operation: &'static str,
+  pub disturbance_classes: &'static [DisturbanceClass],
+  pub max_disturbance: DisturbanceClass,
 }
 
 #[derive(Clone, Debug, Default)]

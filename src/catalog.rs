@@ -1,4 +1,24 @@
-use crate::model::CommandSpec;
+use crate::model::{CommandSpec, DisturbanceClass};
+
+const NONE: &[DisturbanceClass] = &[DisturbanceClass::None];
+const FOREGROUND_KEYBOARD: &[DisturbanceClass] =
+  &[DisturbanceClass::ForegroundApp, DisturbanceClass::Keyboard];
+const FOCUS_POINTER_ENTRY: &[DisturbanceClass] = &[
+  DisturbanceClass::Focus,
+  DisturbanceClass::ForegroundApp,
+  DisturbanceClass::Keyboard,
+  DisturbanceClass::Pointer,
+];
+const POINTER_WITH_FOREGROUND: &[DisturbanceClass] =
+  &[DisturbanceClass::ForegroundApp, DisturbanceClass::Pointer];
+const POINTER_ONLY: &[DisturbanceClass] = &[DisturbanceClass::Pointer];
+const PRESS_BUTTON_DISTURBANCE: &[DisturbanceClass] = &[
+  DisturbanceClass::ForegroundApp,
+  DisturbanceClass::Keyboard,
+  DisturbanceClass::Pointer,
+];
+const OBSERVE_WINDOW_TREE_DISTURBANCE: &[DisturbanceClass] =
+  &[DisturbanceClass::ForegroundApp, DisturbanceClass::Keyboard];
 
 pub struct CommandCatalog {
   commands: Vec<CommandSpec>,
@@ -28,108 +48,144 @@ pub fn default_command_catalog() -> CommandCatalog {
       summary: "Capture one desktop screenshot through the shared runtime path.",
       driver_id: "macos.observe",
       operation: "capture_screen",
+      disturbance_classes: NONE,
+      max_disturbance: DisturbanceClass::None,
     },
     CommandSpec {
       id: "debug.probeDisplays",
       summary: "Enumerate connected macOS displays and capture a coordinate-space report.",
       driver_id: "macos.observe",
       operation: "probe_displays",
+      disturbance_classes: NONE,
+      max_disturbance: DisturbanceClass::None,
     },
     CommandSpec {
       id: "debug.projectScreenshotPoint",
       summary: "Project main-display screenshot pixels back into AUV global logical coordinates.",
       driver_id: "macos.observe",
       operation: "project_screenshot_point",
+      disturbance_classes: NONE,
+      max_disturbance: DisturbanceClass::None,
     },
     CommandSpec {
       id: "debug.identifyPoint",
       summary: "Resolve a logical desktop point against the current macOS display layout.",
       driver_id: "macos.observe",
       operation: "identify_point",
+      disturbance_classes: NONE,
+      max_disturbance: DisturbanceClass::None,
     },
     CommandSpec {
       id: "debug.probeCoordinateReadiness",
       summary: "Capture a screenshot and compare its pixels against the observed macOS coordinate space.",
       driver_id: "macos.observe",
       operation: "probe_coordinate_readiness",
+      disturbance_classes: NONE,
+      max_disturbance: DisturbanceClass::None,
     },
     CommandSpec {
       id: "debug.findScreenText",
       summary: "Capture a screenshot and locate OCR text anchors in screenshot pixel space.",
       driver_id: "macos.observe",
       operation: "find_screen_text",
+      disturbance_classes: NONE,
+      max_disturbance: DisturbanceClass::None,
     },
     CommandSpec {
       id: "debug.observeWindows",
       summary: "Observe visible macOS windows and capture a text report artifact.",
       driver_id: "macos.observe",
       operation: "observe_windows",
+      disturbance_classes: NONE,
+      max_disturbance: DisturbanceClass::None,
     },
     CommandSpec {
       id: "debug.observeWindowTree",
       summary: "Capture an AX tree snapshot for a target macOS app window.",
       driver_id: "macos.observe",
       operation: "observe_window_tree",
+      disturbance_classes: OBSERVE_WINDOW_TREE_DISTURBANCE,
+      max_disturbance: DisturbanceClass::Keyboard,
     },
     CommandSpec {
       id: "debug.probePermissions",
       summary: "Probe macOS screen recording, accessibility, and automation permissions.",
       driver_id: "macos.observe",
       operation: "probe_permissions",
+      disturbance_classes: NONE,
+      max_disturbance: DisturbanceClass::None,
     },
     CommandSpec {
       id: "debug.focusTextInput",
       summary: "Focus a target macOS text input by query through AX.",
       driver_id: "macos.observe",
       operation: "focus_text_input",
+      disturbance_classes: FOCUS_POINTER_ENTRY,
+      max_disturbance: DisturbanceClass::Pointer,
     },
     CommandSpec {
       id: "debug.pressButton",
       summary: "Press a known macOS button-like control by query through AX.",
       driver_id: "macos.observe",
       operation: "press_button",
+      disturbance_classes: PRESS_BUTTON_DISTURBANCE,
+      max_disturbance: DisturbanceClass::Pointer,
     },
     CommandSpec {
       id: "debug.typeText",
       summary: "Type text into the active macOS control through System Events.",
       driver_id: "macos.observe",
       operation: "type_text",
+      disturbance_classes: FOREGROUND_KEYBOARD,
+      max_disturbance: DisturbanceClass::Keyboard,
     },
     CommandSpec {
       id: "debug.pressKey",
       summary: "Press a keyboard key or shortcut in the active macOS app through System Events.",
       driver_id: "macos.observe",
       operation: "press_key",
+      disturbance_classes: FOREGROUND_KEYBOARD,
+      max_disturbance: DisturbanceClass::Keyboard,
     },
     CommandSpec {
       id: "debug.clickPoint",
       summary: "Click a macOS global logical point through Quartz and record its display contract.",
       driver_id: "macos.observe",
       operation: "click_point",
+      disturbance_classes: POINTER_WITH_FOREGROUND,
+      max_disturbance: DisturbanceClass::Pointer,
     },
     CommandSpec {
       id: "debug.clickWindowPoint",
       summary: "Click a point relative to a target macOS window and record the resolved global point.",
       driver_id: "macos.observe",
       operation: "click_window_point",
+      disturbance_classes: POINTER_WITH_FOREGROUND,
+      max_disturbance: DisturbanceClass::Pointer,
     },
     CommandSpec {
       id: "debug.clickScreenText",
       summary: "Capture a screenshot, resolve an OCR text anchor, and click its projected logical point.",
       driver_id: "macos.observe",
       operation: "click_screen_text",
+      disturbance_classes: POINTER_ONLY,
+      max_disturbance: DisturbanceClass::Pointer,
     },
     CommandSpec {
       id: "debug.scrollPoint",
       summary: "Scroll at a macOS global logical point through Quartz and record its display contract.",
       driver_id: "macos.observe",
       operation: "scroll_point",
+      disturbance_classes: POINTER_WITH_FOREGROUND,
+      max_disturbance: DisturbanceClass::Pointer,
     },
     CommandSpec {
       id: "debug.fixtureObserve",
       summary: "Emit a deterministic observation result without touching the real UI.",
       driver_id: "fixture.observe",
       operation: "observe_fixture_scene",
+      disturbance_classes: NONE,
+      max_disturbance: DisturbanceClass::None,
     },
   ];
 
@@ -147,6 +203,8 @@ mod tests {
       summary: "Test command",
       driver_id: "test.driver",
       operation: "test_op",
+      disturbance_classes: NONE,
+      max_disturbance: DisturbanceClass::None,
     }]);
 
     let resolved = catalog.resolve("test.cmd").expect("should resolve");
@@ -168,12 +226,16 @@ mod tests {
         summary: "sum1",
         driver_id: "d1",
         operation: "op1",
+        disturbance_classes: NONE,
+        max_disturbance: DisturbanceClass::None,
       },
       CommandSpec {
         id: "cmd2",
         summary: "sum2",
         driver_id: "d2",
         operation: "op2",
+        disturbance_classes: NONE,
+        max_disturbance: DisturbanceClass::None,
       },
     ];
     let catalog = CommandCatalog::new(commands.clone());

@@ -4,19 +4,32 @@ set -euo pipefail
 QUERY="${1:-aa}"
 ANCHOR="${2:-I DRINK THE LIGHT}"
 CLICK_COUNT="${CLICK_COUNT:-1}"
+APP_ID="${APP_ID:-com.tencent.QQMusicMac}"
+REVEAL_SHORTCUT="${REVEAL_SHORTCUT:-cmd+f}"
+REVEAL_SETTLE_MS="${REVEAL_SETTLE_MS:-300}"
+SUBMIT_SETTLE_MS="${SUBMIT_SETTLE_MS:-900}"
+MAX_DEPTH="${MAX_DEPTH:-5}"
+MAX_CHILDREN="${MAX_CHILDREN:-20}"
+DRY_RUN="${DRY_RUN:-0}"
+MAX_DISTURBANCE="${MAX_DISTURBANCE:-}"
 
-echo "[1/4] Refresh QQ音乐 search results for query: ${QUERY}"
-./scripts/local/qqmusic-search.sh "${QUERY}"
+RUN_ARGS=()
+if [[ "${DRY_RUN}" == "1" ]]; then
+  RUN_ARGS+=(--dry-run)
+fi
+if [[ -n "${MAX_DISTURBANCE}" ]]; then
+  RUN_ARGS+=(--max-disturbance "${MAX_DISTURBANCE}")
+fi
 
-echo "[2/4] Resolve OCR text anchor: ${ANCHOR}"
-cargo run --quiet -- invoke debug.findScreenText \
-  --query "${ANCHOR}"
-
-echo "[3/4] Click OCR text anchor: ${ANCHOR}"
-cargo run --quiet -- invoke debug.clickScreenText \
-  --query "${ANCHOR}" \
-  --click_count "${CLICK_COUNT}"
-
-echo "[4/4] Capture post-click screenshot evidence"
-cargo run --quiet -- invoke debug.captureScreen \
-  --label "qqmusic-result-anchor-${QUERY}"
+python3 scripts/recipes/run_recipe.py \
+  recipes/macos/qqmusic/search-ocr-anchor.v0.json \
+  "${RUN_ARGS[@]}" \
+  --set "app_id=${APP_ID}" \
+  --set "query=${QUERY}" \
+  --set "anchor_text=${ANCHOR}" \
+  --set "click_count=${CLICK_COUNT}" \
+  --set "reveal_shortcut=${REVEAL_SHORTCUT}" \
+  --set "reveal_settle_ms=${REVEAL_SETTLE_MS}" \
+  --set "submit_settle_ms=${SUBMIT_SETTLE_MS}" \
+  --set "max_depth=${MAX_DEPTH}" \
+  --set "max_children=${MAX_CHILDREN}"

@@ -44,9 +44,33 @@
       "default": 900
     }
   },
+  "disturbance_policy": {
+    "max_disturbance": "pointer",
+    "declared_classes": [
+      "none",
+      "focus",
+      "foreground_app",
+      "keyboard",
+      "pointer"
+    ],
+    "notes": [
+      "Probe evidence suggests QQ音乐 may admit a keyboard-first search-entry path, but this validated skill still uses pointer-level focus through debug.focusTextInput.",
+      "Stable concrete result selection is not yet proven without OCR/pointer fallback.",
+      "This skill must not be advertised as non-disturbing."
+    ]
+  },
   "steps": [
     {
       "command_id": "debug.focusTextInput",
+      "disturbance": {
+        "classes": [
+          "focus",
+          "foreground_app",
+          "keyboard",
+          "pointer"
+        ],
+        "max": "pointer"
+      },
       "args": {
         "target": "com.tencent.QQMusicMac",
         "query": "搜索",
@@ -59,6 +83,13 @@
     },
     {
       "command_id": "debug.typeText",
+      "disturbance": {
+        "classes": [
+          "foreground_app",
+          "keyboard"
+        ],
+        "max": "keyboard"
+      },
       "args": {
         "target": "com.tencent.QQMusicMac",
         "text": "aa",
@@ -70,6 +101,12 @@
     },
     {
       "command_id": "debug.findScreenText",
+      "disturbance": {
+        "classes": [
+          "none"
+        ],
+        "max": "none"
+      },
       "args": {
         "query": "I DRINK THE LIGHT"
       },
@@ -77,6 +114,12 @@
     },
     {
       "command_id": "debug.clickScreenText",
+      "disturbance": {
+        "classes": [
+          "pointer"
+        ],
+        "max": "pointer"
+      },
       "args": {
         "query": "I DRINK THE LIGHT",
         "click_count": 1
@@ -85,6 +128,12 @@
     },
     {
       "command_id": "debug.captureScreen",
+      "disturbance": {
+        "classes": [
+          "none"
+        ],
+        "max": "none"
+      },
       "args": {
         "label": "qqmusic-result-anchor-aa"
       },

@@ -53,49 +53,26 @@
     "The host is macOS.",
     "QQ音乐 is installed and can be addressed by ${app_id}.",
     "Screen Recording and Accessibility permissions are already granted.",
-    "The recipe runs on the live desktop and may briefly take pointer control."
+    "The recipe runs on the live desktop and may briefly take pointer control during result selection."
   ],
   "disturbance_policy": {
     "max_disturbance": "pointer",
     "declared_classes": [
       "none",
-      "focus",
       "foreground_app",
       "keyboard",
+      "clipboard",
       "pointer"
     ],
     "notes": [
-      "Probe evidence suggests QQ音乐 may admit a keyboard-first search-entry path, but the current validated recipe still uses pointer-level focus through debug.focusTextInput.",
+      "The search-entry phase now avoids pointer primitives by using a shortcut plus clipboard-backed paste.",
       "Stable concrete result selection is not yet proven without OCR/pointer fallback.",
       "This recipe must not be advertised as non-disturbing."
     ]
   },
   "steps": [
     {
-      "id": "focus-search-input",
-      "command_id": "debug.focusTextInput",
-      "disturbance": {
-        "classes": [
-          "focus",
-          "foreground_app",
-          "keyboard",
-          "pointer"
-        ],
-        "max": "pointer"
-      },
-      "args": {
-        "target": "${app_id}",
-        "query": "搜索",
-        "max_depth": "${max_depth}",
-        "max_children": "${max_children}",
-        "reveal_shortcut": "${reveal_shortcut}",
-        "reveal_settle_ms": "${reveal_settle_ms}"
-      },
-      "purpose": "Reveal and focus the QQ音乐 search box through AX."
-    },
-    {
-      "id": "type-query",
-      "command_id": "debug.typeText",
+      "id": "open-search",
       "disturbance": {
         "classes": [
           "foreground_app",
@@ -103,6 +80,25 @@
         ],
         "max": "keyboard"
       },
+      "command_id": "debug.pressKey",
+      "args": {
+        "target": "${app_id}",
+        "key": "${reveal_shortcut}",
+        "settle_ms": "${reveal_settle_ms}"
+      },
+      "purpose": "Reveal the QQ音乐 search surface through its known keyboard shortcut."
+    },
+    {
+      "id": "paste-query",
+      "disturbance": {
+        "classes": [
+          "foreground_app",
+          "keyboard",
+          "clipboard"
+        ],
+        "max": "clipboard"
+      },
+      "command_id": "debug.pasteTextPreserveClipboard",
       "args": {
         "target": "${app_id}",
         "text": "${query}",
@@ -110,7 +106,7 @@
         "submit_key": "return",
         "submit_settle_ms": "${submit_settle_ms}"
       },
-      "purpose": "Submit the query and wait for the result-list state."
+      "purpose": "Paste the query through the clipboard, then submit it and restore the prior clipboard snapshot."
     },
     {
       "id": "resolve-ocr-anchor",
@@ -158,8 +154,8 @@
   ],
   "verification": {
     "expected_signals": [
-      "debug.focusTextInput succeeds for query 搜索.",
-      "debug.typeText submits the chosen query with return.",
+      "debug.pressKey succeeds for the known search shortcut.",
+      "debug.pasteTextPreserveClipboard reports clipboardRestored=true.",
       "debug.findScreenText reports at least one match for ${anchor_text}.",
       "debug.clickScreenText emits a logicalPoint note and completes the click.",
       "The post-click screenshot shows the target row selected or highlighted."
@@ -176,6 +172,7 @@
   "known_limits": {
     "black_box_region": "QQ音乐 result rows remain visually accessible but weakly exposed through AX.",
     "user_disturbance": "clickScreenText is still an intrusive pointer-level primitive on a live desktop.",
-    "fallback_needed": "If OCR cannot find the anchor, the caller must retry with a different visible anchor or a stronger visual strategy."
+    "fallback_needed": "If OCR cannot find the anchor, the caller must retry with a different visible anchor or a stronger visual strategy.",
+    "shared_app_state": "This recipe should not run concurrently with other QQ音乐 recipes against the same live app instance."
   }
 }

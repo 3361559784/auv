@@ -172,6 +172,30 @@ Recommended primitive split:
 These should remain separate. They have different guarantees and different
 disturbance classes.
 
+### Follow-up Validation: Clipboard-Backed Chinese Search Entry
+
+An additional validation pass on `2026-05-15` confirmed that:
+
+- `debug.pressKey --key cmd+f` followed by
+  `debug.pasteTextPreserveClipboard --text 周杰伦 --submit_key return`
+  successfully reaches a QQ音乐 result page for `周杰伦`
+- the search-entry path preserves a TextEdit sentinel and restores the textual
+  clipboard contents after the paste/submit sequence
+- the resulting screenshot clearly shows a QQ音乐 search results page for
+  `周杰伦`
+
+What this does **not** prove:
+
+- `debug.findScreenText --query 周杰伦` is not currently validated
+- `debug.findScreenText --query 晴天` is not currently validated
+- stable Chinese OCR anchor resolution should therefore still be treated as
+  unproven
+
+This means the current honest claim is:
+
+- Chinese query submission is validated through clipboard-backed search entry
+- Chinese result selection through OCR is not yet validated
+
 ## Recommended Recipe Boundary
 
 The first honest QQ Music recipe boundary is:

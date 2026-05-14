@@ -246,6 +246,87 @@ pub(super) fn type_text(call: &DriverCall) -> AuvResult<DriverResponse> {
   })
 }
 
+pub(super) fn paste_text_preserve_clipboard(call: &DriverCall) -> AuvResult<DriverResponse> {
+  let app = app_identifier(call).unwrap_or_default();
+  let text = required_non_empty_string(call, "text")?;
+  let replace_existing = optional_bool(call, "replace_existing")?.unwrap_or(false);
+  let submit_key = optional_non_empty_string(call, "submit_key");
+  let submit_settle_ms = optional_positive_u64(call, "submit_settle_ms")?.unwrap_or(0);
+  if !app.is_empty() {
+    activate_target_app(&app)?;
+  }
+  paste_text_preserving_clipboard(
+    &text,
+    replace_existing,
+    submit_key.as_deref(),
+    submit_settle_ms,
+  )?;
+
+  let artifact = build_text_artifact(
+    "paste-text-preserve-clipboard",
+    "txt",
+    &format!(
+      "paste-text-preserve-clipboard-{}",
+      sanitize_file_component(&text)
+    ),
+    [
+      format!("pastedAt={}", now_millis()),
+      format!("app={app}"),
+      format!("text={text}"),
+      format!("textLength={}", text.chars().count()),
+      format!("replaceExisting={replace_existing}"),
+      format!("submitKey={}", submit_key.as_deref().unwrap_or("n/a")),
+      format!("submitSettleMs={submit_settle_ms}"),
+      "clipboardRestored=true".to_string(),
+    ]
+    .join("\n"),
+    "Pasted text through the macOS clipboard, then restored the prior clipboard snapshot.",
+  )?;
+
+  let mut notes = vec![
+    format!("text={text}"),
+    format!("textLength={}", text.chars().count()),
+    format!("replaceExisting={replace_existing}"),
+    "clipboardRestored=true".to_string(),
+  ];
+  if !app.is_empty() {
+    notes.push(format!("app={app}"));
+  }
+  if let Some(submit_key) = submit_key.as_deref() {
+    notes.push(format!("submitKey={submit_key}"));
+  }
+  if submit_settle_ms > 0 {
+    notes.push(format!("submitSettleMs={submit_settle_ms}"));
+  }
+
+  Ok(DriverResponse {
+    summary: match submit_key.as_deref() {
+      Some(submit_key) => format!(
+        "Pasted {} character(s) into {} and submitted with {} while restoring the clipboard.",
+        text.chars().count(),
+        if app.is_empty() {
+          "the active app"
+        } else {
+          &app
+        },
+        submit_key
+      ),
+      None => format!(
+        "Pasted {} character(s) into {} while restoring the clipboard.",
+        text.chars().count(),
+        if app.is_empty() {
+          "the active app"
+        } else {
+          &app
+        }
+      ),
+    },
+    backend: Some("macos.system-events.paste-text-preserve-clipboard".to_string()),
+    notes,
+    artifacts: vec![artifact],
+  })
+}
+
 pub(super) fn press_key(call: &DriverCall) -> AuvResult<DriverResponse> {
   let app = app_identifier(call).unwrap_or_default();
   let key = required_non_empty_string(call, "key")?;

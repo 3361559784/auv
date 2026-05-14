@@ -1,3 +1,5 @@
+use std::io::Write;
+
 use super::*;
 
 pub(super) fn enumerate_displays() -> AuvResult<ObservedDisplaySnapshot> {
@@ -77,6 +79,14 @@ pub(super) fn build_scroll_point_script(x: f64, y: f64, delta_x: f64, delta_y: f
     .replace("__Y__", &format!("{y:.3}"))
     .replace("__DELTA_X__", &format!("{:.0}", delta_x.round()))
     .replace("__DELTA_Y__", &format!("{:.0}", delta_y.round()))
+}
+
+pub(super) fn build_restore_clipboard_script(snapshot_payload: &str) -> String {
+  RESTORE_CLIPBOARD_SCRIPT_TEMPLATE.replace("__PAYLOAD__", &swift_string_literal(snapshot_payload))
+}
+
+pub(super) fn build_set_clipboard_text_script(text: &str) -> String {
+  SET_CLIPBOARD_TEXT_SCRIPT_TEMPLATE.replace("__TEXT__", &swift_string_literal(text))
 }
 
 pub(super) fn probe_automation_to_system_events() -> String {
@@ -1140,6 +1150,66 @@ pub(super) fn activate_target_app(app: &str) -> AuvResult<()> {
   run_command(OSASCRIPT_BINARY, &args).map(|_| ())
 }
 
+pub(super) struct ClipboardLock {
+  path: PathBuf,
+}
+
+impl Drop for ClipboardLock {
+  fn drop(&mut self) {
+    let _ = fs::remove_file(&self.path);
+  }
+}
+
+pub(super) fn acquire_clipboard_lock(timeout_ms: u64) -> AuvResult<ClipboardLock> {
+  let path = env::temp_dir().join("auv-macos-clipboard.lock");
+  let started_at = now_millis();
+
+  loop {
+    match fs::OpenOptions::new()
+      .write(true)
+      .create_new(true)
+      .open(&path)
+    {
+      Ok(mut file) => {
+        let _ = writeln!(file, "pid={}", std::process::id());
+        let _ = writeln!(file, "acquiredAt={}", started_at);
+        return Ok(ClipboardLock { path });
+      }
+      Err(error) if error.kind() == ErrorKind::AlreadyExists => {
+        if now_millis().saturating_sub(started_at) > timeout_ms as u128 {
+          return Err(format!(
+            "timed out waiting for the global macOS clipboard lock after {} ms",
+            timeout_ms
+          ));
+        }
+        thread::sleep(Duration::from_millis(50));
+      }
+      Err(error) => {
+        return Err(format!(
+          "failed to acquire the global macOS clipboard lock {}: {error}",
+          path.display()
+        ));
+      }
+    }
+  }
+}
+
+pub(super) fn capture_clipboard_snapshot() -> AuvResult<String> {
+  Ok(
+    run_swift_script(CAPTURE_CLIPBOARD_SCRIPT)?
+      .trim()
+      .to_string(),
+  )
+}
+
+pub(super) fn restore_clipboard_snapshot(snapshot_payload: &str) -> AuvResult<()> {
+  run_swift_script(&build_restore_clipboard_script(snapshot_payload)).map(|_| ())
+}
+
+pub(super) fn set_clipboard_text(text: &str) -> AuvResult<()> {
+  run_swift_script(&build_set_clipboard_text_script(text)).map(|_| ())
+}
+
 pub(super) fn type_text_via_system_events(
   text: &str,
   replace_existing: bool,
@@ -1165,6 +1235,50 @@ pub(super) fn type_text_via_system_events(
     thread::sleep(Duration::from_millis(submit_settle_ms));
   }
   Ok(())
+}
+
+pub(super) fn paste_text_preserving_clipboard(
+  text: &str,
+  replace_existing: bool,
+  submit_key: Option<&str>,
+  submit_settle_ms: u64,
+) -> AuvResult<()> {
+  let _clipboard_lock = acquire_clipboard_lock(5_000)?;
+  let clipboard_snapshot = capture_clipboard_snapshot()?;
+  let action_result = (|| {
+    set_clipboard_text(text)?;
+    let mut lines = vec!["tell application \"System Events\"".to_string()];
+    if replace_existing {
+      lines.push("keystroke \"a\" using {command down}".to_string());
+      lines.push("delay 0.05".to_string());
+      lines.push("key code 51".to_string());
+      lines.push("delay 0.05".to_string());
+    }
+    lines.push("keystroke \"v\" using {command down}".to_string());
+    if let Some(submit_key) = submit_key {
+      let key_code = special_key_code(submit_key)?;
+      lines.push("delay 0.05".to_string());
+      lines.push(format!("key code {key_code}"));
+    }
+    lines.push("end tell".to_string());
+    run_osascript_lines(&lines)?;
+    if submit_settle_ms > 0 {
+      thread::sleep(Duration::from_millis(submit_settle_ms));
+    }
+    Ok(())
+  })();
+  let restore_result = restore_clipboard_snapshot(&clipboard_snapshot);
+
+  match (action_result, restore_result) {
+    (Ok(()), Ok(())) => Ok(()),
+    (Err(action_error), Ok(())) => Err(action_error),
+    (Ok(()), Err(restore_error)) => Err(format!(
+      "restored pasted text action but failed to restore clipboard: {restore_error}"
+    )),
+    (Err(action_error), Err(restore_error)) => Err(format!(
+      "{action_error}; additionally failed to restore clipboard: {restore_error}"
+    )),
+  }
 }
 
 pub(super) fn special_key_code(raw: &str) -> AuvResult<u32> {

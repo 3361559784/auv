@@ -18,8 +18,8 @@ mod support;
 mod tests;
 
 use self::control::{
-  click_point, click_screen_text, click_window_point, focus_text_input, press_button, press_key,
-  scroll_point, type_text,
+  click_point, click_screen_text, click_window_point, focus_text_input,
+  paste_text_preserve_clipboard, press_button, press_key, scroll_point, type_text,
 };
 use self::observe::{
   capture_screen, find_screen_text, identify_point, observe_window_tree, observe_windows,
@@ -36,6 +36,9 @@ const OBSERVE_WINDOW_TREE_SCRIPT_TEMPLATE: &str = include_str!("scripts/observe_
 const OCR_FIND_TEXT_SCRIPT_TEMPLATE: &str = include_str!("scripts/ocr_find_text.swift");
 const CLICK_POINT_SCRIPT_TEMPLATE: &str = include_str!("scripts/click_point.swift");
 const SCROLL_POINT_SCRIPT_TEMPLATE: &str = include_str!("scripts/scroll_point.swift");
+const CAPTURE_CLIPBOARD_SCRIPT: &str = include_str!("scripts/capture_clipboard.swift");
+const RESTORE_CLIPBOARD_SCRIPT_TEMPLATE: &str = include_str!("scripts/restore_clipboard.swift");
+const SET_CLIPBOARD_TEXT_SCRIPT_TEMPLATE: &str = include_str!("scripts/set_clipboard_text.swift");
 
 const XCRUN_BINARY: &str = "/usr/bin/xcrun";
 const OSASCRIPT_BINARY: &str = "/usr/bin/osascript";
@@ -61,6 +64,7 @@ impl Driver for MacOsObserveDriver {
         "control.focus-text-input",
         "control.press-button",
         "control.type-text",
+        "control.paste-text-preserve-clipboard",
         "control.press-key",
         "control.click-point",
         "control.click-window-point",
@@ -87,6 +91,7 @@ impl Driver for MacOsObserveDriver {
       "focus_text_input" => focus_text_input(call),
       "press_button" => press_button(call),
       "type_text" => type_text(call),
+      "paste_text_preserve_clipboard" => paste_text_preserve_clipboard(call),
       "press_key" => press_key(call),
       "click_point" => click_point(call),
       "click_window_point" => click_window_point(call),

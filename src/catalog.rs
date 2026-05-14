@@ -3,6 +3,11 @@ use crate::model::{CommandSpec, DisturbanceClass};
 const NONE: &[DisturbanceClass] = &[DisturbanceClass::None];
 const FOREGROUND_KEYBOARD: &[DisturbanceClass] =
   &[DisturbanceClass::ForegroundApp, DisturbanceClass::Keyboard];
+const FOREGROUND_KEYBOARD_CLIPBOARD: &[DisturbanceClass] = &[
+  DisturbanceClass::ForegroundApp,
+  DisturbanceClass::Keyboard,
+  DisturbanceClass::Clipboard,
+];
 const FOCUS_POINTER_ENTRY: &[DisturbanceClass] = &[
   DisturbanceClass::Focus,
   DisturbanceClass::ForegroundApp,
@@ -140,6 +145,14 @@ pub fn default_command_catalog() -> CommandCatalog {
       max_disturbance: DisturbanceClass::Keyboard,
     },
     CommandSpec {
+      id: "debug.pasteTextPreserveClipboard",
+      summary: "Paste text into the active macOS control through the clipboard, then restore the prior clipboard snapshot.",
+      driver_id: "macos.observe",
+      operation: "paste_text_preserve_clipboard",
+      disturbance_classes: FOREGROUND_KEYBOARD_CLIPBOARD,
+      max_disturbance: DisturbanceClass::Clipboard,
+    },
+    CommandSpec {
       id: "debug.pressKey",
       summary: "Press a keyboard key or shortcut in the active macOS app through System Events.",
       driver_id: "macos.observe",
@@ -260,6 +273,11 @@ mod tests {
     assert!(catalog.resolve("debug.focusTextInput").is_some());
     assert!(catalog.resolve("debug.pressButton").is_some());
     assert!(catalog.resolve("debug.typeText").is_some());
+    assert!(
+      catalog
+        .resolve("debug.pasteTextPreserveClipboard")
+        .is_some()
+    );
     assert!(catalog.resolve("debug.pressKey").is_some());
     assert!(catalog.resolve("debug.clickPoint").is_some());
     assert!(catalog.resolve("debug.clickWindowPoint").is_some());

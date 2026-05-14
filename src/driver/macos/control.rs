@@ -470,15 +470,30 @@ pub(super) fn click_screen_text(call: &DriverCall) -> AuvResult<DriverResponse> 
     max_observations,
   ))?;
   let ocr_snapshot = parse_ocr_text_snapshot(&ocr_report)?;
-  let matched = ocr_snapshot.matches.get(match_index).ok_or_else(|| {
+  let min_confidence = optional_f64(call, "min_confidence")?.unwrap_or(0.0);
+  if !(0.0..=1.0).contains(&min_confidence) {
+    return Err(format!(
+      "invalid --min_confidence value {:.3}: expected a ratio within 0.0..=1.0",
+      min_confidence
+    ));
+  }
+  let region =
+    parse_ocr_region_constraint(call, ocr_snapshot.image_width, ocr_snapshot.image_height)?;
+  let filtered_matches = filter_ocr_matches(&ocr_snapshot.matches, min_confidence, region.as_ref());
+  let matched = filtered_matches.get(match_index).copied().ok_or_else(|| {
     format!(
-      "no OCR text match at index {} for query {} (found {})",
+      "no filtered OCR text match at index {} for query {} (found {} after filtering from {})",
       match_index,
       query,
+      filtered_matches.len(),
       ocr_snapshot.matches.len()
     )
   })?;
-  let (screenshot_center_x, screenshot_center_y) = ocr_match_center(matched);
+  let anchor_offset_x = optional_f64(call, "anchor_offset_x")?.unwrap_or(0.0);
+  let anchor_offset_y = optional_f64(call, "anchor_offset_y")?.unwrap_or(0.0);
+  let (match_center_x, match_center_y) = ocr_match_center(matched);
+  let screenshot_center_x = match_center_x + anchor_offset_x;
+  let screenshot_center_y = match_center_y + anchor_offset_y;
   let (logical_x, logical_y) =
     project_main_screenshot_point(&snapshot, screenshot_center_x, screenshot_center_y)?;
   let button_label = optional_string(call, "button").unwrap_or_else(|| "left".to_string());
@@ -503,9 +518,12 @@ pub(super) fn click_screen_text(call: &DriverCall) -> AuvResult<DriverResponse> 
     [
       format!("query={query}"),
       format!("matchIndex={match_index}"),
+      format!("filteredMatchCount={}", filtered_matches.len()),
+      format!("minConfidence={min_confidence:.3}"),
       format!("matchText={}", matched.text),
       format!("matchBounds={}", render_rect_compact(&matched.bounds)),
       format!("matchConfidence={:.3}", matched.confidence),
+      format!("anchorOffset={anchor_offset_x:.3},{anchor_offset_y:.3}"),
       format!("screenshotCenter={screenshot_center_x:.3},{screenshot_center_y:.3}"),
       format!("logicalPoint={logical_x:.3},{logical_y:.3}"),
       format!("button={button_label}"),
@@ -530,8 +548,11 @@ pub(super) fn click_screen_text(call: &DriverCall) -> AuvResult<DriverResponse> 
     notes: vec![
       format!("query={query}"),
       format!("matchIndex={match_index}"),
+      format!("filteredMatchCount={}", filtered_matches.len()),
       format!("matchText={}", matched.text),
       format!("matchBounds={}", render_rect_compact(&matched.bounds)),
+      format!("minConfidence={min_confidence:.3}"),
+      format!("anchorOffset={anchor_offset_x:.3},{anchor_offset_y:.3}"),
       format!("logicalPoint={logical_x:.3},{logical_y:.3}"),
     ],
     artifacts: vec![screenshot_artifact, report_artifact],

@@ -5,10 +5,11 @@ use std::path::PathBuf;
 use super::{
   ScreenshotDimensions,
   support::{
-    assess_coordinate_readiness, optional_bool, optional_f64, parse_display_snapshot,
-    parse_mouse_button, parse_ocr_text_snapshot, parse_shortcut, project_main_screenshot_point,
-    read_png_dimensions, resolve_display_point, resolve_scroll_deltas, sanitize_file_component,
-    special_key_code, swift_string_literal,
+    assess_coordinate_readiness, filter_ocr_matches, optional_bool, optional_f64,
+    parse_display_snapshot, parse_mouse_button, parse_ocr_region_constraint,
+    parse_ocr_text_snapshot, parse_shortcut, project_main_screenshot_point,
+    read_png_dimensions, render_rect_compact, resolve_display_point, resolve_scroll_deltas,
+    sanitize_file_component, special_key_code, swift_string_literal,
   },
 };
 use crate::{
@@ -181,6 +182,33 @@ fn project_main_screenshot_point_maps_retina_pixels_to_logical() {
     project_main_screenshot_point(&snapshot, 997.5, 1311.5).expect("projection should succeed");
   assert!((logical_x - 498.75).abs() < f64::EPSILON);
   assert!((logical_y - 655.75).abs() < f64::EPSILON);
+}
+
+#[test]
+fn parse_ocr_region_constraint_accepts_normalized_bounds() {
+  let call = build_call([
+    ("region_left_ratio", "0.1"),
+    ("region_top_ratio", "0.2"),
+    ("region_right_ratio", "0.9"),
+    ("region_bottom_ratio", "0.8"),
+  ]);
+  let region =
+    parse_ocr_region_constraint(&call, 1000, 500).expect("region should parse").unwrap();
+  assert_eq!(render_rect_compact(&region), "100,100,800,300");
+}
+
+#[test]
+fn filter_ocr_matches_applies_confidence_and_region() {
+  let snapshot = parse_ocr_text_snapshot(sample_ocr_report()).expect("OCR report should parse");
+  let region = super::ObservedRect {
+    x: 700,
+    y: 1200,
+    width: 700,
+    height: 200,
+  };
+  let filtered = filter_ocr_matches(&snapshot.matches, 0.95, Some(&region));
+  assert_eq!(filtered.len(), 1);
+  assert_eq!(filtered[0].text, "I DRINK THE LIGHT (Jengi Remix)");
 }
 
 #[test]

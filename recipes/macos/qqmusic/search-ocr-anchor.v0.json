@@ -47,6 +47,26 @@
     "click_count": {
       "type": "integer",
       "default": 1
+    },
+    "region_left_ratio": {
+      "type": "number",
+      "default": 0.14
+    },
+    "region_top_ratio": {
+      "type": "number",
+      "default": 0.34
+    },
+    "region_right_ratio": {
+      "type": "number",
+      "default": 0.90
+    },
+    "region_bottom_ratio": {
+      "type": "number",
+      "default": 0.95
+    },
+    "min_confidence": {
+      "type": "number",
+      "default": 0.90
     }
   },
   "preconditions": [
@@ -118,9 +138,14 @@
         "max": "none"
       },
       "args": {
-        "query": "${anchor_text}"
+        "query": "${anchor_text}",
+        "min_confidence": "${min_confidence}",
+        "region_left_ratio": "${region_left_ratio}",
+        "region_top_ratio": "${region_top_ratio}",
+        "region_right_ratio": "${region_right_ratio}",
+        "region_bottom_ratio": "${region_bottom_ratio}"
       },
-      "purpose": "Resolve a known OCR text anchor in screenshot pixel space."
+      "purpose": "Resolve a known OCR text anchor inside the QQ音乐 result-list region instead of scanning the whole screen."
     },
     {
       "id": "click-ocr-anchor",
@@ -133,9 +158,14 @@
       },
       "args": {
         "query": "${anchor_text}",
-        "click_count": "${click_count}"
+        "click_count": "${click_count}",
+        "min_confidence": "${min_confidence}",
+        "region_left_ratio": "${region_left_ratio}",
+        "region_top_ratio": "${region_top_ratio}",
+        "region_right_ratio": "${region_right_ratio}",
+        "region_bottom_ratio": "${region_bottom_ratio}"
       },
-      "purpose": "Project the OCR anchor back to logical coordinates and click it."
+      "purpose": "Project the filtered OCR anchor back to logical coordinates and click it."
     },
     {
       "id": "capture-evidence",
@@ -156,7 +186,7 @@
     "expected_signals": [
       "debug.pressKey succeeds for the known search shortcut.",
       "debug.pasteTextPreserveClipboard reports clipboardRestored=true.",
-      "debug.findScreenText reports at least one match for ${anchor_text}.",
+      "debug.findScreenText reports at least one filtered match for ${anchor_text} inside the result-list region.",
       "debug.clickScreenText emits a logicalPoint note and completes the click.",
       "The post-click screenshot shows the target row selected or highlighted."
     ],
@@ -173,6 +203,7 @@
     "black_box_region": "QQ音乐 result rows remain visually accessible but weakly exposed through AX.",
     "user_disturbance": "clickScreenText is still an intrusive pointer-level primitive on a live desktop.",
     "fallback_needed": "If OCR cannot find the anchor, the caller must retry with a different visible anchor or a stronger visual strategy.",
+    "region_tuning": "The default OCR region ratios target the QQ音乐 result-list area and may need adjustment if the window layout changes.",
     "shared_app_state": "This recipe should not run concurrently with other QQ音乐 recipes against the same live app instance."
   }
 }

@@ -29,7 +29,7 @@ The broader result-selection baseline proves the following chain:
 
 1. open the QQ音乐 search surface through a keyboard shortcut
 2. paste and submit a query while restoring the clipboard
-3. resolve a known OCR anchor from the result list
+3. resolve a known OCR anchor inside the result-list region
 4. click the OCR anchor
 5. capture post-click evidence
 
@@ -44,6 +44,12 @@ Current disturbance truth:
 The narrower search-entry recipe has `max_disturbance=clipboard` because it
 avoids pointer primitives, but still foregrounds QQ音乐 and temporarily uses
 the clipboard.
+
+The broader result-selection recipe now also carries visual anchor constraints:
+
+- OCR matching can be limited to a normalized screenshot region
+- QQ音乐 defaults now target the result-list band instead of scanning the whole screen
+- later 网易云 recipes can reuse the same region-constrained anchor approach
 
 Also be honest about concurrency:
 

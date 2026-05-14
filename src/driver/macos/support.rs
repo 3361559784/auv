@@ -259,6 +259,83 @@ pub(super) fn parse_ocr_text_line(line: &str) -> AuvResult<OcrTextMatch> {
   })
 }
 
+pub(super) fn parse_ocr_region_constraint(
+  call: &DriverCall,
+  image_width: i64,
+  image_height: i64,
+) -> AuvResult<Option<ObservedRect>> {
+  let left_ratio = optional_f64(call, "region_left_ratio")?;
+  let top_ratio = optional_f64(call, "region_top_ratio")?;
+  let right_ratio = optional_f64(call, "region_right_ratio")?;
+  let bottom_ratio = optional_f64(call, "region_bottom_ratio")?;
+
+  match (left_ratio, top_ratio, right_ratio, bottom_ratio) {
+    (None, None, None, None) => Ok(None),
+    (Some(left), Some(top), Some(right), Some(bottom)) => {
+      for (label, value) in [
+        ("region_left_ratio", left),
+        ("region_top_ratio", top),
+        ("region_right_ratio", right),
+        ("region_bottom_ratio", bottom),
+      ] {
+        if !(0.0..=1.0).contains(&value) {
+          return Err(format!(
+            "invalid --{} value {:.3}: expected a ratio within 0.0..=1.0",
+            label, value
+          ));
+        }
+      }
+      if left >= right {
+        return Err(format!(
+          "invalid OCR region: left ratio {:.3} must be smaller than right ratio {:.3}",
+          left, right
+        ));
+      }
+      if top >= bottom {
+        return Err(format!(
+          "invalid OCR region: top ratio {:.3} must be smaller than bottom ratio {:.3}",
+          top, bottom
+        ));
+      }
+
+      Ok(Some(ObservedRect {
+        x: (left * image_width as f64).round() as i64,
+        y: (top * image_height as f64).round() as i64,
+        width: ((right - left) * image_width as f64).round() as i64,
+        height: ((bottom - top) * image_height as f64).round() as i64,
+      }))
+    }
+    _ => Err(
+      "OCR region ratio mode requires --region_left_ratio, --region_top_ratio, --region_right_ratio, and --region_bottom_ratio together"
+        .to_string(),
+    ),
+  }
+}
+
+pub(super) fn filter_ocr_matches<'a>(
+  matches: &'a [OcrTextMatch],
+  min_confidence: f64,
+  region: Option<&ObservedRect>,
+) -> Vec<&'a OcrTextMatch> {
+  matches
+    .iter()
+    .filter(|matched| matched.confidence >= min_confidence)
+    .filter(|matched| {
+      region.is_none_or(|region| {
+        let (center_x, center_y) = ocr_match_center(matched);
+        center_x >= region.x as f64
+          && center_y >= region.y as f64
+          && center_x < (region.x + region.width) as f64
+          && center_y < (region.y + region.height) as f64
+      })
+    })
+    .collect()
+}
+
+pub(super) fn render_ocr_region_note(region: &ObservedRect) -> String {
+  format!("ocrRegion={}", render_rect_compact(region))
+}
+
 pub(super) fn parse_bool_flag(raw: &str, label: &str) -> AuvResult<bool> {
   match raw {
     "1" | "true" => Ok(true),

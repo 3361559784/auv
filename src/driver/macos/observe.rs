@@ -438,6 +438,16 @@ pub(super) fn find_screen_text(call: &DriverCall) -> AuvResult<DriverResponse> {
     max_observations,
   ))?;
   let ocr_snapshot = parse_ocr_text_snapshot(&ocr_report)?;
+  let min_confidence = optional_f64(call, "min_confidence")?.unwrap_or(0.0);
+  if !(0.0..=1.0).contains(&min_confidence) {
+    return Err(format!(
+      "invalid --min_confidence value {:.3}: expected a ratio within 0.0..=1.0",
+      min_confidence
+    ));
+  }
+  let region =
+    parse_ocr_region_constraint(call, ocr_snapshot.image_width, ocr_snapshot.image_height)?;
+  let filtered_matches = filter_ocr_matches(&ocr_snapshot.matches, min_confidence, region.as_ref());
   let report_artifact = build_text_artifact(
     "screen-text-report",
     "txt",
@@ -454,15 +464,20 @@ pub(super) fn find_screen_text(call: &DriverCall) -> AuvResult<DriverResponse> {
   let mut notes = vec![
     format!("query={query}"),
     format!("matchCount={}", ocr_snapshot.matches.len()),
+    format!("filteredMatchCount={}", filtered_matches.len()),
     format!("caseSensitive={case_sensitive}"),
     format!("exact={exact}"),
+    format!("minConfidence={min_confidence:.3}"),
     format!(
       "screenshotPixels={}x{}",
       ocr_snapshot.image_width, ocr_snapshot.image_height
     ),
   ];
+  if let Some(region) = region.as_ref() {
+    notes.push(render_ocr_region_note(region));
+  }
 
-  let summary = if let Some(best_match) = ocr_snapshot.matches.first() {
+  let summary = if let Some(best_match) = filtered_matches.first() {
     let (screenshot_center_x, screenshot_center_y) = ocr_match_center(best_match);
     let (logical_x, logical_y) =
       project_main_screenshot_point(&snapshot, screenshot_center_x, screenshot_center_y)?;
@@ -474,13 +489,14 @@ pub(super) fn find_screen_text(call: &DriverCall) -> AuvResult<DriverResponse> {
     notes.push(format!("bestMatchConfidence={:.3}", best_match.confidence));
     notes.push(format!("bestLogicalPoint={logical_x:.3},{logical_y:.3}"));
     format!(
-      "Found {} OCR text match(es) for query {}; best anchor {} projects to logical point ({logical_x:.3}, {logical_y:.3}).",
-      ocr_snapshot.matches.len(),
+      "Found {} OCR text match(es) for query {} after filtering; best anchor {} projects to logical point ({logical_x:.3}, {logical_y:.3}).",
+      filtered_matches.len(),
       query,
       best_match.text
     )
   } else {
-    "Found 0 OCR text matches in the current desktop screenshot.".to_string()
+    "Found 0 OCR text matches in the current desktop screenshot after applying the active filters."
+      .to_string()
   };
 
   Ok(DriverResponse {

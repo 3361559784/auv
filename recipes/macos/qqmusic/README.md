@@ -169,3 +169,21 @@ auv-cli skill run macos.qqmusic.play_visible_anchor.v0 --dry-run
 The machine-readable case matrix for this narrow skill currently lives at:
 
 - `recipes/macos/qqmusic/play-visible-anchor.cases.v0.json`
+
+Current product-facing coverage commands are:
+
+```bash
+auv-cli skill cases list
+auv-cli skill cases show macos.qqmusic.play_visible_anchor.v0
+auv-cli skill cases run macos.qqmusic.play_visible_anchor.v0 --dry-run
+auv-cli skill cases run macos.qqmusic.play_visible_anchor.v0
+auv-cli skill cases run macos.qqmusic.play_visible_anchor.v0 --case chinese-query-chinese-anchor --all-statuses
+```
+
+Current case-matrix truth:
+
+- `ascii-aa-cure-for-me` is validated
+- `ascii-aa-soft-universe` is validated
+- `ascii-aa-aa-alone-again` is validated
+- `chinese-query-chinese-anchor` is still a candidate and currently fails at
+  `resolve-ocr-anchor`

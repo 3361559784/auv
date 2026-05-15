@@ -5,7 +5,7 @@ use std::process;
 
 use auv_cli::build_default_runtime;
 use auv_cli::model::RunStatus;
-use auv_cli::skill::{SkillCatalog, run_skill};
+use auv_cli::skill::{SkillCaseMatrixCatalog, SkillCatalog, run_skill, run_skill_case_matrix};
 use cli::{CliCommand, help_text, parse_cli};
 
 fn main() {
@@ -22,6 +22,7 @@ fn run() -> Result<(), String> {
     env::current_dir().map_err(|error| format!("failed to resolve current directory: {error}"))?;
   let runtime = build_default_runtime(project_root.clone())?;
   let skill_catalog = SkillCatalog::discover(&project_root)?;
+  let case_matrix_catalog = SkillCaseMatrixCatalog::discover(&project_root)?;
 
   match command {
     CliCommand::Help => {
@@ -104,6 +105,54 @@ fn run() -> Result<(), String> {
           entry.path.display()
         ))?
       );
+    }
+    CliCommand::SkillCasesList => {
+      for entry in case_matrix_catalog.entries() {
+        println!("{}", entry.matrix.skill_id);
+        if !entry.matrix.status.is_empty() {
+          println!("  status: {}", entry.matrix.status);
+        }
+        println!("  cases: {}", entry.matrix.cases.len());
+        println!("  path: {}", entry.path.display());
+      }
+    }
+    CliCommand::SkillCasesShow { query } => {
+      let entry = case_matrix_catalog.resolve(&project_root, &query)?;
+      let raw = std::fs::read_to_string(&entry.path).map_err(|error| {
+        format!(
+          "failed to read case-matrix manifest {}: {error}",
+          entry.path.display()
+        )
+      })?;
+      let value: serde_json::Value = serde_json::from_str(&raw)
+        .map_err(|error| format!("failed to parse {}: {error}", entry.path.display()))?;
+      println!(
+        "{}",
+        serde_json::to_string_pretty(&value).map_err(|error| format!(
+          "failed to render case-matrix manifest {}: {error}",
+          entry.path.display()
+        ))?
+      );
+    }
+    CliCommand::SkillCasesRun {
+      query,
+      dry_run,
+      max_disturbance,
+      only_case_ids,
+      include_nonvalidated,
+    } => {
+      let entry = case_matrix_catalog.resolve(&project_root, &query)?;
+      run_skill_case_matrix(
+        &runtime,
+        &skill_catalog,
+        entry,
+        auv_cli::skill::SkillCaseRunOptions {
+          dry_run,
+          max_disturbance,
+          only_case_ids,
+          include_nonvalidated,
+        },
+      )?;
     }
     CliCommand::SkillRun {
       query,

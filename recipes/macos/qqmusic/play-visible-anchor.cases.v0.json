@@ -18,27 +18,46 @@
       ]
     },
     {
-      "case_id": "chinese-query-english-anchor",
-      "status": "candidate",
+      "case_id": "ascii-aa-soft-universe",
+      "status": "validated",
       "inputs": {
-        "query": "周杰伦"
+        "query": "aa",
+        "anchor_text": "Soft Universe",
+        "playback_title": "Soft Universe"
       },
       "disturbance": "pointer",
       "notes": [
-        "Clipboard-backed Chinese search-entry is already validated.",
-        "End-to-end playback validation with an English visible row anchor is still pending."
+        "Validated against the same aa result page using a second visible AURORA row.",
+        "Verification currently matches the player-title line by partial title text."
+      ]
+    },
+    {
+      "case_id": "ascii-aa-aa-alone-again",
+      "status": "validated",
+      "inputs": {
+        "query": "aa",
+        "anchor_text": "AA (Alone Again)",
+        "playback_title": "AA (Alone Again)"
+      },
+      "disturbance": "pointer",
+      "notes": [
+        "Validated against a non-AURORA row from the same aa result page.",
+        "This broadens the narrow skill beyond a single artist-specific anchor."
       ]
     },
     {
       "case_id": "chinese-query-chinese-anchor",
-      "status": "unvalidated",
+      "status": "candidate",
       "inputs": {
-        "query": "周杰伦"
+        "query": "周杰伦",
+        "anchor_text": "晴天",
+        "playback_title": "晴天"
       },
       "disturbance": "pointer",
       "notes": [
-        "Chinese OCR anchor stability is still unproven for QQ音乐 result selection.",
-        "Do not market this as supported until OCR anchor resolution and playback verification are both validated."
+        "Clipboard-backed Chinese search-entry is already validated.",
+        "Current end-to-end run fails at resolve-ocr-anchor with zero OCR matches for 晴天 in the constrained result region.",
+        "Do not market Chinese OCR anchor playback as supported yet."
       ]
     }
   ]

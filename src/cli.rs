@@ -14,6 +14,17 @@ pub enum CliCommand {
   SkillShow {
     query: String,
   },
+  SkillCasesList,
+  SkillCasesShow {
+    query: String,
+  },
+  SkillCasesRun {
+    query: String,
+    dry_run: bool,
+    max_disturbance: Option<DisturbanceClass>,
+    only_case_ids: Vec<String>,
+    include_nonvalidated: bool,
+  },
   SkillRun {
     query: String,
     dry_run: bool,
@@ -52,6 +63,9 @@ USAGE
   auv-cli inspect <run-id>
   auv-cli skill list
   auv-cli skill show <skill-id-or-path>
+  auv-cli skill cases list
+  auv-cli skill cases show <matrix-id-or-path>
+  auv-cli skill cases run <matrix-id-or-path> [--case <case-id>] [--all-statuses] [--dry-run] [--max-disturbance <class>]
   auv-cli skill run <skill-id-or-path> [--dry-run] [--max-disturbance <class>] [--set key=value]
 
 NOTES
@@ -67,6 +81,7 @@ NOTES
   - `debug.findImageText` runs the same OCR matching over an existing image artifact, which is useful for verifying captured evidence without recapturing the live desktop.
   - `debug.clickScreenText` supports `--match_index` and `--click_count` when the query resolves to multiple OCR anchors.
   - `skill run` is the product-facing recipe entrypoint: it resolves a recipe manifest from `recipes/`, validates disturbance policy, replays steps through the shared runtime, and carries step artifact paths into later verification steps.
+  - `skill cases run` replays validated case-matrix entries serially; this is the current narrow-skill coverage entrypoint for QQ音乐 productization.
 ",
   )
 }
@@ -138,6 +153,7 @@ fn parse_skill(arguments: &[String]) -> AuvResult<CliCommand> {
       }
       Ok(CliCommand::SkillList)
     }
+    "cases" => parse_skill_cases(arguments),
     "show" => {
       if arguments.len() != 3 {
         return Err("usage: auv-cli skill show <skill-id-or-path>".to_string());
@@ -149,6 +165,33 @@ fn parse_skill(arguments: &[String]) -> AuvResult<CliCommand> {
     "run" => parse_skill_run(arguments),
     other => Err(format!(
       "unknown skill subcommand {other}; use `auv-cli skill list` to inspect the current catalog"
+    )),
+  }
+}
+
+fn parse_skill_cases(arguments: &[String]) -> AuvResult<CliCommand> {
+  if arguments.len() < 3 {
+    return Err("usage: auv-cli skill cases <list|show|run> ...".to_string());
+  }
+
+  match arguments[2].as_str() {
+    "list" => {
+      if arguments.len() != 3 {
+        return Err("usage: auv-cli skill cases list".to_string());
+      }
+      Ok(CliCommand::SkillCasesList)
+    }
+    "show" => {
+      if arguments.len() != 4 {
+        return Err("usage: auv-cli skill cases show <matrix-id-or-path>".to_string());
+      }
+      Ok(CliCommand::SkillCasesShow {
+        query: arguments[3].clone(),
+      })
+    }
+    "run" => parse_skill_cases_run(arguments),
+    other => Err(format!(
+      "unknown skill cases subcommand {other}; use `auv-cli skill cases list`"
     )),
   }
 }
@@ -204,5 +247,58 @@ fn parse_skill_run(arguments: &[String]) -> AuvResult<CliCommand> {
     dry_run,
     max_disturbance,
     overrides,
+  })
+}
+
+fn parse_skill_cases_run(arguments: &[String]) -> AuvResult<CliCommand> {
+  if arguments.len() < 4 {
+    return Err(
+      "usage: auv-cli skill cases run <matrix-id-or-path> [--case <case-id>] [--all-statuses] [--dry-run] [--max-disturbance <class>]".to_string(),
+    );
+  }
+
+  let query = arguments[3].clone();
+  let mut dry_run = false;
+  let mut max_disturbance = None;
+  let mut only_case_ids = Vec::new();
+  let mut include_nonvalidated = false;
+  let mut index = 4;
+
+  while index < arguments.len() {
+    match arguments[index].as_str() {
+      "--dry-run" => {
+        dry_run = true;
+        index += 1;
+      }
+      "--all-statuses" => {
+        include_nonvalidated = true;
+        index += 1;
+      }
+      "--case" => {
+        if index + 1 >= arguments.len() {
+          return Err("--case requires a value".to_string());
+        }
+        only_case_ids.push(arguments[index + 1].clone());
+        index += 2;
+      }
+      "--max-disturbance" => {
+        if index + 1 >= arguments.len() {
+          return Err("--max-disturbance requires a value".to_string());
+        }
+        max_disturbance = Some(DisturbanceClass::parse(&arguments[index + 1])?);
+        index += 2;
+      }
+      other => {
+        return Err(format!("unexpected skill-cases-run argument {other}"));
+      }
+    }
+  }
+
+  Ok(CliCommand::SkillCasesRun {
+    query,
+    dry_run,
+    max_disturbance,
+    only_case_ids,
+    include_nonvalidated,
   })
 }

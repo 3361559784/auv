@@ -109,6 +109,11 @@ The runner must:
 - surface run ids and artifact paths
 - export prior-step artifact paths into later step variables
 
+Once a narrow skill has more than one validated case, `auv-cli skill cases run`
+becomes the product-facing coverage entrypoint. That is the current QQ音乐
+shape: one executable recipe, plus one case matrix that declares which inputs
+are actually validated.
+
 ## Verification Contract
 
 Productized narrow skills should define:

@@ -119,11 +119,53 @@ pub struct SkillCatalog {
   entries: Vec<SkillCatalogEntry>,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+pub struct SkillCaseMatrix {
+  pub skill_id: String,
+  pub version: String,
+  #[serde(default)]
+  pub status: String,
+  #[serde(default)]
+  pub cases: Vec<SkillCase>,
+}
+
+#[derive(Clone, Debug, Deserialize, Default)]
+pub struct SkillCase {
+  #[serde(default)]
+  pub case_id: String,
+  #[serde(default)]
+  pub status: String,
+  #[serde(default)]
+  pub inputs: BTreeMap<String, String>,
+  #[serde(default)]
+  pub disturbance: String,
+  #[serde(default)]
+  pub notes: Vec<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct SkillCaseMatrixEntry {
+  pub matrix: SkillCaseMatrix,
+  pub path: PathBuf,
+}
+
+pub struct SkillCaseMatrixCatalog {
+  entries: Vec<SkillCaseMatrixEntry>,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct SkillRunOptions {
   pub dry_run: bool,
   pub max_disturbance: Option<DisturbanceClass>,
   pub overrides: BTreeMap<String, String>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct SkillCaseRunOptions {
+  pub dry_run: bool,
+  pub max_disturbance: Option<DisturbanceClass>,
+  pub only_case_ids: Vec<String>,
+  pub include_nonvalidated: bool,
 }
 
 struct LiveAppSkillLock {
@@ -200,6 +242,78 @@ impl SkillCatalog {
         format!("unknown skill {query}; use `auv-cli skill list` to inspect the current catalog")
       })
   }
+
+  pub fn resolve_recipe_id(&self, recipe_id: &str) -> AuvResult<&SkillCatalogEntry> {
+    self
+      .entries
+      .iter()
+      .find(|entry| entry.manifest.recipe_id == recipe_id)
+      .ok_or_else(|| format!("unknown skill {recipe_id}; use `auv-cli skill list`"))
+  }
+}
+
+impl SkillCaseMatrixCatalog {
+  pub fn discover(project_root: &Path) -> AuvResult<Self> {
+    let recipes_root = project_root.join("recipes");
+    if !recipes_root.exists() {
+      return Ok(Self {
+        entries: Vec::new(),
+      });
+    }
+
+    let mut entries = Vec::new();
+    collect_case_matrix_entries(&recipes_root, &mut entries)?;
+    entries.sort_by(|left, right| left.matrix.skill_id.cmp(&right.matrix.skill_id));
+    Ok(Self { entries })
+  }
+
+  pub fn entries(&self) -> &[SkillCaseMatrixEntry] {
+    &self.entries
+  }
+
+  pub fn resolve(&self, project_root: &Path, query: &str) -> AuvResult<&SkillCaseMatrixEntry> {
+    let candidate = Path::new(query);
+    if candidate.exists() {
+      let absolute = fs::canonicalize(candidate)
+        .map_err(|error| format!("failed to canonicalize case-matrix path {query}: {error}"))?;
+      return self
+        .entries
+        .iter()
+        .find(|entry| entry.path == absolute)
+        .ok_or_else(|| {
+          format!(
+            "case-matrix path {} is not a registered matrix manifest",
+            absolute.display()
+          )
+        });
+    }
+
+    let project_relative = project_root.join(query);
+    if project_relative.exists() {
+      let absolute = fs::canonicalize(&project_relative).map_err(|error| {
+        format!(
+          "failed to canonicalize project-relative case-matrix path {}: {error}",
+          project_relative.display()
+        )
+      })?;
+      return self
+        .entries
+        .iter()
+        .find(|entry| entry.path == absolute)
+        .ok_or_else(|| {
+          format!(
+            "case-matrix path {} is not a registered matrix manifest",
+            absolute.display()
+          )
+        });
+    }
+
+    self
+      .entries
+      .iter()
+      .find(|entry| entry.matrix.skill_id == query)
+      .ok_or_else(|| format!("unknown case matrix {query}; use `auv-cli skill cases list`"))
+  }
 }
 
 pub fn run_skill(
@@ -261,6 +375,61 @@ pub fn run_skill(
   Ok(())
 }
 
+pub fn run_skill_case_matrix(
+  runtime: &Runtime,
+  skill_catalog: &SkillCatalog,
+  matrix_entry: &SkillCaseMatrixEntry,
+  options: SkillCaseRunOptions,
+) -> AuvResult<()> {
+  let skill_entry = skill_catalog.resolve_recipe_id(&matrix_entry.matrix.skill_id)?;
+  let cases = select_cases(&matrix_entry.matrix, &options)?;
+  let selected_case_count = cases.len();
+
+  println!("case-matrix: {}", matrix_entry.matrix.skill_id);
+  println!("version: {}", matrix_entry.matrix.version);
+  if !matrix_entry.matrix.status.is_empty() {
+    println!("status: {}", matrix_entry.matrix.status);
+  }
+  println!("selected cases: {}", cases.len());
+
+  let mut failures = Vec::new();
+  for case in cases {
+    println!("case: {} [{}]", case.case_id, case.status);
+    match run_skill(
+      runtime,
+      skill_entry,
+      SkillRunOptions {
+        dry_run: options.dry_run,
+        max_disturbance: options.max_disturbance,
+        overrides: case.inputs.clone(),
+      },
+    ) {
+      Ok(()) => println!("case-result: ok"),
+      Err(error) => {
+        println!("case-result: failed");
+        println!("case-error: {error}");
+        failures.push((case.case_id.clone(), error));
+      }
+    }
+  }
+
+  if !failures.is_empty() {
+    let summary = failures
+      .iter()
+      .map(|(case_id, error)| format!("- {case_id}: {error}"))
+      .collect::<Vec<_>>()
+      .join("\n");
+    return Err(format!(
+      "{} of {} selected case(s) failed:\n{}",
+      failures.len(),
+      selected_case_count,
+      summary
+    ));
+  }
+
+  Ok(())
+}
+
 fn collect_skill_entries(root: &Path, entries: &mut Vec<SkillCatalogEntry>) -> AuvResult<()> {
   for raw_entry in fs::read_dir(root)
     .map_err(|error| format!("failed to read skill directory {}: {error}", root.display()))?
@@ -289,6 +458,54 @@ fn collect_skill_entries(root: &Path, entries: &mut Vec<SkillCatalogEntry>) -> A
   Ok(())
 }
 
+fn collect_case_matrix_entries(
+  root: &Path,
+  entries: &mut Vec<SkillCaseMatrixEntry>,
+) -> AuvResult<()> {
+  for raw_entry in fs::read_dir(root).map_err(|error| {
+    format!(
+      "failed to read case-matrix directory {}: {error}",
+      root.display()
+    )
+  })? {
+    let raw_entry = raw_entry
+      .map_err(|error| format!("failed to enumerate case-matrix directory entry: {error}"))?;
+    let path = raw_entry.path();
+    if path.is_dir() {
+      collect_case_matrix_entries(&path, entries)?;
+      continue;
+    }
+    if path.extension().and_then(|value| value.to_str()) != Some("json") {
+      continue;
+    }
+    let Some(file_name) = path.file_name().and_then(|value| value.to_str()) else {
+      continue;
+    };
+    if !file_name.contains(".cases.") {
+      continue;
+    }
+
+    let raw = fs::read_to_string(&path).map_err(|error| {
+      format!(
+        "failed to read case-matrix manifest {}: {error}",
+        path.display()
+      )
+    })?;
+    let matrix = serde_json::from_str::<SkillCaseMatrix>(&raw).map_err(|error| {
+      format!(
+        "failed to parse case-matrix manifest {}: {error}",
+        path.display()
+      )
+    })?;
+    entries.push(SkillCaseMatrixEntry {
+      matrix,
+      path: fs::canonicalize(&path)
+        .map_err(|error| format!("failed to canonicalize {}: {error}", path.display()))?,
+    });
+  }
+  Ok(())
+}
+
 fn default_inputs(manifest: &SkillManifest) -> AuvResult<BTreeMap<String, String>> {
   let mut resolved = BTreeMap::new();
   for (key, spec) in &manifest.inputs {
@@ -297,6 +514,41 @@ fn default_inputs(manifest: &SkillManifest) -> AuvResult<BTreeMap<String, String
     }
   }
   Ok(resolved)
+}
+
+fn select_cases<'a>(
+  matrix: &'a SkillCaseMatrix,
+  options: &SkillCaseRunOptions,
+) -> AuvResult<Vec<&'a SkillCase>> {
+  let selected = if options.only_case_ids.is_empty() {
+    matrix
+      .cases
+      .iter()
+      .filter(|case| options.include_nonvalidated || case.status == "validated")
+      .collect::<Vec<_>>()
+  } else {
+    matrix
+      .cases
+      .iter()
+      .filter(|case| {
+        options
+          .only_case_ids
+          .iter()
+          .any(|wanted| wanted == &case.case_id)
+      })
+      .collect::<Vec<_>>()
+  };
+
+  if selected.is_empty() {
+    let reason = if options.only_case_ids.is_empty() {
+      "no matching validated cases found"
+    } else {
+      "no matching cases found for requested case ids"
+    };
+    return Err(format!("{reason} in matrix {}", matrix.skill_id));
+  }
+
+  Ok(selected)
 }
 
 fn validate_disturbance_policy(
@@ -645,8 +897,8 @@ mod tests {
   use serde_json::json;
 
   use super::{
-    SkillCatalog, SkillManifest, default_inputs, export_step_variables, is_image_artifact,
-    render_template, render_value,
+    SkillCaseMatrixCatalog, SkillCatalog, SkillManifest, default_inputs, export_step_variables,
+    is_image_artifact, render_template, render_value,
   };
   use crate::model::{InvokeResult, RunStatus, now_millis};
 
@@ -733,6 +985,38 @@ mod tests {
     let catalog = SkillCatalog::discover(&root).expect("catalog should load");
     assert_eq!(catalog.entries().len(), 1);
     assert_eq!(catalog.entries()[0].manifest.recipe_id, "test.example.v0");
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn case_matrix_catalog_discovers_cases_manifests_only() {
+    let root = env::temp_dir().join(format!("auv-case-matrix-{}", now_millis()));
+    fs::create_dir_all(root.join("recipes/test")).expect("temp recipes dir should exist");
+    fs::write(
+      root.join("recipes/test/example.v0.json"),
+      r#"{
+        "recipe_id": "test.example.v0",
+        "version": "0.1.0",
+        "target_app": { "bundle_id": "app", "display_mode": "live-desktop" },
+        "objective": "test",
+        "steps": []
+      }"#,
+    )
+    .expect("manifest should write");
+    fs::write(
+      root.join("recipes/test/example.cases.v0.json"),
+      r#"{
+        "skill_id": "test.example.v0",
+        "version": "0.1.0",
+        "cases": [{ "case_id": "baseline", "status": "validated" }]
+      }"#,
+    )
+    .expect("matrix should write");
+
+    let catalog = SkillCaseMatrixCatalog::discover(&root).expect("catalog should load");
+    assert_eq!(catalog.entries().len(), 1);
+    assert_eq!(catalog.entries()[0].matrix.skill_id, "test.example.v0");
 
     let _ = fs::remove_dir_all(root);
   }

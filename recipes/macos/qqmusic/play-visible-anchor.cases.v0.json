@@ -1,0 +1,45 @@
+{
+  "skill_id": "macos.qqmusic.play_visible_anchor.v0",
+  "version": "0.1.0",
+  "status": "active-case-matrix",
+  "cases": [
+    {
+      "case_id": "ascii-aa-cure-for-me",
+      "status": "validated",
+      "inputs": {
+        "query": "aa",
+        "anchor_text": "Cure For Me",
+        "playback_title": "Cure For Me - AURORA"
+      },
+      "disturbance": "pointer",
+      "notes": [
+        "This is the current canonical playback baseline.",
+        "Validated through the formal recipe and captured-image OCR verification."
+      ]
+    },
+    {
+      "case_id": "chinese-query-english-anchor",
+      "status": "candidate",
+      "inputs": {
+        "query": "周杰伦"
+      },
+      "disturbance": "pointer",
+      "notes": [
+        "Clipboard-backed Chinese search-entry is already validated.",
+        "End-to-end playback validation with an English visible row anchor is still pending."
+      ]
+    },
+    {
+      "case_id": "chinese-query-chinese-anchor",
+      "status": "unvalidated",
+      "inputs": {
+        "query": "周杰伦"
+      },
+      "disturbance": "pointer",
+      "notes": [
+        "Chinese OCR anchor stability is still unproven for QQ音乐 result selection.",
+        "Do not market this as supported until OCR anchor resolution and playback verification are both validated."
+      ]
+    }
+  ]
+}

@@ -54,6 +54,11 @@
       "default": 2,
       "note": "The first validated activation path is a row double-click."
     },
+    "activation_settle_ms": {
+      "type": "integer",
+      "default": 900,
+      "note": "How long to wait after the row activation before capturing evidence."
+    },
     "selection_region_left_ratio": {
       "type": "number",
       "default": 0.14
@@ -184,6 +189,14 @@
         "region_top_ratio": "${selection_region_top_ratio}",
         "region_right_ratio": "${selection_region_right_ratio}",
         "region_bottom_ratio": "${selection_region_bottom_ratio}"
+      },
+      "expect": {
+        "output_must_contain": [
+          "${anchor_text}"
+        ],
+        "output_must_not_contain": [
+          "Found 0 OCR text matches"
+        ]
       }
     },
     {
@@ -198,11 +211,20 @@
       "args": {
         "query": "${anchor_text}",
         "click_count": "${click_count}",
+        "settle_ms": "${activation_settle_ms}",
         "min_confidence": "${selection_min_confidence}",
         "region_left_ratio": "${selection_region_left_ratio}",
         "region_top_ratio": "${selection_region_top_ratio}",
         "region_right_ratio": "${selection_region_right_ratio}",
         "region_bottom_ratio": "${selection_region_bottom_ratio}"
+      },
+      "expect": {
+        "output_must_contain": [
+          "${anchor_text}"
+        ],
+        "output_must_not_contain": [
+          "Found 0 OCR text matches"
+        ]
       }
     },
     {
@@ -216,6 +238,9 @@
       },
       "args": {
         "label": "qqmusic-playback-anchor-${query}"
+      },
+      "expect": {
+        "artifact_count_at_least": 1
       }
     },
     {
@@ -235,6 +260,14 @@
         "region_top_ratio": "${verification_region_top_ratio}",
         "region_right_ratio": "${verification_region_right_ratio}",
         "region_bottom_ratio": "${verification_region_bottom_ratio}"
+      },
+      "expect": {
+        "output_must_contain": [
+          "${playback_title}"
+        ],
+        "output_must_not_contain": [
+          "Found 0 OCR text matches"
+        ]
       }
     }
   ],

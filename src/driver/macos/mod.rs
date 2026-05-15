@@ -22,8 +22,9 @@ use self::control::{
   paste_text_preserve_clipboard, press_button, press_key, scroll_point, type_text,
 };
 use self::observe::{
-  capture_screen, find_image_text, find_screen_text, identify_point, observe_window_tree, observe_windows,
-  probe_coordinate_readiness, probe_displays, probe_permissions, project_screenshot_point,
+  capture_screen, find_image_text, find_screen_text, identify_point, observe_window_tree,
+  observe_windows, probe_coordinate_readiness, probe_displays, probe_permissions,
+  project_screenshot_point,
 };
 use self::support::*;
 pub(crate) use self::support::{copy_file, sanitized_artifact_name};

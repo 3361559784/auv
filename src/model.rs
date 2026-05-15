@@ -30,6 +30,20 @@ impl DisturbanceClass {
       Self::Pointer => "pointer",
     }
   }
+
+  pub fn parse(raw: &str) -> AuvResult<Self> {
+    match raw.trim() {
+      "none" => Ok(Self::None),
+      "focus" => Ok(Self::Focus),
+      "foreground_app" => Ok(Self::ForegroundApp),
+      "keyboard" => Ok(Self::Keyboard),
+      "clipboard" => Ok(Self::Clipboard),
+      "pointer" => Ok(Self::Pointer),
+      other => Err(format!(
+        "unknown disturbance class {other:?}; expected one of none, focus, foreground_app, keyboard, clipboard, pointer"
+      )),
+    }
+  }
 }
 
 #[derive(Clone, Debug)]
@@ -289,7 +303,7 @@ fn render_block(raw: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-  use super::new_run_id;
+  use super::{DisturbanceClass, new_run_id};
 
   #[test]
   fn new_run_id_is_unique_within_process() {
@@ -297,5 +311,17 @@ mod tests {
     let second = new_run_id();
 
     assert_ne!(first, second);
+  }
+
+  #[test]
+  fn disturbance_class_parses_known_values() {
+    assert_eq!(
+      DisturbanceClass::parse("clipboard").expect("clipboard should parse"),
+      DisturbanceClass::Clipboard
+    );
+    assert_eq!(
+      DisturbanceClass::parse("pointer").expect("pointer should parse"),
+      DisturbanceClass::Pointer
+    );
   }
 }

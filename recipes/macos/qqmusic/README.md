@@ -9,6 +9,7 @@ Current baseline:
 - `select-result-anchor.v0.json`
 - `search-ocr-anchor.v0.json`
 - `play-visible-anchor.v0.json`
+- `play-visible-anchor.cases.v0.json`
 
 The lower-disturbance baseline proves only the following chain:
 
@@ -64,6 +65,15 @@ current validation still depends on one captured-image verification trick:
 
 That is enough to validate one narrow playback baseline, but it is not yet a
 generic `qqmusic.play_song` contract.
+
+The canonical local wrapper now goes through the product-facing Rust entrypoint:
+
+- `cargo run --quiet -- skill run macos.qqmusic.play_visible_anchor.v0`
+
+It no longer treats "all subcommands returned completed" as good enough. The
+formal playback recipe now carries step-level expectations so the skill fails
+when OCR resolves zero matches or when the expected now-playing title is absent
+from the captured evidence image.
 
 The recipe runner now applies a per-app live-desktop lock, so QQ音乐 recipes
 for the same app instance do not execute concurrently through
@@ -137,8 +147,8 @@ DRY_RUN=1 ./scripts/local/qqmusic-select-visible-anchor.sh "Cure For Me"
 DRY_RUN=1 ./scripts/local/qqmusic-play-visible-anchor.sh aa "Cure For Me" "Cure For Me - AURORA"
 ./scripts/local/qqmusic-play-visible-anchor.sh aa "Cure For Me" "Cure For Me - AURORA"
 
-python3 scripts/recipes/run_recipe.py \
-  recipes/macos/qqmusic/play-visible-anchor.v0.json \
+cargo run --quiet -- skill run \
+  macos.qqmusic.play_visible_anchor.v0 \
   --dry-run
 ```
 
@@ -147,3 +157,15 @@ python3 scripts/recipes/run_recipe.py \
 The point is to stop carrying the QQ音乐 baseline as a chat transcript or an
 ad-hoc shell sequence. A recipe manifest gives later agents a stable,
 inspectable chain they can replay, override, and eventually distill further.
+
+The product-facing CLI entrypoint is now:
+
+```bash
+auv-cli skill list
+auv-cli skill show macos.qqmusic.play_visible_anchor.v0
+auv-cli skill run macos.qqmusic.play_visible_anchor.v0 --dry-run
+```
+
+The machine-readable case matrix for this narrow skill currently lives at:
+
+- `recipes/macos/qqmusic/play-visible-anchor.cases.v0.json`

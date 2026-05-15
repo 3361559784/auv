@@ -579,8 +579,7 @@ pub(super) fn find_image_text(call: &DriverCall) -> AuvResult<DriverResponse> {
       best_match.text
     )
   } else {
-    "Found 0 OCR text matches in the provided image after applying the active filters."
-      .to_string()
+    "Found 0 OCR text matches in the provided image after applying the active filters.".to_string()
   };
 
   Ok(DriverResponse {

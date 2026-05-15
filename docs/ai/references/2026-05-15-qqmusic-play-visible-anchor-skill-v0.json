@@ -56,6 +56,10 @@
     "click_count": {
       "type": "integer",
       "default": 2
+    },
+    "activation_settle_ms": {
+      "type": "integer",
+      "default": 900
     }
   },
   "disturbance_policy": {
@@ -121,6 +125,7 @@
       "args": {
         "query": "Cure For Me",
         "click_count": 2,
+        "settle_ms": 900,
         "min_confidence": 0.9,
         "region_left_ratio": 0.14,
         "region_top_ratio": 0.34,

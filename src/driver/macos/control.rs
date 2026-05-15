@@ -527,6 +527,7 @@ pub(super) fn click_screen_text(call: &DriverCall) -> AuvResult<DriverResponse> 
     project_main_screenshot_point(&snapshot, screenshot_center_x, screenshot_center_y)?;
   let button_label = optional_string(call, "button").unwrap_or_else(|| "left".to_string());
   let click_count = optional_i64(call, "click_count")?.unwrap_or(1).clamp(1, 4);
+  let settle_ms = optional_positive_u64(call, "settle_ms")?.unwrap_or(0);
   let nested_call = DriverCall {
     operation: "click_point".to_string(),
     target: call.target.clone(),
@@ -535,6 +536,7 @@ pub(super) fn click_screen_text(call: &DriverCall) -> AuvResult<DriverResponse> 
       ("y".to_string(), format!("{logical_y:.3}")),
       ("button".to_string(), button_label.clone()),
       ("click_count".to_string(), click_count.to_string()),
+      ("settle_ms".to_string(), settle_ms.to_string()),
     ]),
     working_directory: call.working_directory.clone(),
   };
@@ -557,6 +559,7 @@ pub(super) fn click_screen_text(call: &DriverCall) -> AuvResult<DriverResponse> 
       format!("logicalPoint={logical_x:.3},{logical_y:.3}"),
       format!("button={button_label}"),
       format!("clickCount={click_count}"),
+      format!("settleMs={settle_ms}"),
     ]
     .join("\n"),
     "Clicked an OCR text anchor projected from screenshot pixels to logical coordinates.",
@@ -583,6 +586,7 @@ pub(super) fn click_screen_text(call: &DriverCall) -> AuvResult<DriverResponse> 
       format!("minConfidence={min_confidence:.3}"),
       format!("anchorOffset={anchor_offset_x:.3},{anchor_offset_y:.3}"),
       format!("logicalPoint={logical_x:.3},{logical_y:.3}"),
+      format!("settleMs={settle_ms}"),
     ],
     artifacts: vec![screenshot_artifact, report_artifact],
   })
@@ -592,6 +596,7 @@ pub(super) fn click_point(call: &DriverCall) -> AuvResult<DriverResponse> {
   let x = required_f64(call, "x")?;
   let y = required_f64(call, "y")?;
   let click_count = optional_i64(call, "click_count")?.unwrap_or(1).clamp(1, 4);
+  let settle_ms = optional_positive_u64(call, "settle_ms")?.unwrap_or(0);
   let (button_name, button_code) = parse_mouse_button(call)?;
   let snapshot = enumerate_displays()?;
   let resolution = resolve_display_point(&snapshot, x, y)
@@ -602,6 +607,9 @@ pub(super) fn click_point(call: &DriverCall) -> AuvResult<DriverResponse> {
     }
   }
   run_swift_script(&build_click_point_script(x, y, button_code, click_count))?;
+  if settle_ms > 0 {
+    thread::sleep(Duration::from_millis(settle_ms));
+  }
   let report = [
     format!("capturedAt={}", snapshot.captured_at),
     format!("globalLogicalPoint={x:.3},{y:.3}"),
@@ -612,6 +620,7 @@ pub(super) fn click_point(call: &DriverCall) -> AuvResult<DriverResponse> {
     format!("displayId={}", resolution.display.display_id),
     format!("button={button_name}"),
     format!("clickCount={click_count}"),
+    format!("settleMs={settle_ms}"),
     "coordinateSpace=global-logical".to_string(),
     "cursorAfter=target".to_string(),
   ]
@@ -639,6 +648,7 @@ pub(super) fn click_point(call: &DriverCall) -> AuvResult<DriverResponse> {
       "coordinateSpace=global-logical".to_string(),
       format!("button={button_name}"),
       format!("clickCount={click_count}"),
+      format!("settleMs={settle_ms}"),
       format!(
         "backingPixelPoint={},{}",
         resolution.backing_pixel_x, resolution.backing_pixel_y

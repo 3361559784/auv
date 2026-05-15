@@ -7,9 +7,9 @@ use super::{
   support::{
     assess_coordinate_readiness, filter_ocr_matches, optional_bool, optional_f64,
     parse_display_snapshot, parse_mouse_button, parse_ocr_region_constraint,
-    parse_ocr_text_snapshot, parse_shortcut, project_main_screenshot_point,
-    read_png_dimensions, render_rect_compact, resolve_display_point, resolve_scroll_deltas,
-    sanitize_file_component, special_key_code, swift_string_literal,
+    parse_ocr_text_snapshot, parse_shortcut, project_main_screenshot_point, read_png_dimensions,
+    render_rect_compact, resolve_display_point, resolve_scroll_deltas, sanitize_file_component,
+    special_key_code, swift_string_literal,
   },
 };
 use crate::{
@@ -192,8 +192,9 @@ fn parse_ocr_region_constraint_accepts_normalized_bounds() {
     ("region_right_ratio", "0.9"),
     ("region_bottom_ratio", "0.8"),
   ]);
-  let region =
-    parse_ocr_region_constraint(&call, 1000, 500).expect("region should parse").unwrap();
+  let region = parse_ocr_region_constraint(&call, 1000, 500)
+    .expect("region should parse")
+    .unwrap();
   assert_eq!(render_rect_compact(&region), "100,100,800,300");
 }
 

@@ -5,6 +5,7 @@ use std::process;
 
 use auv_cli::build_default_runtime;
 use auv_cli::model::RunStatus;
+use auv_cli::skill::{SkillCatalog, run_skill};
 use cli::{CliCommand, help_text, parse_cli};
 
 fn main() {
@@ -19,7 +20,8 @@ fn run() -> Result<(), String> {
   let command = parse_cli(&arguments)?;
   let project_root =
     env::current_dir().map_err(|error| format!("failed to resolve current directory: {error}"))?;
-  let runtime = build_default_runtime(project_root)?;
+  let runtime = build_default_runtime(project_root.clone())?;
+  let skill_catalog = SkillCatalog::discover(&project_root)?;
 
   match command {
     CliCommand::Help => {
@@ -74,6 +76,51 @@ fn run() -> Result<(), String> {
     }
     CliCommand::Inspect { run_id } => {
       print!("{}", runtime.inspect(&run_id)?);
+    }
+    CliCommand::SkillList => {
+      for entry in skill_catalog.entries() {
+        println!("{}", entry.manifest.recipe_id);
+        println!("  {}", entry.manifest.objective);
+        if !entry.manifest.status.is_empty() {
+          println!("  status: {}", entry.manifest.status);
+        }
+        println!("  path: {}", entry.path.display());
+      }
+    }
+    CliCommand::SkillShow { query } => {
+      let entry = skill_catalog.resolve(&project_root, &query)?;
+      let raw = std::fs::read_to_string(&entry.path).map_err(|error| {
+        format!(
+          "failed to read skill manifest {}: {error}",
+          entry.path.display()
+        )
+      })?;
+      let value: serde_json::Value = serde_json::from_str(&raw)
+        .map_err(|error| format!("failed to parse {}: {error}", entry.path.display()))?;
+      println!(
+        "{}",
+        serde_json::to_string_pretty(&value).map_err(|error| format!(
+          "failed to render skill manifest {}: {error}",
+          entry.path.display()
+        ))?
+      );
+    }
+    CliCommand::SkillRun {
+      query,
+      dry_run,
+      max_disturbance,
+      overrides,
+    } => {
+      let entry = skill_catalog.resolve(&project_root, &query)?;
+      run_skill(
+        &runtime,
+        entry,
+        auv_cli::skill::SkillRunOptions {
+          dry_run,
+          max_disturbance,
+          overrides,
+        },
+      )?;
     }
   }
 

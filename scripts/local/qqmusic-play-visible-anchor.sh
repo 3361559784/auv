@@ -5,6 +5,7 @@ QUERY="${1:-aa}"
 ANCHOR="${2:-Cure For Me}"
 PLAYBACK_TITLE="${3:-Cure For Me - AURORA}"
 CLICK_COUNT="${CLICK_COUNT:-2}"
+ACTIVATION_SETTLE_MS="${ACTIVATION_SETTLE_MS:-900}"
 MAX_DISTURBANCE="${MAX_DISTURBANCE:-pointer}"
 DRY_RUN="${DRY_RUN:-0}"
 VERIFY_MIN_CONFIDENCE="${VERIFY_MIN_CONFIDENCE:-0.90}"
@@ -34,14 +35,15 @@ if [[ -n "${MAX_DISTURBANCE}" ]]; then
   RUN_ARGS+=(--max-disturbance "${MAX_DISTURBANCE}")
 fi
 
-python3 scripts/recipes/run_recipe.py \
-  recipes/macos/qqmusic/play-visible-anchor.v0.json \
+cargo run --quiet -- skill run \
+  macos.qqmusic.play_visible_anchor.v0 \
   "${RUN_ARGS[@]}" \
   --set "app_id=${APP_ID}" \
   --set "query=${QUERY}" \
   --set "anchor_text=${ANCHOR}" \
   --set "playback_title=${PLAYBACK_TITLE}" \
   --set "click_count=${CLICK_COUNT}" \
+  --set "activation_settle_ms=${ACTIVATION_SETTLE_MS}" \
   --set "reveal_shortcut=${REVEAL_SHORTCUT}" \
   --set "reveal_settle_ms=${REVEAL_SETTLE_MS}" \
   --set "submit_settle_ms=${SUBMIT_SETTLE_MS}" \

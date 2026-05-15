@@ -2,6 +2,7 @@ pub mod catalog;
 pub mod driver;
 pub mod model;
 pub mod runtime;
+pub mod skill;
 pub mod store;
 
 use std::path::PathBuf;

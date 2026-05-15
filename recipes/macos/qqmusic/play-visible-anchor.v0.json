@@ -79,6 +79,15 @@
       "type": "number",
       "default": 0.90
     },
+    "anchor_wait_timeout_ms": {
+      "type": "integer",
+      "default": 3500,
+      "note": "Poll the result region until the OCR anchor actually becomes visible instead of guessing one fixed settle delay."
+    },
+    "anchor_wait_poll_ms": {
+      "type": "integer",
+      "default": 250
+    },
     "verification_region_left_ratio": {
       "type": "number",
       "default": 0.22
@@ -171,6 +180,34 @@
         "target": "${app_id}",
         "key": "${dismiss_overlay_key}",
         "settle_ms": "${dismiss_overlay_settle_ms}"
+      }
+    },
+    {
+      "id": "wait-for-ocr-anchor",
+      "command_id": "debug.waitForScreenText",
+      "disturbance": {
+        "classes": [
+          "none"
+        ],
+        "max": "none"
+      },
+      "args": {
+        "query": "${anchor_text}",
+        "timeout_ms": "${anchor_wait_timeout_ms}",
+        "poll_interval_ms": "${anchor_wait_poll_ms}",
+        "min_confidence": "${selection_min_confidence}",
+        "region_left_ratio": "${selection_region_left_ratio}",
+        "region_top_ratio": "${selection_region_top_ratio}",
+        "region_right_ratio": "${selection_region_right_ratio}",
+        "region_bottom_ratio": "${selection_region_bottom_ratio}"
+      },
+      "expect": {
+        "output_must_contain": [
+          "${anchor_text}"
+        ],
+        "output_must_not_contain": [
+          "Timed out while polling"
+        ]
       }
     },
     {

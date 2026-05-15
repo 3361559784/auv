@@ -46,6 +46,14 @@
       "type": "number",
       "default": 0.90
     },
+    "anchor_wait_timeout_ms": {
+      "type": "integer",
+      "default": 2000
+    },
+    "anchor_wait_poll_ms": {
+      "type": "integer",
+      "default": 250
+    },
     "anchor_offset_x": {
       "type": "number",
       "default": 0.0
@@ -104,6 +112,27 @@
         "settle_ms": "${activate_settle_ms}"
       },
       "purpose": "Bring QQ音乐 to the foreground before screen-based OCR and pointer selection."
+    },
+    {
+      "id": "wait-for-ocr-anchor",
+      "command_id": "debug.waitForScreenText",
+      "disturbance": {
+        "classes": [
+          "none"
+        ],
+        "max": "none"
+      },
+      "args": {
+        "query": "${anchor_text}",
+        "timeout_ms": "${anchor_wait_timeout_ms}",
+        "poll_interval_ms": "${anchor_wait_poll_ms}",
+        "min_confidence": "${min_confidence}",
+        "region_left_ratio": "${region_left_ratio}",
+        "region_top_ratio": "${region_top_ratio}",
+        "region_right_ratio": "${region_right_ratio}",
+        "region_bottom_ratio": "${region_bottom_ratio}"
+      },
+      "purpose": "Wait until the anchor becomes visible in the constrained result region before the one-shot OCR resolve step."
     },
     {
       "id": "resolve-ocr-anchor",

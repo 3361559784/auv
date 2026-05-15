@@ -98,6 +98,14 @@ pub fn default_command_catalog() -> CommandCatalog {
       max_disturbance: DisturbanceClass::None,
     },
     CommandSpec {
+      id: "debug.waitForScreenText",
+      summary: "Poll live-desktop OCR until a target text anchor appears or the timeout expires.",
+      driver_id: "macos.observe",
+      operation: "wait_for_screen_text",
+      disturbance_classes: NONE,
+      max_disturbance: DisturbanceClass::None,
+    },
+    CommandSpec {
       id: "debug.findImageText",
       summary: "Locate OCR text anchors inside an existing image artifact without touching the live desktop.",
       driver_id: "macos.observe",

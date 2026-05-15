@@ -483,7 +483,7 @@ pub(super) fn click_screen_text(call: &DriverCall) -> AuvResult<DriverResponse> 
   let query = required_non_empty_string(call, "query")?;
   let label = format!("screen-text-click-{}", sanitize_file_component(&query));
   let screenshot_path = capture_screenshot_file(&label)?;
-  let _dimensions = read_png_dimensions(&screenshot_path)?;
+  let dimensions = read_png_dimensions(&screenshot_path)?;
   let snapshot = enumerate_displays()?;
   let exact = optional_bool(call, "exact")?.unwrap_or(false);
   let case_sensitive = optional_bool(call, "case_sensitive")?.unwrap_or(false);
@@ -491,14 +491,6 @@ pub(super) fn click_screen_text(call: &DriverCall) -> AuvResult<DriverResponse> 
     .unwrap_or(64)
     .clamp(1, 256);
   let match_index = optional_i64(call, "match_index")?.unwrap_or(0).max(0) as usize;
-  let ocr_report = run_swift_script(&build_ocr_find_text_script(
-    screenshot_path.as_path(),
-    &query,
-    exact,
-    case_sensitive,
-    max_observations,
-  ))?;
-  let ocr_snapshot = parse_ocr_text_snapshot(&ocr_report)?;
   let min_confidence = optional_f64(call, "min_confidence")?.unwrap_or(0.0);
   if !(0.0..=1.0).contains(&min_confidence) {
     return Err(format!(
@@ -506,8 +498,16 @@ pub(super) fn click_screen_text(call: &DriverCall) -> AuvResult<DriverResponse> 
       min_confidence
     ));
   }
-  let region =
-    parse_ocr_region_constraint(call, ocr_snapshot.image_width, ocr_snapshot.image_height)?;
+  let region = parse_ocr_region_constraint(call, dimensions.width, dimensions.height)?;
+  let ocr_report = run_swift_script(&build_ocr_find_text_script(
+    screenshot_path.as_path(),
+    &query,
+    exact,
+    case_sensitive,
+    max_observations,
+    region.as_ref(),
+  ))?;
+  let ocr_snapshot = parse_ocr_text_snapshot(&ocr_report)?;
   let filtered_matches = filter_ocr_matches(&ocr_snapshot.matches, min_confidence, region.as_ref());
   let matched = filtered_matches.get(match_index).copied().ok_or_else(|| {
     format!(

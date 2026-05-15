@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use super::*;
 
 pub(super) fn capture_screen(call: &DriverCall) -> AuvResult<DriverResponse> {
@@ -423,21 +425,13 @@ pub(super) fn find_screen_text(call: &DriverCall) -> AuvResult<DriverResponse> {
   let query = required_non_empty_string(call, "query")?;
   let label = format!("screen-text-{}", sanitize_file_component(&query));
   let screenshot_path = capture_screenshot_file(&label)?;
-  let _dimensions = read_png_dimensions(&screenshot_path)?;
+  let dimensions = read_png_dimensions(&screenshot_path)?;
   let snapshot = enumerate_displays()?;
   let exact = optional_bool(call, "exact")?.unwrap_or(false);
   let case_sensitive = optional_bool(call, "case_sensitive")?.unwrap_or(false);
   let max_observations = optional_i64(call, "max_observations")?
     .unwrap_or(64)
     .clamp(1, 256);
-  let ocr_report = run_swift_script(&build_ocr_find_text_script(
-    screenshot_path.as_path(),
-    &query,
-    exact,
-    case_sensitive,
-    max_observations,
-  ))?;
-  let ocr_snapshot = parse_ocr_text_snapshot(&ocr_report)?;
   let min_confidence = optional_f64(call, "min_confidence")?.unwrap_or(0.0);
   if !(0.0..=1.0).contains(&min_confidence) {
     return Err(format!(
@@ -445,8 +439,16 @@ pub(super) fn find_screen_text(call: &DriverCall) -> AuvResult<DriverResponse> {
       min_confidence
     ));
   }
-  let region =
-    parse_ocr_region_constraint(call, ocr_snapshot.image_width, ocr_snapshot.image_height)?;
+  let region = parse_ocr_region_constraint(call, dimensions.width, dimensions.height)?;
+  let ocr_report = run_swift_script(&build_ocr_find_text_script(
+    screenshot_path.as_path(),
+    &query,
+    exact,
+    case_sensitive,
+    max_observations,
+    region.as_ref(),
+  ))?;
+  let ocr_snapshot = parse_ocr_text_snapshot(&ocr_report)?;
   let filtered_matches = filter_ocr_matches(&ocr_snapshot.matches, min_confidence, region.as_ref());
   let report_artifact = build_text_artifact(
     "screen-text-report",
@@ -507,6 +509,130 @@ pub(super) fn find_screen_text(call: &DriverCall) -> AuvResult<DriverResponse> {
   })
 }
 
+pub(super) fn wait_for_screen_text(call: &DriverCall) -> AuvResult<DriverResponse> {
+  let query = required_non_empty_string(call, "query")?;
+  let label = format!("screen-text-wait-{}", sanitize_file_component(&query));
+  let exact = optional_bool(call, "exact")?.unwrap_or(false);
+  let case_sensitive = optional_bool(call, "case_sensitive")?.unwrap_or(false);
+  let max_observations = optional_i64(call, "max_observations")?
+    .unwrap_or(64)
+    .clamp(1, 256);
+  let min_confidence = optional_f64(call, "min_confidence")?.unwrap_or(0.0);
+  if !(0.0..=1.0).contains(&min_confidence) {
+    return Err(format!(
+      "invalid --min_confidence value {:.3}: expected a ratio within 0.0..=1.0",
+      min_confidence
+    ));
+  }
+  let timeout_ms = optional_positive_u64(call, "timeout_ms")?.unwrap_or(3000);
+  let poll_interval_ms = optional_positive_u64(call, "poll_interval_ms")?.unwrap_or(250);
+  let started_at = Instant::now();
+  let mut attempts = 0usize;
+  let mut previous_screenshot_path: Option<PathBuf> = None;
+
+  loop {
+    attempts += 1;
+    let attempt_label = format!("{label}-attempt-{attempts}");
+    let screenshot_path = capture_screenshot_file(&attempt_label)?;
+    let dimensions = read_png_dimensions(&screenshot_path)?;
+    let snapshot = enumerate_displays()?;
+    let region = parse_ocr_region_constraint(call, dimensions.width, dimensions.height)?;
+    let ocr_report = run_swift_script(&build_ocr_find_text_script(
+      screenshot_path.as_path(),
+      &query,
+      exact,
+      case_sensitive,
+      max_observations,
+      region.as_ref(),
+    ))?;
+    let ocr_snapshot = parse_ocr_text_snapshot(&ocr_report)?;
+    let filtered_matches =
+      filter_ocr_matches(&ocr_snapshot.matches, min_confidence, region.as_ref())
+        .into_iter()
+        .cloned()
+        .collect::<Vec<_>>();
+    let elapsed_ms = started_at.elapsed().as_millis() as u64;
+    let timed_out = elapsed_ms >= timeout_ms;
+
+    if !filtered_matches.is_empty() || timed_out {
+      if let Some(previous_path) = previous_screenshot_path {
+        let _ = fs::remove_file(previous_path);
+      }
+
+      let report_artifact = build_text_artifact(
+        "screen-text-wait-report",
+        "txt",
+        &format!(
+          "screen-text-wait-report-{}",
+          sanitize_file_component(&query)
+        ),
+        ocr_report,
+        "Captured Vision OCR text-anchor report from the final wait-for-screen-text polling attempt.",
+      )?;
+      let screenshot_artifact = ProducedArtifact {
+        kind: "screenshot".to_string(),
+        source_path: screenshot_path,
+        preferred_name: format!("{}.png", sanitize_file_component(&label)),
+        note: Some(
+          "Final screenshot retained from waitForScreenText polling over the live desktop."
+            .to_string(),
+        ),
+      };
+      let mut notes = vec![
+        format!("query={query}"),
+        format!("attemptCount={attempts}"),
+        format!("elapsedMs={elapsed_ms}"),
+        format!("timeoutMs={timeout_ms}"),
+        format!("pollIntervalMs={poll_interval_ms}"),
+        format!("timedOut={timed_out}"),
+        format!("matchCount={}", ocr_snapshot.matches.len()),
+        format!("filteredMatchCount={}", filtered_matches.len()),
+        format!("caseSensitive={case_sensitive}"),
+        format!("exact={exact}"),
+        format!("minConfidence={min_confidence:.3}"),
+        format!(
+          "screenshotPixels={}x{}",
+          ocr_snapshot.image_width, ocr_snapshot.image_height
+        ),
+      ];
+      if let Some(region) = region.as_ref() {
+        notes.push(render_ocr_region_note(region));
+      }
+
+      let summary = if let Some(best_match) = filtered_matches.first() {
+        let (screenshot_center_x, screenshot_center_y) = ocr_match_center(best_match);
+        let (logical_x, logical_y) =
+          project_main_screenshot_point(&snapshot, screenshot_center_x, screenshot_center_y)?;
+        notes.push(format!("bestMatchText={}", best_match.text));
+        notes.push(format!(
+          "bestMatchBounds={}",
+          render_rect_compact(&best_match.bounds)
+        ));
+        notes.push(format!("bestMatchConfidence={:.3}", best_match.confidence));
+        notes.push(format!("bestLogicalPoint={logical_x:.3},{logical_y:.3}"));
+        format!(
+          "Observed OCR text anchor {} after {} polling attempt(s) over {} ms; best anchor projects to logical point ({logical_x:.3}, {logical_y:.3}).",
+          best_match.text, attempts, elapsed_ms
+        )
+      } else {
+        "Timed out while polling the live desktop for a filtered OCR text anchor.".to_string()
+      };
+
+      return Ok(DriverResponse {
+        summary,
+        backend: Some("macos.vision.wait-screen-text".to_string()),
+        notes,
+        artifacts: vec![screenshot_artifact, report_artifact],
+      });
+    }
+
+    if let Some(previous_path) = previous_screenshot_path.replace(screenshot_path) {
+      let _ = fs::remove_file(previous_path);
+    }
+    thread::sleep(Duration::from_millis(poll_interval_ms));
+  }
+}
+
 pub(super) fn find_image_text(call: &DriverCall) -> AuvResult<DriverResponse> {
   let query = required_non_empty_string(call, "query")?;
   let image_path = PathBuf::from(required_non_empty_string(call, "image_path")?);
@@ -522,14 +648,7 @@ pub(super) fn find_image_text(call: &DriverCall) -> AuvResult<DriverResponse> {
   let max_observations = optional_i64(call, "max_observations")?
     .unwrap_or(64)
     .clamp(1, 256);
-  let ocr_report = run_swift_script(&build_ocr_find_text_script(
-    image_path.as_path(),
-    &query,
-    exact,
-    case_sensitive,
-    max_observations,
-  ))?;
-  let ocr_snapshot = parse_ocr_text_snapshot(&ocr_report)?;
+  let dimensions = read_png_dimensions(&image_path)?;
   let min_confidence = optional_f64(call, "min_confidence")?.unwrap_or(0.0);
   if !(0.0..=1.0).contains(&min_confidence) {
     return Err(format!(
@@ -537,8 +656,16 @@ pub(super) fn find_image_text(call: &DriverCall) -> AuvResult<DriverResponse> {
       min_confidence
     ));
   }
-  let region =
-    parse_ocr_region_constraint(call, ocr_snapshot.image_width, ocr_snapshot.image_height)?;
+  let region = parse_ocr_region_constraint(call, dimensions.width, dimensions.height)?;
+  let ocr_report = run_swift_script(&build_ocr_find_text_script(
+    image_path.as_path(),
+    &query,
+    exact,
+    case_sensitive,
+    max_observations,
+    region.as_ref(),
+  ))?;
+  let ocr_snapshot = parse_ocr_text_snapshot(&ocr_report)?;
   let filtered_matches = filter_ocr_matches(&ocr_snapshot.matches, min_confidence, region.as_ref());
   let report_artifact = build_text_artifact(
     "image-text-report",

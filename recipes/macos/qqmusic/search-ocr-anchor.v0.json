@@ -76,6 +76,14 @@
     "min_confidence": {
       "type": "number",
       "default": 0.90
+    },
+    "anchor_wait_timeout_ms": {
+      "type": "integer",
+      "default": 3500
+    },
+    "anchor_wait_poll_ms": {
+      "type": "integer",
+      "default": 250
     }
   },
   "preconditions": [
@@ -154,6 +162,27 @@
         "settle_ms": "${dismiss_overlay_settle_ms}"
       },
       "purpose": "Dismiss the QQ音乐 search suggestion overlay before OCR inspects the result-list region."
+    },
+    {
+      "id": "wait-for-ocr-anchor",
+      "command_id": "debug.waitForScreenText",
+      "disturbance": {
+        "classes": [
+          "none"
+        ],
+        "max": "none"
+      },
+      "args": {
+        "query": "${anchor_text}",
+        "timeout_ms": "${anchor_wait_timeout_ms}",
+        "poll_interval_ms": "${anchor_wait_poll_ms}",
+        "min_confidence": "${min_confidence}",
+        "region_left_ratio": "${region_left_ratio}",
+        "region_top_ratio": "${region_top_ratio}",
+        "region_right_ratio": "${region_right_ratio}",
+        "region_bottom_ratio": "${region_bottom_ratio}"
+      },
+      "purpose": "Wait until the target OCR anchor is actually visible inside the result-list region instead of assuming one fixed submit delay was enough."
     },
     {
       "id": "resolve-ocr-anchor",

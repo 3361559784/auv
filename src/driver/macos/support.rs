@@ -45,6 +45,7 @@ pub(super) fn build_ocr_find_text_script(
   exact: bool,
   case_sensitive: bool,
   max_observations: i64,
+  crop_region: Option<&ObservedRect>,
 ) -> String {
   OCR_FIND_TEXT_SCRIPT_TEMPLATE
     .replace(
@@ -58,6 +59,36 @@ pub(super) fn build_ocr_find_text_script(
       if case_sensitive { "true" } else { "false" },
     )
     .replace("__MAX_OBSERVATIONS__", &max_observations.to_string())
+    .replace(
+      "__CROP_ENABLED__",
+      if crop_region.is_some() {
+        "true"
+      } else {
+        "false"
+      },
+    )
+    .replace(
+      "__CROP_X__",
+      &crop_region.map(|value| value.x).unwrap_or(0).to_string(),
+    )
+    .replace(
+      "__CROP_Y__",
+      &crop_region.map(|value| value.y).unwrap_or(0).to_string(),
+    )
+    .replace(
+      "__CROP_WIDTH__",
+      &crop_region
+        .map(|value| value.width)
+        .unwrap_or(0)
+        .to_string(),
+    )
+    .replace(
+      "__CROP_HEIGHT__",
+      &crop_region
+        .map(|value| value.height)
+        .unwrap_or(0)
+        .to_string(),
+    )
 }
 
 pub(super) fn build_click_point_script(

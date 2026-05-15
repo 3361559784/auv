@@ -24,7 +24,7 @@ use self::control::{
 use self::observe::{
   capture_screen, find_image_text, find_screen_text, identify_point, observe_window_tree,
   observe_windows, probe_coordinate_readiness, probe_displays, probe_permissions,
-  project_screenshot_point,
+  project_screenshot_point, wait_for_screen_text,
 };
 use self::support::*;
 pub(crate) use self::support::{copy_file, sanitized_artifact_name};
@@ -62,6 +62,7 @@ impl Driver for MacOsObserveDriver {
         "observe.project-screenshot-point",
         "observe.coordinate-readiness",
         "observe.screen-text",
+        "observe.wait-screen-text",
         "observe.image-text",
         "control.activate-app",
         "control.focus-text-input",
@@ -90,6 +91,7 @@ impl Driver for MacOsObserveDriver {
       "observe_windows" => observe_windows(call),
       "observe_window_tree" => observe_window_tree(call),
       "find_screen_text" => find_screen_text(call),
+      "wait_for_screen_text" => wait_for_screen_text(call),
       "find_image_text" => find_image_text(call),
       "probe_permissions" => probe_permissions(call),
       "activate_app" => activate_app(call),

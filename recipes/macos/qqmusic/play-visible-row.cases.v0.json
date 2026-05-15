@@ -1,0 +1,35 @@
+{
+  "skill_id": "macos.qqmusic.play_visible_row.v0",
+  "version": "0.1.0",
+  "status": "active-case-matrix",
+  "cases": [
+    {
+      "case_id": "ascii-aa-first-visible-row",
+      "status": "validated",
+      "inputs": {
+        "query": "aa",
+        "row_index": "1",
+        "playback_title": "Cure For Me - AURORA"
+      },
+      "disturbance": "pointer",
+      "notes": [
+        "This is the current canonical row-based playback fallback baseline.",
+        "Validated through the formal row recipe and captured-image OCR verification."
+      ]
+    },
+    {
+      "case_id": "chinese-query-first-visible-row",
+      "status": "candidate",
+      "inputs": {
+        "query": "周杰伦",
+        "row_index": "1",
+        "playback_title": "晴天"
+      },
+      "disturbance": "pointer",
+      "notes": [
+        "Chinese OCR anchor resolution is no longer the gating signal for this case.",
+        "Use this case to validate row-based fallback activation for the Chinese result page."
+      ]
+    }
+  ]
+}

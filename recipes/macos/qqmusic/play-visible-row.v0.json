@@ -1,14 +1,14 @@
 {
-  "recipe_id": "macos.qqmusic.play_visible_anchor.v0",
+  "recipe_id": "macos.qqmusic.play_visible_row.v0",
   "version": "0.1.0",
-  "status": "validated-recipe",
+  "status": "experimental-recipe",
   "platform": "macOS",
   "target_app": {
     "name": "QQ音乐",
     "bundle_id": "${app_id}",
     "display_mode": "live-desktop"
   },
-  "objective": "Reach QQ音乐 search results, double-click a visible result-row OCR anchor, and verify the resulting now-playing title from the captured evidence image.",
+  "objective": "Reach QQ音乐 search results, activate the first visible result row through row detection, and verify the resulting now-playing title from the captured evidence image.",
   "inputs": {
     "app_id": {
       "type": "string",
@@ -17,17 +17,12 @@
     "query": {
       "type": "string",
       "default": "aa",
-      "note": "Current validated playback baseline starts from the ASCII query aa."
-    },
-    "anchor_text": {
-      "type": "string",
-      "default": "Cure For Me",
-      "note": "A visible row-title anchor from the QQ音乐 results list."
+      "note": "Current fallback baseline starts from the ASCII query aa."
     },
     "playback_title": {
       "type": "string",
       "default": "Cure For Me - AURORA",
-      "note": "The expected bottom-player title OCR string after result activation."
+      "note": "The expected bottom-player title OCR string after row activation."
     },
     "reveal_shortcut": {
       "type": "string",
@@ -49,6 +44,60 @@
       "type": "integer",
       "default": 300
     },
+    "result_region_left_ratio": {
+      "type": "number",
+      "default": 0.14
+    },
+    "result_region_top_ratio": {
+      "type": "number",
+      "default": 0.34
+    },
+    "result_region_right_ratio": {
+      "type": "number",
+      "default": 0.90
+    },
+    "result_region_bottom_ratio": {
+      "type": "number",
+      "default": 0.95
+    },
+    "row_min_confidence": {
+      "type": "number",
+      "default": 0.90
+    },
+    "row_max_observations": {
+      "type": "integer",
+      "default": 128
+    },
+    "row_wait_min_row_count": {
+      "type": "integer",
+      "default": 3,
+      "note": "Wait until at least this many visible rows appear before row activation."
+    },
+    "row_wait_timeout_ms": {
+      "type": "integer",
+      "default": 3500
+    },
+    "row_wait_poll_ms": {
+      "type": "integer",
+      "default": 250
+    },
+    "row_index": {
+      "type": "integer",
+      "default": 1,
+      "note": "1-based index of the visible result row to activate."
+    },
+    "row_anchor_mode": {
+      "type": "string",
+      "default": "title_band"
+    },
+    "row_anchor_x_ratio": {
+      "type": "number",
+      "default": 0.25
+    },
+    "row_anchor_y_ratio": {
+      "type": "number",
+      "default": 0.50
+    },
     "click_count": {
       "type": "integer",
       "default": 2,
@@ -57,36 +106,7 @@
     "activation_settle_ms": {
       "type": "integer",
       "default": 900,
-      "note": "How long to wait after the row activation before capturing evidence."
-    },
-    "selection_region_left_ratio": {
-      "type": "number",
-      "default": 0.14
-    },
-    "selection_region_top_ratio": {
-      "type": "number",
-      "default": 0.34
-    },
-    "selection_region_right_ratio": {
-      "type": "number",
-      "default": 0.90
-    },
-    "selection_region_bottom_ratio": {
-      "type": "number",
-      "default": 0.95
-    },
-    "selection_min_confidence": {
-      "type": "number",
-      "default": 0.90
-    },
-    "anchor_wait_timeout_ms": {
-      "type": "integer",
-      "default": 3500,
-      "note": "Poll the result region until the OCR anchor actually becomes visible instead of guessing one fixed settle delay."
-    },
-    "anchor_wait_poll_ms": {
-      "type": "integer",
-      "default": 250
+      "note": "How long to wait after row activation before capturing evidence."
     },
     "verification_region_left_ratio": {
       "type": "number",
@@ -125,9 +145,9 @@
       "pointer"
     ],
     "notes": [
-      "This recipe is not non-disturbing. It foregrounds QQ音乐, re-activates QQ音乐 before live capture steps, uses the clipboard during search entry, and uses pointer disturbance for result activation.",
-      "The playback verification step is observation-only because it runs OCR against the captured evidence image instead of recapturing the live desktop.",
-      "This is a narrow validated playback baseline, not a general qqmusic.play_song contract."
+      "This recipe is not non-disturbing. It foregrounds QQ音乐, re-activates QQ音乐 before live capture steps, uses the clipboard during search entry, and uses pointer disturbance for row activation.",
+      "The row-detection and playback-verification steps are observation-only because they run OCR against captured screenshots instead of recapturing the live desktop.",
+      "This is a narrow experimental playback fallback, not a general qqmusic.play_song contract."
     ]
   },
   "steps": [
@@ -183,8 +203,8 @@
       }
     },
     {
-      "id": "wait-for-ocr-anchor",
-      "command_id": "debug.waitForScreenText",
+      "id": "wait-for-screen-rows",
+      "command_id": "debug.waitForScreenRows",
       "disturbance": {
         "classes": [
           "none"
@@ -193,56 +213,26 @@
       },
       "args": {
         "target": "${app_id}",
-        "query": "${anchor_text}",
-        "timeout_ms": "${anchor_wait_timeout_ms}",
-        "poll_interval_ms": "${anchor_wait_poll_ms}",
-        "min_confidence": "${selection_min_confidence}",
-        "region_left_ratio": "${selection_region_left_ratio}",
-        "region_top_ratio": "${selection_region_top_ratio}",
-        "region_right_ratio": "${selection_region_right_ratio}",
-        "region_bottom_ratio": "${selection_region_bottom_ratio}",
+        "min_row_count": "${row_wait_min_row_count}",
+        "timeout_ms": "${row_wait_timeout_ms}",
+        "poll_interval_ms": "${row_wait_poll_ms}",
+        "max_observations": "${row_max_observations}",
+        "min_confidence": "${row_min_confidence}",
+        "region_left_ratio": "${result_region_left_ratio}",
+        "region_top_ratio": "${result_region_top_ratio}",
+        "region_right_ratio": "${result_region_right_ratio}",
+        "region_bottom_ratio": "${result_region_bottom_ratio}",
         "activate_target_before_capture": true
       },
       "expect": {
-        "output_must_contain": [
-          "${anchor_text}"
-        ],
         "output_must_not_contain": [
           "Timed out while polling"
         ]
       }
     },
     {
-      "id": "resolve-ocr-anchor",
-      "command_id": "debug.findScreenText",
-      "disturbance": {
-        "classes": [
-          "none"
-        ],
-        "max": "none"
-      },
-      "args": {
-        "target": "${app_id}",
-        "query": "${anchor_text}",
-        "min_confidence": "${selection_min_confidence}",
-        "region_left_ratio": "${selection_region_left_ratio}",
-        "region_top_ratio": "${selection_region_top_ratio}",
-        "region_right_ratio": "${selection_region_right_ratio}",
-        "region_bottom_ratio": "${selection_region_bottom_ratio}",
-        "activate_target_before_capture": true
-      },
-      "expect": {
-        "output_must_contain": [
-          "${anchor_text}"
-        ],
-        "output_must_not_contain": [
-          "Found 0 OCR text matches"
-        ]
-      }
-    },
-    {
-      "id": "double-click-row-anchor",
-      "command_id": "debug.clickScreenText",
+      "id": "click-visible-row",
+      "command_id": "debug.clickScreenRow",
       "disturbance": {
         "classes": [
           "pointer"
@@ -251,22 +241,23 @@
       },
       "args": {
         "target": "${app_id}",
-        "query": "${anchor_text}",
+        "row_index": "${row_index}",
         "click_count": "${click_count}",
         "settle_ms": "${activation_settle_ms}",
-        "min_confidence": "${selection_min_confidence}",
-        "region_left_ratio": "${selection_region_left_ratio}",
-        "region_top_ratio": "${selection_region_top_ratio}",
-        "region_right_ratio": "${selection_region_right_ratio}",
-        "region_bottom_ratio": "${selection_region_bottom_ratio}",
+        "row_anchor_mode": "${row_anchor_mode}",
+        "row_anchor_x_ratio": "${row_anchor_x_ratio}",
+        "row_anchor_y_ratio": "${row_anchor_y_ratio}",
+        "max_observations": "${row_max_observations}",
+        "min_confidence": "${row_min_confidence}",
+        "region_left_ratio": "${result_region_left_ratio}",
+        "region_top_ratio": "${result_region_top_ratio}",
+        "region_right_ratio": "${result_region_right_ratio}",
+        "region_bottom_ratio": "${result_region_bottom_ratio}",
         "activate_target_before_capture": true
       },
       "expect": {
-        "output_must_contain": [
-          "${anchor_text}"
-        ],
         "output_must_not_contain": [
-          "Found 0 OCR text matches"
+          "no visible row at index"
         ]
       }
     },
@@ -281,7 +272,7 @@
       },
       "args": {
         "target": "${app_id}",
-        "label": "qqmusic-playback-anchor-${query}",
+        "label": "qqmusic-row-playback-${query}",
         "activate_target_before_capture": true
       },
       "expect": {
@@ -319,25 +310,25 @@
   "verification": {
     "expected_signals": [
       "The query is submitted through clipboard-backed search entry.",
-      "A visible OCR row anchor is resolved in the results list.",
-      "The row anchor double-click completes.",
+      "debug.waitForScreenRows reports enough visible rows in the constrained result region.",
+      "debug.clickScreenRow reports row bounds and a projected logical click point.",
       "A captured post-click screenshot artifact exists.",
       "debug.findImageText confirms ${playback_title} inside the bottom-player title region of the captured evidence image."
     ],
     "success_criteria": [
-      "A known row anchor is activated through a double-click.",
+      "A visible row is activated through row detection.",
       "A captured evidence image exists.",
       "The evidence image contains the expected now-playing title."
     ],
     "non_goals": [
-      "This recipe does not prove generalized playback for arbitrary rows.",
-      "This recipe does not prove pointer-free playback activation.",
-      "This recipe does not prove Chinese OCR anchor stability."
+      "This recipe does not prove generalized playback for arbitrary queries.",
+      "This recipe does not prove OCR row anchor stability.",
+      "This recipe does not prove pointer-free playback activation."
     ]
   },
   "known_limits": {
-    "narrow_baseline": "This recipe is validated for a narrow baseline and should not yet be advertised as a broad QQ音乐 playback skill.",
-    "pointer_required": "Result activation still depends on pointer disturbance through OCR-projected row selection.",
+    "narrow_baseline": "This recipe is validated only as a narrow fallback slice and should not yet be advertised as a broad QQ音乐 playback skill.",
+    "row_detection": "Result activation depends on row detection plus pointer disturbance through the projected row anchor.",
     "foreground_capture": "Live capture steps explicitly re-activate QQ音乐 before taking screenshots so foreground drift does not contaminate evidence.",
     "captured_image_verification": "Playback verification currently trusts OCR over the captured evidence image, not live-screen OCR.",
     "shared_app_state": "Do not run multiple QQ音乐 recipes against the same live app instance at once."

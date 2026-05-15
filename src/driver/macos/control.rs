@@ -482,6 +482,7 @@ pub(super) fn click_window_point(call: &DriverCall) -> AuvResult<DriverResponse>
 pub(super) fn click_screen_text(call: &DriverCall) -> AuvResult<DriverResponse> {
   let query = required_non_empty_string(call, "query")?;
   let label = format!("screen-text-click-{}", sanitize_file_component(&query));
+  let activated_app = maybe_activate_target_app_for_observation(call)?;
   let screenshot_path = capture_screenshot_file(&label)?;
   let dimensions = read_png_dimensions(&screenshot_path)?;
   let snapshot = enumerate_displays()?;
@@ -570,6 +571,23 @@ pub(super) fn click_screen_text(call: &DriverCall) -> AuvResult<DriverResponse> 
     preferred_name: format!("{}.png", sanitize_file_component(&label)),
     note: Some("Screenshot captured for OCR click-anchor detection.".to_string()),
   };
+  let mut notes = vec![
+    format!("query={query}"),
+    format!("matchIndex={match_index}"),
+    format!("filteredMatchCount={}", filtered_matches.len()),
+    format!("matchText={}", matched.text),
+    format!("matchBounds={}", render_rect_compact(&matched.bounds)),
+    format!("minConfidence={min_confidence:.3}"),
+    format!("anchorOffset={anchor_offset_x:.3},{anchor_offset_y:.3}"),
+    format!("screenshotCenter={screenshot_center_x:.3},{screenshot_center_y:.3}"),
+    format!("logicalPoint={logical_x:.3},{logical_y:.3}"),
+    format!("button={button_label}"),
+    format!("clickCount={click_count}"),
+    format!("settleMs={settle_ms}"),
+  ];
+  if let Some(app) = activated_app {
+    notes.push(format!("activatedTargetBeforeCapture={app}"));
+  }
 
   Ok(DriverResponse {
     summary: format!(
@@ -577,23 +595,14 @@ pub(super) fn click_screen_text(call: &DriverCall) -> AuvResult<DriverResponse> 
       matched.text, query
     ),
     backend: Some("macos.vision.click-screen-text".to_string()),
-    notes: vec![
-      format!("query={query}"),
-      format!("matchIndex={match_index}"),
-      format!("filteredMatchCount={}", filtered_matches.len()),
-      format!("matchText={}", matched.text),
-      format!("matchBounds={}", render_rect_compact(&matched.bounds)),
-      format!("minConfidence={min_confidence:.3}"),
-      format!("anchorOffset={anchor_offset_x:.3},{anchor_offset_y:.3}"),
-      format!("logicalPoint={logical_x:.3},{logical_y:.3}"),
-      format!("settleMs={settle_ms}"),
-    ],
+    notes,
     artifacts: vec![screenshot_artifact, report_artifact],
   })
 }
 
 pub(super) fn click_screen_row(call: &DriverCall) -> AuvResult<DriverResponse> {
   let label = optional_string(call, "label").unwrap_or_else(|| "screen-row-click".to_string());
+  let activated_app = maybe_activate_target_app_for_observation(call)?;
   let screenshot_path = capture_screenshot_file(&label)?;
   let dimensions = read_png_dimensions(&screenshot_path)?;
   let snapshot = enumerate_displays()?;
@@ -716,7 +725,6 @@ pub(super) fn click_screen_row(call: &DriverCall) -> AuvResult<DriverResponse> {
     preferred_name: format!("{}.png", sanitize_file_component(&label)),
     note: Some("Screenshot captured for visible OCR row detection before row click.".to_string()),
   };
-
   let mut notes = vec![
     format!("rowStrategy={}", detection.strategy),
     format!("rowIndex={}", row_index + 1),
@@ -729,6 +737,9 @@ pub(super) fn click_screen_row(call: &DriverCall) -> AuvResult<DriverResponse> {
     format!("logicalPoint={logical_x:.3},{logical_y:.3}"),
     format!("settleMs={settle_ms}"),
   ];
+  if let Some(app) = activated_app {
+    notes.push(format!("activatedTargetBeforeCapture={app}"));
+  }
   if let Some(region) = region.as_ref() {
     notes.push(render_ocr_region_note(region));
   }

@@ -66,6 +66,17 @@ current validation still depends on one captured-image verification trick:
 That is enough to validate one narrow playback baseline, but it is not yet a
 generic `qqmusic.play_song` contract.
 
+There is now also a row-based fallback experimental wrapper:
+
+- `scripts/local/qqmusic-play-visible-row.sh`
+
+And a corresponding experimental row recipe:
+
+- `recipes/macos/qqmusic/play-visible-row.v0.json`
+
+This variant is meant to validate visible-row activation when Chinese OCR
+anchors are not reliable enough for grounding.
+
 The canonical local wrapper now goes through the product-facing Rust entrypoint:
 
 - `cargo run --quiet -- skill run macos.qqmusic.play_visible_anchor.v0`
@@ -170,6 +181,10 @@ The machine-readable case matrix for this narrow skill currently lives at:
 
 - `recipes/macos/qqmusic/play-visible-anchor.cases.v0.json`
 
+The machine-readable case matrix for the row-based fallback currently lives at:
+
+- `recipes/macos/qqmusic/play-visible-row.cases.v0.json`
+
 Current product-facing coverage commands are:
 
 ```bash
@@ -187,3 +202,8 @@ Current case-matrix truth:
 - `ascii-aa-aa-alone-again` is validated
 - `chinese-query-chinese-anchor` is still a candidate and currently fails at
   `resolve-ocr-anchor`
+
+Current row-fallback case truth:
+
+- `ascii-aa-first-visible-row` is validated
+- `chinese-query-first-visible-row` is a candidate for row-based fallback

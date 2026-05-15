@@ -92,3 +92,7 @@ productized narrow skill instead of a single lucky demo:
 The next step is not "more abstraction". The next step is to use this matrix to
 decide whether Chinese OCR anchor resolution deserves its own signal upgrade or
 its own fallback contract.
+
+The Chinese case is now also being tracked in the row-based fallback matrix:
+
+- `recipes/macos/qqmusic/play-visible-row.cases.v0.json`

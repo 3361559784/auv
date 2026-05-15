@@ -22,6 +22,20 @@ pub(super) fn capture_screenshot_file(label: &str) -> AuvResult<PathBuf> {
   Ok(temporary_path)
 }
 
+pub(super) fn maybe_activate_target_app_for_observation(
+  call: &DriverCall,
+) -> AuvResult<Option<String>> {
+  let Some(app) = app_identifier(call) else {
+    return Ok(None);
+  };
+  if app.is_empty() || !optional_bool(call, "activate_target_before_capture")?.unwrap_or(false) {
+    return Ok(None);
+  }
+
+  activate_target_app(&app)?;
+  Ok(Some(app))
+}
+
 pub(super) fn build_observe_windows_script(limit: i64, app_filter: &str) -> String {
   OBSERVE_WINDOWS_SCRIPT_TEMPLATE
     .replace("__LIMIT__", &limit.to_string())

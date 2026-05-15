@@ -4,6 +4,7 @@ use super::*;
 
 pub(super) fn capture_screen(call: &DriverCall) -> AuvResult<DriverResponse> {
   let label = optional_string(call, "label").unwrap_or_else(|| "desktop".to_string());
+  let activated_app = maybe_activate_target_app_for_observation(call)?;
   let temporary_path = capture_screenshot_file(&label)?;
   let dimensions = read_png_dimensions(&temporary_path)?;
   let snapshot = enumerate_displays().ok();
@@ -38,6 +39,9 @@ pub(super) fn capture_screen(call: &DriverCall) -> AuvResult<DriverResponse> {
     {
       notes.push(render_display_note(main_display));
     }
+  }
+  if let Some(app) = activated_app {
+    notes.push(format!("activatedTargetBeforeCapture={app}"));
   }
 
   Ok(DriverResponse {
@@ -424,6 +428,7 @@ pub(super) fn project_screenshot_point(call: &DriverCall) -> AuvResult<DriverRes
 pub(super) fn find_screen_text(call: &DriverCall) -> AuvResult<DriverResponse> {
   let query = required_non_empty_string(call, "query")?;
   let label = format!("screen-text-{}", sanitize_file_component(&query));
+  let activated_app = maybe_activate_target_app_for_observation(call)?;
   let screenshot_path = capture_screenshot_file(&label)?;
   let dimensions = read_png_dimensions(&screenshot_path)?;
   let snapshot = enumerate_displays()?;
@@ -477,6 +482,9 @@ pub(super) fn find_screen_text(call: &DriverCall) -> AuvResult<DriverResponse> {
   ];
   if let Some(region) = region.as_ref() {
     notes.push(render_ocr_region_note(region));
+  }
+  if let Some(app) = activated_app {
+    notes.push(format!("activatedTargetBeforeCapture={app}"));
   }
 
   let summary = if let Some(best_match) = filtered_matches.first() {
@@ -533,6 +541,7 @@ pub(super) fn wait_for_screen_text(call: &DriverCall) -> AuvResult<DriverRespons
   loop {
     attempts += 1;
     let attempt_label = format!("{label}-attempt-{attempts}");
+    let activated_app = maybe_activate_target_app_for_observation(call)?;
     let screenshot_path = capture_screenshot_file(&attempt_label)?;
     let dimensions = read_png_dimensions(&screenshot_path)?;
     let snapshot = enumerate_displays()?;
@@ -598,6 +607,9 @@ pub(super) fn wait_for_screen_text(call: &DriverCall) -> AuvResult<DriverRespons
       if let Some(region) = region.as_ref() {
         notes.push(render_ocr_region_note(region));
       }
+      if let Some(app) = activated_app {
+        notes.push(format!("activatedTargetBeforeCapture={app}"));
+      }
 
       let summary = if let Some(best_match) = filtered_matches.first() {
         let (screenshot_center_x, screenshot_center_y) = ocr_match_center(best_match);
@@ -635,6 +647,7 @@ pub(super) fn wait_for_screen_text(call: &DriverCall) -> AuvResult<DriverRespons
 
 pub(super) fn find_screen_rows(call: &DriverCall) -> AuvResult<DriverResponse> {
   let label = optional_string(call, "label").unwrap_or_else(|| "screen-rows".to_string());
+  let activated_app = maybe_activate_target_app_for_observation(call)?;
   let screenshot_path = capture_screenshot_file(&label)?;
   let dimensions = read_png_dimensions(&screenshot_path)?;
   let min_confidence = optional_f64(call, "min_confidence")?.unwrap_or(0.0);
@@ -681,6 +694,9 @@ pub(super) fn find_screen_rows(call: &DriverCall) -> AuvResult<DriverResponse> {
   ];
   if let Some(region) = region.as_ref() {
     notes.push(render_ocr_region_note(region));
+  }
+  if let Some(app) = activated_app {
+    notes.push(format!("activatedTargetBeforeCapture={app}"));
   }
   for row in rows.iter().take(5) {
     notes.push(render_ocr_row_note(row));
@@ -743,6 +759,7 @@ pub(super) fn wait_for_screen_rows(call: &DriverCall) -> AuvResult<DriverRespons
   loop {
     attempts += 1;
     let attempt_label = format!("{label}-attempt-{attempts}");
+    let activated_app = maybe_activate_target_app_for_observation(call)?;
     let screenshot_path = capture_screenshot_file(&attempt_label)?;
     let dimensions = read_png_dimensions(&screenshot_path)?;
     let region = parse_ocr_region_constraint(call, dimensions.width, dimensions.height)?;
@@ -798,6 +815,9 @@ pub(super) fn wait_for_screen_rows(call: &DriverCall) -> AuvResult<DriverRespons
       ];
       if let Some(region) = region.as_ref() {
         notes.push(render_ocr_region_note(region));
+      }
+      if let Some(app) = activated_app {
+        notes.push(format!("activatedTargetBeforeCapture={app}"));
       }
       for row in rows.iter().take(5) {
         notes.push(render_ocr_row_note(row));

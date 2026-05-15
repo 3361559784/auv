@@ -77,6 +77,14 @@ And a corresponding experimental row recipe:
 This variant is meant to validate visible-row activation when Chinese OCR
 anchors are not reliable enough for grounding.
 
+The current row fallback uses a two-step activation chain:
+
+1. click the visible row
+2. press the result play control
+
+That is the first version that is actually supposed to reach playback, not
+just row selection.
+
 The canonical local wrapper now goes through the product-facing Rust entrypoint:
 
 - `cargo run --quiet -- skill run macos.qqmusic.play_visible_anchor.v0`

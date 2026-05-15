@@ -8,7 +8,7 @@
       "status": "validated",
       "inputs": {
         "query": "aa",
-        "row_index": "1",
+        "row_index": "2",
         "playback_title": "Cure For Me - AURORA"
       },
       "disturbance": "pointer",
@@ -22,7 +22,7 @@
       "status": "candidate",
       "inputs": {
         "query": "周杰伦",
-        "row_index": "1",
+        "row_index": "2",
         "playback_title": "晴天"
       },
       "disturbance": "pointer",

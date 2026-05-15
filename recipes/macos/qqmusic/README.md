@@ -44,6 +44,22 @@ The modular result-selection skill proves only:
 
 It does **not** prove playback activation yet.
 
+There is now a narrower experimental playback wrapper:
+
+- `scripts/local/qqmusic-play-visible-anchor.sh`
+
+It is intentionally not advertised as a generic recipe manifest yet. The
+current validation still depends on one captured-image verification trick:
+
+1. run the broader `search-ocr-anchor` chain
+2. double-click a visible row anchor
+3. capture post-click evidence
+4. run OCR against the captured evidence image, restricted to the bottom-player
+   title region
+
+That is enough to validate one narrow playback baseline, but it is not yet a
+generic `qqmusic.play_song` contract.
+
 The recipe runner now applies a per-app live-desktop lock, so QQ音乐 recipes
 for the same app instance do not execute concurrently through
 `scripts/recipes/run_recipe.py`.
@@ -63,6 +79,17 @@ The broader result-selection recipe now also carries visual anchor constraints:
 - OCR matching can be limited to a normalized screenshot region
 - QQ音乐 defaults now target the result-list band instead of scanning the whole screen
 - later 网易云 recipes can reuse the same region-constrained anchor approach
+
+Current playback-validation truth:
+
+- the first validated activation path is a row double-click, not a semantic AX
+  action
+- the first validated playback proof is OCR over the captured post-click image,
+  not live-screen OCR
+- the current baseline is specific to a known visible anchor and a known player
+  title string
+- this is strong enough for a narrow playback baseline, but still too narrow to
+  advertise as a general-purpose QQ音乐 playback skill
 
 Also be honest about concurrency:
 
@@ -101,6 +128,9 @@ DRY_RUN=1 ./scripts/local/qqmusic-select-result.sh aa "Cure For Me"
 
 DRY_RUN=1 ./scripts/local/qqmusic-select-visible-anchor.sh "Cure For Me"
 ./scripts/local/qqmusic-select-visible-anchor.sh "Cure For Me"
+
+DRY_RUN=1 ./scripts/local/qqmusic-play-visible-anchor.sh aa "Cure For Me" "Cure For Me - AURORA"
+./scripts/local/qqmusic-play-visible-anchor.sh aa "Cure For Me" "Cure For Me - AURORA"
 ```
 
 ## Why This Exists

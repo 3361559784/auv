@@ -507,6 +507,90 @@ pub(super) fn find_screen_text(call: &DriverCall) -> AuvResult<DriverResponse> {
   })
 }
 
+pub(super) fn find_image_text(call: &DriverCall) -> AuvResult<DriverResponse> {
+  let query = required_non_empty_string(call, "query")?;
+  let image_path = PathBuf::from(required_non_empty_string(call, "image_path")?);
+  if !image_path.exists() {
+    return Err(format!(
+      "image_path does not exist: {}",
+      image_path.display()
+    ));
+  }
+
+  let exact = optional_bool(call, "exact")?.unwrap_or(false);
+  let case_sensitive = optional_bool(call, "case_sensitive")?.unwrap_or(false);
+  let max_observations = optional_i64(call, "max_observations")?
+    .unwrap_or(64)
+    .clamp(1, 256);
+  let ocr_report = run_swift_script(&build_ocr_find_text_script(
+    image_path.as_path(),
+    &query,
+    exact,
+    case_sensitive,
+    max_observations,
+  ))?;
+  let ocr_snapshot = parse_ocr_text_snapshot(&ocr_report)?;
+  let min_confidence = optional_f64(call, "min_confidence")?.unwrap_or(0.0);
+  if !(0.0..=1.0).contains(&min_confidence) {
+    return Err(format!(
+      "invalid --min_confidence value {:.3}: expected a ratio within 0.0..=1.0",
+      min_confidence
+    ));
+  }
+  let region =
+    parse_ocr_region_constraint(call, ocr_snapshot.image_width, ocr_snapshot.image_height)?;
+  let filtered_matches = filter_ocr_matches(&ocr_snapshot.matches, min_confidence, region.as_ref());
+  let report_artifact = build_text_artifact(
+    "image-text-report",
+    "txt",
+    &format!("image-text-report-{}", sanitize_file_component(&query)),
+    ocr_report,
+    "Captured Vision OCR text-anchor report for a provided image artifact.",
+  )?;
+
+  let mut notes = vec![
+    format!("query={query}"),
+    format!("imagePath={}", image_path.display()),
+    format!("matchCount={}", ocr_snapshot.matches.len()),
+    format!("filteredMatchCount={}", filtered_matches.len()),
+    format!("caseSensitive={case_sensitive}"),
+    format!("exact={exact}"),
+    format!("minConfidence={min_confidence:.3}"),
+    format!(
+      "imagePixels={}x{}",
+      ocr_snapshot.image_width, ocr_snapshot.image_height
+    ),
+  ];
+  if let Some(region) = region.as_ref() {
+    notes.push(render_ocr_region_note(region));
+  }
+
+  let summary = if let Some(best_match) = filtered_matches.first() {
+    notes.push(format!("bestMatchText={}", best_match.text));
+    notes.push(format!(
+      "bestMatchBounds={}",
+      render_rect_compact(&best_match.bounds)
+    ));
+    notes.push(format!("bestMatchConfidence={:.3}", best_match.confidence));
+    format!(
+      "Found {} OCR text match(es) for query {} inside the provided image after filtering; best anchor is {}.",
+      filtered_matches.len(),
+      query,
+      best_match.text
+    )
+  } else {
+    "Found 0 OCR text matches in the provided image after applying the active filters."
+      .to_string()
+  };
+
+  Ok(DriverResponse {
+    summary,
+    backend: Some("macos.vision.image-text".to_string()),
+    notes,
+    artifacts: vec![report_artifact],
+  })
+}
+
 pub(super) fn identify_point(call: &DriverCall) -> AuvResult<DriverResponse> {
   let x = required_f64(call, "x")?;
   let y = required_f64(call, "y")?;

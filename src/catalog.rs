@@ -98,6 +98,14 @@ pub fn default_command_catalog() -> CommandCatalog {
       max_disturbance: DisturbanceClass::None,
     },
     CommandSpec {
+      id: "debug.findImageText",
+      summary: "Locate OCR text anchors inside an existing image artifact without touching the live desktop.",
+      driver_id: "macos.observe",
+      operation: "find_image_text",
+      disturbance_classes: NONE,
+      max_disturbance: DisturbanceClass::None,
+    },
+    CommandSpec {
       id: "debug.observeWindows",
       summary: "Observe visible macOS windows and capture a text report artifact.",
       driver_id: "macos.observe",

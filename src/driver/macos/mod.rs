@@ -22,7 +22,7 @@ use self::control::{
   paste_text_preserve_clipboard, press_button, press_key, scroll_point, type_text,
 };
 use self::observe::{
-  capture_screen, find_screen_text, identify_point, observe_window_tree, observe_windows,
+  capture_screen, find_image_text, find_screen_text, identify_point, observe_window_tree, observe_windows,
   probe_coordinate_readiness, probe_displays, probe_permissions, project_screenshot_point,
 };
 use self::support::*;
@@ -61,6 +61,7 @@ impl Driver for MacOsObserveDriver {
         "observe.project-screenshot-point",
         "observe.coordinate-readiness",
         "observe.screen-text",
+        "observe.image-text",
         "control.activate-app",
         "control.focus-text-input",
         "control.press-button",
@@ -88,6 +89,7 @@ impl Driver for MacOsObserveDriver {
       "observe_windows" => observe_windows(call),
       "observe_window_tree" => observe_window_tree(call),
       "find_screen_text" => find_screen_text(call),
+      "find_image_text" => find_image_text(call),
       "probe_permissions" => probe_permissions(call),
       "activate_app" => activate_app(call),
       "focus_text_input" => focus_text_input(call),

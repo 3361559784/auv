@@ -127,7 +127,9 @@ Observed failures or weak points:
 Current conclusion:
 
 - stable concrete result selection still requires OCR / pointer fallback
-- the current validated QQ Music slice is search + anchor click, not playback
+- a single generic semantic result-selection path is still not proven
+- however, one narrow playback activation baseline is now validated:
+  constrained OCR anchor -> row double-click -> captured evidence image OCR
 
 ## Disturbance Classification
 
@@ -206,6 +208,10 @@ Optionally followed by:
 
 `resolve OCR anchor -> click OCR anchor -> capture evidence`
 
+And more narrowly, a later validation slice can currently claim:
+
+`resolve OCR anchor -> double-click visible row -> verify player title from captured evidence image`
+
 The current repo should not yet claim a recipe like:
 
 - `qqmusic.play_song`
@@ -224,12 +230,18 @@ Therefore:
 - pointer-free search entry is feasible
 - `AX set value` is not a safe dependency for search input
 - stable concrete result selection is not proven without OCR / pointer fallback
+- the first validated playback path is a result-row double-click followed by
+  OCR verification over the captured post-click evidence image
 - the app must not currently be described as fully semantic-controllable or
   non-disturbing
 
 The most accurate short form is:
 
 `keyboard-first search entry, pointer fallback required for stable result selection`
+
+The most accurate extended form is:
+
+`keyboard-first search entry, OCR/pointer fallback for result selection, and a narrow double-click playback baseline verified from captured evidence`
 
 ## Implementation Gates
 
@@ -238,7 +250,8 @@ The next code changes should follow this order:
 1. Add disturbance metadata to primitives and recipes.
 2. Add a paste-aware input primitive that preserves and restores the clipboard.
 3. Keep the first QQ Music recipe scoped to search entry and evidence capture.
-4. Treat result selection and playback as a separate later milestone.
+4. Treat broader result selection and broader playback as later milestones, even
+   though one narrow double-click playback baseline is now validated.
 
 ## Allowed Claims
 
@@ -247,16 +260,48 @@ The current state is strong enough to claim:
 - QQ Music has a validated keyboard-first search-entry path on macOS.
 - AUV can already validate a `search -> OCR anchor resolve -> OCR anchor click -> evidence capture` slice.
 - QQ Music result selection currently depends on OCR / pointer fallback.
+- AUV can validate one narrow playback slice through
+  `search -> OCR anchor -> row double-click -> captured-image OCR verification`.
 
 ## Forbidden Claims
 
 The current state is not strong enough to claim:
 
-- QQ Music playback is a validated skill.
+- QQ Music has a broad validated playback skill.
 - QQ Music result rows are fully controllable through AX.
 - the current workflow is non-disturbing.
 - a lightweight model can already complete the full playback task through a
-  stable high-level skill.
+  stable general-purpose high-level skill.
+
+## Follow-up Validation: Narrow Playback Baseline
+
+An additional validation pass on `2026-05-15` established one narrow playback
+baseline:
+
+- query: `aa`
+- visible result-row anchor: `Cure For Me`
+- activation path: row double-click
+- verification signal: OCR over the captured post-click evidence image
+- verified player-title query: `Cure For Me - AURORA`
+
+What is currently strong:
+
+- the row double-click path can change QQ音乐 into a visible now-playing state
+- the post-click screenshot can be inspected without recapturing the live
+  desktop
+- the player-title region in the captured evidence image can confirm the
+  expected title through `debug.findImageText`
+
+What is still not proven:
+
+- a generalized playback activation strategy for arbitrary rows
+- a pointer-free playback activation strategy
+- reliable live-screen OCR verification for the bottom player title region
+- Chinese OCR anchor resolution for result selection
+
+This matters because the current playback baseline is real, but narrow. It
+should be treated as a validated exploratory skill slice, not a general QQ音乐
+playback contract.
 
 ## Related Files
 

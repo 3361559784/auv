@@ -633,6 +633,209 @@ pub(super) fn wait_for_screen_text(call: &DriverCall) -> AuvResult<DriverRespons
   }
 }
 
+pub(super) fn find_screen_rows(call: &DriverCall) -> AuvResult<DriverResponse> {
+  let label = optional_string(call, "label").unwrap_or_else(|| "screen-rows".to_string());
+  let screenshot_path = capture_screenshot_file(&label)?;
+  let dimensions = read_png_dimensions(&screenshot_path)?;
+  let min_confidence = optional_f64(call, "min_confidence")?.unwrap_or(0.0);
+  if !(0.0..=1.0).contains(&min_confidence) {
+    return Err(format!(
+      "invalid --min_confidence value {:.3}: expected a ratio within 0.0..=1.0",
+      min_confidence
+    ));
+  }
+  let max_observations = optional_i64(call, "max_observations")?
+    .unwrap_or(128)
+    .clamp(1, 512);
+  let region = parse_ocr_region_constraint(call, dimensions.width, dimensions.height)?;
+  let detection = detect_screen_rows(
+    screenshot_path.as_path(),
+    min_confidence,
+    max_observations,
+    region.as_ref(),
+  )?;
+  let rows = detection.rows;
+  let report_artifact = build_text_artifact(
+    "screen-rows-report",
+    "txt",
+    &format!("screen-rows-report-{}", sanitize_file_component(&label)),
+    detection.report,
+    "Captured row-detection report used for visible-row grouping (OCR first, then visual-band fallback).",
+  )?;
+  let screenshot_artifact = ProducedArtifact {
+    kind: "screenshot".to_string(),
+    source_path: screenshot_path,
+    preferred_name: format!("{}.png", sanitize_file_component(&label)),
+    note: Some("Screenshot captured for OCR-based visible-row detection.".to_string()),
+  };
+  let mut notes = vec![
+    format!("rowStrategy={}", detection.strategy),
+    format!("rowCount={}", rows.len()),
+    format!("matchCount={}", detection.raw_match_count),
+    format!("filteredMatchCount={}", detection.filtered_match_count),
+    format!("minConfidence={min_confidence:.3}"),
+    format!(
+      "screenshotPixels={}x{}",
+      dimensions.width, dimensions.height
+    ),
+  ];
+  if let Some(region) = region.as_ref() {
+    notes.push(render_ocr_region_note(region));
+  }
+  for row in rows.iter().take(5) {
+    notes.push(render_ocr_row_note(row));
+  }
+
+  let summary = if let Some(first_row) = rows.first() {
+    let preview = if first_row.text_fragments.is_empty() {
+      format!("bounds={}", render_rect_compact(&first_row.bounds))
+    } else {
+      first_row
+        .text_fragments
+        .iter()
+        .take(3)
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(" | ")
+    };
+    format!(
+      "Detected {} visible row(s) with strategy {} in the constrained region; first row preview: {}.",
+      rows.len(),
+      detection.strategy,
+      preview
+    )
+  } else {
+    format!(
+      "Detected 0 visible row(s) in the constrained region after strategy {}.",
+      detection.strategy
+    )
+  };
+
+  Ok(DriverResponse {
+    summary,
+    backend: Some(format!("macos.vision.screen-rows.{}", detection.strategy)),
+    notes,
+    artifacts: vec![screenshot_artifact, report_artifact],
+  })
+}
+
+pub(super) fn wait_for_screen_rows(call: &DriverCall) -> AuvResult<DriverResponse> {
+  let label = optional_string(call, "label").unwrap_or_else(|| "screen-rows-wait".to_string());
+  let min_confidence = optional_f64(call, "min_confidence")?.unwrap_or(0.0);
+  if !(0.0..=1.0).contains(&min_confidence) {
+    return Err(format!(
+      "invalid --min_confidence value {:.3}: expected a ratio within 0.0..=1.0",
+      min_confidence
+    ));
+  }
+  let max_observations = optional_i64(call, "max_observations")?
+    .unwrap_or(128)
+    .clamp(1, 512);
+  let min_row_count = optional_i64(call, "min_row_count")?
+    .unwrap_or(1)
+    .clamp(1, 64) as usize;
+  let timeout_ms = optional_positive_u64(call, "timeout_ms")?.unwrap_or(3000);
+  let poll_interval_ms = optional_positive_u64(call, "poll_interval_ms")?.unwrap_or(250);
+  let started_at = Instant::now();
+  let mut attempts = 0usize;
+  let mut previous_screenshot_path: Option<PathBuf> = None;
+
+  loop {
+    attempts += 1;
+    let attempt_label = format!("{label}-attempt-{attempts}");
+    let screenshot_path = capture_screenshot_file(&attempt_label)?;
+    let dimensions = read_png_dimensions(&screenshot_path)?;
+    let region = parse_ocr_region_constraint(call, dimensions.width, dimensions.height)?;
+    let detection = detect_screen_rows(
+      screenshot_path.as_path(),
+      min_confidence,
+      max_observations,
+      region.as_ref(),
+    )?;
+    let rows = detection.rows;
+    let elapsed_ms = started_at.elapsed().as_millis() as u64;
+    let timed_out = elapsed_ms >= timeout_ms;
+
+    if rows.len() >= min_row_count || timed_out {
+      if let Some(previous_path) = previous_screenshot_path {
+        let _ = fs::remove_file(previous_path);
+      }
+      let report_artifact = build_text_artifact(
+        "screen-rows-wait-report",
+        "txt",
+        &format!(
+          "screen-rows-wait-report-{}",
+          sanitize_file_component(&label)
+        ),
+        detection.report,
+        "Captured row-detection report from the final wait-for-screen-rows polling attempt.",
+      )?;
+      let screenshot_artifact = ProducedArtifact {
+        kind: "screenshot".to_string(),
+        source_path: screenshot_path,
+        preferred_name: format!("{}.png", sanitize_file_component(&label)),
+        note: Some(
+          "Final screenshot retained from waitForScreenRows polling over the live desktop."
+            .to_string(),
+        ),
+      };
+      let mut notes = vec![
+        format!("rowStrategy={}", detection.strategy),
+        format!("rowCount={}", rows.len()),
+        format!("requiredRowCount={min_row_count}"),
+        format!("attemptCount={attempts}"),
+        format!("elapsedMs={elapsed_ms}"),
+        format!("timeoutMs={timeout_ms}"),
+        format!("pollIntervalMs={poll_interval_ms}"),
+        format!("timedOut={timed_out}"),
+        format!("matchCount={}", detection.raw_match_count),
+        format!("filteredMatchCount={}", detection.filtered_match_count),
+        format!("minConfidence={min_confidence:.3}"),
+        format!(
+          "screenshotPixels={}x{}",
+          dimensions.width, dimensions.height
+        ),
+      ];
+      if let Some(region) = region.as_ref() {
+        notes.push(render_ocr_region_note(region));
+      }
+      for row in rows.iter().take(5) {
+        notes.push(render_ocr_row_note(row));
+      }
+
+      let summary = if rows.len() >= min_row_count {
+        format!(
+          "Observed {} visible row(s) with strategy {} after {} polling attempt(s) over {} ms.",
+          rows.len(),
+          detection.strategy,
+          attempts,
+          elapsed_ms
+        )
+      } else {
+        format!(
+          "Timed out while polling the live desktop for visible rows after strategy {}.",
+          detection.strategy
+        )
+      };
+
+      return Ok(DriverResponse {
+        summary,
+        backend: Some(format!(
+          "macos.vision.wait-screen-rows.{}",
+          detection.strategy
+        )),
+        notes,
+        artifacts: vec![screenshot_artifact, report_artifact],
+      });
+    }
+
+    if let Some(previous_path) = previous_screenshot_path.replace(screenshot_path) {
+      let _ = fs::remove_file(previous_path);
+    }
+    thread::sleep(Duration::from_millis(poll_interval_ms));
+  }
+}
+
 pub(super) fn find_image_text(call: &DriverCall) -> AuvResult<DriverResponse> {
   let query = required_non_empty_string(call, "query")?;
   let image_path = PathBuf::from(required_non_empty_string(call, "image_path")?);

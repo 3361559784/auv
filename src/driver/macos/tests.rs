@@ -3,13 +3,13 @@ use std::fs;
 use std::path::PathBuf;
 
 use super::{
-  ScreenshotDimensions,
+  OcrTextMatch, ScreenshotDimensions,
   support::{
-    assess_coordinate_readiness, filter_ocr_matches, optional_bool, optional_f64,
-    parse_display_snapshot, parse_mouse_button, parse_ocr_region_constraint,
-    parse_ocr_text_snapshot, parse_shortcut, project_main_screenshot_point, read_png_dimensions,
-    render_rect_compact, resolve_display_point, resolve_scroll_deltas, sanitize_file_component,
-    special_key_code, swift_string_literal,
+    assess_coordinate_readiness, filter_ocr_matches, group_ocr_matches_into_rows, optional_bool,
+    optional_f64, parse_display_snapshot, parse_mouse_button, parse_ocr_region_constraint,
+    parse_ocr_text_snapshot, parse_shortcut, parse_visual_rows_snapshot,
+    project_main_screenshot_point, read_png_dimensions, render_rect_compact, resolve_display_point,
+    resolve_scroll_deltas, sanitize_file_component, special_key_code, swift_string_literal,
   },
 };
 use crate::{
@@ -213,6 +213,62 @@ fn filter_ocr_matches_applies_confidence_and_region() {
 }
 
 #[test]
+fn group_ocr_matches_into_rows_merges_nearby_vertical_observations() {
+  let matches = vec![
+    OcrTextMatch {
+      match_index: 0,
+      text: "Song Title".to_string(),
+      confidence: 0.99,
+      bounds: super::ObservedRect {
+        x: 100,
+        y: 100,
+        width: 180,
+        height: 30,
+      },
+    },
+    OcrTextMatch {
+      match_index: 1,
+      text: "Artist".to_string(),
+      confidence: 0.98,
+      bounds: super::ObservedRect {
+        x: 110,
+        y: 138,
+        width: 90,
+        height: 24,
+      },
+    },
+    OcrTextMatch {
+      match_index: 2,
+      text: "Next Row".to_string(),
+      confidence: 0.97,
+      bounds: super::ObservedRect {
+        x: 100,
+        y: 260,
+        width: 120,
+        height: 28,
+      },
+    },
+  ];
+  let refs = matches.iter().collect::<Vec<_>>();
+  let rows = group_ocr_matches_into_rows(&refs);
+  assert_eq!(rows.len(), 2);
+  assert_eq!(rows[0].source, "ocr-text");
+  assert_eq!(rows[0].text_fragments.len(), 2);
+  assert_eq!(rows[1].text_fragments, vec!["Next Row".to_string()]);
+}
+
+#[test]
+fn parse_visual_rows_snapshot_parses_visual_band_rows() {
+  let snapshot =
+    parse_visual_rows_snapshot(sample_visual_row_report()).expect("visual row report should parse");
+  assert_eq!(snapshot.strategy, "visual-bands");
+  assert_eq!(snapshot.rows.len(), 2);
+  assert_eq!(snapshot.rows[0].source, "visual-bands");
+  assert_eq!(snapshot.rows[0].bounds.x, 423);
+  assert!(snapshot.rows[0].text_fragments.is_empty());
+}
+
+#[test]
 fn read_png_dimensions_extracts_width_and_height() {
   let path = temp_png_path("png-dimensions");
   write_minimal_png(&path, 3024, 1964);
@@ -263,6 +319,19 @@ caseSensitive=false\n\
 match\t0\tI DRINK THE LIGHT (Jengi Remix)\t0.998901\t741\t1286\t513\t51\n\
 match\t1\tTHE GODS WE CAN TOUCH\t0.945678\t1604\t808\t300\t42\n\
 matchCount=2\n"
+}
+
+fn sample_visual_row_report() -> &'static str {
+  "detectedAt=2026-05-15T22:00:00Z\n\
+imagePath=/tmp/auv-screen.png\n\
+imageWidth=3024\n\
+imageHeight=1964\n\
+rowStrategy=visual-bands\n\
+cropRect=423,668,2298,1198\n\
+analysisStrip=46,0,552,1198\n\
+row\t0\t423\t712\t2120\t88\t0.423100\n\
+row\t1\t423\t826\t2120\t86\t0.401200\n\
+rowCount=2\n"
 }
 
 fn temp_png_path(label: &str) -> PathBuf {

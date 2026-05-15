@@ -18,13 +18,14 @@ mod support;
 mod tests;
 
 use self::control::{
-  activate_app, click_point, click_screen_text, click_window_point, focus_text_input,
-  paste_text_preserve_clipboard, press_button, press_key, scroll_point, type_text,
+  activate_app, click_point, click_screen_row, click_screen_text, click_window_point,
+  focus_text_input, paste_text_preserve_clipboard, press_button, press_key, scroll_point,
+  type_text,
 };
 use self::observe::{
-  capture_screen, find_image_text, find_screen_text, identify_point, observe_window_tree,
-  observe_windows, probe_coordinate_readiness, probe_displays, probe_permissions,
-  project_screenshot_point, wait_for_screen_text,
+  capture_screen, find_image_text, find_screen_rows, find_screen_text, identify_point,
+  observe_window_tree, observe_windows, probe_coordinate_readiness, probe_displays,
+  probe_permissions, project_screenshot_point, wait_for_screen_rows, wait_for_screen_text,
 };
 use self::support::*;
 pub(crate) use self::support::{copy_file, sanitized_artifact_name};
@@ -35,6 +36,7 @@ const ENUMERATE_DISPLAYS_SCRIPT: &str = include_str!("scripts/enumerate_displays
 const OBSERVE_WINDOWS_SCRIPT_TEMPLATE: &str = include_str!("scripts/observe_windows.swift");
 const OBSERVE_WINDOW_TREE_SCRIPT_TEMPLATE: &str = include_str!("scripts/observe_window_tree.swift");
 const OCR_FIND_TEXT_SCRIPT_TEMPLATE: &str = include_str!("scripts/ocr_find_text.swift");
+const FIND_VISUAL_ROWS_SCRIPT_TEMPLATE: &str = include_str!("scripts/find_visual_rows.swift");
 const CLICK_POINT_SCRIPT_TEMPLATE: &str = include_str!("scripts/click_point.swift");
 const SCROLL_POINT_SCRIPT_TEMPLATE: &str = include_str!("scripts/scroll_point.swift");
 const CAPTURE_CLIPBOARD_SCRIPT: &str = include_str!("scripts/capture_clipboard.swift");
@@ -63,6 +65,8 @@ impl Driver for MacOsObserveDriver {
         "observe.coordinate-readiness",
         "observe.screen-text",
         "observe.wait-screen-text",
+        "observe.screen-rows",
+        "observe.wait-screen-rows",
         "observe.image-text",
         "control.activate-app",
         "control.focus-text-input",
@@ -73,6 +77,7 @@ impl Driver for MacOsObserveDriver {
         "control.click-point",
         "control.click-window-point",
         "control.click-screen-text",
+        "control.click-screen-row",
         "control.scroll-point",
       ],
       donor_boundary: "Borrow host observation primitives from AIRI, but keep MCP tools, action executors, approval queues, and workflow shells out of AUV core.",
@@ -92,6 +97,8 @@ impl Driver for MacOsObserveDriver {
       "observe_window_tree" => observe_window_tree(call),
       "find_screen_text" => find_screen_text(call),
       "wait_for_screen_text" => wait_for_screen_text(call),
+      "find_screen_rows" => find_screen_rows(call),
+      "wait_for_screen_rows" => wait_for_screen_rows(call),
       "find_image_text" => find_image_text(call),
       "probe_permissions" => probe_permissions(call),
       "activate_app" => activate_app(call),
@@ -103,6 +110,7 @@ impl Driver for MacOsObserveDriver {
       "click_point" => click_point(call),
       "click_window_point" => click_window_point(call),
       "click_screen_text" => click_screen_text(call),
+      "click_screen_row" => click_screen_row(call),
       "scroll_point" => scroll_point(call),
       other => Err(format!(
         "driver macos.observe does not support operation {}",
@@ -174,6 +182,23 @@ struct OcrTextSnapshot {
   exact: bool,
   case_sensitive: bool,
   matches: Vec<OcrTextMatch>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ObservedOcrRow {
+  row_index: usize,
+  source: String,
+  bounds: ObservedRect,
+  text_fragments: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct DetectedScreenRows {
+  strategy: String,
+  raw_match_count: usize,
+  filtered_match_count: usize,
+  rows: Vec<ObservedOcrRow>,
+  report: String,
 }
 
 #[derive(Clone, Debug, PartialEq)]

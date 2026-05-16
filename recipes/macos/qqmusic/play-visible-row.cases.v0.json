@@ -9,7 +9,10 @@
       "inputs": {
         "query": "aa",
         "row_index": "2",
-        "playback_title": "Cure For Me - AURORA"
+        "target_title": "Cure For Me - AURORA",
+        "observed_playback_title": "Cure For Me - AURORA",
+        "target_artist": "",
+        "now_playing_scope_path_prefix": "0.4.4"
       },
       "disturbance": "pointer",
       "notes": [
@@ -22,13 +25,17 @@
       "status": "candidate",
       "inputs": {
         "query": "周杰伦",
-        "row_index": "2",
-        "playback_title": "晴天"
+        "row_index": "1",
+        "target_title": "晴天",
+        "observed_playback_title": "天空仍灿烂",
+        "target_artist": "周杰伦",
+        "now_playing_scope_path_prefix": "0.4.4"
       },
       "disturbance": "pointer",
       "notes": [
         "Chinese OCR anchor resolution is no longer the gating signal for this case.",
-        "Use this case to validate row-based fallback activation for the Chinese result page."
+        "Use this case to validate row-based fallback activation for the Chinese result page.",
+        "The target title remains 晴天, but the current observed playback title is 天空仍灿烂."
       ]
     }
   ]

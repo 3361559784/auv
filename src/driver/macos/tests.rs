@@ -7,9 +7,10 @@ use super::{
   support::{
     assess_coordinate_readiness, filter_ocr_matches, group_ocr_matches_into_rows, optional_bool,
     optional_f64, parse_display_snapshot, parse_mouse_button, parse_ocr_region_constraint,
-    parse_ocr_text_snapshot, parse_shortcut, parse_visual_rows_snapshot,
+    parse_observed_ax_tree, parse_ocr_text_snapshot, parse_shortcut, parse_visual_rows_snapshot,
     project_main_screenshot_point, read_png_dimensions, render_rect_compact, resolve_display_point,
     resolve_scroll_deltas, sanitize_file_component, special_key_code, swift_string_literal,
+    find_now_playing_ax_node,
   },
 };
 use crate::{
@@ -258,6 +259,14 @@ fn group_ocr_matches_into_rows_merges_nearby_vertical_observations() {
 }
 
 #[test]
+fn find_now_playing_ax_node_matches_title_and_artist() {
+  let snapshot = parse_observed_ax_tree(sample_ax_report()).expect("AX report should parse");
+  let node = find_now_playing_ax_node(&snapshot, "天空仍灿烂", Some("周杰伦"), Some("0.4.4"))
+    .expect("now-playing node should match");
+  assert_eq!(node.title, "歌曲名：天空仍灿烂 - 歌手名：周杰伦");
+}
+
+#[test]
 fn parse_visual_rows_snapshot_parses_visual_band_rows() {
   let snapshot =
     parse_visual_rows_snapshot(sample_visual_row_report()).expect("visual row report should parse");
@@ -332,6 +341,19 @@ analysisStrip=46,0,552,1198\n\
 row\t0\t423\t712\t2120\t88\t0.423100\n\
 row\t1\t423\t826\t2120\t86\t0.401200\n\
 rowCount=2\n"
+}
+
+fn sample_ax_report() -> &'static str {
+  "observedAt=2026-05-16T07:00:00Z\n\
+appName=QQ音乐\n\
+bundleId=com.tencent.QQMusicMac\n\
+pid=1495\n\
+windowTitle=\n\
+rootRole=AXWindow\n\
+node\t0\t0\tAXWindow\tAXStandardWindow\tQQMianWindow\t\t\t\t\t\t66\t33\t1280\t857\n\
+node\t1\t0.4\tAXUnknown\t\t播放控制栏\t\t\t\t\t\t298\t800\t1036\t78\n\
+node\t2\t0.4.4\tAXUnknown\t\t歌曲名：天空仍灿烂 - 歌手名：周杰伦\t\t\t\t\t\t375\t812\t264\t24\n\
+node\t2\t0.4.9\tAXUnknown\t\t播放列表\t\t\t\t\t\t1284\t824\t30\t30\n"
 }
 
 fn temp_png_path(label: &str) -> PathBuf {

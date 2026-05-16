@@ -88,6 +88,7 @@
     "declared_classes": [
       "none",
       "foreground_app",
+      "keyboard",
       "pointer"
     ],
     "notes": [
@@ -112,6 +113,27 @@
         "settle_ms": "${activate_settle_ms}"
       },
       "purpose": "Bring QQ音乐 to the foreground before screen-based OCR and pointer selection."
+    },
+    {
+      "id": "focus-search-input",
+      "command_id": "debug.focusTextInput",
+      "disturbance": {
+        "classes": [
+          "foreground_app",
+          "keyboard",
+          "pointer"
+        ],
+        "max": "pointer"
+      },
+      "args": {
+        "target": "${app_id}",
+        "query": "搜索",
+        "reveal_shortcut": "cmd+f",
+        "reveal_settle_ms": 300,
+        "max_depth": 5,
+        "max_children": 20
+      },
+      "purpose": "Re-establish the search input focus before checking the result list."
     },
     {
       "id": "wait-for-ocr-anchor",

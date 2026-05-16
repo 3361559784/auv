@@ -71,7 +71,7 @@ USAGE
 NOTES
   - Names are provisional and reflect the current phase-0/1 runtime skeleton.
   - The CLI is a thin frontend over the library runtime in src/lib.rs.
-  - `debug.captureScreen`, `debug.probeDisplays`, `debug.projectScreenshotPoint`, `debug.identifyPoint`, `debug.probeCoordinateReadiness`, `debug.observeWindows`, `debug.observeWindowTree`, `debug.probePermissions`, `debug.focusTextInput`, `debug.pressButton`, `debug.clickPoint`, and `debug.scrollPoint` are the current desktop donor entrypoints.
+  - `debug.captureScreen`, `debug.probeDisplays`, `debug.projectScreenshotPoint`, `debug.identifyPoint`, `debug.probeCoordinateReadiness`, `debug.observeWindows`, `debug.observeWindowTree`, `debug.probePermissions`, `debug.focusTextInput`, `debug.pressButton`, `debug.verifyNowPlayingTitle`, `debug.clickPoint`, and `debug.scrollPoint` are the current desktop donor entrypoints.
   - `debug.observeWindowTree`, `debug.focusTextInput`, and `debug.pressButton` accept `--reveal_shortcut cmd+f`-style hints when an app hides the target UI until a keyboard shortcut reveals it.
   - `--reveal_settle_ms <millis>` can be used to make the reveal step explicit instead of depending on hard-coded timing assumptions.
   - `debug.typeText` supports `--replace_existing true`, `--submit_key return`, and `--submit_settle_ms 800` for repeatable text-entry flows.
@@ -81,6 +81,7 @@ NOTES
   - `debug.waitForScreenText` polls that same OCR path until a filtered anchor appears or the timeout expires; use it when result-page readiness is the real problem instead of guessing longer sleeps.
   - `debug.findScreenRows`, `debug.waitForScreenRows`, and `debug.clickScreenRow` treat OCR observations as grouped visible rows, which is the current fallback direction when exact text anchors are visually present but not OCR-reliable.
   - `debug.findImageText` runs the same OCR matching over an existing image artifact, which is useful for verifying captured evidence without recapturing the live desktop.
+  - `debug.verifyNowPlayingTitle` prefers AX tree matching for player-title verification, which is the current direction for QQ音乐 playback disambiguation.
   - `debug.clickScreenText` supports `--match_index` and `--click_count` when the query resolves to multiple OCR anchors.
   - `skill run` is the product-facing recipe entrypoint: it resolves a recipe manifest from `recipes/`, validates disturbance policy, replays steps through the shared runtime, and carries step artifact paths into later verification steps.
   - `skill cases run` replays validated case-matrix entries serially; this is the current narrow-skill coverage entrypoint for QQ音乐 productization.

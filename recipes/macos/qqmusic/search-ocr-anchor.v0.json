@@ -110,21 +110,40 @@
   },
   "steps": [
     {
-      "id": "open-search",
+      "id": "activate-target-app",
+      "command_id": "debug.activateApp",
+      "disturbance": {
+        "classes": [
+          "foreground_app"
+        ],
+        "max": "foreground_app"
+      },
+      "args": {
+        "target": "${app_id}",
+        "settle_ms": "${reveal_settle_ms}"
+      },
+      "purpose": "Bring QQ音乐 to the foreground before search submission and OCR observation."
+    },
+    {
+      "id": "focus-search-input",
+      "command_id": "debug.focusTextInput",
       "disturbance": {
         "classes": [
           "foreground_app",
-          "keyboard"
+          "keyboard",
+          "pointer"
         ],
-        "max": "keyboard"
+        "max": "pointer"
       },
-      "command_id": "debug.pressKey",
       "args": {
         "target": "${app_id}",
-        "key": "${reveal_shortcut}",
-        "settle_ms": "${reveal_settle_ms}"
+        "query": "搜索",
+        "reveal_shortcut": "${reveal_shortcut}",
+        "reveal_settle_ms": "${reveal_settle_ms}",
+        "max_depth": "${max_depth}",
+        "max_children": "${max_children}"
       },
-      "purpose": "Reveal the QQ音乐 search surface through its known keyboard shortcut."
+      "purpose": "Reveal and focus the QQ音乐 search surface through the known shortcut plus AX click."
     },
     {
       "id": "paste-query",

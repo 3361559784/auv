@@ -51,7 +51,9 @@ The matrix also includes one explicit candidate case:
 - `chinese-query-row-fallback`
   - query: `周杰伦`
   - row index: `1`
-  - playback title: `晴天`
+  - target title: `晴天`
+  - observed playback title: `天空仍灿烂`
 
 This is useful because it relocates the Chinese case away from OCR grounding
-and into row-based fallback validation.
+and into row-based fallback activation. It does **not** yet prove target-title
+playback success.

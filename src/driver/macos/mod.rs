@@ -26,6 +26,7 @@ use self::observe::{
   capture_screen, find_image_text, find_screen_rows, find_screen_text, identify_point,
   observe_window_tree, observe_windows, probe_coordinate_readiness, probe_displays,
   probe_permissions, project_screenshot_point, wait_for_screen_rows, wait_for_screen_text,
+  verify_now_playing_title,
 };
 use self::support::*;
 pub(crate) use self::support::{copy_file, sanitized_artifact_name};
@@ -101,6 +102,7 @@ impl Driver for MacOsObserveDriver {
       "wait_for_screen_rows" => wait_for_screen_rows(call),
       "find_image_text" => find_image_text(call),
       "probe_permissions" => probe_permissions(call),
+      "verify_now_playing_title" => verify_now_playing_title(call),
       "activate_app" => activate_app(call),
       "focus_text_input" => focus_text_input(call),
       "press_button" => press_button(call),

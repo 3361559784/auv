@@ -8,7 +8,7 @@
     "bundle_id": "${app_id}",
     "display_mode": "live-desktop"
   },
-  "objective": "Open the QQ音乐 search UI, submit a query, and capture post-submit evidence without using pointer primitives.",
+  "objective": "Open the QQ音乐 search UI, focus the search field, submit a query, and capture post-submit evidence.",
   "inputs": {
     "app_id": {
       "type": "string",
@@ -39,36 +39,56 @@
     "The recipe may foreground QQ音乐 and will use the clipboard temporarily before restoring it."
   ],
   "disturbance_policy": {
-    "max_disturbance": "clipboard",
+    "max_disturbance": "pointer",
     "declared_classes": [
       "none",
       "foreground_app",
       "keyboard",
-      "clipboard"
+      "clipboard",
+      "pointer"
     ],
     "notes": [
-      "This recipe avoids pointer primitives, but it is not non-disturbing.",
-      "The current validated path still foregrounds QQ音乐 and temporarily uses the clipboard.",
+      "This recipe is not non-disturbing.",
+      "The current path foregrounds QQ音乐, focuses the search field, and temporarily uses the clipboard.",
       "This recipe proves query submission only; it does not prove stable result selection or playback activation."
     ]
   },
   "steps": [
     {
-      "id": "open-search",
-      "command_id": "debug.pressKey",
+      "id": "activate-target-app",
+      "command_id": "debug.activateApp",
       "disturbance": {
         "classes": [
-          "foreground_app",
-          "keyboard"
+          "foreground_app"
         ],
-        "max": "keyboard"
+        "max": "foreground_app"
       },
       "args": {
         "target": "${app_id}",
-        "key": "${reveal_shortcut}",
-        "settle_ms": "${reveal_settle_ms}"
+        "settle_ms": 300
       },
-      "purpose": "Reveal the QQ音乐 search surface through its known keyboard shortcut."
+      "purpose": "Bring QQ音乐 to the foreground before sending the search shortcut."
+    },
+    {
+      "id": "focus-search-input",
+      "command_id": "debug.focusTextInput",
+      "disturbance": {
+        "classes": [
+          "foreground_app",
+          "keyboard",
+          "pointer"
+        ],
+        "max": "pointer"
+      },
+      "args": {
+        "target": "${app_id}",
+        "query": "搜索",
+        "reveal_shortcut": "${reveal_shortcut}",
+        "reveal_settle_ms": "${reveal_settle_ms}",
+        "max_depth": 5,
+        "max_children": 20
+      },
+      "purpose": "Reveal and focus the QQ音乐 search surface through the known shortcut plus AX click."
     },
     {
       "id": "paste-query",
@@ -76,8 +96,7 @@
       "disturbance": {
         "classes": [
           "foreground_app",
-          "keyboard",
-          "clipboard"
+          "keyboard"
         ],
         "max": "clipboard"
       },
@@ -100,6 +119,8 @@
         "max": "none"
       },
       "args": {
+        "target": "${app_id}",
+        "activate_target_before_capture": true,
         "label": "qqmusic-search-entry-${query}"
       },
       "purpose": "Capture post-submit evidence for inspect and later distillation."
@@ -124,6 +145,7 @@
   "known_limits": {
     "foreground_shift": "The current implementation foregrounds QQ音乐 before sending the reveal shortcut and paste action.",
     "clipboard_usage": "The recipe temporarily replaces the clipboard and then restores it.",
+    "surface_readiness": "The recipe now focuses the search field explicitly instead of assuming a shortcut alone establishes the active input.",
     "result_selection": "Stable result-row selection still requires OCR/pointer fallback in the current validated baseline.",
     "shared_app_state": "This recipe should not run concurrently with other QQ音乐 recipes against the same live app instance."
   }

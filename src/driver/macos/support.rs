@@ -879,6 +879,97 @@ pub(super) fn find_best_ax_node<'a>(
     .map(|(_, node)| node)
 }
 
+pub(super) fn find_now_playing_ax_node<'a>(
+  snapshot: &'a ObservedAxTreeSnapshot,
+  expected_title: &str,
+  expected_artist: Option<&str>,
+  scope_path_prefix: Option<&str>,
+) -> Option<&'a ObservedAxNode> {
+  let expected_title = expected_title.trim().to_lowercase();
+  if expected_title.is_empty() {
+    return None;
+  }
+  let expected_artist = expected_artist
+    .map(|value| value.trim().to_lowercase())
+    .filter(|value| !value.is_empty());
+  let scope_path_prefix = scope_path_prefix
+    .map(|value| value.trim().to_string())
+    .filter(|value| !value.is_empty());
+
+  snapshot
+    .nodes
+    .iter()
+    .filter(|node| node.bounds.width > 0 && node.bounds.height > 0)
+    .filter(|node| {
+      scope_path_prefix
+        .as_ref()
+        .is_none_or(|prefix| node.path.starts_with(prefix))
+    })
+    .filter_map(|node| {
+      score_now_playing_ax_node_match(node, &expected_title, expected_artist.as_deref())
+        .map(|score| (score, node))
+    })
+    .max_by(|left, right| left.0.cmp(&right.0))
+    .map(|(_, node)| node)
+}
+
+fn score_now_playing_ax_node_match(
+  node: &ObservedAxNode,
+  expected_title: &str,
+  expected_artist: Option<&str>,
+) -> Option<i64> {
+  let searchable = ax_node_search_text(node);
+  if !searchable.contains(expected_title) {
+    return None;
+  }
+  if let Some(expected_artist) = expected_artist {
+    if !searchable.contains(expected_artist) {
+      return None;
+    }
+  }
+
+  let mut score = 100 - node.depth as i64;
+  if node.title.to_lowercase().contains(expected_title) {
+    score += 40;
+  }
+  if let Some(expected_artist) = expected_artist {
+    if node.title.to_lowercase().contains(expected_artist) {
+      score += 20;
+    }
+  }
+  if node.role == "AXUnknown" || node.role == "AXStaticText" {
+    score += 10;
+  }
+  if node.subrole == "AXStaticText" || node.subrole == "AXTextField" {
+    score += 6;
+  }
+
+  Some(score)
+}
+
+fn ax_node_search_text(node: &ObservedAxNode) -> String {
+  [
+    node.title.as_str(),
+    node.description.as_str(),
+    node.help.as_str(),
+    node.identifier.as_str(),
+    node.placeholder.as_str(),
+    node.value.as_str(),
+  ]
+  .into_iter()
+  .filter_map(|value| {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+      None
+    } else {
+      Some(trimmed)
+    }
+  })
+  .collect::<Vec<_>>()
+  .join(" ")
+  .to_lowercase()
+}
+
 pub(super) fn no_matching_ax_node_error(
   snapshot: &ObservedAxTreeSnapshot,
   query: &str,

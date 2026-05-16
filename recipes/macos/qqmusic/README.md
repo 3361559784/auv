@@ -215,3 +215,11 @@ Current row-fallback case truth:
 
 - `ascii-aa-row-fallback` is validated
 - `chinese-query-row-fallback` is a candidate for row-based fallback
+- Chinese candidate keeps `target_title=晴天` and separate `observed_playback_title=天空仍灿烂`
+- Row-fallback verification now prefers AX tree title matching over screenshot OCR for the current now-playing title
+
+The current verification direction is:
+
+1. use row detection to activate a visible result row
+2. press the result play control
+3. verify the now-playing title through the AX tree

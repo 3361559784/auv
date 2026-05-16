@@ -4,7 +4,9 @@ use crate::model::{AuvResult, DriverCall, DriverDescriptor, DriverResponse};
 
 use self::fixture::FixtureObserveDriver;
 use self::macos::MacOsObserveDriver;
-pub(crate) use self::macos::{copy_file, sanitized_artifact_name};
+pub(crate) use self::macos::{
+  clear_stale_lock_file, copy_file, describe_lock_owner, sanitized_artifact_name,
+};
 
 mod fixture;
 mod macos;

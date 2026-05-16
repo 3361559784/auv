@@ -8,9 +8,10 @@ use super::{
     assess_coordinate_readiness, filter_ocr_matches, find_now_playing_ax_node,
     group_ocr_matches_into_rows, optional_bool, optional_f64, parse_display_snapshot,
     parse_mouse_button, parse_observed_ax_tree, parse_ocr_region_constraint,
-    parse_ocr_text_snapshot, parse_shortcut, parse_visual_rows_snapshot,
-    project_main_screenshot_point, read_png_dimensions, render_rect_compact, resolve_display_point,
-    resolve_scroll_deltas, sanitize_file_component, special_key_code, swift_string_literal,
+    parse_ocr_text_snapshot, parse_shortcut, parse_visual_rows_snapshot, process_is_alive,
+    project_main_screenshot_point, read_lock_owner_pid, read_png_dimensions,
+    render_rect_compact, resolve_display_point, resolve_scroll_deltas, sanitize_file_component,
+    special_key_code, swift_string_literal, temp_file_path,
   },
 };
 use crate::{
@@ -288,6 +289,27 @@ fn read_png_dimensions_extracts_width_and_height() {
 }
 
 #[test]
+fn temp_file_path_is_unique_within_process() {
+  let first = temp_file_path("artifact", "txt");
+  let second = temp_file_path("artifact", "txt");
+  assert_ne!(first, second);
+}
+
+#[test]
+fn read_lock_owner_pid_parses_pid_field() {
+  let path = temp_txt_path("lock-owner");
+  fs::write(&path, "pid=4242\nacquiredAt=123\n").expect("lock file should write");
+  let pid = read_lock_owner_pid(&path).expect("pid should parse");
+  assert_eq!(pid, Some(4242));
+  let _ = fs::remove_file(path);
+}
+
+#[test]
+fn process_is_alive_matches_current_process() {
+  assert!(process_is_alive(std::process::id()));
+}
+
+#[test]
 fn driver_registry_stores_and_retrieves_drivers() {
   let registry = DriverRegistry::new(vec![Box::new(FixtureObserveDriver)]);
   assert!(registry.get("fixture.observe").is_some());
@@ -358,6 +380,10 @@ node\t2\t0.4.9\tAXUnknown\t\t播放列表\t\t\t\t\t\t1284\t824\t30\t30\n"
 
 fn temp_png_path(label: &str) -> PathBuf {
   std::env::temp_dir().join(format!("auv-{}-{}.png", label, now_millis()))
+}
+
+fn temp_txt_path(label: &str) -> PathBuf {
+  std::env::temp_dir().join(format!("auv-{}-{}.txt", label, now_millis()))
 }
 
 fn write_minimal_png(path: &PathBuf, width: u32, height: u32) {

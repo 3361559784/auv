@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 use serde::Deserialize;
 use serde_json::Value;
 
+use crate::driver::{clear_stale_lock_file, describe_lock_owner};
 use crate::model::{AuvResult, DisturbanceClass, ExecutionTarget, InvokeRequest, InvokeResult};
 use crate::runtime::Runtime;
 
@@ -644,9 +645,12 @@ fn maybe_acquire_live_app_lock(
         return Ok(Some(LiveAppSkillLock { path }));
       }
       Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+        clear_stale_lock_file(&path)?;
         if started.elapsed() > Duration::from_millis(timeout_ms) {
+          let owner = describe_lock_owner(&path).unwrap_or_else(|_| "unknown owner".to_string());
           return Err(format!(
-            "timed out waiting for live-app skill lock for {bundle_id:?} after {timeout_ms} ms"
+            "timed out waiting for live-app skill lock for {bundle_id:?} after {timeout_ms} ms ({owner}; path={})",
+            path.display()
           ));
         }
         thread::sleep(Duration::from_millis(50));
@@ -898,7 +902,7 @@ mod tests {
 
   use super::{
     SkillCaseMatrixCatalog, SkillCatalog, SkillManifest, default_inputs, export_step_variables,
-    is_image_artifact, render_template, render_value,
+    is_image_artifact, render_template, render_value, sanitize_lock_component,
   };
   use crate::model::{InvokeResult, RunStatus, now_millis};
 
@@ -1035,5 +1039,11 @@ mod tests {
       &BTreeMap::from([("query".to_string(), "aa".to_string())]),
     );
     assert_eq!(rendered, "artifact=${missing}");
+  }
+
+  #[test]
+  fn sanitize_lock_component_collapses_non_alphanumeric_segments() {
+    assert_eq!(sanitize_lock_component("com.tencent.QQMusicMac"), "com-tencent-QQMusicMac");
+    assert_eq!(sanitize_lock_component("  weird / bundle id  "), "weird-bundle-id");
   }
 }

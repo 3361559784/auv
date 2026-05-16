@@ -117,8 +117,8 @@ Current playback-validation truth:
 
 - the first validated activation path is a row double-click, not a semantic AX
   action
-- the first validated playback proof is OCR over the captured post-click image,
-  not live-screen OCR
+- the current stable playback proof is AX-based now-playing title verification,
+  not screenshot OCR over the captured post-click image
 - the current baseline is specific to a known visible anchor and a known player
   title string
 - this is strong enough for a narrow playback baseline, but still too narrow to

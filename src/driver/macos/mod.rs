@@ -29,7 +29,9 @@ use self::observe::{
   wait_for_screen_rows, wait_for_screen_text,
 };
 use self::support::*;
-pub(crate) use self::support::{copy_file, sanitized_artifact_name};
+pub(crate) use self::support::{
+  clear_stale_lock_file, copy_file, describe_lock_owner, sanitized_artifact_name,
+};
 
 const PROBE_ACCESSIBILITY_SCRIPT: &str = include_str!("scripts/probe_accessibility.swift");
 const PROBE_SCREEN_RECORDING_SCRIPT: &str = include_str!("scripts/probe_screen_recording.swift");

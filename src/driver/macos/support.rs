@@ -1,6 +1,9 @@
 use std::io::Write;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::*;
+
+static TEMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 pub(super) fn enumerate_displays() -> AuvResult<ObservedDisplaySnapshot> {
   let report = run_swift_script(ENUMERATE_DISPLAYS_SCRIPT)?;
@@ -1314,11 +1317,13 @@ pub(super) fn run_command(binary: &str, args: &[String]) -> AuvResult<CommandOut
 }
 
 pub(super) fn temp_file_path(label: &str, extension: &str) -> PathBuf {
+  let sequence = TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed);
   env::temp_dir().join(format!(
-    "auv-{}-{}-{}.{}",
+    "auv-{}-{}-{}-{}.{}",
     sanitize_file_component(label),
     now_millis(),
     std::process::id(),
+    sequence,
     extension
   ))
 }
@@ -1595,10 +1600,13 @@ pub(super) fn acquire_clipboard_lock(timeout_ms: u64) -> AuvResult<ClipboardLock
         return Ok(ClipboardLock { path });
       }
       Err(error) if error.kind() == ErrorKind::AlreadyExists => {
+        clear_stale_lock_file(&path)?;
         if now_millis().saturating_sub(started_at) > timeout_ms as u128 {
+          let owner = describe_lock_owner(&path).unwrap_or_else(|_| "unknown owner".to_string());
           return Err(format!(
-            "timed out waiting for the global macOS clipboard lock after {} ms",
-            timeout_ms
+            "timed out waiting for the global macOS clipboard lock after {} ms ({owner}; path={})",
+            timeout_ms,
+            path.display()
           ));
         }
         thread::sleep(Duration::from_millis(50));
@@ -1611,6 +1619,79 @@ pub(super) fn acquire_clipboard_lock(timeout_ms: u64) -> AuvResult<ClipboardLock
       }
     }
   }
+}
+
+pub(crate) fn clear_stale_lock_file(path: &Path) -> AuvResult<()> {
+  let Some(owner_pid) = read_lock_owner_pid(path)? else {
+    return Ok(());
+  };
+  if process_is_alive(owner_pid) {
+    return Ok(());
+  }
+
+  fs::remove_file(path).map_err(|error| {
+    format!(
+      "failed to clear stale lock {} owned by pid {}: {error}",
+      path.display(),
+      owner_pid
+    )
+  })?;
+  Ok(())
+}
+
+pub(crate) fn read_lock_owner_pid(path: &Path) -> AuvResult<Option<u32>> {
+  let content = match fs::read_to_string(path) {
+    Ok(content) => content,
+    Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+    Err(error) => {
+      return Err(format!("failed to read lock file {}: {error}", path.display()));
+    }
+  };
+
+  for line in content.lines() {
+    if let Some(raw_pid) = line.trim().strip_prefix("pid=") {
+      let pid = raw_pid.trim().parse::<u32>().map_err(|error| {
+        format!("invalid pid entry in lock file {}: {error}", path.display())
+      })?;
+      return Ok(Some(pid));
+    }
+  }
+
+  Ok(None)
+}
+
+pub(crate) fn describe_lock_owner(path: &Path) -> AuvResult<String> {
+  let content = match fs::read_to_string(path) {
+    Ok(content) => content,
+    Err(error) if error.kind() == ErrorKind::NotFound => return Ok("lock file disappeared".to_string()),
+    Err(error) => {
+      return Err(format!("failed to read lock file {}: {error}", path.display()));
+    }
+  };
+
+  let mut fragments = Vec::new();
+  for line in content.lines() {
+    let trimmed = line.trim();
+    if !trimmed.is_empty() {
+      fragments.push(trimmed.to_string());
+    }
+  }
+  if fragments.is_empty() {
+    Ok("empty lock file".to_string())
+  } else {
+    Ok(fragments.join(", "))
+  }
+}
+
+pub(crate) fn process_is_alive(pid: u32) -> bool {
+  if pid == 0 {
+    return false;
+  }
+
+  let status = Command::new("/bin/kill")
+    .args(["-0", &pid.to_string()])
+    .status();
+  matches!(status, Ok(status) if status.success())
 }
 
 pub(super) fn capture_clipboard_snapshot() -> AuvResult<String> {

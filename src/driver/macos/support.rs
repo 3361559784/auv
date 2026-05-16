@@ -913,7 +913,7 @@ pub(super) fn find_now_playing_ax_node<'a>(
     .map(|(_, node)| node)
 }
 
-fn ax_node_search_text(node: &ObservedAxNode) -> String {
+pub(super) fn ax_node_search_text(node: &ObservedAxNode) -> String {
   let searchable = [
     node.title.as_str(),
     node.description.as_str(),

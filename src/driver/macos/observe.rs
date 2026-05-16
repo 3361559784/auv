@@ -439,6 +439,146 @@ pub(super) fn verify_now_playing_title(call: &DriverCall) -> AuvResult<DriverRes
   })
 }
 
+pub(super) fn verify_ax_text(call: &DriverCall) -> AuvResult<DriverResponse> {
+  let app = app_identifier(call).unwrap_or_default();
+  let expected_text = required_non_empty_string(call, "target_text")?;
+  let expected_role = optional_non_empty_string(call, "target_role");
+  let expected_subrole = optional_non_empty_string(call, "target_subrole");
+  let scope_path_prefix = optional_non_empty_string(call, "scope_path_prefix");
+  let max_depth = optional_i64(call, "max_depth")?.unwrap_or(6).clamp(1, 10);
+  let max_children = optional_i64(call, "max_children")?
+    .unwrap_or(24)
+    .clamp(1, 60);
+  if !app.is_empty() {
+    activate_target_app(&app)?;
+  }
+
+  let tree_report = run_swift_script(&build_observe_window_tree_script(
+    &app,
+    max_depth,
+    max_children,
+  ))?;
+  let snapshot = parse_observed_ax_tree(&tree_report)?;
+  let expected_text_lc = expected_text.trim().to_lowercase();
+  let expected_role_lc = expected_role
+    .as_deref()
+    .map(|value| value.trim().to_lowercase())
+    .filter(|value| !value.is_empty());
+  let expected_subrole_lc = expected_subrole
+    .as_deref()
+    .map(|value| value.trim().to_lowercase())
+    .filter(|value| !value.is_empty());
+  let scope_path_prefix = scope_path_prefix
+    .as_deref()
+    .map(|value| value.trim().to_string())
+    .filter(|value| !value.is_empty());
+
+  let matched = snapshot
+    .nodes
+    .iter()
+    .filter(|node| node.bounds.width > 0 && node.bounds.height > 0)
+    .filter(|node| {
+      scope_path_prefix
+        .as_ref()
+        .is_none_or(|prefix| node.path.starts_with(prefix))
+    })
+    .filter(|node| {
+      if let Some(role) = expected_role_lc.as_deref() {
+        node.role.to_lowercase() == role
+      } else {
+        true
+      }
+    })
+    .filter(|node| {
+      if let Some(subrole) = expected_subrole_lc.as_deref() {
+        node.subrole.to_lowercase() == subrole
+      } else {
+        true
+      }
+    })
+    .filter_map(|node| {
+      let searchable = ax_node_search_text(node);
+      if searchable.contains(&expected_text_lc) {
+        Some((100 - node.depth as i64, node))
+      } else {
+        None
+      }
+    })
+    .max_by(|left, right| left.0.cmp(&right.0))
+    .map(|(_, node)| node)
+    .ok_or_else(|| {
+      let mut detail = format!("no matching ax text node found for target_text {}", expected_text);
+      if let Some(role) = expected_role.as_deref() {
+        detail.push_str(&format!(" and target_role {}", role));
+      }
+      if let Some(subrole) = expected_subrole.as_deref() {
+        detail.push_str(&format!(" and target_subrole {}", subrole));
+      }
+      if let Some(scope) = scope_path_prefix.as_deref() {
+        detail.push_str(&format!(" within scope_path_prefix {}", scope));
+      }
+      detail
+    })?;
+
+  let report = render_ax_interaction_report("verify-ax-text", &snapshot, matched, &expected_text);
+  let artifact = build_text_artifact(
+    "verify-ax-text",
+    "txt",
+    &format!("verify-ax-text-{}", sanitize_file_component(&expected_text)),
+    report,
+    "Captured an AX tree snapshot and matched a text-bearing node without relying on screenshot OCR.",
+  )?;
+
+  let mut notes = vec![
+    format!("targetText={expected_text}"),
+    format!("matchedPath={}", matched.path),
+    format!("matchedRole={}", matched.role),
+    format!("matchedBounds={}", render_rect_compact(&matched.bounds)),
+  ];
+  if let Some(role) = expected_role.as_deref() {
+    notes.push(format!("targetRole={role}"));
+  }
+  if let Some(subrole) = expected_subrole.as_deref() {
+    notes.push(format!("targetSubrole={subrole}"));
+  }
+  if let Some(scope) = scope_path_prefix.as_deref() {
+    notes.push(format!("scopePathPrefix={scope}"));
+  }
+  if !matched.title.is_empty() {
+    notes.push(format!("matchedTitle={}", matched.title));
+  }
+  if !matched.description.is_empty() {
+    notes.push(format!("matchedDescription={}", matched.description));
+  }
+  if !matched.value.is_empty() {
+    notes.push(format!("matchedValue={}", matched.value));
+  }
+
+  let mut summary_suffix = String::new();
+  if let Some(role) = expected_role.as_deref() {
+    summary_suffix.push_str(&format!(" as {role}"));
+  }
+  if let Some(subrole) = expected_subrole.as_deref() {
+    summary_suffix.push_str(&format!(" ({subrole})"));
+  }
+
+  Ok(DriverResponse {
+    summary: format!(
+      "Verified AX text {} in {}{} through the AX tree.",
+      expected_text,
+      if snapshot.app_name.is_empty() {
+        "target app"
+      } else {
+        &snapshot.app_name
+      },
+      summary_suffix
+    ),
+    backend: Some("macos.observe.verify-ax-text".to_string()),
+    notes,
+    artifacts: vec![artifact],
+  })
+}
+
 pub(super) fn project_screenshot_point(call: &DriverCall) -> AuvResult<DriverResponse> {
   let x = required_f64(call, "x")?;
   let y = required_f64(call, "y")?;

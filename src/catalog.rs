@@ -138,6 +138,14 @@ pub fn default_command_catalog() -> CommandCatalog {
       max_disturbance: DisturbanceClass::None,
     },
     CommandSpec {
+      id: "debug.verifyAxText",
+      summary: "Verify that a text-bearing AX node exists in the observed tree without relying on screenshot OCR.",
+      driver_id: "macos.observe",
+      operation: "verify_ax_text",
+      disturbance_classes: NONE,
+      max_disturbance: DisturbanceClass::None,
+    },
+    CommandSpec {
       id: "debug.observeWindows",
       summary: "Observe visible macOS windows and capture a text report artifact.",
       driver_id: "macos.observe",
@@ -325,6 +333,7 @@ mod tests {
     assert!(catalog.resolve("debug.probeCoordinateReadiness").is_some());
     assert!(catalog.resolve("debug.findScreenText").is_some());
     assert!(catalog.resolve("debug.verifyNowPlayingTitle").is_some());
+    assert!(catalog.resolve("debug.verifyAxText").is_some());
     assert!(catalog.resolve("debug.observeWindows").is_some());
     assert!(catalog.resolve("debug.observeWindowTree").is_some());
     assert!(catalog.resolve("debug.probePermissions").is_some());

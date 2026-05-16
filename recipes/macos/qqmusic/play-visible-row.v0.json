@@ -356,18 +356,18 @@
     }
   ],
   "verification": {
-    "expected_signals": [
-      "The query is submitted through clipboard-backed search entry.",
-      "debug.waitForScreenRows reports enough visible rows in the constrained result region.",
-      "debug.clickScreenRow reports row bounds and a projected logical click point.",
-      "debug.clickScreenText completes for the result play control.",
-      "debug.verifyNowPlayingTitle confirms ${target_title} from the AX tree without relying on screenshot OCR."
-    ],
-    "success_criteria": [
-      "A visible row is activated through row detection.",
-      "The result play control is pressed.",
-      "The current now-playing title is verified through the AX tree."
-    ],
+      "expected_signals": [
+        "The query is submitted through clipboard-backed search entry.",
+        "debug.waitForScreenRows reports enough visible rows in the constrained result region.",
+        "debug.clickScreenRow reports row bounds and a projected logical click point.",
+        "debug.clickScreenText completes for the result play control.",
+        "debug.verifyNowPlayingTitle confirms ${target_title} from the AX tree without relying on screenshot OCR."
+      ],
+      "success_criteria": [
+        "A visible row is activated through row detection.",
+        "The result play control is pressed.",
+        "The current now-playing title is verified through the AX tree."
+      ],
     "non_goals": [
       "This recipe does not prove generalized playback for arbitrary queries.",
       "This recipe does not prove OCR row anchor stability.",
@@ -378,6 +378,7 @@
   "known_limits": {
     "narrow_baseline": "This recipe is validated only as a narrow fallback slice and should not yet be advertised as a broad QQ音乐 playback skill.",
     "row_detection": "Result activation depends on row detection plus pointer disturbance through the projected row anchor and a follow-up play control press.",
+    "target_disambiguation": "Chinese target-title cases currently rely on row activation plus now-playing AX verification; result-area AX title/artist targeting is diagnostic only.",
     "foreground_capture": "Live capture steps explicitly re-activate QQ音乐 before taking screenshots so foreground drift does not contaminate evidence.",
     "captured_image_verification": "Playback verification now prefers AX tree title matching over screenshot OCR.",
     "candidate_reporting": "When the target title is not yet proven, record the observed playback title separately instead of rewriting the target title.",

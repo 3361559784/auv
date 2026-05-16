@@ -55,13 +55,12 @@ And now also a formal playback recipe:
 - `recipes/macos/qqmusic/play-visible-anchor.v0.json`
 
 It is intentionally not advertised as a generic recipe manifest yet. The
-current validation still depends on one captured-image verification trick:
+current validation is:
 
 1. run the broader `search-ocr-anchor` chain
 2. double-click a visible row anchor
-3. capture post-click evidence
-4. run OCR against the captured evidence image, restricted to the bottom-player
-   title region
+3. press the result play control
+4. verify the now-playing title through the AX tree
 
 That is enough to validate one narrow playback baseline, but it is not yet a
 generic `qqmusic.play_song` contract.
@@ -214,9 +213,10 @@ Current case-matrix truth:
 Current row-fallback case truth:
 
 - `ascii-aa-row-fallback` is validated
-- `chinese-query-row-fallback` is a candidate for row-based fallback
-- Chinese candidate keeps `target_title=晴天` and separate `observed_playback_title=天空仍灿烂`
+- `chinese-query-row-fallback` is validated for row-based fallback activation
+- Chinese validated case keeps `target_title=晴天` and separate `observed_playback_title=天空仍灿烂`
 - Row-fallback verification now prefers AX tree title matching over screenshot OCR for the current now-playing title
+- Chinese target-title disambiguation is now verified through row activation plus now-playing AX verification
 
 The current verification direction is:
 

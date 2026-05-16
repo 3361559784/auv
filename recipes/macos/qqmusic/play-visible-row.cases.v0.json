@@ -12,17 +12,18 @@
         "target_title": "Cure For Me - AURORA",
         "observed_playback_title": "Cure For Me - AURORA",
         "target_artist": "",
+        "result_title_artist_scope_path_prefix": "0.8",
         "now_playing_scope_path_prefix": "0.4.4"
       },
       "disturbance": "pointer",
       "notes": [
         "This is the current canonical row-based playback fallback baseline.",
-        "Validated through the formal row recipe and captured-image OCR verification."
+        "Validated through the formal row recipe and AX now-playing verification."
       ]
     },
     {
       "case_id": "chinese-query-row-fallback",
-      "status": "candidate",
+      "status": "validated",
       "inputs": {
         "query": "周杰伦",
         "row_index": "1",
@@ -35,7 +36,7 @@
       "notes": [
         "Chinese OCR anchor resolution is no longer the gating signal for this case.",
         "Use this case to validate row-based fallback activation for the Chinese result page.",
-        "The target title remains 晴天, but the current observed playback title is 天空仍灿烂."
+        "The target title remains 晴天, and the current observed playback title is now verified through the AX tree."
       ]
     }
   ]

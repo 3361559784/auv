@@ -375,17 +375,28 @@ pub(super) fn verify_now_playing_title(call: &DriverCall) -> AuvResult<DriverRes
     scope_path_prefix.as_deref(),
   )
   .ok_or_else(|| {
-    let mut detail = format!("no matching now-playing node found for target_title {}", expected_title);
+    let mut detail = format!(
+      "no matching now-playing node found for target_title {}",
+      expected_title
+    );
     if let Some(artist) = expected_artist.as_deref() {
       detail.push_str(&format!(" and target_artist {}", artist));
     }
     detail
   })?;
-  let report = render_ax_interaction_report("verify-now-playing-title", &snapshot, matched, &expected_title);
+  let report = render_ax_interaction_report(
+    "verify-now-playing-title",
+    &snapshot,
+    matched,
+    &expected_title,
+  );
   let artifact = build_text_artifact(
     "verify-now-playing-title",
     "txt",
-    &format!("verify-now-playing-title-{}", sanitize_file_component(&expected_title)),
+    &format!(
+      "verify-now-playing-title-{}",
+      sanitize_file_component(&expected_title)
+    ),
     report,
     "Captured an AX tree snapshot and matched the current now-playing title without relying on screenshot OCR.",
   )?;
@@ -416,7 +427,11 @@ pub(super) fn verify_now_playing_title(call: &DriverCall) -> AuvResult<DriverRes
     summary: format!(
       "Verified now-playing title {} in {} through the AX tree.",
       expected_title,
-      if snapshot.app_name.is_empty() { "target app" } else { &snapshot.app_name }
+      if snapshot.app_name.is_empty() {
+        "target app"
+      } else {
+        &snapshot.app_name
+      }
     ),
     backend: Some("macos.observe.verify-now-playing-title".to_string()),
     notes,

@@ -913,6 +913,37 @@ pub(super) fn find_now_playing_ax_node<'a>(
     .map(|(_, node)| node)
 }
 
+fn ax_node_search_text(node: &ObservedAxNode) -> String {
+  let searchable = [
+    node.title.as_str(),
+    node.description.as_str(),
+    node.help.as_str(),
+    node.identifier.as_str(),
+    node.placeholder.as_str(),
+    node.value.as_str(),
+  ]
+  .into_iter()
+  .filter_map(|value| {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+      None
+    } else {
+      Some(trimmed)
+    }
+  })
+  .collect::<Vec<_>>()
+  .join(" ");
+  normalize_ax_text(&searchable)
+}
+
+fn normalize_ax_text(value: &str) -> String {
+  value
+    .chars()
+    .filter(|character| !character.is_whitespace())
+  .collect::<String>()
+    .to_lowercase()
+}
+
 fn score_now_playing_ax_node_match(
   node: &ObservedAxNode,
   expected_title: &str,
@@ -945,29 +976,6 @@ fn score_now_playing_ax_node_match(
   }
 
   Some(score)
-}
-
-fn ax_node_search_text(node: &ObservedAxNode) -> String {
-  [
-    node.title.as_str(),
-    node.description.as_str(),
-    node.help.as_str(),
-    node.identifier.as_str(),
-    node.placeholder.as_str(),
-    node.value.as_str(),
-  ]
-  .into_iter()
-  .filter_map(|value| {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-      None
-    } else {
-      Some(trimmed)
-    }
-  })
-  .collect::<Vec<_>>()
-  .join(" ")
-  .to_lowercase()
 }
 
 pub(super) fn no_matching_ax_node_error(

@@ -25,8 +25,8 @@ use self::control::{
 use self::observe::{
   capture_screen, find_image_text, find_screen_rows, find_screen_text, identify_point,
   observe_window_tree, observe_windows, probe_coordinate_readiness, probe_displays,
-  probe_permissions, project_screenshot_point, wait_for_screen_rows, wait_for_screen_text,
-  verify_now_playing_title,
+  probe_permissions, project_screenshot_point, verify_now_playing_title, wait_for_screen_rows,
+  wait_for_screen_text,
 };
 use self::support::*;
 pub(crate) use self::support::{copy_file, sanitized_artifact_name};

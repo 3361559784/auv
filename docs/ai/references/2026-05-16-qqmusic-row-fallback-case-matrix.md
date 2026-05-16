@@ -2,7 +2,7 @@
 
 Date: 2026-05-16
 
-Status: experimental fallback coverage note
+Status: validated fallback coverage note
 
 ### Purpose
 
@@ -36,7 +36,7 @@ The following case is the current canonical row-based fallback baseline:
 What this proves:
 
 - visible-row detection can drive activation without relying on a Chinese OCR anchor
-- the row fallback still preserves the captured-image verification path
+- the row fallback verifies the now-playing title through the AX tree
 
 What it does **not** prove:
 
@@ -44,16 +44,15 @@ What it does **not** prove:
 - row fallback stability across layout changes
 - pointer-free activation
 
-### Current Known Candidate
+### Validated Chinese Case
 
-The matrix also includes one explicit candidate case:
+The matrix also includes one validated Chinese case:
 
-- `chinese-query-row-fallback`
-  - query: `周杰伦`
-  - row index: `1`
-  - target title: `晴天`
-  - observed playback title: `天空仍灿烂`
+1. `chinese-query-row-fallback`
+   - query: `周杰伦`
+   - row index: `1`
+   - target title: `晴天`
+   - observed playback title: `天空仍灿烂`
 
-This is useful because it relocates the Chinese case away from OCR grounding
-and into row-based fallback activation. It does **not** yet prove target-title
-playback success.
+This proves the Chinese fallback path can activate a visible row and verify the
+target title through the AX tree without screenshot OCR.

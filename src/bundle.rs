@@ -67,6 +67,10 @@ pub struct SkillBundleMember {
   pub contract: String,
   #[serde(default, rename = "evidenceRefs")]
   pub evidence_refs: Vec<String>,
+  #[serde(default, rename = "appBundleId")]
+  pub app_bundle_id: String,
+  #[serde(default, rename = "targetApplication")]
+  pub target_application: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Default)]

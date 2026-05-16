@@ -5,6 +5,7 @@ use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process;
+use std::process::Command;
 
 use auv_cli::build_default_runtime;
 use auv_cli::bundle::SkillBundleCatalog;
@@ -303,6 +304,12 @@ fn verify_bundle(
       entry.manifest.metadata.id
     ));
   }
+  if entry.manifest.metadata.status.trim().is_empty() {
+    return Err(format!(
+      "bundle {} must have a non-empty metadata.status",
+      entry.manifest.metadata.id
+    ));
+  }
   if entry.manifest.metadata.version.trim().is_empty() {
     return Err(format!(
       "bundle {} must have a non-empty metadata.version",
@@ -358,7 +365,6 @@ fn verify_bundle(
       entry.manifest.metadata.id, entry.manifest.versions.auv, runtime_version
     ));
   }
-
   let mut seen = std::collections::BTreeSet::new();
   for member in &entry.manifest.members {
     if member.recipe_id.trim().is_empty() {
@@ -379,12 +385,38 @@ fn verify_bundle(
         entry.manifest.metadata.id
       ));
     }
+    if member.contract.trim().is_empty() {
+      return Err(format!(
+        "bundle {} member {} must declare contract",
+        entry.manifest.metadata.id, member.recipe_id
+      ));
+    }
     skill_catalog.resolve_recipe_id(&member.recipe_id).map_err(|error| {
       format!(
         "bundle {} references unknown recipe {}: {error}",
         entry.manifest.metadata.id, member.recipe_id
       )
     })?;
+    if !member.target_application.trim().is_empty() {
+      let member_target_req =
+        semver::VersionReq::parse(&member.target_application).map_err(|error| {
+          format!(
+            "bundle {} member {} has invalid targetApplication {}: {error}",
+          entry.manifest.metadata.id, member.recipe_id, member.target_application
+        )
+      })?;
+    let member_app_version =
+      resolve_member_target_app_version(skill_catalog, &member.recipe_id, &member.app_bundle_id)?;
+      if !member_target_req.matches(&member_app_version) {
+        return Err(format!(
+          "bundle {} member {} requires targetApplication {} but app version is {}",
+          entry.manifest.metadata.id,
+          member.recipe_id,
+          member.target_application,
+          member_app_version
+        ));
+      }
+    }
 
     let case_matrix_entry = case_matrix_catalog
       .resolve(project_root, &member.case_matrix_id)
@@ -440,4 +472,106 @@ fn verify_bundle(
   }
 
   Ok(())
+}
+
+fn resolve_member_target_app_version(
+  skill_catalog: &SkillCatalog,
+  recipe_id: &str,
+  app_bundle_id: &str,
+) -> Result<semver::Version, String> {
+  if app_bundle_id.trim().is_empty() {
+    return Err(format!(
+      "bundle member for recipe {} does not declare appBundleId",
+      recipe_id
+    ));
+  }
+
+  skill_catalog.resolve_recipe_id(recipe_id)?;
+  let app_path = resolve_installed_app_path(app_bundle_id)?;
+  let version = read_app_version(&app_path)?;
+  semver::Version::parse(&version).map_err(|error| {
+    format!(
+      "installed app version {} for {} is not parseable: {error}",
+      version, app_bundle_id
+    )
+  })
+}
+
+fn resolve_installed_app_path(bundle_id: &str) -> Result<PathBuf, String> {
+  let query = format!(r#"kMDItemCFBundleIdentifier == "{}""#, bundle_id);
+  let output = Command::new("mdfind")
+    .arg(query)
+    .output()
+    .map_err(|error| format!("failed to run mdfind for {bundle_id}: {error}"))?;
+  if !output.status.success() {
+    return Err(format!(
+      "mdfind failed for {bundle_id}: {}",
+      String::from_utf8_lossy(&output.stderr).trim()
+    ));
+  }
+
+  let stdout = String::from_utf8_lossy(&output.stdout);
+  let Some(path) = stdout.lines().map(str::trim).find(|line| !line.is_empty())
+  else {
+    return Err(format!("no installed app found for bundle id {bundle_id}"));
+  };
+
+  Ok(PathBuf::from(path))
+}
+
+fn read_app_version(app_path: &Path) -> Result<String, String> {
+  let info_plist = app_path.join("Contents").join("Info.plist");
+  if !info_plist.exists() {
+    return Err(format!(
+      "missing Info.plist for app bundle {}",
+      app_path.display()
+    ));
+  }
+
+  let short_version = read_plist_value(&info_plist, "CFBundleShortVersionString")
+    .or_else(|_| read_plist_value(&info_plist, "CFBundleVersion"))?;
+  normalize_semver_version(&short_version)
+}
+
+fn read_plist_value(info_plist: &Path, key: &str) -> Result<String, String> {
+  let output = Command::new("/usr/libexec/PlistBuddy")
+    .args(["-c", &format!("Print {key}"), &info_plist.display().to_string()])
+    .output()
+    .map_err(|error| format!("failed to read {key} from {}: {error}", info_plist.display()))?;
+  if !output.status.success() {
+    return Err(format!(
+      "PlistBuddy failed reading {key} from {}: {}",
+      info_plist.display(),
+      String::from_utf8_lossy(&output.stderr).trim()
+    ));
+  }
+  Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn normalize_semver_version(raw: &str) -> Result<String, String> {
+  let trimmed = raw.trim();
+  if trimmed.is_empty() {
+    return Err("empty version string".to_string());
+  }
+  if semver::Version::parse(trimmed).is_ok() {
+    return Ok(trimmed.to_string());
+  }
+
+  let parts = trimmed.split('.').collect::<Vec<_>>();
+  if parts.is_empty() || parts.iter().any(|part| part.trim().is_empty()) {
+    return Err(format!("invalid dotted version string {trimmed}"));
+  }
+
+  let mut normalized = parts
+    .iter()
+    .take(3)
+    .map(|part| part.trim().to_string())
+    .collect::<Vec<_>>();
+  while normalized.len() < 3 {
+    normalized.push("0".to_string());
+  }
+  let candidate = normalized.join(".");
+  semver::Version::parse(&candidate)
+    .map(|_| candidate)
+    .map_err(|error| format!("version {trimmed} could not be normalized: {error}"))
 }

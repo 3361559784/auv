@@ -29,6 +29,8 @@
         "chinese-query-chinese-anchor"
       ],
       "contract": "verifyNowPlayingTitle",
+      "appBundleId": "com.tencent.QQMusicMac",
+      "targetApplication": ">=11.1.1, <12.0.0",
       "evidenceRefs": [
         "docs/ai/references/2026-05-15-qqmusic-playback-verification.md",
         "docs/ai/references/2026-05-15-qqmusic-play-visible-anchor-skill-v0.json"
@@ -42,6 +44,8 @@
         "notes-marker-baseline"
       ],
       "contract": "verifyAxText",
+      "appBundleId": "com.apple.Notes",
+      "targetApplication": ">=4.13.0, <5.0.0",
       "evidenceRefs": [
         "docs/ai/references/2026-05-17-notes-ax-text-sample.md"
       ]
@@ -54,6 +58,8 @@
         "textedit-marker-baseline"
       ],
       "contract": "verifyAxText",
+      "appBundleId": "com.apple.TextEdit",
+      "targetApplication": ">=1.20.0, <2.0.0",
       "evidenceRefs": [
         "recipes/macos/textedit/README.md"
       ]

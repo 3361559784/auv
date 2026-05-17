@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 use serde::Deserialize;
 use serde_json::Value;
 
+use crate::catalog::default_command_catalog;
 use crate::driver::{clear_stale_lock_file, describe_lock_owner};
 use crate::model::{AuvResult, DisturbanceClass, ExecutionTarget, InvokeRequest, InvokeResult};
 use crate::runtime::Runtime;
@@ -323,7 +324,7 @@ pub fn run_skill(
   options: SkillRunOptions,
 ) -> AuvResult<()> {
   let manifest = &entry.manifest;
-  validate_skill_manifest(manifest)?;
+  validate_skill_manifest_with_commands(manifest, runtime.list_commands())?;
   let mut variables = default_inputs(manifest)?;
   for (key, value) in options.overrides {
     variables.insert(key, value);
@@ -378,10 +379,18 @@ pub fn run_skill(
 }
 
 pub(crate) fn validate_skill_manifest(manifest: &SkillManifest) -> AuvResult<()> {
+  let command_catalog = default_command_catalog();
+  validate_skill_manifest_with_commands(manifest, command_catalog.all())
+}
+
+pub(crate) fn validate_skill_manifest_with_commands(
+  manifest: &SkillManifest,
+  command_catalog: &[crate::model::CommandSpec],
+) -> AuvResult<()> {
   validate_skill_identity(manifest)?;
   validate_skill_target_app(manifest)?;
   validate_skill_inputs(manifest)?;
-  validate_skill_steps(manifest)?;
+  validate_skill_steps(manifest, command_catalog)?;
   validate_skill_verification(manifest)?;
   Ok(())
 }
@@ -453,7 +462,10 @@ fn validate_skill_inputs(manifest: &SkillManifest) -> AuvResult<()> {
   Ok(())
 }
 
-fn validate_skill_steps(manifest: &SkillManifest) -> AuvResult<()> {
+fn validate_skill_steps(
+  manifest: &SkillManifest,
+  command_catalog: &[crate::model::CommandSpec],
+) -> AuvResult<()> {
   if manifest.steps.is_empty() {
     return Err(format!(
       "skill {} must declare at least one step",
@@ -473,6 +485,15 @@ fn validate_skill_steps(manifest: &SkillManifest) -> AuvResult<()> {
         manifest.recipe_id, step_label
       ));
     }
+    let Some(command) = command_catalog
+      .iter()
+      .find(|command| command.id == step.command_id)
+    else {
+      return Err(format!(
+        "skill {} step {} references unknown command_id {}",
+        manifest.recipe_id, step_label, step.command_id
+      ));
+    };
     if step.disturbance.max.trim().is_empty() {
       return Err(format!(
         "skill {} step {} must declare disturbance.max",
@@ -493,12 +514,22 @@ fn validate_skill_steps(manifest: &SkillManifest) -> AuvResult<()> {
         )
       })?;
     }
-    parse_step_max(step).map_err(|error| {
+    let step_max = parse_step_max(step).map_err(|error| {
       format!(
         "skill {} step {} has invalid disturbance.max {}: {error}",
         manifest.recipe_id, step_label, step.disturbance.max
       )
     })?;
+    if step_max > command.max_disturbance {
+      return Err(format!(
+        "skill {} step {} uses disturbance.max {} above command {} max {}",
+        manifest.recipe_id,
+        step_label,
+        step_max.as_str(),
+        command.id,
+        command.max_disturbance.as_str()
+      ));
+    }
 
     for key in step.args.keys() {
       if key.trim().is_empty() {
@@ -535,7 +566,11 @@ pub fn run_skill_case_matrix(
   options: SkillCaseRunOptions,
 ) -> AuvResult<()> {
   let skill_entry = skill_catalog.resolve_recipe_id(&matrix_entry.matrix.skill_id)?;
-  validate_case_matrix_against_skill(&skill_entry.manifest, &matrix_entry.matrix)?;
+  validate_case_matrix_against_skill_with_commands(
+    &skill_entry.manifest,
+    &matrix_entry.matrix,
+    runtime.list_commands(),
+  )?;
   let cases = select_cases(&matrix_entry.matrix, &options)?;
   let selected_case_count = cases.len();
 
@@ -588,7 +623,12 @@ pub fn render_skill_case_matrix_report(
   skill_entry: &SkillCatalogEntry,
   matrix_entry: &SkillCaseMatrixEntry,
 ) -> AuvResult<String> {
-  validate_case_matrix_against_skill(&skill_entry.manifest, &matrix_entry.matrix)?;
+  let command_catalog = default_command_catalog();
+  validate_case_matrix_against_skill_with_commands(
+    &skill_entry.manifest,
+    &matrix_entry.matrix,
+    command_catalog.all(),
+  )?;
 
   let manifest = &skill_entry.manifest;
   let matrix = &matrix_entry.matrix;
@@ -1004,6 +1044,49 @@ pub(crate) fn validate_case_matrix_against_skill(
   Ok(())
 }
 
+pub(crate) fn validate_case_matrix_against_skill_with_commands(
+  manifest: &SkillManifest,
+  matrix: &SkillCaseMatrix,
+  command_catalog: &[crate::model::CommandSpec],
+) -> AuvResult<()> {
+  validate_case_matrix_against_skill(manifest, matrix)?;
+
+  for step in &manifest.steps {
+    let Some(command) = command_catalog
+      .iter()
+      .find(|command| command.id == step.command_id)
+    else {
+      return Err(format!(
+        "skill {} step {} references unknown command_id {}",
+        manifest.recipe_id,
+        if step.id.trim().is_empty() {
+          &step.command_id
+        } else {
+          &step.id
+        },
+        step.command_id
+      ));
+    };
+    let step_max = parse_step_max(step)?;
+    if step_max > command.max_disturbance {
+      return Err(format!(
+        "skill {} step {} uses disturbance.max {} above command {} max {}",
+        manifest.recipe_id,
+        if step.id.trim().is_empty() {
+          &step.command_id
+        } else {
+          &step.id
+        },
+        step_max.as_str(),
+        command.id,
+        command.max_disturbance.as_str()
+      ));
+    }
+  }
+
+  Ok(())
+}
+
 fn parse_step_max(step: &SkillStep) -> AuvResult<DisturbanceClass> {
   if step.disturbance.max.is_empty() {
     Ok(DisturbanceClass::None)
@@ -1303,8 +1386,9 @@ mod tests {
     SkillCaseMatrix, SkillCaseMatrixCatalog, SkillCatalog, SkillManifest, default_inputs,
     export_step_variables, is_image_artifact, render_template, render_value,
     sanitize_lock_component, validate_case_matrix_against_skill, validate_case_matrix_manifest,
-    validate_skill_manifest,
+    validate_skill_manifest, validate_skill_manifest_with_commands,
   };
+  use crate::catalog::default_command_catalog;
   use crate::model::{InvokeResult, RunStatus, now_millis};
 
   #[test]
@@ -1491,6 +1575,80 @@ mod tests {
     .expect("manifest should deserialize");
 
     validate_skill_manifest(&manifest).expect("manifest should validate");
+  }
+
+  #[test]
+  fn validate_skill_manifest_rejects_unknown_command_id() {
+    let manifest: SkillManifest = serde_json::from_value(json!({
+      "recipe_id": "test.skill",
+      "version": "0.1.0",
+      "status": "experimental-recipe",
+      "platform": "macOS",
+      "target_app": { "bundle_id": "app", "display_mode": "live-desktop" },
+      "objective": "test",
+      "inputs": {
+        "query": { "type": "string", "default": "aa" }
+      },
+      "disturbance_policy": {
+        "max_disturbance": "pointer",
+        "declared_classes": ["pointer"]
+      },
+      "steps": [{
+        "id": "step-1",
+        "command_id": "debug.doesNotExist",
+        "disturbance": {
+          "classes": ["none"],
+          "max": "none"
+        }
+      }],
+      "verification": {
+        "expected_signals": ["signal"],
+        "success_criteria": ["criteria"]
+      }
+    }))
+    .expect("manifest should deserialize");
+
+    let catalog = default_command_catalog();
+    let error = validate_skill_manifest_with_commands(&manifest, catalog.all())
+      .expect_err("unknown command should fail");
+    assert!(error.contains("unknown command_id"));
+  }
+
+  #[test]
+  fn validate_skill_manifest_rejects_step_disturbance_above_command_max() {
+    let manifest: SkillManifest = serde_json::from_value(json!({
+      "recipe_id": "test.skill",
+      "version": "0.1.0",
+      "status": "experimental-recipe",
+      "platform": "macOS",
+      "target_app": { "bundle_id": "app", "display_mode": "live-desktop" },
+      "objective": "test",
+      "inputs": {
+        "query": { "type": "string", "default": "aa" }
+      },
+      "disturbance_policy": {
+        "max_disturbance": "pointer",
+        "declared_classes": ["pointer"]
+      },
+      "steps": [{
+        "id": "step-1",
+        "command_id": "debug.observeWindows",
+        "disturbance": {
+          "classes": ["pointer"],
+          "max": "pointer"
+        }
+      }],
+      "verification": {
+        "expected_signals": ["signal"],
+        "success_criteria": ["criteria"]
+      }
+    }))
+    .expect("manifest should deserialize");
+
+    let catalog = default_command_catalog();
+    let error = validate_skill_manifest_with_commands(&manifest, catalog.all())
+      .expect_err("step disturbance above command max should fail");
+    assert!(error.contains("above command"));
   }
 
   #[test]
@@ -1681,5 +1839,54 @@ mod tests {
     let error = validate_case_matrix_against_skill(&manifest, &matrix)
       .expect_err("missing required input should fail");
     assert!(error.contains("missing required input"));
+  }
+
+  #[test]
+  fn validate_case_matrix_against_skill_rejects_mismatched_skill_id() {
+    let manifest: SkillManifest = serde_json::from_value(json!({
+      "recipe_id": "test.skill",
+      "version": "0.1.0",
+      "status": "experimental-recipe",
+      "platform": "macOS",
+      "target_app": { "bundle_id": "app", "display_mode": "live-desktop" },
+      "objective": "test",
+      "inputs": {
+        "query": { "type": "string", "default": "aa" }
+      },
+      "disturbance_policy": {
+        "max_disturbance": "pointer",
+        "declared_classes": ["pointer"]
+      },
+      "steps": [{
+        "command_id": "debug.captureScreen",
+        "disturbance": {
+          "classes": ["none"],
+          "max": "none"
+        }
+      }],
+      "verification": {
+        "expected_signals": ["signal"],
+        "success_criteria": ["criteria"]
+      }
+    }))
+    .expect("manifest should deserialize");
+    let matrix: SkillCaseMatrix = serde_json::from_value(json!({
+      "skill_id": "other.skill",
+      "version": "0.1.0",
+      "status": "active-case-matrix",
+      "cases": [{
+        "case_id": "baseline",
+        "status": "validated",
+        "inputs": {
+          "query": "aa"
+        },
+        "disturbance": "none"
+      }]
+    }))
+    .expect("matrix should deserialize");
+
+    let error = validate_case_matrix_against_skill(&manifest, &matrix)
+      .expect_err("mismatched skill id should fail");
+    assert!(error.contains("does not match skill"));
   }
 }

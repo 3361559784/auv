@@ -18,9 +18,19 @@ calls, and future UI surfaces on the same execution model.
 
 ## Project Structure & Module Organization
 
-To be implemented. The repository layout is still provisional and should be
-updated once core crates, runtime modules, driver modules, tests, and durable
-documentation locations are decided.
+Current repository structure:
+
+- `src/runtime.rs`: implicit run execution and artifact persistence
+- `src/catalog.rs`: command catalog and default command definitions
+- `src/skill.rs`: recipe and case-matrix loading, validation, and execution
+- `src/bundle.rs`: bundle export, bundle verification, and package verification
+- `src/driver/macos/`: macOS driver implementation, dispatch, support, and tests
+- `recipes/`: executable recipe manifests and case matrices
+- `bundles/`: bundle manifests
+- `docs/ai/references/`: durable reference notes, coverage reports, and evidence packs
+
+The CLI is a frontend over the shared runtime, not the only architecture
+surface.
 
 ## Build, Test, and Development Commands
 
@@ -48,10 +58,10 @@ through code names too early.
 
 ## Testing Guidelines
 
-There is no dedicated test suite yet. Add focused unit tests near the code they
-cover with `#[cfg(test)]`, and add integration tests under `tests/` once CLI or
-runtime behavior becomes stable. Name tests after the behavior being verified,
-for example `creates_run_for_each_invoke`.
+Focused unit tests live next to the code they cover with `#[cfg(test)]`.
+The current repo already has Rust unit coverage for catalog, skill, bundle,
+runtime, driver, and CLI behavior. Add regression tests for behavior changes
+and keep them narrow.
 
 Use `cargo test` for the full suite and include regression tests for bug fixes.
 
@@ -81,3 +91,13 @@ documents are the source of truth while the work is underway.
 When an implementation is mostly complete, update durable reference material in
 `docs/ai/references/`. Add, merge, or revise reference docs so completed and
 partially completed work is discoverable outside the original plan or spec.
+
+## Validation Commands
+
+- `cargo fmt --check`
+- `cargo check`
+- `cargo test`
+- `git diff --check`
+- `cargo run --quiet -- list-commands`
+- `cargo run --quiet -- skill cases list`
+- `cargo run --quiet -- skill bundle list`

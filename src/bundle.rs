@@ -1,6 +1,5 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use serde::Deserialize;
 
@@ -434,19 +433,26 @@ pub fn export_bundle(
     })?;
     for evidence_ref in &member.evidence_refs {
       let evidence_source = project_root.join(evidence_ref);
-      if evidence_source.exists() {
-        let destination = evidence_refs_dir.join(sanitized_bundle_package_name(evidence_ref));
-        if evidence_source.is_dir() {
-          copy_directory(&evidence_source, &destination)?;
-        } else {
-          fs::copy(&evidence_source, &destination).map_err(|error| {
-            format!(
-              "failed to copy evidence ref {} -> {}: {error}",
-              evidence_source.display(),
-              destination.display()
-            )
-          })?;
-        }
+      if !evidence_source.exists() {
+        return Err(format!(
+          "bundle {} member {} references missing evidence ref {} at {}",
+          entry.manifest.metadata.id,
+          member.recipe_id,
+          evidence_ref,
+          evidence_source.display()
+        ));
+      }
+      let destination = evidence_refs_dir.join(sanitized_bundle_package_name(evidence_ref));
+      if evidence_source.is_dir() {
+        copy_directory(&evidence_source, &destination)?;
+      } else {
+        fs::copy(&evidence_source, &destination).map_err(|error| {
+          format!(
+            "failed to copy evidence ref {} -> {}: {error}",
+            evidence_source.display(),
+            destination.display()
+          )
+        })?;
       }
     }
 
@@ -910,7 +916,7 @@ pub fn verify_bundle(
       entry.manifest.metadata.id
     ));
   }
-  let bundle_target_application = validate_bundle_target_application_scope(entry)?;
+  let _bundle_target_application = validate_bundle_target_application_scope(entry)?;
   if entry.manifest.members.is_empty() {
     return Err(format!(
       "bundle {} has no members",
@@ -948,18 +954,6 @@ pub fn verify_bundle(
       entry.manifest.metadata.id, entry.manifest.versions.auv, runtime_version
     ));
   }
-  if let Some((bundle_app_bundle_id, bundle_target_req)) = bundle_target_application {
-    let bundle_app_version = resolve_installed_app_version(&bundle_app_bundle_id)?;
-    if !bundle_target_req.matches(&bundle_app_version) {
-      return Err(format!(
-        "bundle {} requires targetApplication {} but app {} version is {}",
-        entry.manifest.metadata.id,
-        entry.manifest.versions.target_application,
-        bundle_app_bundle_id,
-        bundle_app_version
-      ));
-    }
-  }
   let mut seen = std::collections::BTreeSet::new();
   for member in &entry.manifest.members {
     if member.recipe_id.trim().is_empty() {
@@ -995,22 +989,16 @@ pub fn verify_bundle(
         )
       })?;
     if !member.target_application.trim().is_empty() {
-      let member_target_req =
-        semver::VersionReq::parse(&member.target_application).map_err(|error| {
-          format!(
-            "bundle {} member {} has invalid targetApplication {}: {error}",
-            entry.manifest.metadata.id, member.recipe_id, member.target_application
-          )
-        })?;
-      let member_app_version =
-        resolve_member_target_app_version(skill_catalog, &member.recipe_id, &member.app_bundle_id)?;
-      if !member_target_req.matches(&member_app_version) {
+      semver::VersionReq::parse(&member.target_application).map_err(|error| {
+        format!(
+          "bundle {} member {} has invalid targetApplication {}: {error}",
+          entry.manifest.metadata.id, member.recipe_id, member.target_application
+        )
+      })?;
+      if member.app_bundle_id.trim().is_empty() {
         return Err(format!(
-          "bundle {} member {} requires targetApplication {} but app version is {}",
-          entry.manifest.metadata.id,
-          member.recipe_id,
-          member.target_application,
-          member_app_version
+          "bundle {} member {} declares targetApplication {} but no appBundleId",
+          entry.manifest.metadata.id, member.recipe_id, member.target_application
         ));
       }
     }
@@ -1363,10 +1351,6 @@ fn verify_exported_bundle_package(
     }
 
     for evidence_ref in &member.evidence_refs {
-      let source = project_root.join(evidence_ref);
-      if !source.exists() {
-        continue;
-      }
       let exported = evidence_dir.join(sanitized_bundle_package_name(evidence_ref));
       if !exported.exists() {
         return Err(format!(
@@ -1925,128 +1909,25 @@ fn validate_bundle_target_application_scope(
   Ok(Some((app_bundle_id, target_req)))
 }
 
-fn resolve_member_target_app_version(
-  skill_catalog: &SkillCatalog,
-  recipe_id: &str,
-  app_bundle_id: &str,
-) -> Result<semver::Version, String> {
-  if app_bundle_id.trim().is_empty() {
-    return Err(format!(
-      "bundle member for recipe {} does not declare appBundleId",
-      recipe_id
-    ));
-  }
-
-  skill_catalog.resolve_recipe_id(recipe_id)?;
-  resolve_installed_app_version(app_bundle_id)
-}
-
-fn resolve_installed_app_version(app_bundle_id: &str) -> Result<semver::Version, String> {
-  let app_path = resolve_installed_app_path(app_bundle_id)?;
-  let version = read_app_version(&app_path)?;
-  semver::Version::parse(&version).map_err(|error| {
-    format!(
-      "installed app version {} for {} is not parseable: {error}",
-      version, app_bundle_id
-    )
-  })
-}
-
-fn resolve_installed_app_path(bundle_id: &str) -> Result<PathBuf, String> {
-  let query = format!(r#"kMDItemCFBundleIdentifier == "{}""#, bundle_id);
-  let output = Command::new("mdfind")
-    .arg(query)
-    .output()
-    .map_err(|error| format!("failed to run mdfind for {bundle_id}: {error}"))?;
-  if !output.status.success() {
-    return Err(format!(
-      "mdfind failed for {bundle_id}: {}",
-      String::from_utf8_lossy(&output.stderr).trim()
-    ));
-  }
-
-  let stdout = String::from_utf8_lossy(&output.stdout);
-  let Some(path) = stdout.lines().map(str::trim).find(|line| !line.is_empty()) else {
-    return Err(format!("no installed app found for bundle id {bundle_id}"));
-  };
-
-  Ok(PathBuf::from(path))
-}
-
-fn read_app_version(app_path: &Path) -> Result<String, String> {
-  let info_plist = app_path.join("Contents").join("Info.plist");
-  if !info_plist.exists() {
-    return Err(format!(
-      "missing Info.plist for app bundle {}",
-      app_path.display()
-    ));
-  }
-
-  let short_version = read_plist_value(&info_plist, "CFBundleShortVersionString")
-    .or_else(|_| read_plist_value(&info_plist, "CFBundleVersion"))?;
-  normalize_semver_version(&short_version)
-}
-
-fn read_plist_value(info_plist: &Path, key: &str) -> Result<String, String> {
-  let output = Command::new("/usr/libexec/PlistBuddy")
-    .args([
-      "-c",
-      &format!("Print {key}"),
-      &info_plist.display().to_string(),
-    ])
-    .output()
-    .map_err(|error| {
-      format!(
-        "failed to read {key} from {}: {error}",
-        info_plist.display()
-      )
-    })?;
-  if !output.status.success() {
-    return Err(format!(
-      "PlistBuddy failed reading {key} from {}: {}",
-      info_plist.display(),
-      String::from_utf8_lossy(&output.stderr).trim()
-    ));
-  }
-  Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
-}
-
-fn normalize_semver_version(raw: &str) -> Result<String, String> {
-  let trimmed = raw.trim();
-  if trimmed.is_empty() {
-    return Err("empty version string".to_string());
-  }
-  if semver::Version::parse(trimmed).is_ok() {
-    return Ok(trimmed.to_string());
-  }
-
-  let parts = trimmed.split('.').collect::<Vec<_>>();
-  if parts.is_empty() || parts.iter().any(|part| part.trim().is_empty()) {
-    return Err(format!("invalid dotted version string {trimmed}"));
-  }
-
-  let mut normalized = parts
-    .iter()
-    .take(3)
-    .map(|part| part.trim().to_string())
-    .collect::<Vec<_>>();
-  while normalized.len() < 3 {
-    normalized.push("0".to_string());
-  }
-  let candidate = normalized.join(".");
-  semver::Version::parse(&candidate)
-    .map(|_| candidate)
-    .map_err(|error| format!("version {trimmed} could not be normalized: {error}"))
-}
-
 #[cfg(test)]
 mod tests {
   use super::*;
   use std::env;
   use std::fs;
+  use std::sync::atomic::{AtomicU64, Ordering};
 
   use crate::model::now_millis;
   use crate::skill::SkillCaseMatrixCatalog;
+
+  fn unique_test_suffix() -> String {
+    static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
+    format!(
+      "{}-{}-{}",
+      now_millis(),
+      std::process::id(),
+      TEST_COUNTER.fetch_add(1, Ordering::Relaxed)
+    )
+  }
 
   #[test]
   fn bundle_catalog_discovers_bundle_manifests_only() {
@@ -2182,6 +2063,106 @@ mod tests {
     assert!(scope.1.matches(&semver::Version::parse("1.4.0").unwrap()));
   }
 
+  fn copy_fixture_file(source_project_root: &Path, temp_project_root: &Path, relative: &str) {
+    let source = source_project_root.join(relative);
+    let destination = temp_project_root.join(relative);
+    if let Some(parent) = destination.parent() {
+      fs::create_dir_all(parent).expect("destination parent should exist");
+    }
+    fs::copy(&source, &destination).expect("fixture file should copy");
+  }
+
+  fn write_temp_file(temp_project_root: &Path, relative: &str, contents: &str) {
+    let destination = temp_project_root.join(relative);
+    if let Some(parent) = destination.parent() {
+      fs::create_dir_all(parent).expect("destination parent should exist");
+    }
+    fs::write(&destination, contents).expect("temp fixture file should write");
+  }
+
+  fn write_temp_bundle_manifest(
+    temp_project_root: &Path,
+    evidence_refs: &[&str],
+    app_bundle_id: &str,
+    member_target_application: &str,
+    bundle_target_application: &str,
+  ) {
+    let bundle_path = temp_project_root.join("bundles/test/evidence-check.v0.json");
+    if let Some(parent) = bundle_path.parent() {
+      fs::create_dir_all(parent).expect("bundle parent should exist");
+    }
+    let value = serde_json::json!({
+      "apiVersion": "auv.ai/v1alpha1",
+      "kind": "SkillBundle",
+      "metadata": {
+        "id": "test.evidence.check.v0",
+        "name": "Evidence Check Bundle",
+        "version": "0.1.0",
+        "status": "working"
+      },
+      "target": {
+        "applicationFamily": "native-macos-apps",
+        "platform": "macOS"
+      },
+      "versions": {
+        "auv": ">=0.0.1, <0.1.0",
+        "targetApplication": bundle_target_application
+      },
+      "members": [
+        {
+          "recipeId": "macos.textedit.create_and_verify_text.v0",
+          "caseMatrixId": "macos.textedit.create_and_verify_text.v0",
+          "role": "native-text-sample",
+          "validatedCaseIds": ["textedit-marker-baseline"],
+          "candidateCaseIds": [],
+          "contract": "verifyAxText",
+          "appBundleId": app_bundle_id,
+          "targetApplication": member_target_application,
+          "coverageSummary": {
+            "activationStatus": "validated",
+            "semanticSelectionStatus": "not-applicable",
+            "validatedClaims": ["TextEdit marker insertion and AX text verification are validated on macOS."],
+            "boundaryClaims": ["This member is a native text sample, not a music-selection skill."]
+          },
+          "evidenceRefs": evidence_refs,
+        }
+      ],
+      "verification": {
+        "expectedSignals": ["evidence contract"],
+        "successCriteria": ["evidence refs must be present"],
+        "nonGoals": [],
+      },
+      "knownLimits": []
+    });
+    fs::write(
+      &bundle_path,
+      serde_json::to_string_pretty(&value).expect("bundle manifest should serialize"),
+    )
+    .expect("bundle manifest should write");
+  }
+
+  fn temp_bundle_project_root() -> PathBuf {
+    let source_project_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let temp_project_root =
+      env::temp_dir().join(format!("auv-bundle-evidence-{}", unique_test_suffix()));
+    copy_fixture_file(
+      &source_project_root,
+      &temp_project_root,
+      "recipes/macos/textedit/create-and-verify-text.v0.json",
+    );
+    copy_fixture_file(
+      &source_project_root,
+      &temp_project_root,
+      "recipes/macos/textedit/create-and-verify-text.cases.v0.json",
+    );
+    write_temp_file(
+      &temp_project_root,
+      "docs/ai/references/2026-05-17-qqmusic-narrow-skill-coverage.md",
+      "temporary evidence fixture for bundle verification tests\n",
+    );
+    temp_project_root
+  }
+
   #[test]
   fn export_bundle_writes_self_consistent_package() {
     let project_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -2194,7 +2175,8 @@ mod tests {
       .resolve(&project_root, "native.app.skill-tree.v0")
       .expect("bundle should resolve");
 
-    let output_dir = env::temp_dir().join(format!("auv-bundle-export-verify-{}", now_millis()));
+    let output_dir =
+      env::temp_dir().join(format!("auv-bundle-export-verify-{}", unique_test_suffix()));
     export_bundle(
       &project_root,
       &skill_catalog,
@@ -2227,5 +2209,126 @@ mod tests {
     }
 
     let _ = fs::remove_dir_all(output_dir);
+  }
+
+  #[test]
+  fn export_bundle_rejects_missing_evidence_refs() {
+    let project_root = temp_bundle_project_root();
+    write_temp_bundle_manifest(
+      &project_root,
+      &["docs/ai/references/missing-evidence.md"],
+      "",
+      "",
+      "",
+    );
+
+    let skill_catalog = SkillCatalog::discover(&project_root).expect("skill catalog should load");
+    let case_matrix_catalog =
+      SkillCaseMatrixCatalog::discover(&project_root).expect("case catalog should load");
+    let bundle_catalog =
+      SkillBundleCatalog::discover(&project_root).expect("bundle catalog should load");
+    let entry = bundle_catalog
+      .resolve(&project_root, "test.evidence.check.v0")
+      .expect("bundle should resolve");
+    let output_dir = env::temp_dir().join(format!(
+      "auv-bundle-export-missing-{}",
+      unique_test_suffix()
+    ));
+
+    let error = export_bundle(
+      &project_root,
+      &skill_catalog,
+      &case_matrix_catalog,
+      entry,
+      output_dir,
+    )
+    .expect_err("missing evidence refs should fail export");
+    assert!(error.contains("missing evidence ref"));
+
+    let _ = fs::remove_dir_all(project_root);
+  }
+
+  #[test]
+  fn standalone_package_verify_requires_exported_evidence_refs() {
+    let project_root = temp_bundle_project_root();
+    write_temp_bundle_manifest(
+      &project_root,
+      &["docs/ai/references/2026-05-17-qqmusic-narrow-skill-coverage.md"],
+      "",
+      "",
+      "",
+    );
+
+    let skill_catalog = SkillCatalog::discover(&project_root).expect("skill catalog should load");
+    let case_matrix_catalog =
+      SkillCaseMatrixCatalog::discover(&project_root).expect("case catalog should load");
+    let bundle_catalog =
+      SkillBundleCatalog::discover(&project_root).expect("bundle catalog should load");
+    let entry = bundle_catalog
+      .resolve(&project_root, "test.evidence.check.v0")
+      .expect("bundle should resolve");
+    let output_dir =
+      env::temp_dir().join(format!("auv-bundle-export-verify-{}", unique_test_suffix()));
+
+    export_bundle(
+      &project_root,
+      &skill_catalog,
+      &case_matrix_catalog,
+      entry,
+      output_dir.clone(),
+    )
+    .expect("bundle export should succeed");
+
+    let package_root = output_dir.join(sanitized_bundle_package_name(&entry.manifest.metadata.id));
+    let exported_evidence = package_root
+      .join("members")
+      .join(sanitized_bundle_package_name(
+        "macos.textedit.create_and_verify_text.v0",
+      ))
+      .join("evidence")
+      .join(sanitized_bundle_package_name(
+        "docs/ai/references/2026-05-17-qqmusic-narrow-skill-coverage.md",
+      ));
+    fs::remove_file(&exported_evidence).expect("evidence export should be removable");
+
+    let error = verify_exported_bundle_package_standalone(&package_root)
+      .expect_err("missing exported evidence refs should fail standalone verify");
+    assert!(error.contains("missing"));
+
+    let _ = fs::remove_dir_all(output_dir);
+    let _ = fs::remove_dir_all(project_root);
+  }
+
+  #[test]
+  fn verify_bundle_does_not_probe_installed_app_versions() {
+    let project_root = temp_bundle_project_root();
+    write_temp_bundle_manifest(
+      &project_root,
+      &["docs/ai/references/2026-05-17-qqmusic-narrow-skill-coverage.md"],
+      "com.example.DoesNotExist",
+      ">=1.0.0",
+      "",
+    );
+
+    let runtime_version = "0.0.1";
+    let skill_catalog = SkillCatalog::discover(&project_root).expect("skill catalog should load");
+    let case_matrix_catalog =
+      SkillCaseMatrixCatalog::discover(&project_root).expect("case catalog should load");
+    let bundle_catalog =
+      SkillBundleCatalog::discover(&project_root).expect("bundle catalog should load");
+    let entry = bundle_catalog
+      .resolve(&project_root, "test.evidence.check.v0")
+      .expect("bundle should resolve");
+
+    verify_bundle(
+      &project_root,
+      runtime_version,
+      &skill_catalog,
+      &case_matrix_catalog,
+      entry,
+    )
+    .expect("bundle verification should not depend on installed app versions");
+
+    let _ = fs::remove_dir_all(project_root);
   }
 }

@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 
 use auv_cli::model::{AuvResult, DisturbanceClass, ExecutionTarget, InvokeRequest};
 
+#[derive(Debug)]
 pub enum CliCommand {
   Help,
   ListCommands,
@@ -16,6 +17,9 @@ pub enum CliCommand {
   },
   SkillBundleList,
   SkillBundleShow {
+    query: String,
+  },
+  SkillBundleCoverage {
     query: String,
   },
   SkillBundleVerify {
@@ -82,6 +86,7 @@ USAGE
   auv-cli skill show <skill-id-or-path>
   auv-cli skill bundle list
   auv-cli skill bundle show <bundle-id-or-path>
+  auv-cli skill bundle coverage <bundle-id-or-path>
   auv-cli skill bundle verify <bundle-id-or-path>
   auv-cli skill bundle export <bundle-id-or-path> <output-dir>
   auv-cli skill bundle package verify <package-dir>
@@ -199,7 +204,7 @@ fn parse_skill(arguments: &[String]) -> AuvResult<CliCommand> {
 
 fn parse_skill_bundle(arguments: &[String]) -> AuvResult<CliCommand> {
   if arguments.len() < 3 {
-    return Err("usage: auv-cli skill bundle <list|show|verify|export> ...".to_string());
+    return Err("usage: auv-cli skill bundle <list|show|coverage|verify|export> ...".to_string());
   }
 
   match arguments[2].as_str() {
@@ -214,6 +219,14 @@ fn parse_skill_bundle(arguments: &[String]) -> AuvResult<CliCommand> {
         return Err("usage: auv-cli skill bundle show <bundle-id-or-path>".to_string());
       }
       Ok(CliCommand::SkillBundleShow {
+        query: arguments[3].clone(),
+      })
+    }
+    "coverage" => {
+      if arguments.len() != 4 {
+        return Err("usage: auv-cli skill bundle coverage <bundle-id-or-path>".to_string());
+      }
+      Ok(CliCommand::SkillBundleCoverage {
         query: arguments[3].clone(),
       })
     }
@@ -247,6 +260,29 @@ fn parse_skill_bundle(arguments: &[String]) -> AuvResult<CliCommand> {
     other => Err(format!(
       "unknown skill bundle subcommand {other}; use `auv-cli skill bundle list`"
     )),
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn parse_skill_bundle_coverage_command() {
+    let command = parse_cli(&[
+      "skill".to_string(),
+      "bundle".to_string(),
+      "coverage".to_string(),
+      "native.app.skill-tree.v0".to_string(),
+    ])
+    .expect("bundle coverage command should parse");
+
+    match command {
+      CliCommand::SkillBundleCoverage { query } => {
+        assert_eq!(query, "native.app.skill-tree.v0");
+      }
+      other => panic!("unexpected command: {other:?}"),
+    }
   }
 }
 

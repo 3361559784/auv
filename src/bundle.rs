@@ -1635,7 +1635,7 @@ fn render_bundle_package_member(
   )
 }
 
-fn render_bundle_package_coverage(
+pub fn render_bundle_package_coverage(
   entry: &SkillBundleCatalogEntry,
   skill_catalog: &SkillCatalog,
   case_matrix_catalog: &SkillCaseMatrixCatalog,

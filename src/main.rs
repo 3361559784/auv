@@ -6,7 +6,8 @@ use std::process;
 
 use auv_cli::build_default_runtime;
 use auv_cli::bundle::{
-  SkillBundleCatalog, export_bundle, verify_bundle, verify_exported_bundle_package_standalone,
+  SkillBundleCatalog, export_bundle, render_bundle_package_coverage, verify_bundle,
+  verify_exported_bundle_package_standalone,
 };
 use auv_cli::model::RunStatus;
 use auv_cli::skill::{
@@ -141,6 +142,13 @@ fn run() -> Result<(), String> {
           "failed to render bundle manifest {}: {error}",
           entry.path.display()
         ))?
+      );
+    }
+    CliCommand::SkillBundleCoverage { query } => {
+      let entry = bundle_catalog.resolve(&project_root, &query)?;
+      print!(
+        "{}",
+        render_bundle_package_coverage(entry, &skill_catalog, &case_matrix_catalog, &project_root,)?
       );
     }
     CliCommand::SkillBundleVerify { query } => {

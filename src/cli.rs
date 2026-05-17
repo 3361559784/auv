@@ -25,6 +25,9 @@ pub enum CliCommand {
     query: String,
     output_dir: String,
   },
+  SkillBundlePackageVerify {
+    package_dir: String,
+  },
   SkillCasesList,
   SkillCasesShow {
     query: String,
@@ -78,6 +81,7 @@ USAGE
   auv-cli skill bundle show <bundle-id-or-path>
   auv-cli skill bundle verify <bundle-id-or-path>
   auv-cli skill bundle export <bundle-id-or-path> <output-dir>
+  auv-cli skill bundle package verify <package-dir>
   auv-cli skill cases list
   auv-cli skill cases show <matrix-id-or-path>
   auv-cli skill cases run <matrix-id-or-path> [--case <case-id>] [--all-statuses] [--dry-run] [--max-disturbance <class>]
@@ -226,6 +230,14 @@ fn parse_skill_bundle(arguments: &[String]) -> AuvResult<CliCommand> {
       Ok(CliCommand::SkillBundleExport {
         query: arguments[3].clone(),
         output_dir: arguments[4].clone(),
+      })
+    }
+    "package" => {
+      if arguments.len() != 5 || arguments[3].as_str() != "verify" {
+        return Err("usage: auv-cli skill bundle package verify <package-dir>".to_string());
+      }
+      Ok(CliCommand::SkillBundlePackageVerify {
+        package_dir: arguments[4].clone(),
       })
     }
     other => Err(format!(

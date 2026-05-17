@@ -377,7 +377,7 @@ pub fn run_skill(
   Ok(())
 }
 
-fn validate_skill_manifest(manifest: &SkillManifest) -> AuvResult<()> {
+pub(crate) fn validate_skill_manifest(manifest: &SkillManifest) -> AuvResult<()> {
   validate_skill_identity(manifest)?;
   validate_skill_target_app(manifest)?;
   validate_skill_inputs(manifest)?;
@@ -760,7 +760,7 @@ fn validate_disturbance_policy(
   Ok(active_max)
 }
 
-fn validate_case_matrix_manifest(matrix: &SkillCaseMatrix) -> AuvResult<()> {
+pub(crate) fn validate_case_matrix_manifest(matrix: &SkillCaseMatrix) -> AuvResult<()> {
   if matrix.skill_id.trim().is_empty() {
     return Err("case matrix skill_id must not be empty".to_string());
   }
@@ -840,7 +840,7 @@ fn validate_case_matrix_manifest(matrix: &SkillCaseMatrix) -> AuvResult<()> {
   Ok(())
 }
 
-fn validate_case_matrix_against_skill(
+pub(crate) fn validate_case_matrix_against_skill(
   manifest: &SkillManifest,
   matrix: &SkillCaseMatrix,
 ) -> AuvResult<()> {

@@ -5,7 +5,9 @@ use std::path::PathBuf;
 use std::process;
 
 use auv_cli::build_default_runtime;
-use auv_cli::bundle::{SkillBundleCatalog, export_bundle, verify_bundle};
+use auv_cli::bundle::{
+  SkillBundleCatalog, export_bundle, verify_bundle, verify_exported_bundle_package_standalone,
+};
 use auv_cli::model::RunStatus;
 use auv_cli::skill::{SkillCaseMatrixCatalog, SkillCatalog, run_skill, run_skill_case_matrix};
 use cli::{CliCommand, help_text, parse_cli};
@@ -169,6 +171,13 @@ fn run() -> Result<(), String> {
       )?;
       println!("bundle: {}", entry.manifest.metadata.id);
       println!("status: exported");
+    }
+    CliCommand::SkillBundlePackageVerify { package_dir } => {
+      let package_root = PathBuf::from(package_dir);
+      let bundle_id = verify_exported_bundle_package_standalone(&package_root)?;
+      println!("bundle: {}", bundle_id);
+      println!("status: verified");
+      println!("package: {}", package_root.display());
     }
     CliCommand::SkillCasesList => {
       for entry in case_matrix_catalog.entries() {

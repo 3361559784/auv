@@ -5,7 +5,10 @@ use std::process::Command;
 use serde::Deserialize;
 
 use crate::model::AuvResult;
-use crate::skill::{SkillCaseMatrixCatalog, SkillCatalog};
+use crate::skill::{
+  SkillCaseMatrix, SkillCaseMatrixCatalog, SkillCatalog, SkillManifest,
+  validate_case_matrix_against_skill, validate_case_matrix_manifest, validate_skill_manifest,
+};
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct SkillBundleManifest {
@@ -480,6 +483,272 @@ pub fn export_bundle(
   )?;
 
   Ok(())
+}
+
+pub fn verify_exported_bundle_package_standalone(package_root: &Path) -> Result<String, String> {
+  let bundle_manifest_path = package_root.join("bundle.json");
+  let package_manifest_path = package_root.join("package.json");
+  let index_path = package_root.join("index.txt");
+  let readme_path = package_root.join("README.md");
+  let members_root = package_root.join("members");
+
+  for required in [
+    &bundle_manifest_path,
+    &package_manifest_path,
+    &index_path,
+    &readme_path,
+    &members_root,
+  ] {
+    if !required.exists() {
+      return Err(format!(
+        "exported bundle package is missing {}",
+        required.display()
+      ));
+    }
+  }
+
+  let bundle_manifest: SkillBundleManifest =
+    serde_json::from_value(read_json_file(&bundle_manifest_path)?).map_err(|error| {
+      format!(
+        "failed to parse exported bundle manifest {}: {error}",
+        bundle_manifest_path.display()
+      )
+    })?;
+  let package_manifest: ExportedBundlePackageManifest =
+    serde_json::from_value(read_json_file(&package_manifest_path)?).map_err(|error| {
+      format!(
+        "failed to parse exported package manifest {}: {error}",
+        package_manifest_path.display()
+      )
+    })?;
+
+  if package_manifest.bundle_id != bundle_manifest.metadata.id
+    || package_manifest.bundle_name != bundle_manifest.metadata.name
+    || package_manifest.bundle_version != bundle_manifest.metadata.version
+    || package_manifest.bundle_status != bundle_manifest.metadata.status
+    || package_manifest.versions.auv != bundle_manifest.versions.auv
+    || package_manifest.versions.target_application != bundle_manifest.versions.target_application
+    || package_manifest.verification.expected_signals
+      != bundle_manifest.verification.expected_signals
+    || package_manifest.verification.success_criteria
+      != bundle_manifest.verification.success_criteria
+    || package_manifest.verification.non_goals != bundle_manifest.verification.non_goals
+    || package_manifest.known_limits != bundle_manifest.known_limits
+  {
+    return Err(format!(
+      "exported package manifest {} does not match bundle manifest {}",
+      package_manifest_path.display(),
+      bundle_manifest_path.display()
+    ));
+  }
+
+  if package_manifest.members.len() != bundle_manifest.members.len() {
+    return Err(format!(
+      "exported package member count {} does not match bundle member count {}",
+      package_manifest.members.len(),
+      bundle_manifest.members.len()
+    ));
+  }
+
+  for member in &bundle_manifest.members {
+    let Some(package_member) = package_manifest
+      .members
+      .iter()
+      .find(|candidate| candidate.recipe_id == member.recipe_id)
+    else {
+      return Err(format!(
+        "exported package is missing member {}",
+        member.recipe_id
+      ));
+    };
+
+    if package_member.case_matrix_id != member.case_matrix_id
+      || package_member.role != member.role
+      || package_member.contract != member.contract
+      || package_member.app_bundle_id != member.app_bundle_id
+      || package_member.target_application != member.target_application
+      || package_member.validated_case_ids != member.validated_case_ids
+      || package_member.candidate_case_ids != member.candidate_case_ids
+      || package_member.evidence_refs != member.evidence_refs
+    {
+      return Err(format!(
+        "exported package metadata for member {} does not match bundle manifest",
+        member.recipe_id
+      ));
+    }
+
+    let expected_package_dir = bundle_member_relative_dir(&member.recipe_id);
+    if package_member.package_dir != expected_package_dir {
+      return Err(format!(
+        "exported package member {} declares packageDir {} but expected {}",
+        member.recipe_id, package_member.package_dir, expected_package_dir
+      ));
+    }
+
+    let member_dir = package_root.join(&expected_package_dir);
+    let recipe_export_path =
+      package_root.join(bundle_member_recipe_relative_path(&member.recipe_id));
+    let cases_export_path = package_root.join(bundle_member_cases_relative_path(&member.recipe_id));
+    let evidence_export_path =
+      package_root.join(bundle_member_evidence_relative_path(&member.recipe_id));
+    let summary_export_path =
+      package_root.join(bundle_member_summary_relative_path(&member.recipe_id));
+    let evidence_dir = package_root.join(bundle_member_evidence_relative_dir(&member.recipe_id));
+
+    for required in [
+      &member_dir,
+      &recipe_export_path,
+      &cases_export_path,
+      &evidence_export_path,
+      &summary_export_path,
+      &evidence_dir,
+    ] {
+      if !required.exists() {
+        return Err(format!(
+          "exported package member {} is missing {}",
+          member.recipe_id,
+          required.display()
+        ));
+      }
+    }
+
+    let recipe_manifest: SkillManifest =
+      serde_json::from_value(read_json_file(&recipe_export_path)?).map_err(|error| {
+        format!(
+          "failed to parse exported recipe {}: {error}",
+          recipe_export_path.display()
+        )
+      })?;
+    validate_skill_manifest(&recipe_manifest).map_err(|error| {
+      format!(
+        "exported recipe {} failed manifest validation: {error}",
+        recipe_export_path.display()
+      )
+    })?;
+    if recipe_manifest.recipe_id != member.recipe_id {
+      return Err(format!(
+        "exported recipe {} declares recipe_id {} but bundle member expects {}",
+        recipe_export_path.display(),
+        recipe_manifest.recipe_id,
+        member.recipe_id
+      ));
+    }
+
+    let case_matrix: SkillCaseMatrix = serde_json::from_value(read_json_file(&cases_export_path)?)
+      .map_err(|error| {
+        format!(
+          "failed to parse exported case matrix {}: {error}",
+          cases_export_path.display()
+        )
+      })?;
+    validate_case_matrix_manifest(&case_matrix).map_err(|error| {
+      format!(
+        "exported case matrix {} failed validation: {error}",
+        cases_export_path.display()
+      )
+    })?;
+    validate_case_matrix_against_skill(&recipe_manifest, &case_matrix).map_err(|error| {
+      format!(
+        "exported case matrix {} does not match recipe {}: {error}",
+        cases_export_path.display(),
+        recipe_export_path.display()
+      )
+    })?;
+    if case_matrix.skill_id != member.case_matrix_id {
+      return Err(format!(
+        "exported case matrix {} declares skill_id {} but bundle member expects {}",
+        cases_export_path.display(),
+        case_matrix.skill_id,
+        member.case_matrix_id
+      ));
+    }
+
+    for validated_case_id in &member.validated_case_ids {
+      let Some(case) = case_matrix
+        .cases
+        .iter()
+        .find(|case| case.case_id == *validated_case_id)
+      else {
+        return Err(format!(
+          "exported package references missing validated case {} in {}",
+          validated_case_id,
+          cases_export_path.display()
+        ));
+      };
+      if case.status != "validated" {
+        return Err(format!(
+          "exported package validated case {} in {} has status {}",
+          validated_case_id,
+          cases_export_path.display(),
+          case.status
+        ));
+      }
+    }
+
+    for candidate_case_id in &member.candidate_case_ids {
+      if !case_matrix
+        .cases
+        .iter()
+        .any(|case| case.case_id == *candidate_case_id)
+      {
+        return Err(format!(
+          "exported package references missing candidate case {} in {}",
+          candidate_case_id,
+          cases_export_path.display()
+        ));
+      }
+    }
+
+    let evidence_text = fs::read_to_string(&evidence_export_path).map_err(|error| {
+      format!(
+        "failed to read exported evidence index {}: {error}",
+        evidence_export_path.display()
+      )
+    })?;
+    if evidence_text != render_bundle_member_evidence(member) {
+      return Err(format!(
+        "exported evidence index {} does not match bundle member {}",
+        evidence_export_path.display(),
+        member.recipe_id
+      ));
+    }
+
+    for evidence_ref in &member.evidence_refs {
+      let exported = evidence_dir.join(sanitized_bundle_package_name(evidence_ref));
+      if !exported.exists() {
+        return Err(format!(
+          "exported evidence {} for member {} is missing",
+          exported.display(),
+          member.recipe_id
+        ));
+      }
+    }
+  }
+
+  let index_text = fs::read_to_string(&index_path).map_err(|error| {
+    format!(
+      "failed to read exported index {}: {error}",
+      index_path.display()
+    )
+  })?;
+  let mut expected_index_lines = vec![
+    format!("bundleId={}", bundle_manifest.metadata.id),
+    format!("bundleName={}", bundle_manifest.metadata.name),
+    format!("sourceManifest={}", package_manifest.source_manifest),
+    "members=".to_string(),
+  ];
+  for member in &bundle_manifest.members {
+    expected_index_lines.push(render_bundle_index_member_line(member));
+  }
+  let expected_index = expected_index_lines.join("\n") + "\n";
+  if index_text != expected_index {
+    return Err(format!(
+      "exported index {} does not match expected bundle index contract",
+      index_path.display()
+    ));
+  }
+
+  Ok(bundle_manifest.metadata.id)
 }
 
 pub fn verify_bundle(
@@ -1532,6 +1801,9 @@ mod tests {
       &package_root,
     )
     .expect("exported bundle package should self-verify");
+    let bundle_id = verify_exported_bundle_package_standalone(&package_root)
+      .expect("exported bundle package should standalone-verify");
+    assert_eq!(bundle_id, entry.manifest.metadata.id);
 
     let package_manifest: ExportedBundlePackageManifest = serde_json::from_value(
       read_json_file(&package_root.join("package.json")).expect("package manifest should read"),

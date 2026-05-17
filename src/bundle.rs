@@ -6,8 +6,9 @@ use serde::Deserialize;
 
 use crate::model::AuvResult;
 use crate::skill::{
-  SkillCaseMatrix, SkillCaseMatrixCatalog, SkillCatalog, SkillManifest,
-  validate_case_matrix_against_skill, validate_case_matrix_manifest, validate_skill_manifest,
+  SkillCaseMatrix, SkillCaseMatrixCatalog, SkillCaseMatrixEntry, SkillCatalog, SkillCatalogEntry,
+  SkillManifest, render_skill_case_matrix_report, validate_case_matrix_against_skill,
+  validate_case_matrix_manifest, validate_skill_manifest,
 };
 
 #[derive(Clone, Debug, Deserialize)]
@@ -213,6 +214,8 @@ struct ExportedBundlePackageManifest {
   source_manifest: String,
   #[serde(rename = "projectRoot")]
   project_root: String,
+  #[serde(rename = "coverageReport")]
+  coverage_report: String,
   versions: ExportedBundlePackageVersions,
   members: Vec<ExportedBundlePackageMember>,
   verification: ExportedBundlePackageVerification,
@@ -247,6 +250,8 @@ struct ExportedBundlePackageMember {
   evidence_refs: Vec<String>,
   #[serde(rename = "packageDir")]
   package_dir: String,
+  #[serde(rename = "coverageReport")]
+  coverage_report: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -392,6 +397,18 @@ pub fn export_bundle(
       )
     })?;
 
+    let coverage_path = member_dir.join("coverage.md");
+    fs::write(
+      &coverage_path,
+      render_skill_case_matrix_report(recipe_entry, case_matrix_entry)?,
+    )
+    .map_err(|error| {
+      format!(
+        "failed to write bundle member coverage report {}: {error}",
+        coverage_path.display()
+      )
+    })?;
+
     let evidence_refs_dir = member_dir.join("evidence");
     fs::create_dir_all(&evidence_refs_dir).map_err(|error| {
       format!(
@@ -435,6 +452,18 @@ pub fn export_bundle(
     )
   })?;
 
+  let coverage_path = package_root.join("coverage.md");
+  fs::write(
+    &coverage_path,
+    render_bundle_package_coverage(entry, skill_catalog, case_matrix_catalog, project_root)?,
+  )
+  .map_err(|error| {
+    format!(
+      "failed to write bundle export coverage report {}: {error}",
+      coverage_path.display()
+    )
+  })?;
+
   let readme_path = package_root.join("README.md");
   let mut readme = String::new();
   readme.push_str(&format!("# {}\n\n", entry.manifest.metadata.name));
@@ -443,10 +472,12 @@ pub fn export_bundle(
   readme.push_str("Contents:\n");
   readme.push_str("- `bundle.json`: canonical bundle manifest\n");
   readme.push_str("- `index.txt`: compact package index for downstream consumers\n\n");
+  readme.push_str("- `coverage.md`: bundle-level coverage and boundary summary\n\n");
   readme.push_str("- `members/<recipe-id>/recipe.json`: copied recipe manifest\n");
   readme.push_str("- `members/<recipe-id>/cases.json`: copied case matrix\n");
   readme.push_str("- `members/<recipe-id>/evidence.txt`: member evidence index\n");
   readme.push_str("- `members/<recipe-id>/summary.txt`: member summary\n\n");
+  readme.push_str("- `members/<recipe-id>/coverage.md`: member coverage report\n\n");
   readme.push_str("Source manifest:\n");
   readme.push_str(&format!("- `{}`\n", entry.path.display()));
   readme.push_str("\nMembers:\n");
@@ -489,6 +520,7 @@ pub fn verify_exported_bundle_package_standalone(package_root: &Path) -> Result<
   let bundle_manifest_path = package_root.join("bundle.json");
   let package_manifest_path = package_root.join("package.json");
   let index_path = package_root.join("index.txt");
+  let coverage_path = package_root.join("coverage.md");
   let readme_path = package_root.join("README.md");
   let members_root = package_root.join("members");
 
@@ -496,6 +528,7 @@ pub fn verify_exported_bundle_package_standalone(package_root: &Path) -> Result<
     &bundle_manifest_path,
     &package_manifest_path,
     &index_path,
+    &coverage_path,
     &readme_path,
     &members_root,
   ] {
@@ -526,6 +559,7 @@ pub fn verify_exported_bundle_package_standalone(package_root: &Path) -> Result<
     || package_manifest.bundle_name != bundle_manifest.metadata.name
     || package_manifest.bundle_version != bundle_manifest.metadata.version
     || package_manifest.bundle_status != bundle_manifest.metadata.status
+    || package_manifest.coverage_report != "coverage.md"
     || package_manifest.versions.auv != bundle_manifest.versions.auv
     || package_manifest.versions.target_application != bundle_manifest.versions.target_application
     || package_manifest.verification.expected_signals
@@ -584,6 +618,14 @@ pub fn verify_exported_bundle_package_standalone(package_root: &Path) -> Result<
         member.recipe_id, package_member.package_dir, expected_package_dir
       ));
     }
+    if package_member.coverage_report != bundle_member_coverage_relative_path(&member.recipe_id) {
+      return Err(format!(
+        "exported package member {} declares coverageReport {} but expected {}",
+        member.recipe_id,
+        package_member.coverage_report,
+        bundle_member_coverage_relative_path(&member.recipe_id)
+      ));
+    }
 
     let member_dir = package_root.join(&expected_package_dir);
     let recipe_export_path =
@@ -593,6 +635,8 @@ pub fn verify_exported_bundle_package_standalone(package_root: &Path) -> Result<
       package_root.join(bundle_member_evidence_relative_path(&member.recipe_id));
     let summary_export_path =
       package_root.join(bundle_member_summary_relative_path(&member.recipe_id));
+    let coverage_export_path =
+      package_root.join(bundle_member_coverage_relative_path(&member.recipe_id));
     let evidence_dir = package_root.join(bundle_member_evidence_relative_dir(&member.recipe_id));
 
     for required in [
@@ -601,6 +645,7 @@ pub fn verify_exported_bundle_package_standalone(package_root: &Path) -> Result<
       &cases_export_path,
       &evidence_export_path,
       &summary_export_path,
+      &coverage_export_path,
       &evidence_dir,
     ] {
       if !required.exists() {
@@ -713,6 +758,30 @@ pub fn verify_exported_bundle_package_standalone(package_root: &Path) -> Result<
       ));
     }
 
+    let coverage_text = fs::read_to_string(&coverage_export_path).map_err(|error| {
+      format!(
+        "failed to read exported member coverage {}: {error}",
+        coverage_export_path.display()
+      )
+    })?;
+    let expected_coverage = render_skill_case_matrix_report(
+      &SkillCatalogEntry {
+        manifest: recipe_manifest.clone(),
+        path: recipe_export_path.clone(),
+      },
+      &SkillCaseMatrixEntry {
+        matrix: case_matrix.clone(),
+        path: cases_export_path.clone(),
+      },
+    )?;
+    if coverage_text != expected_coverage {
+      return Err(format!(
+        "exported member coverage {} does not match bundle member {}",
+        coverage_export_path.display(),
+        member.recipe_id
+      ));
+    }
+
     for evidence_ref in &member.evidence_refs {
       let exported = evidence_dir.join(sanitized_bundle_package_name(evidence_ref));
       if !exported.exists() {
@@ -745,6 +814,20 @@ pub fn verify_exported_bundle_package_standalone(package_root: &Path) -> Result<
     return Err(format!(
       "exported index {} does not match expected bundle index contract",
       index_path.display()
+    ));
+  }
+
+  let coverage_text = fs::read_to_string(&coverage_path).map_err(|error| {
+    format!(
+      "failed to read exported bundle coverage {}: {error}",
+      coverage_path.display()
+    )
+  })?;
+  let expected_coverage = render_bundle_standalone_coverage(&bundle_manifest, &package_manifest);
+  if coverage_text != expected_coverage {
+    return Err(format!(
+      "exported bundle coverage {} does not match expected bundle coverage contract",
+      coverage_path.display()
     ));
   }
 
@@ -1015,6 +1098,7 @@ fn verify_exported_bundle_package(
   let bundle_manifest_path = package_root.join("bundle.json");
   let package_manifest_path = package_root.join("package.json");
   let index_path = package_root.join("index.txt");
+  let coverage_path = package_root.join("coverage.md");
   let readme_path = package_root.join("README.md");
   let members_root = package_root.join("members");
 
@@ -1022,6 +1106,7 @@ fn verify_exported_bundle_package(
     &bundle_manifest_path,
     &package_manifest_path,
     &index_path,
+    &coverage_path,
     &readme_path,
     &members_root,
   ] {
@@ -1089,6 +1174,12 @@ fn verify_exported_bundle_package(
       project_root.display()
     ));
   }
+  if package_manifest.coverage_report != "coverage.md" {
+    return Err(format!(
+      "exported package coverageReport {} does not match expected coverage.md",
+      package_manifest.coverage_report
+    ));
+  }
   if package_manifest.versions.auv != entry.manifest.versions.auv
     || package_manifest.versions.target_application != entry.manifest.versions.target_application
   {
@@ -1148,6 +1239,14 @@ fn verify_exported_bundle_package(
         member.recipe_id, package_member.package_dir, expected_package_dir
       ));
     }
+    if package_member.coverage_report != bundle_member_coverage_relative_path(&member.recipe_id) {
+      return Err(format!(
+        "exported package member {} declares coverageReport {} but expected {}",
+        member.recipe_id,
+        package_member.coverage_report,
+        bundle_member_coverage_relative_path(&member.recipe_id)
+      ));
+    }
 
     let member_dir = package_root.join(&expected_package_dir);
     let recipe_entry = skill_catalog.resolve_recipe_id(&member.recipe_id)?;
@@ -1159,6 +1258,8 @@ fn verify_exported_bundle_package(
       package_root.join(bundle_member_evidence_relative_path(&member.recipe_id));
     let summary_export_path =
       package_root.join(bundle_member_summary_relative_path(&member.recipe_id));
+    let coverage_export_path =
+      package_root.join(bundle_member_coverage_relative_path(&member.recipe_id));
     let evidence_dir = package_root.join(bundle_member_evidence_relative_dir(&member.recipe_id));
 
     for required in [
@@ -1167,6 +1268,7 @@ fn verify_exported_bundle_package(
       &cases_export_path,
       &evidence_export_path,
       &summary_export_path,
+      &coverage_export_path,
       &evidence_dir,
     ] {
       if !required.exists() {
@@ -1227,6 +1329,21 @@ fn verify_exported_bundle_package(
       ));
     }
 
+    let coverage_text = fs::read_to_string(&coverage_export_path).map_err(|error| {
+      format!(
+        "failed to read exported member coverage {}: {error}",
+        coverage_export_path.display()
+      )
+    })?;
+    let expected_coverage = render_skill_case_matrix_report(recipe_entry, case_matrix_entry)?;
+    if coverage_text != expected_coverage {
+      return Err(format!(
+        "exported member coverage {} does not match source member {}",
+        coverage_export_path.display(),
+        member.recipe_id
+      ));
+    }
+
     for evidence_ref in &member.evidence_refs {
       let source = project_root.join(evidence_ref);
       if !source.exists() {
@@ -1266,6 +1383,21 @@ fn verify_exported_bundle_package(
     ));
   }
 
+  let coverage_text = fs::read_to_string(&coverage_path).map_err(|error| {
+    format!(
+      "failed to read exported bundle coverage {}: {error}",
+      coverage_path.display()
+    )
+  })?;
+  let expected_coverage =
+    render_bundle_package_coverage(entry, skill_catalog, case_matrix_catalog, project_root)?;
+  if coverage_text != expected_coverage {
+    return Err(format!(
+      "exported bundle coverage {} does not match source bundle coverage contract",
+      coverage_path.display()
+    ));
+  }
+
   Ok(())
 }
 
@@ -1298,6 +1430,7 @@ fn render_bundle_package_manifest(
         "candidateCaseIds": member.candidate_case_ids,
         "evidenceRefs": member.evidence_refs,
         "packageDir": member_path,
+        "coverageReport": bundle_member_coverage_relative_path(&member.recipe_id),
       })
     })
     .collect::<Vec<_>>();
@@ -1313,6 +1446,7 @@ fn render_bundle_package_manifest(
     },
     "sourceManifest": entry.path.display().to_string(),
     "projectRoot": project_root.display().to_string(),
+    "coverageReport": "coverage.md",
     "members": members,
     "verification": {
       "expectedSignals": entry.manifest.verification.expected_signals,
@@ -1349,6 +1483,10 @@ fn bundle_member_evidence_relative_path(recipe_id: &str) -> String {
 
 fn bundle_member_summary_relative_path(recipe_id: &str) -> String {
   format!("{}/summary.txt", bundle_member_relative_dir(recipe_id))
+}
+
+fn bundle_member_coverage_relative_path(recipe_id: &str) -> String {
+  format!("{}/coverage.md", bundle_member_relative_dir(recipe_id))
 }
 
 fn render_bundle_index_member_line(member: &SkillBundleMember) -> String {
@@ -1437,6 +1575,173 @@ fn render_bundle_package_member(
     recipe_path.display(),
     case_matrix_path.display()
   )
+}
+
+fn render_bundle_package_coverage(
+  entry: &SkillBundleCatalogEntry,
+  skill_catalog: &SkillCatalog,
+  case_matrix_catalog: &SkillCaseMatrixCatalog,
+  project_root: &Path,
+) -> Result<String, String> {
+  let mut output = String::new();
+  output.push_str(&format!(
+    "# Bundle Coverage: {}\n\n",
+    entry.manifest.metadata.id
+  ));
+  output.push_str(&format!(
+    "- bundle name: `{}`\n",
+    entry.manifest.metadata.name
+  ));
+  output.push_str(&format!(
+    "- bundle version: `{}`\n",
+    entry.manifest.metadata.version
+  ));
+  output.push_str(&format!(
+    "- bundle status: `{}`\n",
+    entry.manifest.metadata.status
+  ));
+  output.push_str(&format!(
+    "- target family: `{}` on `{}`\n",
+    entry.manifest.target.application_family, entry.manifest.target.platform
+  ));
+  output.push_str(&format!(
+    "- member count: `{}`\n\n",
+    entry.manifest.members.len()
+  ));
+
+  output.push_str("## Known Limits\n\n");
+  if entry.manifest.known_limits.is_empty() {
+    output.push_str("- none declared\n");
+  } else {
+    for limit in &entry.manifest.known_limits {
+      output.push_str(&format!("- {}\n", limit));
+    }
+  }
+
+  output.push_str("\n## Member Coverage\n\n");
+  for member in &entry.manifest.members {
+    let _recipe_entry = skill_catalog.resolve_recipe_id(&member.recipe_id)?;
+    let _case_matrix_entry = case_matrix_catalog.resolve(project_root, &member.case_matrix_id)?;
+    output.push_str(&format!("### {}\n\n", member.recipe_id));
+    output.push_str(&format!("- role: `{}`\n", member.role));
+    output.push_str(&format!("- contract: `{}`\n", member.contract));
+    if !member.app_bundle_id.is_empty() {
+      output.push_str(&format!("- app bundle id: `{}`\n", member.app_bundle_id));
+    }
+    if !member.target_application.is_empty() {
+      output.push_str(&format!(
+        "- target application: `{}`\n",
+        member.target_application
+      ));
+    }
+    output.push_str(&format!(
+      "- coverage report: `{}`\n",
+      bundle_member_coverage_relative_path(&member.recipe_id)
+    ));
+    output.push_str(&format!(
+      "- validated cases: `{}`\n",
+      member.validated_case_ids.len()
+    ));
+    output.push_str(&format!(
+      "- candidate cases: `{}`\n",
+      member.candidate_case_ids.len()
+    ));
+    output.push_str(&format!(
+      "- recipe path: `{}`\n",
+      bundle_member_recipe_relative_path(&member.recipe_id)
+    ));
+    output.push_str(&format!(
+      "- case matrix path: `{}`\n",
+      bundle_member_cases_relative_path(&member.recipe_id)
+    ));
+    output.push('\n');
+  }
+
+  Ok(output)
+}
+
+fn render_bundle_standalone_coverage(
+  bundle_manifest: &SkillBundleManifest,
+  package_manifest: &ExportedBundlePackageManifest,
+) -> String {
+  let mut output = String::new();
+  output.push_str(&format!(
+    "# Bundle Coverage: {}\n\n",
+    bundle_manifest.metadata.id
+  ));
+  output.push_str(&format!(
+    "- bundle name: `{}`\n",
+    bundle_manifest.metadata.name
+  ));
+  output.push_str(&format!(
+    "- bundle version: `{}`\n",
+    bundle_manifest.metadata.version
+  ));
+  output.push_str(&format!(
+    "- bundle status: `{}`\n",
+    bundle_manifest.metadata.status
+  ));
+  output.push_str(&format!(
+    "- target family: `{}` on `{}`\n",
+    bundle_manifest.target.application_family, bundle_manifest.target.platform
+  ));
+  output.push_str(&format!(
+    "- member count: `{}`\n\n",
+    bundle_manifest.members.len()
+  ));
+
+  output.push_str("## Known Limits\n\n");
+  if bundle_manifest.known_limits.is_empty() {
+    output.push_str("- none declared\n");
+  } else {
+    for limit in &bundle_manifest.known_limits {
+      output.push_str(&format!("- {}\n", limit));
+    }
+  }
+
+  output.push_str("\n## Member Coverage\n\n");
+  for member in &bundle_manifest.members {
+    let package_member = package_manifest
+      .members
+      .iter()
+      .find(|candidate| candidate.recipe_id == member.recipe_id)
+      .expect("package member should exist for standalone coverage render");
+    output.push_str(&format!("### {}\n\n", member.recipe_id));
+    output.push_str(&format!("- role: `{}`\n", member.role));
+    output.push_str(&format!("- contract: `{}`\n", member.contract));
+    if !member.app_bundle_id.is_empty() {
+      output.push_str(&format!("- app bundle id: `{}`\n", member.app_bundle_id));
+    }
+    if !member.target_application.is_empty() {
+      output.push_str(&format!(
+        "- target application: `{}`\n",
+        member.target_application
+      ));
+    }
+    output.push_str(&format!(
+      "- coverage report: `{}`\n",
+      package_member.coverage_report
+    ));
+    output.push_str(&format!(
+      "- validated cases: `{}`\n",
+      member.validated_case_ids.len()
+    ));
+    output.push_str(&format!(
+      "- candidate cases: `{}`\n",
+      member.candidate_case_ids.len()
+    ));
+    output.push_str(&format!(
+      "- recipe path: `{}`\n",
+      bundle_member_recipe_relative_path(&member.recipe_id)
+    ));
+    output.push_str(&format!(
+      "- case matrix path: `{}`\n",
+      bundle_member_cases_relative_path(&member.recipe_id)
+    ));
+    output.push('\n');
+  }
+
+  output
 }
 
 fn sanitized_bundle_package_name(raw: &str) -> String {

@@ -9,9 +9,9 @@ use super::{
     group_ocr_matches_into_rows, optional_bool, optional_f64, parse_display_snapshot,
     parse_mouse_button, parse_observed_ax_tree, parse_ocr_region_constraint,
     parse_ocr_text_snapshot, parse_shortcut, parse_visual_rows_snapshot, process_is_alive,
-    project_main_screenshot_point, read_lock_owner_pid, read_png_dimensions,
-    render_rect_compact, resolve_display_point, resolve_scroll_deltas, sanitize_file_component,
-    special_key_code, swift_string_literal, temp_file_path,
+    project_main_screenshot_point, read_lock_owner_pid, read_png_dimensions, render_rect_compact,
+    resolve_display_point, resolve_scroll_deltas, sanitize_file_component, special_key_code,
+    swift_string_literal, temp_file_path,
   },
 };
 use crate::{

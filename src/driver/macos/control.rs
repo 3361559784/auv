@@ -1,3 +1,6 @@
+use std::thread;
+use std::time::Duration;
+
 use super::*;
 
 pub(super) fn activate_app(call: &DriverCall) -> AuvResult<DriverResponse> {

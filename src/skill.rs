@@ -1043,7 +1043,13 @@ mod tests {
 
   #[test]
   fn sanitize_lock_component_collapses_non_alphanumeric_segments() {
-    assert_eq!(sanitize_lock_component("com.tencent.QQMusicMac"), "com-tencent-QQMusicMac");
-    assert_eq!(sanitize_lock_component("  weird / bundle id  "), "weird-bundle-id");
+    assert_eq!(
+      sanitize_lock_component("com.tencent.QQMusicMac"),
+      "com-tencent-QQMusicMac"
+    );
+    assert_eq!(
+      sanitize_lock_component("  weird / bundle id  "),
+      "weird-bundle-id"
+    );
   }
 }

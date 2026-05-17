@@ -258,8 +258,12 @@ fn export_bundle(
   } else {
     project_root.join(output_dir)
   };
-  fs::create_dir_all(&output_dir)
-    .map_err(|error| format!("failed to create bundle export directory {}: {error}", output_dir.display()))?;
+  fs::create_dir_all(&output_dir).map_err(|error| {
+    format!(
+      "failed to create bundle export directory {}: {error}",
+      output_dir.display()
+    )
+  })?;
 
   let package_root = output_dir.join(sanitized_bundle_package_name(&entry.manifest.metadata.id));
   if package_root.exists() {
@@ -301,12 +305,14 @@ fn export_bundle(
   package_index.push("members=".to_string());
   let mut package_members = Vec::new();
   for member in &entry.manifest.members {
-    let recipe_entry = skill_catalog.resolve_recipe_id(&member.recipe_id).map_err(|error| {
-      format!(
-        "failed to resolve recipe {} while exporting bundle: {error}",
-        member.recipe_id
-      )
-    })?;
+    let recipe_entry = skill_catalog
+      .resolve_recipe_id(&member.recipe_id)
+      .map_err(|error| {
+        format!(
+          "failed to resolve recipe {} while exporting bundle: {error}",
+          member.recipe_id
+        )
+      })?;
     let case_matrix_entry = case_matrix_catalog
       .resolve(project_root, &member.case_matrix_id)
       .map_err(|error| {
@@ -353,7 +359,12 @@ fn export_bundle(
     let summary_path = member_dir.join("summary.txt");
     fs::write(
       &summary_path,
-      render_bundle_member_summary(member, &member_dir, &recipe_entry.path, &case_matrix_entry.path),
+      render_bundle_member_summary(
+        member,
+        &member_dir,
+        &recipe_entry.path,
+        &case_matrix_entry.path,
+      ),
     )
     .map_err(|error| {
       format!(
@@ -415,7 +426,8 @@ fn export_bundle(
   let readme_path = package_root.join("README.md");
   let mut readme = String::new();
   readme.push_str(&format!("# {}\n\n", entry.manifest.metadata.name));
-  readme.push_str("This package is a self-contained export of the current bundle-shaped artifact.\n\n");
+  readme
+    .push_str("This package is a self-contained export of the current bundle-shaped artifact.\n\n");
   readme.push_str("Contents:\n");
   readme.push_str("- `bundle.json`: canonical bundle manifest\n");
   readme.push_str("- `index.txt`: compact package index for downstream consumers\n\n");
@@ -467,7 +479,8 @@ fn copy_directory(source: &Path, destination: &Path) -> Result<(), String> {
       source.display()
     )
   })? {
-    let entry = entry.map_err(|error| format!("failed to enumerate evidence directory entry: {error}"))?;
+    let entry =
+      entry.map_err(|error| format!("failed to enumerate evidence directory entry: {error}"))?;
     let path = entry.path();
     let destination_path = destination.join(entry.file_name());
     if path.is_dir() {
@@ -528,8 +541,9 @@ fn render_bundle_package_manifest(
     "knownLimits": entry.manifest.known_limits,
   });
 
-  serde_json::to_string_pretty(&value)
-    .unwrap_or_else(|error| format!("{{\"error\":\"failed to render bundle package manifest: {error}\"}}\n"))
+  serde_json::to_string_pretty(&value).unwrap_or_else(|error| {
+    format!("{{\"error\":\"failed to render bundle package manifest: {error}\"}}\n")
+  })
 }
 
 fn render_bundle_member_evidence(member: &auv_cli::bundle::SkillBundleMember) -> String {
@@ -689,7 +703,10 @@ fn verify_bundle(
     ));
   }
   if entry.manifest.members.is_empty() {
-    return Err(format!("bundle {} has no members", entry.manifest.metadata.id));
+    return Err(format!(
+      "bundle {} has no members",
+      entry.manifest.metadata.id
+    ));
   }
   if entry.manifest.verification.expected_signals.is_empty() {
     return Err(format!(
@@ -711,7 +728,10 @@ fn verify_bundle(
     )
   })?;
   let runtime_version = semver::Version::parse(runtime_version).map_err(|error| {
-    format!("current runtime version {} is not parseable: {error}", runtime_version)
+    format!(
+      "current runtime version {} is not parseable: {error}",
+      runtime_version
+    )
   })?;
   if !runtime_req.matches(&runtime_version) {
     return Err(format!(
@@ -745,22 +765,24 @@ fn verify_bundle(
         entry.manifest.metadata.id, member.recipe_id
       ));
     }
-    skill_catalog.resolve_recipe_id(&member.recipe_id).map_err(|error| {
-      format!(
-        "bundle {} references unknown recipe {}: {error}",
-        entry.manifest.metadata.id, member.recipe_id
-      )
-    })?;
+    skill_catalog
+      .resolve_recipe_id(&member.recipe_id)
+      .map_err(|error| {
+        format!(
+          "bundle {} references unknown recipe {}: {error}",
+          entry.manifest.metadata.id, member.recipe_id
+        )
+      })?;
     if !member.target_application.trim().is_empty() {
       let member_target_req =
         semver::VersionReq::parse(&member.target_application).map_err(|error| {
           format!(
             "bundle {} member {} has invalid targetApplication {}: {error}",
-          entry.manifest.metadata.id, member.recipe_id, member.target_application
-        )
-      })?;
-    let member_app_version =
-      resolve_member_target_app_version(skill_catalog, &member.recipe_id, &member.app_bundle_id)?;
+            entry.manifest.metadata.id, member.recipe_id, member.target_application
+          )
+        })?;
+      let member_app_version =
+        resolve_member_target_app_version(skill_catalog, &member.recipe_id, &member.app_bundle_id)?;
       if !member_target_req.matches(&member_app_version) {
         return Err(format!(
           "bundle {} member {} requires targetApplication {} but app version is {}",
@@ -865,8 +887,7 @@ fn resolve_installed_app_path(bundle_id: &str) -> Result<PathBuf, String> {
   }
 
   let stdout = String::from_utf8_lossy(&output.stdout);
-  let Some(path) = stdout.lines().map(str::trim).find(|line| !line.is_empty())
-  else {
+  let Some(path) = stdout.lines().map(str::trim).find(|line| !line.is_empty()) else {
     return Err(format!("no installed app found for bundle id {bundle_id}"));
   };
 
@@ -889,9 +910,18 @@ fn read_app_version(app_path: &Path) -> Result<String, String> {
 
 fn read_plist_value(info_plist: &Path, key: &str) -> Result<String, String> {
   let output = Command::new("/usr/libexec/PlistBuddy")
-    .args(["-c", &format!("Print {key}"), &info_plist.display().to_string()])
+    .args([
+      "-c",
+      &format!("Print {key}"),
+      &info_plist.display().to_string(),
+    ])
     .output()
-    .map_err(|error| format!("failed to read {key} from {}: {error}", info_plist.display()))?;
+    .map_err(|error| {
+      format!(
+        "failed to read {key} from {}: {error}",
+        info_plist.display()
+      )
+    })?;
   if !output.status.success() {
     return Err(format!(
       "PlistBuddy failed reading {key} from {}: {}",

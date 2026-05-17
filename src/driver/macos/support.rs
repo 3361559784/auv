@@ -1,5 +1,12 @@
+use std::env;
+use std::fs;
 use std::io::Write;
+use std::io::{ErrorKind, Read};
+use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::thread;
+use std::time::Duration;
 
 use super::*;
 
@@ -1644,15 +1651,19 @@ pub(crate) fn read_lock_owner_pid(path: &Path) -> AuvResult<Option<u32>> {
     Ok(content) => content,
     Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
     Err(error) => {
-      return Err(format!("failed to read lock file {}: {error}", path.display()));
+      return Err(format!(
+        "failed to read lock file {}: {error}",
+        path.display()
+      ));
     }
   };
 
   for line in content.lines() {
     if let Some(raw_pid) = line.trim().strip_prefix("pid=") {
-      let pid = raw_pid.trim().parse::<u32>().map_err(|error| {
-        format!("invalid pid entry in lock file {}: {error}", path.display())
-      })?;
+      let pid = raw_pid
+        .trim()
+        .parse::<u32>()
+        .map_err(|error| format!("invalid pid entry in lock file {}: {error}", path.display()))?;
       return Ok(Some(pid));
     }
   }
@@ -1663,9 +1674,14 @@ pub(crate) fn read_lock_owner_pid(path: &Path) -> AuvResult<Option<u32>> {
 pub(crate) fn describe_lock_owner(path: &Path) -> AuvResult<String> {
   let content = match fs::read_to_string(path) {
     Ok(content) => content,
-    Err(error) if error.kind() == ErrorKind::NotFound => return Ok("lock file disappeared".to_string()),
+    Err(error) if error.kind() == ErrorKind::NotFound => {
+      return Ok("lock file disappeared".to_string());
+    }
     Err(error) => {
-      return Err(format!("failed to read lock file {}: {error}", path.display()));
+      return Err(format!(
+        "failed to read lock file {}: {error}",
+        path.display()
+      ));
     }
   };
 

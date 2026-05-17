@@ -219,7 +219,9 @@ fn parse_skill_bundle(arguments: &[String]) -> AuvResult<CliCommand> {
     }
     "export" => {
       if arguments.len() != 5 {
-        return Err("usage: auv-cli skill bundle export <bundle-id-or-path> <output-dir>".to_string());
+        return Err(
+          "usage: auv-cli skill bundle export <bundle-id-or-path> <output-dir>".to_string(),
+        );
       }
       Ok(CliCommand::SkillBundleExport {
         query: arguments[3].clone(),

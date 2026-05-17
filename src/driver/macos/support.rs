@@ -652,7 +652,7 @@ pub(super) fn compute_combined_bounds(displays: &[ObservedDisplay]) -> ObservedR
   }
 }
 
-pub(super) fn app_contains_window(app_identifier: &str, app_name: &str) -> bool {
+pub(crate) fn app_contains_window(app_identifier: &str, app_name: &str) -> bool {
   let app_identifier = app_identifier.trim().to_ascii_lowercase();
   let app_name = app_name.trim().to_ascii_lowercase();
   app_identifier == app_name
@@ -660,7 +660,7 @@ pub(super) fn app_contains_window(app_identifier: &str, app_name: &str) -> bool 
     || app_name.contains(&app_identifier)
 }
 
-pub(super) fn window_area(window: &ObservedWindow) -> i64 {
+pub(crate) fn window_area(window: &ObservedWindow) -> i64 {
   window.bounds.width.saturating_mul(window.bounds.height)
 }
 
@@ -698,7 +698,7 @@ pub(super) fn project_main_screenshot_point(
   ))
 }
 
-pub(super) fn resolve_window_point(
+pub(crate) fn resolve_window_point(
   call: &DriverCall,
   window: &ObservedWindow,
 ) -> AuvResult<(f64, f64, String)> {

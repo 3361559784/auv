@@ -1,0 +1,76 @@
+use std::thread;
+use std::time::Duration;
+
+use super::super::*;
+use crate::model::ExecutionTarget;
+
+pub(super) fn activate_app_if_needed(app: &str) -> AuvResult<()> {
+  if !app.is_empty() {
+    activate_target_app(app)?;
+  }
+  Ok(())
+}
+
+pub(super) fn send_reveal_shortcut_if_needed(
+  reveal_shortcut: Option<&str>,
+  reveal_settle_ms: u64,
+) -> AuvResult<()> {
+  if let Some(shortcut) = reveal_shortcut {
+    send_shortcut(shortcut)?;
+    thread::sleep(Duration::from_millis(reveal_settle_ms));
+  }
+  Ok(())
+}
+
+pub(crate) fn build_click_point_call(
+  target: &ExecutionTarget,
+  working_directory: &std::path::Path,
+  x: f64,
+  y: f64,
+  button: &str,
+  click_count: i64,
+  settle_ms: Option<u64>,
+  app: Option<&str>,
+) -> DriverCall {
+  let mut inputs = std::collections::BTreeMap::from([
+    ("x".to_string(), format!("{x:.3}")),
+    ("y".to_string(), format!("{y:.3}")),
+    ("button".to_string(), button.to_string()),
+    ("click_count".to_string(), click_count.to_string()),
+  ]);
+  if let Some(settle_ms) = settle_ms {
+    inputs.insert("settle_ms".to_string(), settle_ms.to_string());
+  }
+  if let Some(app) = app.filter(|value| !value.is_empty()) {
+    inputs.insert("app".to_string(), app.to_string());
+  }
+
+  DriverCall {
+    operation: "click_point".to_string(),
+    target: target.clone(),
+    inputs,
+    working_directory: working_directory.to_path_buf(),
+  }
+}
+
+pub(super) fn build_ax_click_notes(
+  query: &str,
+  matched: &ObservedAxNode,
+  center_x: f64,
+  center_y: f64,
+) -> Vec<String> {
+  let mut notes = vec![
+    format!("query={query}"),
+    format!("matchedPath={}", matched.path),
+    format!("matchedRole={}", matched.role),
+    format!("matchedBounds={}", render_rect_compact(&matched.bounds)),
+    format!("clickLogicalPoint={center_x:.3},{center_y:.3}"),
+  ];
+  if !matched.description.is_empty() {
+    notes.push(format!("matchedDescription={}", matched.description));
+  }
+  if !matched.title.is_empty() {
+    notes.push(format!("matchedTitle={}", matched.title));
+  }
+  notes
+}

@@ -1,0 +1,132 @@
+use std::thread;
+use std::time::Duration;
+
+use super::super::*;
+use super::common::activate_app_if_needed;
+
+pub(crate) fn click_point(call: &DriverCall) -> AuvResult<DriverResponse> {
+  let x = required_f64(call, "x")?;
+  let y = required_f64(call, "y")?;
+  let click_count = optional_i64(call, "click_count")?.unwrap_or(1).clamp(1, 4);
+  let settle_ms = optional_positive_u64(call, "settle_ms")?.unwrap_or(0);
+  let (button_name, button_code) = parse_mouse_button(call)?;
+  let snapshot = enumerate_displays()?;
+  let resolution = resolve_display_point(&snapshot, x, y)
+    .ok_or_else(|| format!("logical point ({x:.3}, {y:.3}) is outside all connected displays"))?;
+
+  activate_app_if_needed(&app_identifier(call).unwrap_or_default())?;
+  run_swift_script(&build_click_point_script(x, y, button_code, click_count))?;
+  if settle_ms > 0 {
+    thread::sleep(Duration::from_millis(settle_ms));
+  }
+
+  let report = [
+    format!("capturedAt={}", snapshot.captured_at),
+    format!("globalLogicalPoint={x:.3},{y:.3}"),
+    format!(
+      "backingPixelPoint={},{}",
+      resolution.backing_pixel_x, resolution.backing_pixel_y
+    ),
+    format!("displayId={}", resolution.display.display_id),
+    format!("button={button_name}"),
+    format!("clickCount={click_count}"),
+    format!("settleMs={settle_ms}"),
+    "coordinateSpace=global-logical".to_string(),
+    "cursorAfter=target".to_string(),
+  ]
+  .join("\n")
+    + "\n";
+  let artifact = build_text_artifact(
+    "click-point",
+    "txt",
+    &format!(
+      "click-point-{}-{}",
+      sanitize_file_component(&format!("{x:.3}")),
+      sanitize_file_component(&format!("{y:.3}"))
+    ),
+    report,
+    "Clicked a macOS logical point through Quartz and recorded its coordinate contract.",
+  )?;
+
+  Ok(DriverResponse {
+    summary: format!(
+      "Clicked {} at global logical point ({x:.3}, {y:.3}) on display #{}.",
+      button_name, resolution.display.display_id
+    ),
+    backend: Some("macos.swift.quartz-click".to_string()),
+    notes: vec![
+      "coordinateSpace=global-logical".to_string(),
+      format!("button={button_name}"),
+      format!("clickCount={click_count}"),
+      format!("settleMs={settle_ms}"),
+      format!(
+        "backingPixelPoint={},{}",
+        resolution.backing_pixel_x, resolution.backing_pixel_y
+      ),
+      render_display_note(&resolution.display),
+      "cursorAfter=target".to_string(),
+    ],
+    artifacts: vec![artifact],
+  })
+}
+
+pub(crate) fn scroll_point(call: &DriverCall) -> AuvResult<DriverResponse> {
+  let x = required_f64(call, "x")?;
+  let y = required_f64(call, "y")?;
+  let (delta_x, delta_y, normalized_scroll) = resolve_scroll_deltas(call)?;
+  let snapshot = enumerate_displays()?;
+  let resolution = resolve_display_point(&snapshot, x, y)
+    .ok_or_else(|| format!("logical point ({x:.3}, {y:.3}) is outside all connected displays"))?;
+
+  activate_app_if_needed(&app_identifier(call).unwrap_or_default())?;
+  run_swift_script(&build_scroll_point_script(x, y, delta_x, delta_y))?;
+
+  let report = [
+    format!("capturedAt={}", snapshot.captured_at),
+    format!("globalLogicalPoint={x:.3},{y:.3}"),
+    format!(
+      "backingPixelPoint={},{}",
+      resolution.backing_pixel_x, resolution.backing_pixel_y
+    ),
+    format!("displayId={}", resolution.display.display_id),
+    format!("deltaX={delta_x:.0}"),
+    format!("deltaY={delta_y:.0}"),
+    format!("normalizedScroll={normalized_scroll}"),
+    "coordinateSpace=global-logical".to_string(),
+    "cursorAfter=target".to_string(),
+  ]
+  .join("\n")
+    + "\n";
+  let artifact = build_text_artifact(
+    "scroll-point",
+    "txt",
+    &format!(
+      "scroll-point-{}-{}",
+      sanitize_file_component(&format!("{x:.3}")),
+      sanitize_file_component(&format!("{y:.3}"))
+    ),
+    report,
+    "Scrolled at a macOS logical point through Quartz and recorded its coordinate contract.",
+  )?;
+
+  Ok(DriverResponse {
+    summary: format!(
+      "Scrolled at global logical point ({x:.3}, {y:.3}) on display #{} with {}.",
+      resolution.display.display_id, normalized_scroll
+    ),
+    backend: Some("macos.swift.quartz-scroll".to_string()),
+    notes: vec![
+      "coordinateSpace=global-logical".to_string(),
+      format!("deltaX={delta_x:.0}"),
+      format!("deltaY={delta_y:.0}"),
+      format!("normalizedScroll={normalized_scroll}"),
+      format!(
+        "backingPixelPoint={},{}",
+        resolution.backing_pixel_x, resolution.backing_pixel_y
+      ),
+      render_display_note(&resolution.display),
+      "cursorAfter=target".to_string(),
+    ],
+    artifacts: vec![artifact],
+  })
+}

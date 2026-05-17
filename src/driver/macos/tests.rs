@@ -4,14 +4,15 @@ use std::path::PathBuf;
 
 use super::{
   OcrTextMatch, ScreenshotDimensions,
+  control::common::build_click_point_call,
   support::{
-    assess_coordinate_readiness, filter_ocr_matches, find_now_playing_ax_node,
+    app_contains_window, assess_coordinate_readiness, filter_ocr_matches, find_now_playing_ax_node,
     group_ocr_matches_into_rows, optional_bool, optional_f64, parse_display_snapshot,
     parse_mouse_button, parse_observed_ax_tree, parse_ocr_region_constraint,
     parse_ocr_text_snapshot, parse_shortcut, parse_visual_rows_snapshot, process_is_alive,
     project_main_screenshot_point, read_lock_owner_pid, read_png_dimensions, render_rect_compact,
-    resolve_display_point, resolve_scroll_deltas, sanitize_file_component, special_key_code,
-    swift_string_literal, temp_file_path,
+    resolve_display_point, resolve_scroll_deltas, resolve_window_point, sanitize_file_component,
+    special_key_code, swift_string_literal, temp_file_path, window_area,
   },
 };
 use crate::{
@@ -307,6 +308,139 @@ fn read_lock_owner_pid_parses_pid_field() {
 #[test]
 fn process_is_alive_matches_current_process() {
   assert!(process_is_alive(std::process::id()));
+}
+
+#[test]
+fn build_click_point_call_populates_required_inputs() {
+  let target = ExecutionTarget::default();
+  let working_directory = PathBuf::from("/tmp/auv");
+  let call = build_click_point_call(
+    &target,
+    &working_directory,
+    12.5,
+    48.25,
+    "left",
+    2,
+    Some(300),
+    Some("com.apple.TextEdit"),
+  );
+  assert_eq!(call.operation, "click_point");
+  assert_eq!(call.working_directory, working_directory);
+  assert_eq!(call.inputs.get("x"), Some(&"12.500".to_string()));
+  assert_eq!(call.inputs.get("y"), Some(&"48.250".to_string()));
+  assert_eq!(call.inputs.get("button"), Some(&"left".to_string()));
+  assert_eq!(call.inputs.get("click_count"), Some(&"2".to_string()));
+  assert_eq!(call.inputs.get("settle_ms"), Some(&"300".to_string()));
+  assert_eq!(
+    call.inputs.get("app"),
+    Some(&"com.apple.TextEdit".to_string())
+  );
+}
+
+#[test]
+fn build_click_point_call_omits_optional_inputs_when_absent() {
+  let call = build_click_point_call(
+    &ExecutionTarget::default(),
+    std::path::Path::new("."),
+    1.0,
+    2.0,
+    "right",
+    1,
+    None,
+    None,
+  );
+  assert!(!call.inputs.contains_key("settle_ms"));
+  assert!(!call.inputs.contains_key("app"));
+}
+
+#[test]
+fn app_contains_window_matches_bundleish_identifiers() {
+  assert!(app_contains_window("com.apple.TextEdit", "TextEdit"));
+  assert!(app_contains_window("QQ音乐", "QQ音乐"));
+  assert!(!app_contains_window("TextEdit", "Notes"));
+}
+
+#[test]
+fn window_area_uses_window_bounds() {
+  let window = super::ObservedWindow {
+    app_name: "TextEdit".to_string(),
+    owner_pid: 1,
+    layer: 0,
+    title: "Untitled".to_string(),
+    bounds: super::ObservedRect {
+      x: 0,
+      y: 0,
+      width: 640,
+      height: 480,
+    },
+  };
+  assert_eq!(window_area(&window), 307200);
+}
+
+#[test]
+fn resolve_window_point_supports_offset_mode() {
+  let call = build_call([("offset_x", "16"), ("offset_y", "24")]);
+  let window = super::ObservedWindow {
+    app_name: "TextEdit".to_string(),
+    owner_pid: 1,
+    layer: 0,
+    title: "Untitled".to_string(),
+    bounds: super::ObservedRect {
+      x: 100,
+      y: 200,
+      width: 640,
+      height: 480,
+    },
+  };
+  let (x, y, summary) = resolve_window_point(&call, &window).expect("offset mode should resolve");
+  assert_eq!(x, 116.0);
+  assert_eq!(y, 224.0);
+  assert_eq!(summary, "windowOffset=16.000,24.000");
+}
+
+#[test]
+fn resolve_window_point_supports_relative_mode() {
+  let call = build_call([("relative_x", "0.5"), ("relative_y", "0.25")]);
+  let window = super::ObservedWindow {
+    app_name: "TextEdit".to_string(),
+    owner_pid: 1,
+    layer: 0,
+    title: "Untitled".to_string(),
+    bounds: super::ObservedRect {
+      x: 100,
+      y: 200,
+      width: 640,
+      height: 480,
+    },
+  };
+  let (x, y, summary) = resolve_window_point(&call, &window).expect("relative mode should resolve");
+  assert_eq!(x, 420.0);
+  assert_eq!(y, 320.0);
+  assert_eq!(summary, "windowRelative=0.500,0.250");
+}
+
+#[test]
+fn resolve_window_point_rejects_mixed_modes() {
+  let call = build_call([
+    ("offset_x", "16"),
+    ("offset_y", "24"),
+    ("relative_x", "0.5"),
+    ("relative_y", "0.25"),
+  ]);
+  let window = super::ObservedWindow {
+    app_name: "TextEdit".to_string(),
+    owner_pid: 1,
+    layer: 0,
+    title: "Untitled".to_string(),
+    bounds: super::ObservedRect {
+      x: 100,
+      y: 200,
+      width: 640,
+      height: 480,
+    },
+  };
+  let error = resolve_window_point(&call, &window).expect_err("mixed modes should fail");
+  assert!(error.contains("either --offset_x/--offset_y or --relative_x/--relative_y"));
 }
 
 #[test]

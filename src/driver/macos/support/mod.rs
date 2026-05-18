@@ -7,6 +7,7 @@ mod ocr;
 mod parse;
 mod runtime;
 mod scripts;
+mod selector;
 
 pub(crate) use self::artifacts::*;
 pub(crate) use self::ax::*;
@@ -17,3 +18,4 @@ pub(crate) use self::ocr::*;
 pub(crate) use self::parse::*;
 pub(crate) use self::runtime::*;
 pub(crate) use self::scripts::*;
+pub(crate) use self::selector::*;

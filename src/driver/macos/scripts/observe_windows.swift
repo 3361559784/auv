@@ -17,6 +17,7 @@ func boundsDict(_ value: NSDictionary?) -> [String: Int]? {
 let limit = __LIMIT__
 let appFilter = __APP_FILTER__.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
 let frontmostAppName = NSWorkspace.shared.frontmostApplication?.localizedName ?? ""
+let frontmostAppBundleId = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
 
 let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
 let rawWindowInfo = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] ?? []
@@ -32,6 +33,8 @@ for window in rawWindowInfo {
   let bounds = boundsDict(window[kCGWindowBounds as String] as? NSDictionary)
   let title = (window[kCGWindowName as String] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
   let ownerPid = window[kCGWindowOwnerPID as String] as? Int ?? 0
+  let windowNumber = window[kCGWindowNumber as String] as? Int ?? 0
+  let ownerBundleId = NSRunningApplication(processIdentifier: pid_t(ownerPid))?.bundleIdentifier ?? ""
 
   if alpha <= 0 || (bounds?["width"] ?? 0) <= 1 || (bounds?["height"] ?? 0) <= 1 {
     continue
@@ -41,6 +44,8 @@ for window in rawWindowInfo {
     "appName": ownerName,
     "title": title,
     "ownerPid": ownerPid,
+    "ownerBundleId": ownerBundleId,
+    "windowNumber": windowNumber,
     "layer": layer,
     "x": bounds?["x"] ?? 0,
     "y": bounds?["y"] ?? 0,
@@ -53,9 +58,13 @@ for window in rawWindowInfo {
   }
 }
 
-let frontmostWindowTitle = windows.first(where: { ($0["appName"] as? String) == frontmostAppName })?["title"] as? String ?? ""
+let frontmostWindowTitle =
+  windows.first(where: { ($0["ownerBundleId"] as? String) == frontmostAppBundleId })?["title"] as? String
+  ?? windows.first(where: { ($0["appName"] as? String) == frontmostAppName })?["title"] as? String
+  ?? ""
 
 print("frontmostAppName=\(frontmostAppName)")
+print("frontmostAppBundleId=\(frontmostAppBundleId)")
 print("frontmostWindowTitle=\(frontmostWindowTitle)")
 print("observedAt=\(ISO8601DateFormatter().string(from: Date()))")
 print("windowCount=\(windows.count)")
@@ -63,10 +72,12 @@ for window in windows {
   let appName = window["appName"] as? String ?? "Unknown"
   let title = window["title"] as? String ?? ""
   let ownerPid = window["ownerPid"] as? Int ?? 0
+  let ownerBundleId = window["ownerBundleId"] as? String ?? ""
+  let windowNumber = window["windowNumber"] as? Int ?? 0
   let layer = window["layer"] as? Int ?? 0
   let x = window["x"] as? Int ?? 0
   let y = window["y"] as? Int ?? 0
   let width = window["width"] as? Int ?? 0
   let height = window["height"] as? Int ?? 0
-  print("window\t\(appName)\t\(ownerPid)\t\(layer)\t\(title)\t\(x)\t\(y)\t\(width)\t\(height)")
+  print("window\t\(appName)\t\(ownerPid)\t\(ownerBundleId)\t\(windowNumber)\t\(layer)\t\(title)\t\(x)\t\(y)\t\(width)\t\(height)")
 }

@@ -29,8 +29,10 @@ pub(crate) struct ObservedDisplaySnapshot {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ObservedWindow {
+  pub(crate) window_number: i64,
   pub(crate) app_name: String,
   pub(crate) owner_pid: i64,
+  pub(crate) owner_bundle_id: String,
   pub(crate) layer: i64,
   pub(crate) title: String,
   pub(crate) bounds: ObservedRect,
@@ -39,9 +41,51 @@ pub(crate) struct ObservedWindow {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ObservedWindowSnapshot {
   pub(crate) frontmost_app_name: String,
+  pub(crate) frontmost_app_bundle_id: String,
   pub(crate) frontmost_window_title: String,
   pub(crate) observed_at: String,
   pub(crate) windows: Vec<ObservedWindow>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct AppSelector {
+  pub(crate) raw: String,
+  pub(crate) bundle_id: Option<String>,
+  pub(crate) app_name_hint: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ResolvedAppRef {
+  pub(crate) selector: AppSelector,
+  pub(crate) resolved_bundle_id: Option<String>,
+  pub(crate) resolved_app_name: String,
+  pub(crate) owner_pids: Vec<i64>,
+  pub(crate) match_strategy: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct WindowRef {
+  pub(crate) window_number: i64,
+  pub(crate) owner_pid: i64,
+  pub(crate) owner_bundle_id: String,
+  pub(crate) app_name: String,
+  pub(crate) title: String,
+  pub(crate) bounds: ObservedRect,
+  pub(crate) layer: i64,
+}
+
+impl ObservedWindow {
+  pub(crate) fn to_window_ref(&self) -> WindowRef {
+    WindowRef {
+      window_number: self.window_number,
+      owner_pid: self.owner_pid,
+      owner_bundle_id: self.owner_bundle_id.clone(),
+      app_name: self.app_name.clone(),
+      title: self.title.clone(),
+      bounds: self.bounds.clone(),
+      layer: self.layer,
+    }
+  }
 }
 
 #[derive(Clone, Debug, PartialEq)]

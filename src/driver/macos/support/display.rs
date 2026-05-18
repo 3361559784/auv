@@ -111,24 +111,26 @@ pub(crate) fn parse_display_line(line: &str) -> AuvResult<ObservedDisplay> {
 
 pub(crate) fn parse_window_line(line: &str) -> AuvResult<ObservedWindow> {
   let columns = line.split('\t').collect::<Vec<_>>();
-  if columns.len() != 9 {
+  if columns.len() != 11 {
     return Err(format!(
-      "invalid window report line; expected 9 columns but got {}: {}",
+      "invalid window report line; expected 11 columns but got {}: {}",
       columns.len(),
       line
     ));
   }
 
   Ok(ObservedWindow {
+    window_number: parse_i64(columns[4], "window.number")?,
     app_name: columns[1].to_string(),
     owner_pid: parse_i64(columns[2], "window.ownerPid")?,
-    layer: parse_i64(columns[3], "window.layer")?,
-    title: columns[4].to_string(),
+    owner_bundle_id: columns[3].to_string(),
+    layer: parse_i64(columns[5], "window.layer")?,
+    title: columns[6].to_string(),
     bounds: ObservedRect {
-      x: parse_i64(columns[5], "window.bounds.x")?,
-      y: parse_i64(columns[6], "window.bounds.y")?,
-      width: parse_i64(columns[7], "window.bounds.width")?,
-      height: parse_i64(columns[8], "window.bounds.height")?,
+      x: parse_i64(columns[7], "window.bounds.x")?,
+      y: parse_i64(columns[8], "window.bounds.y")?,
+      width: parse_i64(columns[9], "window.bounds.width")?,
+      height: parse_i64(columns[10], "window.bounds.height")?,
     },
   })
 }

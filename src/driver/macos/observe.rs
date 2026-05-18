@@ -262,6 +262,9 @@ pub(super) fn observe_windows_snapshot(
     frontmost_app_name: report_value(&report, "frontmostAppName=")
       .unwrap_or("")
       .to_string(),
+    frontmost_app_bundle_id: report_value(&report, "frontmostAppBundleId=")
+      .unwrap_or("")
+      .to_string(),
     frontmost_window_title: report_value(&report, "frontmostWindowTitle=")
       .unwrap_or("")
       .to_string(),

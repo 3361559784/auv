@@ -79,7 +79,7 @@ pub(crate) fn project_main_screenshot_point(
 
 pub(crate) fn resolve_window_point(
   call: &DriverCall,
-  window: &ObservedWindow,
+  window: &WindowRef,
 ) -> AuvResult<(f64, f64, String)> {
   let offset_x = optional_f64(call, "offset_x")?;
   let offset_y = optional_f64(call, "offset_y")?;

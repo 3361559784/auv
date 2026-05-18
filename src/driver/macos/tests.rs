@@ -7,12 +7,13 @@ use super::{
   control::common::build_click_point_call,
   support::{
     app_contains_window, assess_coordinate_readiness, filter_ocr_matches, find_now_playing_ax_node,
-    group_ocr_matches_into_rows, optional_bool, optional_f64, parse_display_snapshot,
-    parse_mouse_button, parse_observed_ax_tree, parse_ocr_region_constraint,
-    parse_ocr_text_snapshot, parse_shortcut, parse_visual_rows_snapshot, process_is_alive,
-    project_main_screenshot_point, read_lock_owner_pid, read_png_dimensions, render_rect_compact,
-    resolve_display_point, resolve_scroll_deltas, resolve_window_point, sanitize_file_component,
-    special_key_code, swift_string_literal, temp_file_path, window_area,
+    group_ocr_matches_into_rows, optional_bool, optional_f64, parse_app_selector,
+    parse_display_snapshot, parse_mouse_button, parse_observed_ax_tree,
+    parse_ocr_region_constraint, parse_ocr_text_snapshot, parse_shortcut,
+    parse_visual_rows_snapshot, process_is_alive, project_main_screenshot_point,
+    read_lock_owner_pid, read_png_dimensions, render_rect_compact, resolve_app_ref,
+    resolve_display_point, resolve_scroll_deltas, resolve_window_point, resolve_window_ref,
+    sanitize_file_component, special_key_code, swift_string_literal, temp_file_path, window_area,
   },
 };
 use crate::{
@@ -363,8 +364,10 @@ fn app_contains_window_matches_bundleish_identifiers() {
 #[test]
 fn window_area_uses_window_bounds() {
   let window = super::ObservedWindow {
+    window_number: 7,
     app_name: "TextEdit".to_string(),
     owner_pid: 1,
+    owner_bundle_id: "com.apple.TextEdit".to_string(),
     layer: 0,
     title: "Untitled".to_string(),
     bounds: super::ObservedRect {
@@ -380,18 +383,7 @@ fn window_area_uses_window_bounds() {
 #[test]
 fn resolve_window_point_supports_offset_mode() {
   let call = build_call([("offset_x", "16"), ("offset_y", "24")]);
-  let window = super::ObservedWindow {
-    app_name: "TextEdit".to_string(),
-    owner_pid: 1,
-    layer: 0,
-    title: "Untitled".to_string(),
-    bounds: super::ObservedRect {
-      x: 100,
-      y: 200,
-      width: 640,
-      height: 480,
-    },
-  };
+  let window = sample_window_ref();
   let (x, y, summary) = resolve_window_point(&call, &window).expect("offset mode should resolve");
   assert_eq!(x, 116.0);
   assert_eq!(y, 224.0);
@@ -401,18 +393,7 @@ fn resolve_window_point_supports_offset_mode() {
 #[test]
 fn resolve_window_point_supports_relative_mode() {
   let call = build_call([("relative_x", "0.5"), ("relative_y", "0.25")]);
-  let window = super::ObservedWindow {
-    app_name: "TextEdit".to_string(),
-    owner_pid: 1,
-    layer: 0,
-    title: "Untitled".to_string(),
-    bounds: super::ObservedRect {
-      x: 100,
-      y: 200,
-      width: 640,
-      height: 480,
-    },
-  };
+  let window = sample_window_ref();
   let (x, y, summary) = resolve_window_point(&call, &window).expect("relative mode should resolve");
   assert_eq!(x, 420.0);
   assert_eq!(y, 320.0);
@@ -427,20 +408,129 @@ fn resolve_window_point_rejects_mixed_modes() {
     ("relative_x", "0.5"),
     ("relative_y", "0.25"),
   ]);
-  let window = super::ObservedWindow {
-    app_name: "TextEdit".to_string(),
-    owner_pid: 1,
-    layer: 0,
-    title: "Untitled".to_string(),
-    bounds: super::ObservedRect {
-      x: 100,
-      y: 200,
-      width: 640,
-      height: 480,
-    },
-  };
+  let window = sample_window_ref();
   let error = resolve_window_point(&call, &window).expect_err("mixed modes should fail");
   assert!(error.contains("either --offset_x/--offset_y or --relative_x/--relative_y"));
+}
+
+#[test]
+fn parse_app_selector_recognizes_bundle_id() {
+  let selector =
+    parse_app_selector("com.netease.163music").expect("bundle id selector should parse");
+  assert_eq!(selector.bundle_id.as_deref(), Some("com.netease.163music"));
+  assert!(selector.app_name_hint.is_none());
+}
+
+#[test]
+fn resolve_app_ref_prefers_exact_bundle_id_matches() {
+  let selector =
+    parse_app_selector("com.netease.163music").expect("bundle id selector should parse");
+  let snapshot = super::ObservedWindowSnapshot {
+    frontmost_app_name: "NetEaseMusic".to_string(),
+    frontmost_app_bundle_id: "com.netease.163music".to_string(),
+    frontmost_window_title: "网易云音乐".to_string(),
+    observed_at: "2026-05-18T00:00:00Z".to_string(),
+    windows: vec![
+      super::ObservedWindow {
+        window_number: 2,
+        app_name: "StatusIndicator".to_string(),
+        owner_pid: 20,
+        owner_bundle_id: "com.status.helper".to_string(),
+        layer: 0,
+        title: "StatusIndicator".to_string(),
+        bounds: super::ObservedRect {
+          x: 10,
+          y: 10,
+          width: 28,
+          height: 28,
+        },
+      },
+      super::ObservedWindow {
+        window_number: 9,
+        app_name: "NetEaseMusic".to_string(),
+        owner_pid: 30,
+        owner_bundle_id: "com.netease.163music".to_string(),
+        layer: 0,
+        title: "网易云音乐".to_string(),
+        bounds: super::ObservedRect {
+          x: 100,
+          y: 100,
+          width: 1200,
+          height: 900,
+        },
+      },
+    ],
+  };
+
+  let resolved = resolve_app_ref(&snapshot, &selector).expect("app ref should resolve");
+  assert_eq!(
+    resolved.resolved_bundle_id.as_deref(),
+    Some("com.netease.163music")
+  );
+  assert_eq!(resolved.resolved_app_name, "NetEaseMusic");
+  assert_eq!(resolved.match_strategy, "bundle-id-exact");
+}
+
+#[test]
+fn resolve_window_ref_prefers_substantial_main_window() {
+  let selector =
+    parse_app_selector("com.netease.163music").expect("bundle id selector should parse");
+  let snapshot = super::ObservedWindowSnapshot {
+    frontmost_app_name: "NetEaseMusic".to_string(),
+    frontmost_app_bundle_id: "com.netease.163music".to_string(),
+    frontmost_window_title: "网易云音乐".to_string(),
+    observed_at: "2026-05-18T00:00:00Z".to_string(),
+    windows: vec![
+      super::ObservedWindow {
+        window_number: 7,
+        app_name: "NetEaseMusic".to_string(),
+        owner_pid: 30,
+        owner_bundle_id: "com.netease.163music".to_string(),
+        layer: 0,
+        title: "StatusIndicator".to_string(),
+        bounds: super::ObservedRect {
+          x: 4532,
+          y: -929,
+          width: 28,
+          height: 28,
+        },
+      },
+      super::ObservedWindow {
+        window_number: 11,
+        app_name: "NetEaseMusic".to_string(),
+        owner_pid: 30,
+        owner_bundle_id: "com.netease.163music".to_string(),
+        layer: 0,
+        title: "".to_string(),
+        bounds: super::ObservedRect {
+          x: 3009,
+          y: 265,
+          width: 1644,
+          height: 1140,
+        },
+      },
+      super::ObservedWindow {
+        window_number: 12,
+        app_name: "NetEaseMusic".to_string(),
+        owner_pid: 30,
+        owner_bundle_id: "com.netease.163music".to_string(),
+        layer: 0,
+        title: "网易云音乐".to_string(),
+        bounds: super::ObservedRect {
+          x: 3009,
+          y: 265,
+          width: 1644,
+          height: 1140,
+        },
+      },
+    ],
+  };
+
+  let resolved = resolve_app_ref(&snapshot, &selector).expect("app ref should resolve");
+  let window = resolve_window_ref(&snapshot, &resolved).expect("window ref should resolve");
+  assert_eq!(window.window_number, 12);
+  assert_eq!(window.title, "网易云音乐");
+  assert_eq!(window.owner_bundle_id, "com.netease.163music");
 }
 
 #[test]
@@ -463,6 +553,23 @@ fn build_call<const N: usize>(entries: [(&str, &str); N]) -> DriverCall {
     target: ExecutionTarget::default(),
     inputs,
     working_directory: PathBuf::from("."),
+  }
+}
+
+fn sample_window_ref() -> super::WindowRef {
+  super::WindowRef {
+    window_number: 7,
+    owner_pid: 1,
+    owner_bundle_id: "com.apple.TextEdit".to_string(),
+    app_name: "TextEdit".to_string(),
+    title: "Untitled".to_string(),
+    bounds: super::ObservedRect {
+      x: 100,
+      y: 200,
+      width: 640,
+      height: 480,
+    },
+    layer: 0,
   }
 }
 

@@ -8,30 +8,14 @@ pub(crate) fn click_window_point(call: &DriverCall) -> AuvResult<DriverResponse>
     .ok_or_else(|| {
       "operation requires --target <application-id> or --app <application-id>".to_string()
     })?;
+  let selector = parse_app_selector(&app)?;
   activate_target_app(&app)?;
 
-  let snapshot = super::super::observe::observe_windows_snapshot(32, "")?;
-  let mut candidate_windows = snapshot
-    .windows
-    .iter()
-    .filter(|window| {
-      app_contains_window(&app, &window.app_name)
-        || (!snapshot.frontmost_app_name.is_empty()
-          && snapshot.frontmost_app_name == window.app_name)
-    })
-    .collect::<Vec<_>>();
-  candidate_windows.sort_by(|left, right| {
-    let left_key = (left.layer != 0, -window_area(left));
-    let right_key = (right.layer != 0, -window_area(right));
-    left_key.cmp(&right_key)
-  });
-  let window = candidate_windows
-    .into_iter()
-    .next()
-    .or_else(|| snapshot.windows.first())
-    .ok_or_else(|| format!("could not find a visible window for app {}", app))?;
+  let snapshot = super::super::observe::observe_windows_snapshot(128, "")?;
+  let resolved_app = resolve_app_ref(&snapshot, &selector)?;
+  let window = resolve_window_ref(&snapshot, &resolved_app)?;
 
-  let (logical_x, logical_y, coordinate_summary) = resolve_window_point(call, window)?;
+  let (logical_x, logical_y, coordinate_summary) = resolve_window_point(call, &window)?;
   let button_label = optional_string(call, "button").unwrap_or_else(|| "left".to_string());
   let click_count = optional_i64(call, "click_count")?.unwrap_or(1).clamp(1, 4);
   let nested_call = build_click_point_call(
@@ -52,8 +36,21 @@ pub(crate) fn click_window_point(call: &DriverCall) -> AuvResult<DriverResponse>
     &format!("click-window-point-{}", sanitize_file_component(&app)),
     [
       format!("app={app}"),
+      format!("appSelector={}", resolved_app.selector.raw),
+      format!("matchStrategy={}", resolved_app.match_strategy),
+      format!(
+        "resolvedAppBundleId={}",
+        resolved_app
+          .resolved_bundle_id
+          .clone()
+          .unwrap_or_else(|| "n/a".to_string())
+      ),
+      format!("resolvedAppName={}", resolved_app.resolved_app_name),
+      format!("windowRef={}", window.window_number),
       format!("windowTitle={}", window.title),
       format!("windowBounds={}", render_rect_compact(&window.bounds)),
+      format!("ownerBundleId={}", window.owner_bundle_id),
+      format!("ownerPid={}", window.owner_pid),
       format!("resolvedLogicalPoint={logical_x:.3},{logical_y:.3}"),
       coordinate_summary.clone(),
       format!("button={button_label}"),
@@ -64,10 +61,23 @@ pub(crate) fn click_window_point(call: &DriverCall) -> AuvResult<DriverResponse>
   )?;
   let mut notes = vec![
     format!("app={app}"),
+    format!("appSelector={}", resolved_app.selector.raw),
+    format!("matchStrategy={}", resolved_app.match_strategy),
+    format!(
+      "resolvedAppBundleId={}",
+      resolved_app
+        .resolved_bundle_id
+        .clone()
+        .unwrap_or_else(|| "n/a".to_string())
+    ),
+    format!("windowRef={}", window.window_number),
     format!("windowBounds={}", render_rect_compact(&window.bounds)),
     format!("logicalPoint={logical_x:.3},{logical_y:.3}"),
     coordinate_summary,
   ];
+  if !window.owner_bundle_id.is_empty() {
+    notes.push(format!("ownerBundleId={}", window.owner_bundle_id));
+  }
   if !window.title.is_empty() {
     notes.push(format!("windowTitle={}", window.title));
   }

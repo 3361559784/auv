@@ -70,6 +70,9 @@ reviewer should no longer need to infer whether a skill is:
 
 from scattered step prose.
 
+The same strategy truth should also survive bundle/package export. Otherwise the
+repo is honest but the distillation product is not.
+
 ## Step Contract
 
 Each step currently needs:

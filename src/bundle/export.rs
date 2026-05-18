@@ -81,7 +81,7 @@ pub fn export_bundle(
     format!("sourceManifest={}", entry.path.display()),
     "members=".to_string(),
   ];
-  let mut package_member_dirs = Vec::new();
+  let mut package_members = Vec::new();
   let mut package_member_readme_entries = Vec::new();
   for member in &entry.manifest.members {
     let recipe_entry = skill_catalog
@@ -141,6 +141,7 @@ pub fn export_bundle(
       &summary_path,
       render_bundle_member_summary(
         member,
+        &recipe_entry.manifest.strategy,
         &member_relative_dir,
         &recipe_entry.path,
         &case_matrix_entry.path,
@@ -198,9 +199,13 @@ pub fn export_bundle(
     }
 
     package_index.push(render_bundle_index_member_line(member));
-    package_member_dirs.push(member_relative_dir.clone());
+    package_members.push((
+      member_relative_dir.clone(),
+      recipe_entry.manifest.strategy.clone(),
+    ));
     package_member_readme_entries.push(render_bundle_package_member(
       member,
+      &recipe_entry.manifest.strategy,
       &member_relative_dir,
       &recipe_entry.path,
       &case_matrix_entry.path,
@@ -259,7 +264,7 @@ pub fn export_bundle(
   let package_manifest_path = package_root.join("package.json");
   fs::write(
     &package_manifest_path,
-    render_bundle_package_manifest(entry, project_root, &package_member_dirs),
+    render_bundle_package_manifest(entry, project_root, &package_members),
   )
   .map_err(|error| {
     format!(
@@ -428,6 +433,12 @@ pub fn verify_exported_bundle_package_standalone(package_root: &Path) -> Result<
           recipe_export_path.display()
         )
       })?;
+    if package_member.strategy != recipe_manifest.strategy {
+      return Err(format!(
+        "exported package member {} strategy does not match exported recipe strategy",
+        member.recipe_id
+      ));
+    }
     validate_skill_manifest(&recipe_manifest).map_err(|error| {
       format!(
         "exported recipe {} failed manifest validation: {error}",
@@ -802,6 +813,12 @@ fn verify_exported_bundle_package(
 
     let member_dir = package_root.join(&expected_package_dir);
     let recipe_entry = skill_catalog.resolve_recipe_id(&member.recipe_id)?;
+    if package_member.strategy != recipe_entry.manifest.strategy {
+      return Err(format!(
+        "exported package member {} strategy does not match source recipe strategy",
+        member.recipe_id
+      ));
+    }
     let case_matrix_entry = case_matrix_catalog.resolve(project_root, &member.case_matrix_id)?;
     let recipe_export_path =
       package_root.join(bundle_member_recipe_relative_path(&member.recipe_id));
@@ -869,6 +886,7 @@ fn verify_exported_bundle_package(
     })?;
     let expected_summary = render_bundle_member_summary(
       member,
+      &recipe_entry.manifest.strategy,
       &expected_package_dir,
       &recipe_entry.path,
       &case_matrix_entry.path,

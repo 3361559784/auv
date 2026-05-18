@@ -298,6 +298,10 @@ fn export_bundle_writes_self_consistent_package() {
   for member in &package_manifest.members {
     assert!(member.package_dir.starts_with("members/"));
     assert!(!member.package_dir.contains(" -> "));
+    assert!(!member.strategy.family.is_empty());
+    assert!(!member.strategy.grounding.is_empty());
+    assert!(!member.strategy.activation.is_empty());
+    assert!(!member.strategy.verification_contract.is_empty());
   }
 
   let _ = fs::remove_dir_all(output_dir);

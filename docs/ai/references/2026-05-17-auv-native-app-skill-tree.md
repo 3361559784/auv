@@ -53,6 +53,8 @@ graph TD
 - The native-app bundle now carries two separate QQ音乐 members:
   - OCR-anchor playback with captured-image verification
   - row-fallback playback with AX now-playing verification
+- The exported bundle/package now carries structured strategy truth instead of
+  forcing downstream consumers to infer it from recipe prose.
 - `verifyImageText` is the current evidence-image verification contract for the
   OCR-anchor playback slice.
 - `verifyNowPlayingTitle` is the stable AX-based contract for the row-fallback

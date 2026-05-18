@@ -2,6 +2,8 @@ use std::path::PathBuf;
 
 use serde::Deserialize;
 
+use crate::skill::SkillStrategy;
+
 #[derive(Clone, Debug, Deserialize)]
 pub struct SkillBundleManifest {
   #[serde(rename = "apiVersion")]
@@ -152,6 +154,8 @@ pub(crate) struct ExportedBundlePackageMember {
   pub(crate) package_dir: String,
   #[serde(rename = "coverageReport")]
   pub(crate) coverage_report: String,
+  #[serde(default)]
+  pub(crate) strategy: SkillStrategy,
   #[serde(default, rename = "coverageSummary")]
   pub(crate) coverage_summary: SkillBundleMemberCoverageSummary,
 }

@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::skill::{SkillCaseMatrixCatalog, SkillCatalog};
+use crate::skill::{SkillCaseMatrixCatalog, SkillCatalog, SkillStrategy};
 
 use super::model::{
   ExportedBundlePackageManifest, SkillBundleCatalogEntry, SkillBundleManifest, SkillBundleMember,
@@ -14,14 +14,14 @@ use super::paths::{
 pub(crate) fn render_bundle_package_manifest(
   entry: &SkillBundleCatalogEntry,
   project_root: &Path,
-  package_member_dirs: &[String],
+  package_members: &[(String, SkillStrategy)],
 ) -> String {
   let members = entry
     .manifest
     .members
     .iter()
-    .zip(package_member_dirs.iter())
-    .map(|(member, member_path)| {
+    .zip(package_members.iter())
+    .map(|(member, (member_path, strategy))| {
       serde_json::json!({
         "recipeId": member.recipe_id,
         "caseMatrixId": member.case_matrix_id,
@@ -34,6 +34,12 @@ pub(crate) fn render_bundle_package_manifest(
         "evidenceRefs": member.evidence_refs,
         "packageDir": member_path,
         "coverageReport": bundle_member_coverage_relative_path(&member.recipe_id),
+        "strategy": {
+          "family": strategy.family,
+          "grounding": strategy.grounding,
+          "activation": strategy.activation,
+          "verificationContract": strategy.verification_contract,
+        },
         "coverageSummary": {
           "activationStatus": member.coverage_summary.activation_status,
           "semanticSelectionStatus": member.coverage_summary.semantic_selection_status,
@@ -141,6 +147,7 @@ pub(crate) fn render_bundle_member_evidence(member: &SkillBundleMember) -> Strin
 
 pub(crate) fn render_bundle_member_summary(
   member: &SkillBundleMember,
+  strategy: &SkillStrategy,
   member_relative_dir: &str,
   recipe_path: &Path,
   case_matrix_path: &Path,
@@ -151,7 +158,7 @@ pub(crate) fn render_bundle_member_summary(
     member.evidence_refs.join(", ")
   };
   format!(
-    "`{}` -> `{}` ({})\n  - dir: `{}`\n  - recipe: `{}`\n  - case matrix: `{}`\n  - evidence: `{}`\n  - source recipe: `{}`\n  - source case matrix: `{}`\n  - activation status: `{}`\n  - semantic selection status: `{}`\n  - evidence refs: {}",
+    "`{}` -> `{}` ({})\n  - dir: `{}`\n  - recipe: `{}`\n  - case matrix: `{}`\n  - evidence: `{}`\n  - source recipe: `{}`\n  - source case matrix: `{}`\n  - strategy: `{}/{}/{} -> {}`\n  - activation status: `{}`\n  - semantic selection status: `{}`\n  - evidence refs: {}",
     member.recipe_id,
     member.case_matrix_id,
     member.contract,
@@ -161,6 +168,10 @@ pub(crate) fn render_bundle_member_summary(
     bundle_member_evidence_relative_path(&member.recipe_id),
     recipe_path.display(),
     case_matrix_path.display(),
+    strategy.family,
+    strategy.grounding,
+    strategy.activation,
+    strategy.verification_contract,
     if member.coverage_summary.activation_status.is_empty() {
       "unspecified"
     } else {
@@ -177,15 +188,20 @@ pub(crate) fn render_bundle_member_summary(
 
 pub(crate) fn render_bundle_package_member(
   member: &SkillBundleMember,
+  strategy: &SkillStrategy,
   member_relative_dir: &str,
   recipe_path: &Path,
   case_matrix_path: &Path,
 ) -> String {
   format!(
-    "{} -> {} [{}] dir={} recipe={} cases={}",
+    "{} -> {} [{}] strategy={}/{}/{}->{} dir={} recipe={} cases={}",
     member.recipe_id,
     member.case_matrix_id,
     member.contract,
+    strategy.family,
+    strategy.grounding,
+    strategy.activation,
+    strategy.verification_contract,
     member_relative_dir,
     recipe_path.display(),
     case_matrix_path.display()
@@ -235,11 +251,18 @@ pub fn render_bundle_package_coverage(
 
   output.push_str("\n## Member Coverage\n\n");
   for member in &entry.manifest.members {
-    let _recipe_entry = skill_catalog.resolve_recipe_id(&member.recipe_id)?;
+    let recipe_entry = skill_catalog.resolve_recipe_id(&member.recipe_id)?;
     let _case_matrix_entry = case_matrix_catalog.resolve(project_root, &member.case_matrix_id)?;
     output.push_str(&format!("### {}\n\n", member.recipe_id));
     output.push_str(&format!("- role: `{}`\n", member.role));
     output.push_str(&format!("- contract: `{}`\n", member.contract));
+    output.push_str(&format!(
+      "- strategy: `{}/{}/{} -> {}`\n",
+      recipe_entry.manifest.strategy.family,
+      recipe_entry.manifest.strategy.grounding,
+      recipe_entry.manifest.strategy.activation,
+      recipe_entry.manifest.strategy.verification_contract
+    ));
     if !member.coverage_summary.activation_status.is_empty() {
       output.push_str(&format!(
         "- activation status: `{}`\n",
@@ -348,6 +371,13 @@ pub(crate) fn render_bundle_standalone_coverage(
     output.push_str(&format!("### {}\n\n", member.recipe_id));
     output.push_str(&format!("- role: `{}`\n", member.role));
     output.push_str(&format!("- contract: `{}`\n", member.contract));
+    output.push_str(&format!(
+      "- strategy: `{}/{}/{} -> {}`\n",
+      package_member.strategy.family,
+      package_member.strategy.grounding,
+      package_member.strategy.activation,
+      package_member.strategy.verification_contract
+    ));
     if !member.coverage_summary.activation_status.is_empty() {
       output.push_str(&format!(
         "- activation status: `{}`\n",

@@ -433,6 +433,18 @@ pub fn verify_exported_bundle_package_standalone(package_root: &Path) -> Result<
           recipe_export_path.display()
         )
       })?;
+    let expected_taxonomy_id = recipe_manifest.strategy.taxonomy_id().map_err(|error| {
+      format!(
+        "exported recipe {} has invalid strategy taxonomy: {error}",
+        recipe_export_path.display()
+      )
+    })?;
+    if package_member.taxonomy_id != expected_taxonomy_id {
+      return Err(format!(
+        "exported package member {} declares taxonomyId {} but exported recipe strategy resolves to {}",
+        member.recipe_id, package_member.taxonomy_id, expected_taxonomy_id
+      ));
+    }
     if package_member.strategy != recipe_manifest.strategy {
       return Err(format!(
         "exported package member {} strategy does not match exported recipe strategy",
@@ -813,6 +825,22 @@ fn verify_exported_bundle_package(
 
     let member_dir = package_root.join(&expected_package_dir);
     let recipe_entry = skill_catalog.resolve_recipe_id(&member.recipe_id)?;
+    let expected_taxonomy_id = recipe_entry
+      .manifest
+      .strategy
+      .taxonomy_id()
+      .map_err(|error| {
+        format!(
+          "source recipe {} has invalid strategy taxonomy: {error}",
+          recipe_entry.path.display()
+        )
+      })?;
+    if package_member.taxonomy_id != expected_taxonomy_id {
+      return Err(format!(
+        "exported package member {} declares taxonomyId {} but source recipe strategy resolves to {}",
+        member.recipe_id, package_member.taxonomy_id, expected_taxonomy_id
+      ));
+    }
     if package_member.strategy != recipe_entry.manifest.strategy {
       return Err(format!(
         "exported package member {} strategy does not match source recipe strategy",

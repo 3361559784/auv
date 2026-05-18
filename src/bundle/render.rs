@@ -22,6 +22,12 @@ pub(crate) fn render_bundle_package_manifest(
     .iter()
     .zip(package_members.iter())
     .map(|(member, (member_path, strategy))| {
+      let taxonomy_id = strategy.taxonomy_id().unwrap_or_else(|_| {
+        format!(
+          "{}.{}.{}.{}",
+          strategy.family, strategy.grounding, strategy.activation, strategy.verification_contract
+        )
+      });
       serde_json::json!({
         "recipeId": member.recipe_id,
         "caseMatrixId": member.case_matrix_id,
@@ -34,6 +40,7 @@ pub(crate) fn render_bundle_package_manifest(
         "evidenceRefs": member.evidence_refs,
         "packageDir": member_path,
         "coverageReport": bundle_member_coverage_relative_path(&member.recipe_id),
+        "taxonomyId": taxonomy_id,
         "strategy": {
           "family": strategy.family,
           "grounding": strategy.grounding,
@@ -152,13 +159,19 @@ pub(crate) fn render_bundle_member_summary(
   recipe_path: &Path,
   case_matrix_path: &Path,
 ) -> String {
+  let taxonomy_id = strategy.taxonomy_id().unwrap_or_else(|_| {
+    format!(
+      "{}.{}.{}.{}",
+      strategy.family, strategy.grounding, strategy.activation, strategy.verification_contract
+    )
+  });
   let evidence = if member.evidence_refs.is_empty() {
     "none".to_string()
   } else {
     member.evidence_refs.join(", ")
   };
   format!(
-    "`{}` -> `{}` ({})\n  - dir: `{}`\n  - recipe: `{}`\n  - case matrix: `{}`\n  - evidence: `{}`\n  - source recipe: `{}`\n  - source case matrix: `{}`\n  - strategy: `{}/{}/{} -> {}`\n  - activation status: `{}`\n  - semantic selection status: `{}`\n  - evidence refs: {}",
+    "`{}` -> `{}` ({})\n  - dir: `{}`\n  - recipe: `{}`\n  - case matrix: `{}`\n  - evidence: `{}`\n  - source recipe: `{}`\n  - source case matrix: `{}`\n  - strategy: `{}/{}/{} -> {}`\n  - strategy taxonomy: `{}`\n  - activation status: `{}`\n  - semantic selection status: `{}`\n  - evidence refs: {}",
     member.recipe_id,
     member.case_matrix_id,
     member.contract,
@@ -172,6 +185,7 @@ pub(crate) fn render_bundle_member_summary(
     strategy.grounding,
     strategy.activation,
     strategy.verification_contract,
+    taxonomy_id,
     if member.coverage_summary.activation_status.is_empty() {
       "unspecified"
     } else {
@@ -193,8 +207,14 @@ pub(crate) fn render_bundle_package_member(
   recipe_path: &Path,
   case_matrix_path: &Path,
 ) -> String {
+  let taxonomy_id = strategy.taxonomy_id().unwrap_or_else(|_| {
+    format!(
+      "{}.{}.{}.{}",
+      strategy.family, strategy.grounding, strategy.activation, strategy.verification_contract
+    )
+  });
   format!(
-    "{} -> {} [{}] strategy={}/{}/{}->{} dir={} recipe={} cases={}",
+    "{} -> {} [{}] strategy={}/{}/{}->{} taxonomy={} dir={} recipe={} cases={}",
     member.recipe_id,
     member.case_matrix_id,
     member.contract,
@@ -202,6 +222,7 @@ pub(crate) fn render_bundle_package_member(
     strategy.grounding,
     strategy.activation,
     strategy.verification_contract,
+    taxonomy_id,
     member_relative_dir,
     recipe_path.display(),
     case_matrix_path.display()
@@ -263,6 +284,9 @@ pub fn render_bundle_package_coverage(
       recipe_entry.manifest.strategy.activation,
       recipe_entry.manifest.strategy.verification_contract
     ));
+    if let Ok(taxonomy_id) = recipe_entry.manifest.strategy.taxonomy_id() {
+      output.push_str(&format!("- strategy taxonomy: `{}`\n", taxonomy_id));
+    }
     if !member.coverage_summary.activation_status.is_empty() {
       output.push_str(&format!(
         "- activation status: `{}`\n",
@@ -378,6 +402,12 @@ pub(crate) fn render_bundle_standalone_coverage(
       package_member.strategy.activation,
       package_member.strategy.verification_contract
     ));
+    if !package_member.taxonomy_id.is_empty() {
+      output.push_str(&format!(
+        "- strategy taxonomy: `{}`\n",
+        package_member.taxonomy_id
+      ));
+    }
     if !member.coverage_summary.activation_status.is_empty() {
       output.push_str(&format!(
         "- activation status: `{}`\n",

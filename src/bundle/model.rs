@@ -154,6 +154,8 @@ pub(crate) struct ExportedBundlePackageMember {
   pub(crate) package_dir: String,
   #[serde(rename = "coverageReport")]
   pub(crate) coverage_report: String,
+  #[serde(default, rename = "taxonomyId")]
+  pub(crate) taxonomy_id: String,
   #[serde(default)]
   pub(crate) strategy: SkillStrategy,
   #[serde(default, rename = "coverageSummary")]

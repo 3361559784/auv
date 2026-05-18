@@ -99,6 +99,9 @@ fn run() -> Result<(), String> {
           entry.manifest.strategy.activation,
           entry.manifest.strategy.verification_contract
         );
+        if let Ok(taxonomy_id) = entry.manifest.strategy.taxonomy_id() {
+          println!("  strategy taxonomy: {}", taxonomy_id);
+        }
         if !entry.manifest.status.is_empty() {
           println!("  status: {}", entry.manifest.status);
         }

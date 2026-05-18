@@ -59,6 +59,14 @@ Current validated values are intentionally narrow:
 - `search-entry`
 - `native-text`
 
+Current allowed strategy combinations are also intentionally narrow:
+
+- `search-entry / ax-text-input / clipboard-submit / captureScreenEvidence`
+- `result-selection / ocr-anchor / pointer-click / captureScreenEvidence`
+- `playback / ocr-anchor / pointer-double-click / verifyImageText`
+- `playback / visual-row / pointer-row-activation / verifyNowPlayingTitle`
+- `native-text / ax-text / pointer-focus-clipboard-paste / verifyAxText`
+
 And the important point is not the exact labels. The point is that a bundle or
 reviewer should no longer need to infer whether a skill is:
 
@@ -72,6 +80,16 @@ from scattered step prose.
 
 The same strategy truth should also survive bundle/package export. Otherwise the
 repo is honest but the distillation product is not.
+
+As of 2026-05-18, this truth now survives export in two machine-consumable
+forms:
+
+- structured `strategy.*` fields
+- normalized `taxonomyId`
+
+The current `taxonomyId` shape is:
+
+`family.grounding.activation.verification-contract`
 
 ## Step Contract
 

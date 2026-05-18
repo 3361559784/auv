@@ -61,6 +61,224 @@ pub struct SkillStrategy {
   pub verification_contract: String,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SkillStrategyTaxonomy {
+  pub family: SkillStrategyFamily,
+  pub grounding: SkillGrounding,
+  pub activation: SkillActivation,
+  pub verification_contract: SkillVerificationContract,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SkillStrategyFamily {
+  SearchEntry,
+  ResultSelection,
+  Playback,
+  NativeText,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SkillGrounding {
+  AxTextInput,
+  OcrAnchor,
+  VisualRow,
+  AxText,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SkillActivation {
+  ClipboardSubmit,
+  PointerClick,
+  PointerDoubleClick,
+  PointerRowActivation,
+  PointerFocusClipboardPaste,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SkillVerificationContract {
+  CaptureScreenEvidence,
+  VerifyImageText,
+  VerifyNowPlayingTitle,
+  VerifyAxText,
+}
+
+impl SkillStrategy {
+  pub fn taxonomy(&self) -> AuvResult<SkillStrategyTaxonomy> {
+    let family = SkillStrategyFamily::parse(&self.family)?;
+    let grounding = SkillGrounding::parse(&self.grounding)?;
+    let activation = SkillActivation::parse(&self.activation)?;
+    let verification_contract = SkillVerificationContract::parse(&self.verification_contract)?;
+    Ok(SkillStrategyTaxonomy {
+      family,
+      grounding,
+      activation,
+      verification_contract,
+    })
+  }
+
+  pub fn taxonomy_id(&self) -> AuvResult<String> {
+    Ok(self.taxonomy()?.taxonomy_id())
+  }
+}
+
+impl SkillStrategyTaxonomy {
+  pub fn taxonomy_id(&self) -> String {
+    format!(
+      "{}.{}.{}.{}",
+      self.family.as_str(),
+      self.grounding.as_str(),
+      self.activation.as_str(),
+      self.verification_contract.as_str()
+    )
+  }
+
+  fn allowed() -> &'static [SkillStrategyTaxonomy] {
+    const ALLOWED: &[SkillStrategyTaxonomy] = &[
+      SkillStrategyTaxonomy {
+        family: SkillStrategyFamily::SearchEntry,
+        grounding: SkillGrounding::AxTextInput,
+        activation: SkillActivation::ClipboardSubmit,
+        verification_contract: SkillVerificationContract::CaptureScreenEvidence,
+      },
+      SkillStrategyTaxonomy {
+        family: SkillStrategyFamily::ResultSelection,
+        grounding: SkillGrounding::OcrAnchor,
+        activation: SkillActivation::PointerClick,
+        verification_contract: SkillVerificationContract::CaptureScreenEvidence,
+      },
+      SkillStrategyTaxonomy {
+        family: SkillStrategyFamily::Playback,
+        grounding: SkillGrounding::OcrAnchor,
+        activation: SkillActivation::PointerDoubleClick,
+        verification_contract: SkillVerificationContract::VerifyImageText,
+      },
+      SkillStrategyTaxonomy {
+        family: SkillStrategyFamily::Playback,
+        grounding: SkillGrounding::VisualRow,
+        activation: SkillActivation::PointerRowActivation,
+        verification_contract: SkillVerificationContract::VerifyNowPlayingTitle,
+      },
+      SkillStrategyTaxonomy {
+        family: SkillStrategyFamily::NativeText,
+        grounding: SkillGrounding::AxText,
+        activation: SkillActivation::PointerFocusClipboardPaste,
+        verification_contract: SkillVerificationContract::VerifyAxText,
+      },
+    ];
+    ALLOWED
+  }
+
+  fn is_allowed(&self) -> bool {
+    Self::allowed().contains(self)
+  }
+
+  fn allowed_taxonomy_ids() -> String {
+    Self::allowed()
+      .iter()
+      .map(Self::taxonomy_id)
+      .collect::<Vec<_>>()
+      .join(", ")
+  }
+}
+
+impl SkillStrategyFamily {
+  fn parse(raw: &str) -> AuvResult<Self> {
+    match raw.trim() {
+      "search-entry" => Ok(Self::SearchEntry),
+      "result-selection" => Ok(Self::ResultSelection),
+      "playback" => Ok(Self::Playback),
+      "native-text" => Ok(Self::NativeText),
+      other => Err(format!(
+        "strategy.family {} is unsupported; allowed values: search-entry, result-selection, playback, native-text",
+        other
+      )),
+    }
+  }
+
+  fn as_str(&self) -> &'static str {
+    match self {
+      Self::SearchEntry => "search-entry",
+      Self::ResultSelection => "result-selection",
+      Self::Playback => "playback",
+      Self::NativeText => "native-text",
+    }
+  }
+}
+
+impl SkillGrounding {
+  fn parse(raw: &str) -> AuvResult<Self> {
+    match raw.trim() {
+      "ax-text-input" => Ok(Self::AxTextInput),
+      "ocr-anchor" => Ok(Self::OcrAnchor),
+      "visual-row" => Ok(Self::VisualRow),
+      "ax-text" => Ok(Self::AxText),
+      other => Err(format!(
+        "strategy.grounding {} is unsupported; allowed values: ax-text-input, ocr-anchor, visual-row, ax-text",
+        other
+      )),
+    }
+  }
+
+  fn as_str(&self) -> &'static str {
+    match self {
+      Self::AxTextInput => "ax-text-input",
+      Self::OcrAnchor => "ocr-anchor",
+      Self::VisualRow => "visual-row",
+      Self::AxText => "ax-text",
+    }
+  }
+}
+
+impl SkillActivation {
+  fn parse(raw: &str) -> AuvResult<Self> {
+    match raw.trim() {
+      "clipboard-submit" => Ok(Self::ClipboardSubmit),
+      "pointer-click" => Ok(Self::PointerClick),
+      "pointer-double-click" => Ok(Self::PointerDoubleClick),
+      "pointer-row-activation" => Ok(Self::PointerRowActivation),
+      "pointer-focus-clipboard-paste" => Ok(Self::PointerFocusClipboardPaste),
+      other => Err(format!(
+        "strategy.activation {} is unsupported; allowed values: clipboard-submit, pointer-click, pointer-double-click, pointer-row-activation, pointer-focus-clipboard-paste",
+        other
+      )),
+    }
+  }
+
+  fn as_str(&self) -> &'static str {
+    match self {
+      Self::ClipboardSubmit => "clipboard-submit",
+      Self::PointerClick => "pointer-click",
+      Self::PointerDoubleClick => "pointer-double-click",
+      Self::PointerRowActivation => "pointer-row-activation",
+      Self::PointerFocusClipboardPaste => "pointer-focus-clipboard-paste",
+    }
+  }
+}
+
+impl SkillVerificationContract {
+  fn parse(raw: &str) -> AuvResult<Self> {
+    match raw.trim() {
+      "captureScreenEvidence" => Ok(Self::CaptureScreenEvidence),
+      "verifyImageText" => Ok(Self::VerifyImageText),
+      "verifyNowPlayingTitle" => Ok(Self::VerifyNowPlayingTitle),
+      "verifyAxText" => Ok(Self::VerifyAxText),
+      other => Err(format!(
+        "strategy.verificationContract {} is unsupported; allowed values: captureScreenEvidence, verifyImageText, verifyNowPlayingTitle, verifyAxText",
+        other
+      )),
+    }
+  }
+
+  fn as_str(&self) -> &'static str {
+    match self {
+      Self::CaptureScreenEvidence => "capture-screen-evidence",
+      Self::VerifyImageText => "verify-image-text",
+      Self::VerifyNowPlayingTitle => "verify-now-playing-title",
+      Self::VerifyAxText => "verify-ax-text",
+    }
+  }
+}
+
 #[derive(Clone, Debug, Deserialize, Default)]
 pub struct SkillInputSpec {
   #[serde(rename = "type", default)]
@@ -460,6 +678,18 @@ fn validate_skill_strategy(manifest: &SkillManifest) -> AuvResult<()> {
     "verificationContract",
     &manifest.strategy.verification_contract,
   )?;
+  let taxonomy = manifest
+    .strategy
+    .taxonomy()
+    .map_err(|error| format!("skill {} {}", manifest.recipe_id, error))?;
+  if !taxonomy.is_allowed() {
+    return Err(format!(
+      "skill {} strategy combination {} is unsupported; allowed combinations: {}",
+      manifest.recipe_id,
+      taxonomy.taxonomy_id(),
+      SkillStrategyTaxonomy::allowed_taxonomy_ids()
+    ));
+  }
   Ok(())
 }
 
@@ -724,6 +954,9 @@ pub fn render_skill_case_matrix_report(
     "- strategy verification contract: `{}`\n",
     manifest.strategy.verification_contract
   ));
+  if let Ok(taxonomy_id) = manifest.strategy.taxonomy_id() {
+    output.push_str(&format!("- strategy taxonomy: `{}`\n", taxonomy_id));
+  }
   output.push_str(&format!("- objective: {}\n", manifest.objective.trim()));
   output.push_str(&format!(
     "- max disturbance: `{}`\n",
@@ -1464,9 +1697,9 @@ mod tests {
       "version": "0.1.0",
       "target_app": { "bundle_id": "app", "display_mode": "live-desktop" },
       "strategy": {
-        "family": "test",
-        "grounding": "ax_text",
-        "activation": "pointer_click",
+        "family": "native-text",
+        "grounding": "ax-text",
+        "activation": "pointer-focus-clipboard-paste",
         "verificationContract": "verifyAxText"
       },
       "objective": "test",
@@ -1536,9 +1769,9 @@ mod tests {
         "version": "0.1.0",
         "target_app": { "bundle_id": "app", "display_mode": "live-desktop" },
         "strategy": {
-          "family": "test",
-          "grounding": "ax_text",
-          "activation": "pointer_click",
+          "family": "native-text",
+          "grounding": "ax-text",
+          "activation": "pointer-focus-clipboard-paste",
           "verificationContract": "verifyAxText"
         },
         "objective": "test",
@@ -1567,9 +1800,9 @@ mod tests {
         "version": "0.1.0",
         "target_app": { "bundle_id": "app", "display_mode": "live-desktop" },
         "strategy": {
-          "family": "test",
-          "grounding": "ax_text",
-          "activation": "pointer_click",
+          "family": "native-text",
+          "grounding": "ax-text",
+          "activation": "pointer-focus-clipboard-paste",
           "verificationContract": "verifyAxText"
         },
         "objective": "test",
@@ -1636,9 +1869,9 @@ mod tests {
       "platform": "macOS",
       "target_app": { "bundle_id": "app", "display_mode": "live-desktop" },
       "strategy": {
-        "family": "test",
-        "grounding": "ax_text",
-        "activation": "pointer_click",
+        "family": "native-text",
+        "grounding": "ax-text",
+        "activation": "pointer-focus-clipboard-paste",
         "verificationContract": "verifyAxText"
       },
       "objective": "test",
@@ -1676,9 +1909,9 @@ mod tests {
       "platform": "macOS",
       "target_app": { "bundle_id": "app", "display_mode": "live-desktop" },
       "strategy": {
-        "family": "test",
-        "grounding": "ax_text",
-        "activation": "pointer_click",
+        "family": "native-text",
+        "grounding": "ax-text",
+        "activation": "pointer-focus-clipboard-paste",
         "verificationContract": "verifyAxText"
       },
       "objective": "test",
@@ -1719,9 +1952,9 @@ mod tests {
       "platform": "macOS",
       "target_app": { "bundle_id": "app", "display_mode": "live-desktop" },
       "strategy": {
-        "family": "test",
-        "grounding": "ax_text",
-        "activation": "pointer_click",
+        "family": "native-text",
+        "grounding": "ax-text",
+        "activation": "pointer-focus-clipboard-paste",
         "verificationContract": "verifyAxText"
       },
       "objective": "test",
@@ -1762,9 +1995,9 @@ mod tests {
       "platform": "macOS",
       "target_app": { "bundle_id": "app", "display_mode": "live-desktop" },
       "strategy": {
-        "family": "test",
-        "grounding": "ax_text",
-        "activation": "pointer_click",
+        "family": "native-text",
+        "grounding": "ax-text",
+        "activation": "pointer-focus-clipboard-paste",
         "verificationContract": "verifyAxText"
       },
       "objective": "test",
@@ -1789,9 +2022,9 @@ mod tests {
       "platform": "macOS",
       "target_app": { "bundle_id": "app", "display_mode": "live-desktop" },
       "strategy": {
-        "family": "test",
-        "grounding": "ax_text",
-        "activation": "pointer_click",
+        "family": "native-text",
+        "grounding": "ax-text",
+        "activation": "pointer-focus-clipboard-paste",
         "verificationContract": "verifyAxText"
       },
       "objective": "test",
@@ -1864,9 +2097,9 @@ mod tests {
       "platform": "macOS",
       "target_app": { "bundle_id": "app", "display_mode": "live-desktop" },
       "strategy": {
-        "family": "test",
-        "grounding": "ax_text",
-        "activation": "pointer_click",
+        "family": "native-text",
+        "grounding": "ax-text",
+        "activation": "pointer-focus-clipboard-paste",
         "verificationContract": "verifyAxText"
       },
       "objective": "test",
@@ -1920,9 +2153,9 @@ mod tests {
       "platform": "macOS",
       "target_app": { "bundle_id": "app", "display_mode": "live-desktop" },
       "strategy": {
-        "family": "test",
-        "grounding": "ax_text",
-        "activation": "pointer_click",
+        "family": "native-text",
+        "grounding": "ax-text",
+        "activation": "pointer-focus-clipboard-paste",
         "verificationContract": "verifyAxText"
       },
       "objective": "test",
@@ -1976,9 +2209,9 @@ mod tests {
       "platform": "macOS",
       "target_app": { "bundle_id": "app", "display_mode": "live-desktop" },
       "strategy": {
-        "family": "test",
-        "grounding": "ax_text",
-        "activation": "pointer_click",
+        "family": "native-text",
+        "grounding": "ax-text",
+        "activation": "pointer-focus-clipboard-paste",
         "verificationContract": "verifyAxText"
       },
       "objective": "test",

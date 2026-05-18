@@ -40,7 +40,7 @@ What it validates:
 - ASCII query submission
 - constrained result-region OCR anchor resolution
 - double-click anchor activation
-- captured-image verification of now-playing title
+- captured-image verification of now-playing title through `verifyImageText`
 
 What is actually validated:
 
@@ -77,7 +77,7 @@ What it validates:
 - result-page row detection
 - visible-row activation
 - explicit play-control press
-- AX-based now-playing verification
+- AX-based now-playing verification through `verifyNowPlayingTitle`
 
 What is actually validated:
 

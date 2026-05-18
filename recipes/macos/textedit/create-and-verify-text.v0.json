@@ -8,6 +8,12 @@
     "bundle_id": "${app_id}",
     "display_mode": "live-desktop"
   },
+  "strategy": {
+    "family": "native-text",
+    "grounding": "ax-text",
+    "activation": "pointer-focus-clipboard-paste",
+    "verificationContract": "verifyAxText"
+  },
   "objective": "Focus TextEdit's main text area, write a stable marker, and verify the marker through the AX tree without screenshot OCR.",
   "inputs": {
     "app_id": {

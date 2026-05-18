@@ -183,6 +183,7 @@ fn write_temp_bundle_manifest(
   temp_project_root: &Path,
   evidence_refs: &[&str],
   app_bundle_id: &str,
+  contract: &str,
   member_target_application: &str,
   bundle_target_application: &str,
 ) {
@@ -214,7 +215,7 @@ fn write_temp_bundle_manifest(
         "role": "native-text-sample",
         "validatedCaseIds": ["textedit-marker-baseline"],
         "candidateCaseIds": [],
-        "contract": "verifyAxText",
+        "contract": contract,
         "appBundleId": app_bundle_id,
         "targetApplication": member_target_application,
         "coverageSummary": {
@@ -309,6 +310,7 @@ fn export_bundle_rejects_missing_evidence_refs() {
     &project_root,
     &["docs/ai/references/missing-evidence.md"],
     "",
+    "verifyAxText",
     "",
     "",
   );
@@ -346,6 +348,7 @@ fn standalone_package_verify_requires_exported_evidence_refs() {
     &project_root,
     &["docs/ai/references/2026-05-17-qqmusic-narrow-skill-coverage.md"],
     "",
+    "verifyAxText",
     "",
     "",
   );
@@ -397,6 +400,7 @@ fn verify_bundle_does_not_probe_installed_app_versions() {
     &project_root,
     &["docs/ai/references/2026-05-17-qqmusic-narrow-skill-coverage.md"],
     "com.example.DoesNotExist",
+    "verifyAxText",
     ">=1.0.0",
     "",
   );
@@ -419,6 +423,41 @@ fn verify_bundle_does_not_probe_installed_app_versions() {
     entry,
   )
   .expect("bundle verification should not depend on installed app versions");
+
+  let _ = fs::remove_dir_all(project_root);
+}
+
+#[test]
+fn verify_bundle_rejects_member_contract_mismatch_with_recipe_strategy() {
+  let project_root = temp_bundle_project_root();
+  write_temp_bundle_manifest(
+    &project_root,
+    &["docs/ai/references/2026-05-17-qqmusic-narrow-skill-coverage.md"],
+    "com.apple.TextEdit",
+    "verifyNowPlayingTitle",
+    ">=1.20.0, <2.0.0",
+    "",
+  );
+
+  let runtime_version = "0.0.1";
+  let skill_catalog = SkillCatalog::discover(&project_root).expect("skill catalog should load");
+  let case_matrix_catalog =
+    SkillCaseMatrixCatalog::discover(&project_root).expect("case catalog should load");
+  let bundle_catalog =
+    SkillBundleCatalog::discover(&project_root).expect("bundle catalog should load");
+  let entry = bundle_catalog
+    .resolve(&project_root, "test.evidence.check.v0")
+    .expect("bundle should resolve");
+
+  let error = verify_bundle(
+    &project_root,
+    runtime_version,
+    &skill_catalog,
+    &case_matrix_catalog,
+    entry,
+  )
+  .expect_err("bundle verification should fail on contract mismatch");
+  assert!(error.contains("verificationContract"));
 
   let _ = fs::remove_dir_all(project_root);
 }

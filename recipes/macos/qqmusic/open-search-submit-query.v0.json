@@ -8,6 +8,12 @@
     "bundle_id": "${app_id}",
     "display_mode": "live-desktop"
   },
+  "strategy": {
+    "family": "search-entry",
+    "grounding": "ax-text-input",
+    "activation": "clipboard-submit",
+    "verificationContract": "captureScreenEvidence"
+  },
   "objective": "Open the QQ音乐 search UI, focus the search field, submit a query, and capture post-submit evidence.",
   "inputs": {
     "app_id": {

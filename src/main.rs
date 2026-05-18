@@ -92,6 +92,13 @@ fn run() -> Result<(), String> {
       for entry in skill_catalog.entries() {
         println!("{}", entry.manifest.recipe_id);
         println!("  {}", entry.manifest.objective);
+        println!(
+          "  strategy: {}/{}/{} -> {}",
+          entry.manifest.strategy.family,
+          entry.manifest.strategy.grounding,
+          entry.manifest.strategy.activation,
+          entry.manifest.strategy.verification_contract
+        );
         if !entry.manifest.status.is_empty() {
           println!("  status: {}", entry.manifest.status);
         }

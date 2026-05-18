@@ -8,6 +8,12 @@
     "bundle_id": "${app_id}",
     "display_mode": "live-desktop"
   },
+  "strategy": {
+    "family": "result-selection",
+    "grounding": "ocr-anchor",
+    "activation": "pointer-click",
+    "verificationContract": "captureScreenEvidence"
+  },
   "objective": "Reach QQ Music search results, resolve a known OCR text anchor, click that anchor, and capture post-action evidence.",
   "inputs": {
     "app_id": {

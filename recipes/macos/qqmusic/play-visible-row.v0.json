@@ -8,6 +8,12 @@
     "bundle_id": "${app_id}",
     "display_mode": "live-desktop"
   },
+  "strategy": {
+    "family": "playback",
+    "grounding": "visual-row",
+    "activation": "pointer-row-activation",
+    "verificationContract": "verifyNowPlayingTitle"
+  },
   "objective": "Reach QQ音乐 search results, activate a visible result row through row detection, press the result play control, and verify the resulting now-playing title through the observed AX tree.",
   "inputs": {
     "app_id": {

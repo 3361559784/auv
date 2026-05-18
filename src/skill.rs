@@ -22,6 +22,8 @@ pub struct SkillManifest {
   #[serde(default)]
   pub platform: String,
   pub target_app: SkillTargetApp,
+  #[serde(default)]
+  pub strategy: SkillStrategy,
   pub objective: String,
   #[serde(default)]
   pub inputs: BTreeMap<String, SkillInputSpec>,
@@ -45,6 +47,18 @@ pub struct SkillTargetApp {
   pub bundle_id: String,
   #[serde(default)]
   pub display_mode: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Default, PartialEq, Eq)]
+pub struct SkillStrategy {
+  #[serde(default)]
+  pub family: String,
+  #[serde(default)]
+  pub grounding: String,
+  #[serde(default)]
+  pub activation: String,
+  #[serde(default, rename = "verificationContract")]
+  pub verification_contract: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Default)]
@@ -389,6 +403,7 @@ pub(crate) fn validate_skill_manifest_with_commands(
 ) -> AuvResult<()> {
   validate_skill_identity(manifest)?;
   validate_skill_target_app(manifest)?;
+  validate_skill_strategy(manifest)?;
   validate_skill_inputs(manifest)?;
   validate_skill_steps(manifest, command_catalog)?;
   validate_skill_verification(manifest)?;
@@ -431,6 +446,41 @@ fn validate_skill_target_app(manifest: &SkillManifest) -> AuvResult<()> {
     return Err(format!(
       "skill {} must declare a non-empty target_app.display_mode",
       manifest.recipe_id
+    ));
+  }
+  Ok(())
+}
+
+fn validate_skill_strategy(manifest: &SkillManifest) -> AuvResult<()> {
+  validate_skill_strategy_field(manifest, "family", &manifest.strategy.family)?;
+  validate_skill_strategy_field(manifest, "grounding", &manifest.strategy.grounding)?;
+  validate_skill_strategy_field(manifest, "activation", &manifest.strategy.activation)?;
+  validate_skill_strategy_field(
+    manifest,
+    "verificationContract",
+    &manifest.strategy.verification_contract,
+  )?;
+  Ok(())
+}
+
+fn validate_skill_strategy_field(
+  manifest: &SkillManifest,
+  field_name: &str,
+  value: &str,
+) -> AuvResult<()> {
+  if value.trim().is_empty() {
+    return Err(format!(
+      "skill {} must declare a non-empty strategy.{}",
+      manifest.recipe_id, field_name
+    ));
+  }
+  if !value
+    .chars()
+    .all(|char| char.is_ascii_alphanumeric() || matches!(char, '-' | '_' | '.'))
+  {
+    return Err(format!(
+      "skill {} strategy.{} {} contains unsupported characters",
+      manifest.recipe_id, field_name, value
     ));
   }
   Ok(())
@@ -658,6 +708,22 @@ pub fn render_skill_case_matrix_report(
   output.push_str(&format!("- matrix version: `{}`\n", matrix.version));
   output.push_str(&format!("- matrix status: `{}`\n", matrix.status));
   output.push_str(&format!("- target app: `{}`\n", target_app_display));
+  output.push_str(&format!(
+    "- strategy family: `{}`\n",
+    manifest.strategy.family
+  ));
+  output.push_str(&format!(
+    "- strategy grounding: `{}`\n",
+    manifest.strategy.grounding
+  ));
+  output.push_str(&format!(
+    "- strategy activation: `{}`\n",
+    manifest.strategy.activation
+  ));
+  output.push_str(&format!(
+    "- strategy verification contract: `{}`\n",
+    manifest.strategy.verification_contract
+  ));
   output.push_str(&format!("- objective: {}\n", manifest.objective.trim()));
   output.push_str(&format!(
     "- max disturbance: `{}`\n",
@@ -1397,6 +1463,12 @@ mod tests {
       "recipe_id": "test.skill",
       "version": "0.1.0",
       "target_app": { "bundle_id": "app", "display_mode": "live-desktop" },
+      "strategy": {
+        "family": "test",
+        "grounding": "ax_text",
+        "activation": "pointer_click",
+        "verificationContract": "verifyAxText"
+      },
       "objective": "test",
       "inputs": {
         "query": { "type": "string", "default": "aa" },
@@ -1463,6 +1535,12 @@ mod tests {
         "recipe_id": "test.example.v0",
         "version": "0.1.0",
         "target_app": { "bundle_id": "app", "display_mode": "live-desktop" },
+        "strategy": {
+          "family": "test",
+          "grounding": "ax_text",
+          "activation": "pointer_click",
+          "verificationContract": "verifyAxText"
+        },
         "objective": "test",
         "steps": []
       }"#,
@@ -1488,6 +1566,12 @@ mod tests {
         "recipe_id": "test.example.v0",
         "version": "0.1.0",
         "target_app": { "bundle_id": "app", "display_mode": "live-desktop" },
+        "strategy": {
+          "family": "test",
+          "grounding": "ax_text",
+          "activation": "pointer_click",
+          "verificationContract": "verifyAxText"
+        },
         "objective": "test",
         "steps": []
       }"#,
@@ -1551,6 +1635,12 @@ mod tests {
       "status": "experimental-recipe",
       "platform": "macOS",
       "target_app": { "bundle_id": "app", "display_mode": "live-desktop" },
+      "strategy": {
+        "family": "test",
+        "grounding": "ax_text",
+        "activation": "pointer_click",
+        "verificationContract": "verifyAxText"
+      },
       "objective": "test",
       "inputs": {
         "query": { "type": "string", "default": "aa" }
@@ -1585,6 +1675,12 @@ mod tests {
       "status": "experimental-recipe",
       "platform": "macOS",
       "target_app": { "bundle_id": "app", "display_mode": "live-desktop" },
+      "strategy": {
+        "family": "test",
+        "grounding": "ax_text",
+        "activation": "pointer_click",
+        "verificationContract": "verifyAxText"
+      },
       "objective": "test",
       "inputs": {
         "query": { "type": "string", "default": "aa" }
@@ -1622,6 +1718,12 @@ mod tests {
       "status": "experimental-recipe",
       "platform": "macOS",
       "target_app": { "bundle_id": "app", "display_mode": "live-desktop" },
+      "strategy": {
+        "family": "test",
+        "grounding": "ax_text",
+        "activation": "pointer_click",
+        "verificationContract": "verifyAxText"
+      },
       "objective": "test",
       "inputs": {
         "query": { "type": "string", "default": "aa" }
@@ -1659,6 +1761,12 @@ mod tests {
       "status": "experimental-recipe",
       "platform": "macOS",
       "target_app": { "bundle_id": "app", "display_mode": "live-desktop" },
+      "strategy": {
+        "family": "test",
+        "grounding": "ax_text",
+        "activation": "pointer_click",
+        "verificationContract": "verifyAxText"
+      },
       "objective": "test",
       "steps": [],
       "verification": {
@@ -1680,6 +1788,12 @@ mod tests {
       "status": "experimental-recipe",
       "platform": "macOS",
       "target_app": { "bundle_id": "app", "display_mode": "live-desktop" },
+      "strategy": {
+        "family": "test",
+        "grounding": "ax_text",
+        "activation": "pointer_click",
+        "verificationContract": "verifyAxText"
+      },
       "objective": "test",
       "steps": [{
         "command_id": "debug.captureScreen",
@@ -1749,6 +1863,12 @@ mod tests {
       "status": "experimental-recipe",
       "platform": "macOS",
       "target_app": { "bundle_id": "app", "display_mode": "live-desktop" },
+      "strategy": {
+        "family": "test",
+        "grounding": "ax_text",
+        "activation": "pointer_click",
+        "verificationContract": "verifyAxText"
+      },
       "objective": "test",
       "inputs": {
         "query": { "type": "string" }
@@ -1799,6 +1919,12 @@ mod tests {
       "status": "experimental-recipe",
       "platform": "macOS",
       "target_app": { "bundle_id": "app", "display_mode": "live-desktop" },
+      "strategy": {
+        "family": "test",
+        "grounding": "ax_text",
+        "activation": "pointer_click",
+        "verificationContract": "verifyAxText"
+      },
       "objective": "test",
       "inputs": {
         "query": { "type": "string" },
@@ -1849,6 +1975,12 @@ mod tests {
       "status": "experimental-recipe",
       "platform": "macOS",
       "target_app": { "bundle_id": "app", "display_mode": "live-desktop" },
+      "strategy": {
+        "family": "test",
+        "grounding": "ax_text",
+        "activation": "pointer_click",
+        "verificationContract": "verifyAxText"
+      },
       "objective": "test",
       "inputs": {
         "query": { "type": "string", "default": "aa" }

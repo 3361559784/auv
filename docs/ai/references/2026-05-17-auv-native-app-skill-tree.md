@@ -24,7 +24,7 @@ graph TD
   A --> B["Shared runtime primitives"]
   B --> B1["activateApp / pressKey / focusTextInput / pressButton"]
   B --> B2["typeText / pasteTextPreserveClipboard"]
-  B --> B3["observeWindowTree / verifyNowPlayingTitle / verifyAxText"]
+  B --> B3["observeWindowTree / verifyImageText / verifyNowPlayingTitle / verifyAxText"]
 
   A --> C["QQ音乐 narrow skill"]
   C --> C1["search submit"]
@@ -51,9 +51,12 @@ graph TD
 
 - QQ音乐 has a validated narrow playback slice.
 - The native-app bundle now carries two separate QQ音乐 members:
-  - OCR-anchor playback
-  - row-fallback playback
-- `verifyNowPlayingTitle` is a stable AX-based contract.
+  - OCR-anchor playback with captured-image verification
+  - row-fallback playback with AX now-playing verification
+- `verifyImageText` is the current evidence-image verification contract for the
+  OCR-anchor playback slice.
+- `verifyNowPlayingTitle` is the stable AX-based contract for the row-fallback
+  playback slice.
 - Notes has a validated native-app sample that uses `verifyAxText`.
 - TextEdit has a validated native-app sample that uses the same contract.
 - The same runtime can carry a second native app without screenshot OCR.

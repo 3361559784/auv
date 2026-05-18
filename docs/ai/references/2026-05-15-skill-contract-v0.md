@@ -28,6 +28,7 @@ Current executable skill manifests use:
 - `status`
 - `platform`
 - `target_app`
+- `strategy`
 - `objective`
 - `inputs`
 - `preconditions`
@@ -38,6 +39,36 @@ Current executable skill manifests use:
 
 This is the current minimum viable product contract. Do not add new top-level
 sections unless a second app or platform actually needs them.
+
+## Strategy Contract
+
+Phase 2 starts by turning the most important recipe truth into explicit schema
+instead of prose:
+
+- `strategy.family`
+- `strategy.grounding`
+- `strategy.activation`
+- `strategy.verificationContract`
+
+This is the first structured statement of what a narrow skill actually is.
+
+Current validated values are intentionally narrow:
+
+- `playback`
+- `result-selection`
+- `search-entry`
+- `native-text`
+
+And the important point is not the exact labels. The point is that a bundle or
+reviewer should no longer need to infer whether a skill is:
+
+- OCR-anchor grounded
+- row-fallback grounded
+- AX-text grounded
+- evidence-image verified
+- AX now-playing verified
+
+from scattered step prose.
 
 ## Step Contract
 

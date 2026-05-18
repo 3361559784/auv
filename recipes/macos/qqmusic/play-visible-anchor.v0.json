@@ -8,6 +8,12 @@
     "bundle_id": "${app_id}",
     "display_mode": "live-desktop"
   },
+  "strategy": {
+    "family": "playback",
+    "grounding": "ocr-anchor",
+    "activation": "pointer-double-click",
+    "verificationContract": "verifyImageText"
+  },
   "objective": "Reach QQ音乐 search results, double-click a visible result-row OCR anchor, and verify the resulting now-playing title from the captured evidence image.",
   "inputs": {
     "app_id": {

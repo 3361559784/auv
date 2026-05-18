@@ -178,7 +178,7 @@ pub fn verify_bundle(
         entry.manifest.metadata.id, member.recipe_id
       ));
     }
-    skill_catalog
+    let recipe_entry = skill_catalog
       .resolve_recipe_id(&member.recipe_id)
       .map_err(|error| {
         format!(
@@ -186,6 +186,15 @@ pub fn verify_bundle(
           entry.manifest.metadata.id, member.recipe_id
         )
       })?;
+    if recipe_entry.manifest.strategy.verification_contract != member.contract {
+      return Err(format!(
+        "bundle {} member {} declares contract {} but recipe strategy.verificationContract is {}",
+        entry.manifest.metadata.id,
+        member.recipe_id,
+        member.contract,
+        recipe_entry.manifest.strategy.verification_contract
+      ));
+    }
     if !member.target_application.trim().is_empty() {
       semver::VersionReq::parse(&member.target_application).map_err(|error| {
         format!(

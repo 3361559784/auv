@@ -6,7 +6,9 @@ Status: validated native-app sample
 
 ## Why this exists
 
-QQ音乐 proved the narrow skill shape and `verifyNowPlayingTitle` contract.
+QQ音乐 proved the narrow skill shape across two playback verification
+contracts: `verifyImageText` for the OCR-anchor slice and
+`verifyNowPlayingTitle` for the row-fallback slice.
 Notes proves the same runtime can carry that pattern into a second native macOS
 app without screenshot OCR.
 

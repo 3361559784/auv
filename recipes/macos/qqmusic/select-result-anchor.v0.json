@@ -8,6 +8,12 @@
     "bundle_id": "${app_id}",
     "display_mode": "live-desktop"
   },
+  "strategy": {
+    "family": "result-selection",
+    "grounding": "ocr-anchor",
+    "activation": "pointer-click",
+    "verificationContract": "captureScreenEvidence"
+  },
   "objective": "Resolve a QQ音乐 result-list OCR anchor inside the visible result region, click it, and capture post-click evidence.",
   "inputs": {
     "app_id": {

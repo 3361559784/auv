@@ -96,7 +96,7 @@ pub enum SkillActivation {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SkillVerificationContract {
-  CaptureScreenEvidence,
+  CaptureEvidence,
   VerifyImageText,
   VerifyNowPlayingTitle,
   VerifyAxText,
@@ -138,13 +138,13 @@ impl SkillStrategyTaxonomy {
         family: SkillStrategyFamily::SearchEntry,
         grounding: SkillGrounding::AxTextInput,
         activation: SkillActivation::ClipboardSubmit,
-        verification_contract: SkillVerificationContract::CaptureScreenEvidence,
+        verification_contract: SkillVerificationContract::CaptureEvidence,
       },
       SkillStrategyTaxonomy {
         family: SkillStrategyFamily::ResultSelection,
         grounding: SkillGrounding::OcrAnchor,
         activation: SkillActivation::PointerClick,
-        verification_contract: SkillVerificationContract::CaptureScreenEvidence,
+        verification_contract: SkillVerificationContract::CaptureEvidence,
       },
       SkillStrategyTaxonomy {
         family: SkillStrategyFamily::Playback,
@@ -258,12 +258,12 @@ impl SkillActivation {
 impl SkillVerificationContract {
   fn parse(raw: &str) -> AuvResult<Self> {
     match raw.trim() {
-      "captureScreenEvidence" => Ok(Self::CaptureScreenEvidence),
+      "captureEvidence" => Ok(Self::CaptureEvidence),
       "verifyImageText" => Ok(Self::VerifyImageText),
       "verifyNowPlayingTitle" => Ok(Self::VerifyNowPlayingTitle),
       "verifyAxText" => Ok(Self::VerifyAxText),
       other => Err(format!(
-        "strategy.verificationContract {} is unsupported; allowed values: captureScreenEvidence, verifyImageText, verifyNowPlayingTitle, verifyAxText",
+        "strategy.verificationContract {} is unsupported; allowed values: captureEvidence, verifyImageText, verifyNowPlayingTitle, verifyAxText",
         other
       )),
     }
@@ -271,7 +271,7 @@ impl SkillVerificationContract {
 
   fn as_str(&self) -> &'static str {
     match self {
-      Self::CaptureScreenEvidence => "capture-screen-evidence",
+      Self::CaptureEvidence => "capture-evidence",
       Self::VerifyImageText => "verify-image-text",
       Self::VerifyNowPlayingTitle => "verify-now-playing-title",
       Self::VerifyAxText => "verify-ax-text",
@@ -1628,14 +1628,14 @@ fn enforce_step_expectations(
       ));
     }
   }
-  if let Some(minimum) = step.expect.artifact_count_at_least {
-    if result.artifact_paths.len() < minimum {
-      return Err(format!(
-        "step {step_id:?} produced {} artifacts, below required minimum {}",
-        result.artifact_paths.len(),
-        minimum
-      ));
-    }
+  if let Some(minimum) = step.expect.artifact_count_at_least
+    && result.artifact_paths.len() < minimum
+  {
+    return Err(format!(
+      "step {step_id:?} produced {} artifacts, below required minimum {}",
+      result.artifact_paths.len(),
+      minimum
+    ));
   }
   Ok(())
 }
@@ -1901,7 +1901,7 @@ mod tests {
       },
       "steps": [{
         "id": "step-1",
-        "command_id": "debug.captureScreen",
+        "command_id": "debug.captureDisplay",
         "disturbance": {
           "classes": ["none"],
           "max": "none"
@@ -2046,7 +2046,7 @@ mod tests {
       },
       "objective": "test",
       "steps": [{
-        "command_id": "debug.captureScreen",
+        "command_id": "debug.captureDisplay",
         "disturbance": {
           "classes": ["none"],
           "max": "none"
@@ -2128,7 +2128,7 @@ mod tests {
         "declared_classes": ["none"]
       },
       "steps": [{
-        "command_id": "debug.captureScreen",
+        "command_id": "debug.captureDisplay",
         "disturbance": {
           "classes": ["none"],
           "max": "none"
@@ -2185,7 +2185,7 @@ mod tests {
         "declared_classes": ["pointer"]
       },
       "steps": [{
-        "command_id": "debug.captureScreen",
+        "command_id": "debug.captureDisplay",
         "disturbance": {
           "classes": ["none"],
           "max": "none"
@@ -2240,7 +2240,7 @@ mod tests {
         "declared_classes": ["pointer"]
       },
       "steps": [{
-        "command_id": "debug.captureScreen",
+        "command_id": "debug.captureDisplay",
         "disturbance": {
           "classes": ["none"],
           "max": "none"

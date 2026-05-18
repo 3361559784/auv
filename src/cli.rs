@@ -118,7 +118,7 @@ USAGE
 NOTES
   - Names are provisional and reflect the current phase-0/1 runtime skeleton.
   - The CLI is a thin frontend over the library runtime in src/lib.rs.
-  - `debug.captureScreen`, `debug.probeDisplays`, `debug.projectScreenshotPoint`, `debug.identifyPoint`, `debug.probeCoordinateReadiness`, `debug.observeWindows`, `debug.observeWindowTree`, `debug.probePermissions`, `debug.focusTextInput`, `debug.pressButton`, `debug.verifyNowPlayingTitle`, `debug.verifyAxText`, `debug.clickPoint`, and `debug.scrollPoint` are the current desktop donor entrypoints.
+  - `debug.captureDisplay`, `debug.listDisplays`, `debug.projectScreenshotPoint`, `debug.identifyPoint`, `debug.probeCoordinateReadiness`, `debug.observeWindows`, `debug.observeWindowTree`, `debug.probePermissions`, `debug.focusTextInput`, `debug.pressButton`, `debug.verifyNowPlayingTitle`, `debug.verifyAxText`, `debug.clickPoint`, and `debug.scrollPoint` are the current desktop donor entrypoints.
   - `debug.observeWindowTree`, `debug.focusTextInput`, and `debug.pressButton` accept `--reveal_shortcut cmd+f`-style hints when an app hides the target UI until a keyboard shortcut reveals it.
   - `--reveal_settle_ms <millis>` can be used to make the reveal step explicit instead of depending on hard-coded timing assumptions.
   - `debug.typeText` supports `--replace_existing true`, `--submit_key return`, and `--submit_settle_ms 800` for repeatable text-entry flows.
@@ -371,88 +371,6 @@ fn parse_skill_bundle(arguments: &[String]) -> AuvResult<CliCommand> {
   }
 }
 
-#[cfg(test)]
-mod tests {
-  use super::*;
-
-  #[test]
-  fn parse_skill_bundle_coverage_command() {
-    let command = parse_cli(&[
-      "skill".to_string(),
-      "bundle".to_string(),
-      "coverage".to_string(),
-      "native.app.skill-tree.v0".to_string(),
-    ])
-    .expect("bundle coverage command should parse");
-
-    match command {
-      CliCommand::SkillBundleCoverage { query } => {
-        assert_eq!(query, "native.app.skill-tree.v0");
-      }
-      other => panic!("unexpected command: {other:?}"),
-    }
-  }
-
-  #[test]
-  fn parse_app_probe_command() {
-    let command = parse_cli(&[
-      "app".to_string(),
-      "probe".to_string(),
-      "com.tencent.QQMusicMac".to_string(),
-      "--output-dir".to_string(),
-      "/tmp/probe".to_string(),
-    ])
-    .expect("app probe command should parse");
-
-    match command {
-      CliCommand::AppProbe {
-        bundle_id,
-        output_dir,
-      } => {
-        assert_eq!(bundle_id, "com.tencent.QQMusicMac");
-        assert_eq!(output_dir.as_deref(), Some("/tmp/probe"));
-      }
-      other => panic!("unexpected command: {other:?}"),
-    }
-  }
-
-  #[test]
-  fn parse_app_distill_command() {
-    let command = parse_cli(&[
-      "app".to_string(),
-      "distill".to_string(),
-      "/tmp/analysis".to_string(),
-      "--output-dir".to_string(),
-      "/tmp/out".to_string(),
-    ])
-    .expect("app distill command should parse");
-
-    match command {
-      CliCommand::AppDistill { query, output_dir } => {
-        assert_eq!(query, "/tmp/analysis");
-        assert_eq!(output_dir.as_deref(), Some("/tmp/out"));
-      }
-      other => panic!("unexpected command: {other:?}"),
-    }
-  }
-
-  #[test]
-  fn parse_app_validate_command() {
-    let command = parse_cli(&[
-      "app".to_string(),
-      "validate".to_string(),
-      "/tmp/distill".to_string(),
-    ])
-    .expect("app validate command should parse");
-    match command {
-      CliCommand::AppValidate { query } => {
-        assert_eq!(query, "/tmp/distill");
-      }
-      other => panic!("unexpected command: {other:?}"),
-    }
-  }
-}
-
 fn parse_skill_cases(arguments: &[String]) -> AuvResult<CliCommand> {
   if arguments.len() < 3 {
     return Err("usage: auv-cli skill cases <list|show|run> ...".to_string());
@@ -593,4 +511,86 @@ fn parse_skill_cases_run(arguments: &[String]) -> AuvResult<CliCommand> {
     only_case_ids,
     include_nonvalidated,
   })
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn parse_skill_bundle_coverage_command() {
+    let command = parse_cli(&[
+      "skill".to_string(),
+      "bundle".to_string(),
+      "coverage".to_string(),
+      "native.app.skill-tree.v0".to_string(),
+    ])
+    .expect("bundle coverage command should parse");
+
+    match command {
+      CliCommand::SkillBundleCoverage { query } => {
+        assert_eq!(query, "native.app.skill-tree.v0");
+      }
+      other => panic!("unexpected command: {other:?}"),
+    }
+  }
+
+  #[test]
+  fn parse_app_probe_command() {
+    let command = parse_cli(&[
+      "app".to_string(),
+      "probe".to_string(),
+      "com.tencent.QQMusicMac".to_string(),
+      "--output-dir".to_string(),
+      "/tmp/probe".to_string(),
+    ])
+    .expect("app probe command should parse");
+
+    match command {
+      CliCommand::AppProbe {
+        bundle_id,
+        output_dir,
+      } => {
+        assert_eq!(bundle_id, "com.tencent.QQMusicMac");
+        assert_eq!(output_dir.as_deref(), Some("/tmp/probe"));
+      }
+      other => panic!("unexpected command: {other:?}"),
+    }
+  }
+
+  #[test]
+  fn parse_app_distill_command() {
+    let command = parse_cli(&[
+      "app".to_string(),
+      "distill".to_string(),
+      "/tmp/analysis".to_string(),
+      "--output-dir".to_string(),
+      "/tmp/out".to_string(),
+    ])
+    .expect("app distill command should parse");
+
+    match command {
+      CliCommand::AppDistill { query, output_dir } => {
+        assert_eq!(query, "/tmp/analysis");
+        assert_eq!(output_dir.as_deref(), Some("/tmp/out"));
+      }
+      other => panic!("unexpected command: {other:?}"),
+    }
+  }
+
+  #[test]
+  fn parse_app_validate_command() {
+    let command = parse_cli(&[
+      "app".to_string(),
+      "validate".to_string(),
+      "/tmp/distill".to_string(),
+    ])
+    .expect("app validate command should parse");
+    match command {
+      CliCommand::AppValidate { query } => {
+        assert_eq!(query, "/tmp/distill");
+      }
+      other => panic!("unexpected command: {other:?}"),
+    }
+  }
 }

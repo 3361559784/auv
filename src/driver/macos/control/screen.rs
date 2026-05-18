@@ -1,14 +1,14 @@
 use super::super::*;
-use super::common::build_click_point_call;
+use super::common::{ClickPointCallOptions, build_click_point_call};
 use super::pointer::click_point;
 
 pub(crate) fn click_screen_text(call: &DriverCall) -> AuvResult<DriverResponse> {
   let query = required_non_empty_string(call, "query")?;
   let label = format!("screen-text-click-{}", sanitize_file_component(&query));
   let activated_app = maybe_activate_target_app_for_observation(call)?;
-  let screenshot_path = capture_screenshot_file(&label)?;
+  let (screenshot_path, capture_contract) =
+    crate::driver::macos::capture::xcap_backend::capture_main_display_to_path(&label)?;
   let dimensions = read_png_dimensions(&screenshot_path)?;
-  let snapshot = enumerate_displays()?;
   let exact = optional_bool(call, "exact")?.unwrap_or(false);
   let case_sensitive = optional_bool(call, "case_sensitive")?.unwrap_or(false);
   let max_observations = optional_i64(call, "max_observations")?
@@ -48,19 +48,25 @@ pub(crate) fn click_screen_text(call: &DriverCall) -> AuvResult<DriverResponse> 
   let screenshot_center_x = match_center_x + anchor_offset_x;
   let screenshot_center_y = match_center_y + anchor_offset_y;
   let (logical_x, logical_y) =
-    project_main_screenshot_point(&snapshot, screenshot_center_x, screenshot_center_y)?;
+    crate::driver::macos::capture::xcap_backend::project_capture_pixel_to_global_logical(
+      &capture_contract,
+      screenshot_center_x,
+      screenshot_center_y,
+    )?;
   let button_label = optional_string(call, "button").unwrap_or_else(|| "left".to_string());
   let click_count = optional_i64(call, "click_count")?.unwrap_or(1).clamp(1, 4);
   let settle_ms = optional_positive_u64(call, "settle_ms")?.unwrap_or(0);
   let nested_call = build_click_point_call(
     &call.target,
     call.working_directory.as_path(),
-    logical_x,
-    logical_y,
-    &button_label,
-    click_count,
-    Some(settle_ms),
-    None,
+    ClickPointCallOptions {
+      x: logical_x,
+      y: logical_y,
+      button: &button_label,
+      click_count,
+      settle_ms: Some(settle_ms),
+      app: None,
+    },
   );
   let _ = click_point(&nested_call)?;
 
@@ -124,9 +130,9 @@ pub(crate) fn click_screen_text(call: &DriverCall) -> AuvResult<DriverResponse> 
 pub(crate) fn click_screen_row(call: &DriverCall) -> AuvResult<DriverResponse> {
   let label = optional_string(call, "label").unwrap_or_else(|| "screen-row-click".to_string());
   let activated_app = maybe_activate_target_app_for_observation(call)?;
-  let screenshot_path = capture_screenshot_file(&label)?;
+  let (screenshot_path, capture_contract) =
+    crate::driver::macos::capture::xcap_backend::capture_main_display_to_path(&label)?;
   let dimensions = read_png_dimensions(&screenshot_path)?;
-  let snapshot = enumerate_displays()?;
   let min_confidence = optional_f64(call, "min_confidence")?.unwrap_or(0.0);
   if !(0.0..=1.0).contains(&min_confidence) {
     return Err(format!(
@@ -196,19 +202,25 @@ pub(crate) fn click_screen_row(call: &DriverCall) -> AuvResult<DriverResponse> {
   };
   let screenshot_center_y = row.bounds.y as f64 + (row.bounds.height as f64 * row_anchor_y_ratio);
   let (logical_x, logical_y) =
-    project_main_screenshot_point(&snapshot, screenshot_center_x, screenshot_center_y)?;
+    crate::driver::macos::capture::xcap_backend::project_capture_pixel_to_global_logical(
+      &capture_contract,
+      screenshot_center_x,
+      screenshot_center_y,
+    )?;
   let button_label = optional_string(call, "button").unwrap_or_else(|| "left".to_string());
   let click_count = optional_i64(call, "click_count")?.unwrap_or(1).clamp(1, 4);
   let settle_ms = optional_positive_u64(call, "settle_ms")?.unwrap_or(0);
   let nested_call = build_click_point_call(
     &call.target,
     call.working_directory.as_path(),
-    logical_x,
-    logical_y,
-    &button_label,
-    click_count,
-    Some(settle_ms),
-    None,
+    ClickPointCallOptions {
+      x: logical_x,
+      y: logical_y,
+      button: &button_label,
+      click_count,
+      settle_ms: Some(settle_ms),
+      app: None,
+    },
   );
   let _ = click_point(&nested_call)?;
 

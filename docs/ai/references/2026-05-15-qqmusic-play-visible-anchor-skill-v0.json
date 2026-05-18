@@ -25,7 +25,7 @@
     "debug.pasteTextPreserveClipboard",
     "debug.findScreenText",
     "debug.clickScreenText",
-    "debug.captureScreen",
+    "debug.captureDisplay",
     "debug.findImageText"
   ],
   "inputs": {
@@ -135,7 +135,7 @@
       "purpose": "Double-click the resolved result-row anchor."
     },
     {
-      "command_id": "debug.captureScreen",
+      "command_id": "debug.captureDisplay",
       "args": {
         "label": "qqmusic-playback-anchor-aa"
       },

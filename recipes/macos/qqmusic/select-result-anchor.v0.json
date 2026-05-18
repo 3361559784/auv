@@ -12,7 +12,7 @@
     "family": "result-selection",
     "grounding": "ocr-anchor",
     "activation": "pointer-click",
-    "verificationContract": "captureScreenEvidence"
+    "verificationContract": "captureEvidence"
   },
   "objective": "Resolve a QQ音乐 result-list OCR anchor inside the visible result region, click it, and capture post-click evidence.",
   "inputs": {
@@ -205,7 +205,7 @@
     },
     {
       "id": "capture-evidence",
-      "command_id": "debug.captureScreen",
+      "command_id": "debug.captureDisplay",
       "disturbance": {
         "classes": [
           "none"

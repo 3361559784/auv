@@ -1,32 +1,16 @@
 use std::fs;
 use std::io::Read;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use super::super::*;
 use super::{
   activate_target_app, app_identifier, compute_combined_bounds, optional_bool, parse_bool_flag,
-  parse_f64, parse_i64, parse_u32, render_rect_compact, report_value, run_command,
-  run_swift_script, screenshot_temp_path,
+  parse_f64, parse_i64, parse_u32, render_rect_compact, report_value, run_swift_script,
 };
 
 pub(crate) fn enumerate_displays() -> AuvResult<ObservedDisplaySnapshot> {
   let report = run_swift_script(ENUMERATE_DISPLAYS_SCRIPT)?;
   parse_display_snapshot(&report)
-}
-
-pub(crate) fn capture_screenshot_file(label: &str) -> AuvResult<PathBuf> {
-  let temporary_path = screenshot_temp_path(label);
-  let args = vec!["-x".to_string(), temporary_path.display().to_string()];
-  run_command(SCREEN_CAPTURE_BINARY, &args)?;
-
-  if !temporary_path.exists() {
-    return Err(format!(
-      "screencapture reported success but no image was created at {}",
-      temporary_path.display()
-    ));
-  }
-
-  Ok(temporary_path)
 }
 
 pub(crate) fn maybe_activate_target_app_for_observation(
@@ -133,21 +117,6 @@ pub(crate) fn parse_window_line(line: &str) -> AuvResult<ObservedWindow> {
       height: parse_i64(columns[10], "window.bounds.height")?,
     },
   })
-}
-
-pub(crate) fn render_display_snapshot_report(snapshot: &ObservedDisplaySnapshot) -> String {
-  let mut lines = vec![
-    format!("capturedAt={}", snapshot.captured_at),
-    format!("displayCount={}", snapshot.displays.len()),
-    format!(
-      "combinedBounds={}",
-      render_rect_compact(&snapshot.combined_bounds)
-    ),
-  ];
-  for display in &snapshot.displays {
-    lines.push(render_display_report_line(display));
-  }
-  lines.join("\n") + "\n"
 }
 
 pub(crate) fn render_point_identification_report(
@@ -344,10 +313,7 @@ pub(crate) fn read_png_dimensions(path: &Path) -> AuvResult<ScreenshotDimensions
 
   const PNG_SIGNATURE: [u8; 8] = [137, 80, 78, 71, 13, 10, 26, 10];
   if header[..8] != PNG_SIGNATURE {
-    return Err(format!(
-      "screenshot {} is not a PNG produced by screencapture",
-      path.display()
-    ));
+    return Err(format!("screenshot {} is not a PNG image", path.display()));
   }
   if &header[12..16] != b"IHDR" {
     return Err(format!(
@@ -359,50 +325,4 @@ pub(crate) fn read_png_dimensions(path: &Path) -> AuvResult<ScreenshotDimensions
   let width = u32::from_be_bytes([header[16], header[17], header[18], header[19]]) as i64;
   let height = u32::from_be_bytes([header[20], header[21], header[22], header[23]]) as i64;
   Ok(ScreenshotDimensions { width, height })
-}
-
-pub(crate) fn render_capture_contract_report(
-  snapshot: Option<&ObservedDisplaySnapshot>,
-  dimensions: &ScreenshotDimensions,
-  path: &Path,
-) -> String {
-  let mut lines = vec![
-    format!("screenshotPath={}", path.display()),
-    format!(
-      "screenshotPixels={}x{}",
-      dimensions.width, dimensions.height
-    ),
-    "coordinateContract=debug.captureScreen emits main-display physical screenshot pixels"
-      .to_string(),
-  ];
-  if let Some(snapshot) = snapshot {
-    lines.push(format!("capturedAt={}", snapshot.captured_at));
-    lines.push(format!(
-      "combinedLogicalBounds={}",
-      render_rect_compact(&snapshot.combined_bounds)
-    ));
-    if let Some(main_display) = snapshot
-      .displays
-      .iter()
-      .find(|display| display.is_main)
-      .or_else(|| snapshot.displays.first())
-    {
-      lines.push(format!("mainDisplayId={}", main_display.display_id));
-      lines.push(format!(
-        "mainDisplayLogicalSize={}x{}",
-        main_display.bounds.width, main_display.bounds.height
-      ));
-      lines.push(format!(
-        "mainDisplayPixelSize={}x{}",
-        main_display.pixel_width, main_display.pixel_height
-      ));
-      lines.push(format!(
-        "mainDisplayScaleFactor={:.3}",
-        main_display.scale_factor
-      ));
-    }
-  } else {
-    lines.push("displaySnapshot=unavailable".to_string());
-  }
-  lines.join("\n") + "\n"
 }

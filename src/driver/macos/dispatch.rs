@@ -1,13 +1,13 @@
+use super::capture::commands::{capture_display, capture_region, capture_window, list_displays};
 use super::control::{
   activate_app, click_point, click_screen_row, click_screen_text, click_window_point,
   focus_text_input, paste_text_preserve_clipboard, press_button, press_key, scroll_point,
   type_text,
 };
 use super::observe::{
-  capture_screen, find_image_text, find_screen_rows, find_screen_text, identify_point,
-  observe_window_tree, observe_windows, probe_coordinate_readiness, probe_displays,
-  probe_permissions, project_screenshot_point, verify_ax_text, verify_now_playing_title,
-  wait_for_screen_rows, wait_for_screen_text,
+  find_image_text, find_screen_rows, find_screen_text, identify_point, observe_window_tree,
+  observe_windows, probe_coordinate_readiness, probe_permissions, project_screenshot_point,
+  verify_ax_text, verify_now_playing_title, wait_for_screen_rows, wait_for_screen_text,
 };
 use super::{
   Driver, DriverCall, DriverDescriptor, DriverResponse, MacOsObserveDriver, descriptor,
@@ -29,9 +29,11 @@ pub(crate) fn invoke_operation(call: &DriverCall) -> AuvResult<DriverResponse> {
   require_macos()?;
 
   match call.operation.as_str() {
-    "capture_screen" => capture_screen(call),
+    "capture_display" => capture_display(call),
+    "capture_region" => capture_region(call),
+    "capture_window" => capture_window(call),
     "probe_coordinate_readiness" => probe_coordinate_readiness(call),
-    "probe_displays" => probe_displays(call),
+    "list_displays" => list_displays(call),
     "project_screenshot_point" => project_screenshot_point(call),
     "identify_point" => identify_point(call),
     "observe_windows" => observe_windows(call),

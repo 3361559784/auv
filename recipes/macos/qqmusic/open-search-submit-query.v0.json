@@ -12,7 +12,7 @@
     "family": "search-entry",
     "grounding": "ax-text-input",
     "activation": "clipboard-submit",
-    "verificationContract": "captureScreenEvidence"
+    "verificationContract": "captureEvidence"
   },
   "objective": "Open the QQ音乐 search UI, focus the search field, submit a query, and capture post-submit evidence.",
   "inputs": {
@@ -117,7 +117,7 @@
     },
     {
       "id": "capture-evidence",
-      "command_id": "debug.captureScreen",
+      "command_id": "debug.captureDisplay",
       "disturbance": {
         "classes": [
           "none"

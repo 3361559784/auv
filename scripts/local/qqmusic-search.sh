@@ -9,7 +9,7 @@ SUBMIT_SETTLE_MS="${SUBMIT_SETTLE_MS:-900}"
 MAX_DEPTH="${MAX_DEPTH:-5}"
 MAX_CHILDREN="${MAX_CHILDREN:-20}"
 
-echo "[1/3] Focus QQ音乐 search input"
+echo "[1/4] Focus QQ音乐 search input"
 cargo run --quiet -- invoke debug.focusTextInput \
   --target "${APP_ID}" \
   --query 搜索 \
@@ -18,7 +18,7 @@ cargo run --quiet -- invoke debug.focusTextInput \
   --reveal_shortcut "${REVEAL_SHORTCUT}" \
   --reveal_settle_ms "${REVEAL_SETTLE_MS}"
 
-echo "[2/3] Type query and submit"
+echo "[2/4] Type query and submit"
 cargo run --quiet -- invoke debug.typeText \
   --target "${APP_ID}" \
   --text "${QUERY}" \
@@ -35,4 +35,4 @@ cargo run --quiet -- invoke debug.observeWindowTree \
   --reveal_settle_ms "${REVEAL_SETTLE_MS}"
 
 echo "[4/4] Capture a screenshot artifact for visual confirmation"
-cargo run --quiet -- invoke debug.captureScreen --label "qqmusic-search-${QUERY}"
+cargo run --quiet -- invoke debug.captureDisplay --label "qqmusic-search-${QUERY}"

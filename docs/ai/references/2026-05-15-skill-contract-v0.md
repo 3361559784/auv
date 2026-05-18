@@ -61,8 +61,8 @@ Current validated values are intentionally narrow:
 
 Current allowed strategy combinations are also intentionally narrow:
 
-- `search-entry / ax-text-input / clipboard-submit / captureScreenEvidence`
-- `result-selection / ocr-anchor / pointer-click / captureScreenEvidence`
+- `search-entry / ax-text-input / clipboard-submit / captureEvidence`
+- `result-selection / ocr-anchor / pointer-click / captureEvidence`
 - `playback / ocr-anchor / pointer-double-click / verifyImageText`
 - `playback / visual-row / pointer-row-activation / verifyNowPlayingTitle`
 - `native-text / ax-text / pointer-focus-clipboard-paste / verifyAxText`

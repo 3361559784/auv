@@ -37,11 +37,11 @@ The current implementation records:
 
 2. deterministic runtime-backed probe steps
    - `debug.probePermissions`
-   - `debug.probeDisplays`
+   - `debug.listDisplays`
    - `debug.probeCoordinateReadiness`
    - `debug.observeWindows`
    - `debug.observeWindowTree`
-   - `debug.captureScreen`
+   - `debug.captureDisplay`
    - `debug.findImageText` as a sample OCR-on-artifact pass
 
 Each recorded step includes:
@@ -156,7 +156,7 @@ The first live smoke target was `com.apple.TextEdit`.
 
 That smoke run showed the intended behavior:
 
-- `search-entry.ax-text-input.clipboard-submit.capture-screen-evidence`
+- `search-entry.ax-text-input.clipboard-submit.capture-evidence`
 - `native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text`
 
 were emitted as candidate strategies.

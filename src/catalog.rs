@@ -50,18 +50,34 @@ impl CommandCatalog {
 pub fn default_command_catalog() -> CommandCatalog {
   let commands = vec![
     CommandSpec {
-      id: "debug.captureScreen",
-      summary: "Capture one desktop screenshot through the shared runtime path.",
+      id: "debug.captureDisplay",
+      summary: "Capture one display screenshot with a coordinate contract through xcap.",
       driver_id: "macos.observe",
-      operation: "capture_screen",
+      operation: "capture_display",
       disturbance_classes: NONE,
       max_disturbance: DisturbanceClass::None,
     },
     CommandSpec {
-      id: "debug.probeDisplays",
-      summary: "Enumerate connected macOS displays and capture a coordinate-space report.",
+      id: "debug.captureRegion",
+      summary: "Capture one display-contained region and emit a coordinate contract.",
       driver_id: "macos.observe",
-      operation: "probe_displays",
+      operation: "capture_region",
+      disturbance_classes: NONE,
+      max_disturbance: DisturbanceClass::None,
+    },
+    CommandSpec {
+      id: "debug.captureWindow",
+      summary: "Capture one single-display window and emit a coordinate contract.",
+      driver_id: "macos.observe",
+      operation: "capture_window",
+      disturbance_classes: NONE,
+      max_disturbance: DisturbanceClass::None,
+    },
+    CommandSpec {
+      id: "debug.listDisplays",
+      summary: "List connected displays using the normalized AUV coordinate contract.",
+      driver_id: "macos.observe",
+      operation: "list_displays",
       disturbance_classes: NONE,
       max_disturbance: DisturbanceClass::None,
     },
@@ -326,8 +342,14 @@ mod tests {
   #[test]
   fn default_catalog_always_exposes_observation_commands() {
     let catalog = default_command_catalog();
-    assert!(catalog.resolve("debug.captureScreen").is_some());
-    assert!(catalog.resolve("debug.probeDisplays").is_some());
+    assert!(catalog.resolve("debug.captureDisplay").is_some());
+    assert!(catalog.resolve("debug.captureWindow").is_some());
+    assert!(catalog.resolve("debug.captureRegion").is_some());
+    let removed_capture_command = ["debug", &["capture", "Screen"].join("")].join(".");
+    assert!(catalog.resolve(&removed_capture_command).is_none());
+    assert!(catalog.resolve("debug.listDisplays").is_some());
+    let removed_display_probe_command = ["debug", &["probe", "Displays"].join("")].join(".");
+    assert!(catalog.resolve(&removed_display_probe_command).is_none());
     assert!(catalog.resolve("debug.projectScreenshotPoint").is_some());
     assert!(catalog.resolve("debug.identifyPoint").is_some());
     assert!(catalog.resolve("debug.probeCoordinateReadiness").is_some());

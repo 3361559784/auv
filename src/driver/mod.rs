@@ -5,10 +5,10 @@ use crate::model::{AuvResult, DriverCall, DriverDescriptor, DriverResponse};
 use self::fixture::FixtureObserveDriver;
 use self::macos::MacOsObserveDriver;
 pub(crate) use self::macos::{
-  ObservedAxNode, ObservedAxTreeSnapshot, ObservedDisplaySnapshot, ObservedRect, ObservedWindow,
-  OcrTextSnapshot, clear_stale_lock_file, copy_file, describe_lock_owner, parse_display_snapshot,
-  parse_observed_ax_tree, parse_ocr_text_snapshot, parse_window_line, report_value,
-  sanitized_artifact_name,
+  ObservedAxNode, ObservedAxTreeSnapshot, ObservedDisplay, ObservedDisplaySnapshot, ObservedRect,
+  ObservedWindow, OcrTextSnapshot, clear_stale_lock_file, compute_combined_bounds, copy_file,
+  describe_lock_owner, parse_observed_ax_tree, parse_ocr_text_snapshot, parse_window_line,
+  report_value, sanitized_artifact_name,
 };
 
 mod fixture;

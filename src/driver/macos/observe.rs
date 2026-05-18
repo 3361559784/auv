@@ -6,72 +6,10 @@ use std::time::Instant;
 
 use super::*;
 
-pub(super) fn capture_screen(call: &DriverCall) -> AuvResult<DriverResponse> {
-  let label = optional_string(call, "label").unwrap_or_else(|| "desktop".to_string());
-  let activated_app = maybe_activate_target_app_for_observation(call)?;
-  let temporary_path = capture_screenshot_file(&label)?;
-  let dimensions = read_png_dimensions(&temporary_path)?;
-  let snapshot = enumerate_displays().ok();
-  let contract_report =
-    render_capture_contract_report(snapshot.as_ref(), &dimensions, temporary_path.as_path());
-  let contract_artifact = build_text_artifact(
-    "capture-contract",
-    "txt",
-    &format!("{}-contract", sanitize_file_component(&label)),
-    contract_report,
-    "Recorded screenshot dimensions and the current macOS coordinate contract.",
-  )?;
-  let mut notes = vec![
-    format!(
-      "Temporary screenshot created at {} before artifact ingestion.",
-      temporary_path.display()
-    ),
-    format!(
-      "screenshotPixels={}x{}",
-      dimensions.width, dimensions.height
-    ),
-    "coordinateSpace=screenshot pixels from main-display physical backing pixels".to_string(),
-    "This remains a driver-level primitive instead of an AIRI-style desktop tool wrapper."
-      .to_string(),
-  ];
-  if let Some(snapshot) = &snapshot {
-    if let Some(main_display) = snapshot
-      .displays
-      .iter()
-      .find(|display| display.is_main)
-      .or_else(|| snapshot.displays.first())
-    {
-      notes.push(render_display_note(main_display));
-    }
-  }
-  if let Some(app) = activated_app {
-    notes.push(format!("activatedTargetBeforeCapture={app}"));
-  }
-
-  Ok(DriverResponse {
-    summary: format!(
-      "Captured one desktop screenshot through the shared AUV runtime ({}x{} pixels).",
-      dimensions.width, dimensions.height
-    ),
-    backend: Some("macos.screencapture".to_string()),
-    notes,
-    artifacts: vec![
-      ProducedArtifact {
-        kind: "screenshot".to_string(),
-        source_path: temporary_path,
-        preferred_name: format!("{}.png", sanitize_file_component(&label)),
-        note: Some(
-          "Phase-1 screenshot artifact captured through the macOS desktop driver.".to_string(),
-        ),
-      },
-      contract_artifact,
-    ],
-  })
-}
-
 pub(super) fn probe_coordinate_readiness(call: &DriverCall) -> AuvResult<DriverResponse> {
   let label = optional_string(call, "label").unwrap_or_else(|| "coordinate-readiness".to_string());
-  let screenshot_path = capture_screenshot_file(&label)?;
+  let (screenshot_path, _capture_contract) =
+    crate::driver::macos::capture::xcap_backend::capture_main_display_to_path(&label)?;
   let screenshot = read_png_dimensions(&screenshot_path)?;
   let snapshot = enumerate_displays()?;
   let main_display = snapshot
@@ -143,50 +81,6 @@ pub(super) fn probe_coordinate_readiness(call: &DriverCall) -> AuvResult<DriverR
     backend: Some("macos.observe.coordinate-readiness".to_string()),
     notes,
     artifacts: vec![screenshot_artifact, report_artifact],
-  })
-}
-
-pub(super) fn probe_displays(_call: &DriverCall) -> AuvResult<DriverResponse> {
-  let snapshot = enumerate_displays()?;
-  let main_display = snapshot
-    .displays
-    .iter()
-    .find(|display| display.is_main)
-    .or_else(|| snapshot.displays.first())
-    .ok_or_else(|| "display probe returned no connected displays".to_string())?;
-  let report = render_display_snapshot_report(&snapshot);
-  let artifact = build_text_artifact(
-    "display-report",
-    "txt",
-    "display-report",
-    report,
-    "Captured macOS display enumeration report from the observation driver.",
-  )?;
-
-  let mut notes = vec![
-    format!("capturedAt={}", snapshot.captured_at),
-    format!(
-      "combinedBounds={}",
-      render_rect_compact(&snapshot.combined_bounds)
-    ),
-  ];
-  for display in snapshot.displays.iter().take(3) {
-    notes.push(render_display_note(display));
-  }
-
-  Ok(DriverResponse {
-    summary: format!(
-      "Enumerated {} macOS display(s); main display is #{} at {}x{} logical / {}x{} pixels.",
-      snapshot.displays.len(),
-      main_display.display_id,
-      main_display.bounds.width,
-      main_display.bounds.height,
-      main_display.pixel_width,
-      main_display.pixel_height
-    ),
-    backend: Some("macos.swift.nsscreen".to_string()),
-    notes,
-    artifacts: vec![artifact],
   })
 }
 
@@ -593,26 +487,7 @@ pub(super) fn project_screenshot_point(call: &DriverCall) -> AuvResult<DriverRes
   let x = required_f64(call, "x")?;
   let y = required_f64(call, "y")?;
   let snapshot = enumerate_displays()?;
-  let main_display = snapshot
-    .displays
-    .iter()
-    .find(|display| display.is_main)
-    .or_else(|| snapshot.displays.first())
-    .ok_or_else(|| "display probe returned no connected displays".to_string())?;
-
-  if x < 0.0
-    || y < 0.0
-    || x >= main_display.pixel_width as f64
-    || y >= main_display.pixel_height as f64
-  {
-    return Err(format!(
-      "screenshot pixel point ({x:.3}, {y:.3}) is outside main display physical bounds {}x{}",
-      main_display.pixel_width, main_display.pixel_height
-    ));
-  }
-
-  let logical_x = main_display.bounds.x as f64 + (x / main_display.scale_factor);
-  let logical_y = main_display.bounds.y as f64 + (y / main_display.scale_factor);
+  let (logical_x, logical_y) = project_main_screenshot_point(&snapshot, x, y)?;
   let resolution = resolve_display_point(&snapshot, logical_x, logical_y)
     .ok_or_else(|| "projected logical point fell outside connected displays".to_string())?;
   let report = [
@@ -629,7 +504,7 @@ pub(super) fn project_screenshot_point(call: &DriverCall) -> AuvResult<DriverRes
       resolution.display.pixel_width, resolution.display.pixel_height
     ),
     format!("displayScaleFactor={:.3}", resolution.display.scale_factor),
-    "coordinateContract=debug.captureScreen uses main-display physical pixels".to_string(),
+    "coordinateContract=legacy live screenshot path uses main-display physical pixels".to_string(),
   ]
   .join("\n")
     + "\n";
@@ -669,9 +544,9 @@ pub(super) fn find_screen_text(call: &DriverCall) -> AuvResult<DriverResponse> {
   let query = required_non_empty_string(call, "query")?;
   let label = format!("screen-text-{}", sanitize_file_component(&query));
   let activated_app = maybe_activate_target_app_for_observation(call)?;
-  let screenshot_path = capture_screenshot_file(&label)?;
+  let (screenshot_path, capture_contract) =
+    crate::driver::macos::capture::xcap_backend::capture_main_display_to_path(&label)?;
   let dimensions = read_png_dimensions(&screenshot_path)?;
-  let snapshot = enumerate_displays()?;
   let exact = optional_bool(call, "exact")?.unwrap_or(false);
   let case_sensitive = optional_bool(call, "case_sensitive")?.unwrap_or(false);
   let max_observations = optional_i64(call, "max_observations")?
@@ -730,7 +605,11 @@ pub(super) fn find_screen_text(call: &DriverCall) -> AuvResult<DriverResponse> {
   let summary = if let Some(best_match) = filtered_matches.first() {
     let (screenshot_center_x, screenshot_center_y) = ocr_match_center(best_match);
     let (logical_x, logical_y) =
-      project_main_screenshot_point(&snapshot, screenshot_center_x, screenshot_center_y)?;
+      crate::driver::macos::capture::xcap_backend::project_capture_pixel_to_global_logical(
+        &capture_contract,
+        screenshot_center_x,
+        screenshot_center_y,
+      )?;
     notes.push(format!("bestMatchText={}", best_match.text));
     notes.push(format!(
       "bestMatchBounds={}",
@@ -782,9 +661,9 @@ pub(super) fn wait_for_screen_text(call: &DriverCall) -> AuvResult<DriverRespons
     attempts += 1;
     let attempt_label = format!("{label}-attempt-{attempts}");
     let activated_app = maybe_activate_target_app_for_observation(call)?;
-    let screenshot_path = capture_screenshot_file(&attempt_label)?;
+    let (screenshot_path, capture_contract) =
+      crate::driver::macos::capture::xcap_backend::capture_main_display_to_path(&attempt_label)?;
     let dimensions = read_png_dimensions(&screenshot_path)?;
-    let snapshot = enumerate_displays()?;
     let region = parse_ocr_region_constraint(call, dimensions.width, dimensions.height)?;
     let ocr_report = run_swift_script(&build_ocr_find_text_script(
       screenshot_path.as_path(),
@@ -854,7 +733,11 @@ pub(super) fn wait_for_screen_text(call: &DriverCall) -> AuvResult<DriverRespons
       let summary = if let Some(best_match) = filtered_matches.first() {
         let (screenshot_center_x, screenshot_center_y) = ocr_match_center(best_match);
         let (logical_x, logical_y) =
-          project_main_screenshot_point(&snapshot, screenshot_center_x, screenshot_center_y)?;
+          crate::driver::macos::capture::xcap_backend::project_capture_pixel_to_global_logical(
+            &capture_contract,
+            screenshot_center_x,
+            screenshot_center_y,
+          )?;
         notes.push(format!("bestMatchText={}", best_match.text));
         notes.push(format!(
           "bestMatchBounds={}",
@@ -888,7 +771,8 @@ pub(super) fn wait_for_screen_text(call: &DriverCall) -> AuvResult<DriverRespons
 pub(super) fn find_screen_rows(call: &DriverCall) -> AuvResult<DriverResponse> {
   let label = optional_string(call, "label").unwrap_or_else(|| "screen-rows".to_string());
   let activated_app = maybe_activate_target_app_for_observation(call)?;
-  let screenshot_path = capture_screenshot_file(&label)?;
+  let (screenshot_path, _capture_contract) =
+    crate::driver::macos::capture::xcap_backend::capture_main_display_to_path(&label)?;
   let dimensions = read_png_dimensions(&screenshot_path)?;
   let min_confidence = optional_f64(call, "min_confidence")?.unwrap_or(0.0);
   if !(0.0..=1.0).contains(&min_confidence) {
@@ -1000,7 +884,8 @@ pub(super) fn wait_for_screen_rows(call: &DriverCall) -> AuvResult<DriverRespons
     attempts += 1;
     let attempt_label = format!("{label}-attempt-{attempts}");
     let activated_app = maybe_activate_target_app_for_observation(call)?;
-    let screenshot_path = capture_screenshot_file(&attempt_label)?;
+    let (screenshot_path, _capture_contract) =
+      crate::driver::macos::capture::xcap_backend::capture_main_display_to_path(&attempt_label)?;
     let dimensions = read_png_dimensions(&screenshot_path)?;
     let region = parse_ocr_region_constraint(call, dimensions.width, dimensions.height)?;
     let detection = detect_screen_rows(

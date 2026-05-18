@@ -20,4 +20,3 @@ pub(crate) const SET_CLIPBOARD_TEXT_SCRIPT_TEMPLATE: &str =
 
 pub(crate) const XCRUN_BINARY: &str = "/usr/bin/xcrun";
 pub(crate) const OSASCRIPT_BINARY: &str = "/usr/bin/osascript";
-pub(crate) const SCREEN_CAPTURE_BINARY: &str = "/usr/sbin/screencapture";

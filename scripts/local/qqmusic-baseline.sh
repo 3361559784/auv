@@ -8,7 +8,7 @@ MAX_DEPTH="${MAX_DEPTH:-5}"
 MAX_CHILDREN="${MAX_CHILDREN:-20}"
 
 echo "[1/4] Capture screenshot contract"
-cargo run --quiet -- invoke debug.captureScreen --label qqmusic-baseline
+cargo run --quiet -- invoke debug.captureDisplay --label qqmusic-baseline
 
 echo "[2/4] Observe QQ音乐 AX tree with reveal step"
 cargo run --quiet -- invoke debug.observeWindowTree \

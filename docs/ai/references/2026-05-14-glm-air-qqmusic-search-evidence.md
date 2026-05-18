@@ -23,7 +23,7 @@ Validated command chain:
 2. `debug.typeText`
 3. `debug.findScreenText`
 4. `debug.clickScreenText`
-5. `debug.captureScreen`
+5. `debug.captureDisplay`
 
 Baseline target and inputs:
 

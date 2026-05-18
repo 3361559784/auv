@@ -7,9 +7,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::driver::{
-  ObservedAxTreeSnapshot, ObservedDisplaySnapshot, ObservedRect, ObservedWindow, OcrTextSnapshot,
-  parse_display_snapshot, parse_observed_ax_tree, parse_ocr_text_snapshot, parse_window_line,
-  report_value, sanitized_artifact_name,
+  ObservedAxTreeSnapshot, ObservedDisplay, ObservedDisplaySnapshot, ObservedRect, ObservedWindow,
+  OcrTextSnapshot, compute_combined_bounds, parse_observed_ax_tree, parse_ocr_text_snapshot,
+  parse_window_line, report_value, sanitized_artifact_name,
 };
 use crate::model::{AuvResult, ExecutionTarget, InvokeRequest, RunStatus, now_millis};
 use crate::runtime::Runtime;
@@ -316,8 +316,8 @@ pub fn probe_app(
   steps.push(invoke_probe_step(
     project_root,
     runtime,
-    "probe-displays",
-    "debug.probeDisplays",
+    "list-displays",
+    "debug.listDisplays",
     None,
     BTreeMap::new(),
   )?);
@@ -363,8 +363,8 @@ pub fn probe_app(
   let capture_step = invoke_probe_step(
     project_root,
     runtime,
-    "capture-screen",
-    "debug.captureScreen",
+    "capture-display",
+    "debug.captureDisplay",
     Some(bundle_id.to_string()),
     capture_inputs,
   )?;
@@ -380,7 +380,7 @@ pub fn probe_app(
     .cloned()
     .ok_or_else(|| {
       format!(
-        "capture-screen probe step did not produce a screenshot artifact for {}",
+        "capture-display probe step did not produce a screenshot artifact for {}",
         bundle_id
       )
     })?;
@@ -864,7 +864,7 @@ fn build_app_analysis(probe_path: &Path, probe: &AppProbe) -> AuvResult<AppAnaly
       "search-entry",
       "ax-text-input",
       "clipboard-submit",
-      "captureScreenEvidence",
+      "captureEvidence",
       AssessmentStatus::Candidate,
       "The sampled AX surface exposed text-input-like nodes, so a keyboard/clipboard search-entry path is worth validating before escalating to pointer control.",
     )?);
@@ -884,7 +884,7 @@ fn build_app_analysis(probe_path: &Path, probe: &AppProbe) -> AuvResult<AppAnaly
       "result-selection",
       "ocr-anchor",
       "pointer-click",
-      "captureScreenEvidence",
+      "captureEvidence",
       AssessmentStatus::Candidate,
       "The sample OCR query produced filtered matches on the captured image, so OCR-anchor result selection is a candidate grounding strategy.",
     )?);
@@ -1314,19 +1314,17 @@ fn apply_candidate_grounding(
       }
 
       let replacement = match (taxonomy_id, key.as_str()) {
-        ("search-entry.ax-text-input.clipboard-submit.capture-screen-evidence", "focus_query") => {
+        ("search-entry.ax-text-input.clipboard-submit.capture-evidence", "focus_query") => {
           search_entry_query.clone()
         }
-        ("search-entry.ax-text-input.clipboard-submit.capture-screen-evidence", "query") => {
-          Some(format!(
-            "AUV_{}",
-            recipe_app_slug(&analysis.app_identity).to_ascii_uppercase()
-          ))
-        }
+        ("search-entry.ax-text-input.clipboard-submit.capture-evidence", "query") => Some(format!(
+          "AUV_{}",
+          recipe_app_slug(&analysis.app_identity).to_ascii_uppercase()
+        )),
         ("native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text", "focus_query") => {
           native_text_query.clone()
         }
-        ("result-selection.ocr-anchor.pointer-click.capture-screen-evidence", "anchor_text") => {
+        ("result-selection.ocr-anchor.pointer-click.capture-evidence", "anchor_text") => {
           stable_anchor.clone()
         }
         _ => None,
@@ -1448,8 +1446,21 @@ fn parse_permission_state(probe: &AppProbe) -> AuvResult<AppPermissionState> {
 }
 
 fn parse_display_step(probe: &AppProbe) -> AuvResult<ObservedDisplaySnapshot> {
-  let report = read_named_text_artifact(probe, "probe-displays", None)?;
-  parse_display_snapshot(&report)
+  let raw = read_named_artifact(probe, "list-displays", Some("display-list"), "json")?;
+  let displays_json: Vec<Value> = serde_json::from_str(&raw)
+    .map_err(|error| format!("failed to parse list-displays JSON artifact: {error}"))?;
+  let displays = displays_json
+    .iter()
+    .map(parse_display_descriptor_value)
+    .collect::<AuvResult<Vec<_>>>()?;
+  if displays.is_empty() {
+    return Err("list-displays artifact did not contain any displays".to_string());
+  }
+  Ok(ObservedDisplaySnapshot {
+    combined_bounds: compute_combined_bounds(&displays),
+    displays,
+    captured_at: "".to_string(),
+  })
 }
 
 fn parse_coordinate_readiness(probe: &AppProbe) -> AuvResult<CoordinateReadinessReport> {
@@ -1505,6 +1516,15 @@ fn read_named_text_artifact(
   step_id: &str,
   file_name_hint: Option<&str>,
 ) -> AuvResult<String> {
+  read_named_artifact(probe, step_id, file_name_hint, "txt")
+}
+
+fn read_named_artifact(
+  probe: &AppProbe,
+  step_id: &str,
+  file_name_hint: Option<&str>,
+  extension: &str,
+) -> AuvResult<String> {
   let step = probe
     .steps
     .iter()
@@ -1517,7 +1537,7 @@ fn read_named_text_artifact(
       path
         .extension()
         .and_then(|value| value.to_str())
-        .is_some_and(|value| value.eq_ignore_ascii_case("txt"))
+        .is_some_and(|value| value.eq_ignore_ascii_case(extension))
         && file_name_hint.is_none_or(|hint| {
           path
             .file_name()
@@ -1528,8 +1548,8 @@ fn read_named_text_artifact(
     .cloned()
     .ok_or_else(|| {
       format!(
-        "probe step {} did not produce the expected text artifact",
-        step_id
+        "probe step {} did not produce the expected .{} artifact",
+        step_id, extension
       )
     })?;
   fs::read_to_string(&artifact_path).map_err(|error| {
@@ -1538,6 +1558,65 @@ fn read_named_text_artifact(
       artifact_path.display()
     )
   })
+}
+
+fn parse_display_descriptor_value(value: &Value) -> AuvResult<ObservedDisplay> {
+  let display_ref = value
+    .get("display_ref")
+    .and_then(Value::as_str)
+    .unwrap_or("display");
+  let native_display_id = value
+    .get("native_display_id")
+    .and_then(Value::as_str)
+    .unwrap_or("0")
+    .parse::<u32>()
+    .map_err(|error| {
+      format!("invalid native_display_id for {display_ref} in display-list artifact: {error}")
+    })?;
+  let bounds = parse_json_rect(value, "global_logical_bounds", display_ref)?;
+  let visible_bounds = parse_json_rect(value, "visible_logical_bounds", display_ref)?;
+  let physical_pixel_size = value
+    .get("physical_pixel_size")
+    .ok_or_else(|| format!("display {display_ref} is missing physical_pixel_size"))?;
+  Ok(ObservedDisplay {
+    display_id: native_display_id,
+    is_main: value
+      .get("is_main")
+      .and_then(Value::as_bool)
+      .unwrap_or(false),
+    is_built_in: value
+      .get("is_builtin")
+      .and_then(Value::as_bool)
+      .unwrap_or(false),
+    bounds,
+    visible_bounds,
+    scale_factor: value
+      .get("scale_factor")
+      .and_then(Value::as_f64)
+      .unwrap_or(1.0),
+    pixel_width: json_number_to_i64(physical_pixel_size, "width", display_ref)?,
+    pixel_height: json_number_to_i64(physical_pixel_size, "height", display_ref)?,
+  })
+}
+
+fn parse_json_rect(value: &Value, field: &str, display_ref: &str) -> AuvResult<ObservedRect> {
+  let rect = value
+    .get(field)
+    .ok_or_else(|| format!("display {display_ref} is missing {field}"))?;
+  Ok(ObservedRect {
+    x: json_number_to_i64(rect, "x", display_ref)?,
+    y: json_number_to_i64(rect, "y", display_ref)?,
+    width: json_number_to_i64(rect, "width", display_ref)?,
+    height: json_number_to_i64(rect, "height", display_ref)?,
+  })
+}
+
+fn json_number_to_i64(value: &Value, field: &str, display_ref: &str) -> AuvResult<i64> {
+  value
+    .get(field)
+    .and_then(Value::as_f64)
+    .map(|number| number.round() as i64)
+    .ok_or_else(|| format!("display {display_ref} has invalid numeric field {field}"))
 }
 
 fn choose_primary_window(windows: &[ObservedWindow]) -> Option<&ObservedWindow> {
@@ -1974,13 +2053,13 @@ fn render_candidate_recipe(
   strategy: &AppRecommendedStrategy,
 ) -> AuvResult<Value> {
   match strategy.taxonomy_id.as_str() {
-    "search-entry.ax-text-input.clipboard-submit.capture-screen-evidence" => {
+    "search-entry.ax-text-input.clipboard-submit.capture-evidence" => {
       Ok(render_search_entry_candidate_recipe(analysis))
     }
     "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text" => {
       Ok(render_native_text_candidate_recipe(analysis))
     }
-    "result-selection.ocr-anchor.pointer-click.capture-screen-evidence" => {
+    "result-selection.ocr-anchor.pointer-click.capture-evidence" => {
       Ok(render_result_selection_candidate_recipe(analysis))
     }
     other => Err(format!(
@@ -1995,13 +2074,13 @@ fn render_candidate_case_matrix(
   strategy: &AppRecommendedStrategy,
 ) -> AuvResult<Value> {
   match strategy.taxonomy_id.as_str() {
-    "search-entry.ax-text-input.clipboard-submit.capture-screen-evidence" => {
+    "search-entry.ax-text-input.clipboard-submit.capture-evidence" => {
       Ok(render_search_entry_candidate_cases(analysis))
     }
     "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text" => {
       Ok(render_native_text_candidate_cases(analysis))
     }
-    "result-selection.ocr-anchor.pointer-click.capture-screen-evidence" => {
+    "result-selection.ocr-anchor.pointer-click.capture-evidence" => {
       Ok(render_result_selection_candidate_cases(analysis))
     }
     other => Err(format!(
@@ -2027,7 +2106,7 @@ fn render_search_entry_candidate_recipe(analysis: &AppAnalysis) -> Value {
       "family": "search-entry",
       "grounding": "ax-text-input",
       "activation": "clipboard-submit",
-      "verificationContract": "captureScreenEvidence"
+      "verificationContract": "captureEvidence"
     },
     "objective": format!("Candidate search-entry slice for {} distilled from app-surface analysis.", analysis.app_identity.app_name),
     "inputs": {
@@ -2074,7 +2153,7 @@ fn render_search_entry_candidate_recipe(analysis: &AppAnalysis) -> Value {
       },
       {
         "id": "capture-evidence",
-        "command_id": "debug.captureScreen",
+        "command_id": "debug.captureDisplay",
         "disturbance": { "classes": ["none"], "max": "none" },
         "args": { "target": "${app_id}", "activate_target_before_capture": true, "label": format!("{app_slug}-search-entry-${{query}}") },
         "expect": { "artifact_count_at_least": 1 },
@@ -2215,7 +2294,7 @@ fn render_result_selection_candidate_recipe(analysis: &AppAnalysis) -> Value {
       "family": "result-selection",
       "grounding": "ocr-anchor",
       "activation": "pointer-click",
-      "verificationContract": "captureScreenEvidence"
+      "verificationContract": "captureEvidence"
     },
     "objective": format!("Candidate OCR-anchor result-selection slice for {} distilled from app-surface analysis.", analysis.app_identity.app_name),
     "inputs": {
@@ -2254,7 +2333,7 @@ fn render_result_selection_candidate_recipe(analysis: &AppAnalysis) -> Value {
       },
       {
         "id": "capture-evidence",
-        "command_id": "debug.captureScreen",
+        "command_id": "debug.captureDisplay",
         "disturbance": { "classes": ["none"], "max": "none" },
         "args": { "target": "${app_id}", "activate_target_before_capture": true, "label": format!("{app_slug}-result-selection-${{anchor_text}}") },
         "expect": { "artifact_count_at_least": 1 },
@@ -2390,17 +2469,17 @@ mod tests {
   #[test]
   fn recommended_strategy_uses_stable_taxonomy_id() {
     let strategy = recommended_strategy(
-      "native-text",
-      "ax-text",
-      "pointer-focus-clipboard-paste",
-      "verifyAxText",
+      "search-entry",
+      "ax-text-input",
+      "clipboard-submit",
+      "captureEvidence",
       AssessmentStatus::Candidate,
       "test rationale",
     )
     .expect("taxonomy should be valid");
     assert_eq!(
       strategy.taxonomy_id,
-      "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text"
+      "search-entry.ax-text-input.clipboard-submit.capture-evidence"
     );
   }
 
@@ -2482,7 +2561,7 @@ mod tests {
           "search-entry",
           "ax-text-input",
           "clipboard-submit",
-          "captureScreenEvidence",
+          "captureEvidence",
           AssessmentStatus::Candidate,
           "test rationale",
         )
@@ -2501,14 +2580,15 @@ mod tests {
 
   #[test]
   fn search_entry_distillation_template_validates() {
-    let analysis = sample_analysis_with_strategy(
-      "search-entry.ax-text-input.clipboard-submit.capture-screen-evidence",
-    );
-    let recipe = render_search_entry_candidate_recipe(&analysis);
+    let analysis =
+      sample_analysis_with_strategy("search-entry.ax-text-input.clipboard-submit.capture-evidence");
+    let recipe = render_candidate_recipe(&analysis, &analysis.recommended_strategies[0])
+      .expect("candidate recipe should render");
     let manifest: SkillManifest =
       serde_json::from_value(recipe).expect("candidate recipe should parse");
     validate_skill_manifest(&manifest).expect("candidate recipe should validate");
-    let matrix_value = render_search_entry_candidate_cases(&analysis);
+    let matrix_value = render_candidate_case_matrix(&analysis, &analysis.recommended_strategies[0])
+      .expect("candidate matrix should render");
     let matrix: SkillCaseMatrix =
       serde_json::from_value(matrix_value).expect("candidate matrix should parse");
     validate_case_matrix_manifest(&matrix).expect("candidate matrix should validate");
@@ -2533,9 +2613,8 @@ mod tests {
 
   #[test]
   fn apply_candidate_grounding_marks_unresolved_search_entry_without_search_signal() {
-    let analysis = sample_analysis_with_strategy(
-      "search-entry.ax-text-input.clipboard-submit.capture-screen-evidence",
-    );
+    let analysis =
+      sample_analysis_with_strategy("search-entry.ax-text-input.clipboard-submit.capture-evidence");
     let mut matrix: SkillCaseMatrix =
       serde_json::from_value(render_search_entry_candidate_cases(&analysis))
         .expect("candidate matrix should parse");
@@ -2543,12 +2622,12 @@ mod tests {
     let unresolved = apply_candidate_grounding(
       &analysis,
       None,
-      "search-entry.ax-text-input.clipboard-submit.capture-screen-evidence",
+      "search-entry.ax-text-input.clipboard-submit.capture-evidence",
       &mut matrix,
       &mut resolved,
     );
     assert!(unresolved.iter().any(|key| key == "focus_query"));
-    assert!(resolved.get("query").is_some());
+    assert!(resolved.contains_key("query"));
   }
 
   fn sample_analysis_with_strategy(taxonomy_id: &str) -> AppAnalysis {

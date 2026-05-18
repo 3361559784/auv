@@ -18,7 +18,7 @@
     "debug.typeText",
     "debug.findScreenText",
     "debug.clickScreenText",
-    "debug.captureScreen"
+    "debug.captureDisplay"
   ],
   "inputs": {
     "query": {
@@ -127,7 +127,7 @@
       "purpose": "Project the OCR anchor back to logical coordinates and click it."
     },
     {
-      "command_id": "debug.captureScreen",
+      "command_id": "debug.captureDisplay",
       "disturbance": {
         "classes": [
           "none"

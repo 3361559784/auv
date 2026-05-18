@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use super::{
   OcrTextMatch, ScreenshotDimensions,
-  control::common::build_click_point_call,
+  control::common::{ClickPointCallOptions, build_click_point_call},
   support::{
     app_contains_window, assess_coordinate_readiness, filter_ocr_matches, find_now_playing_ax_node,
     group_ocr_matches_into_rows, optional_bool, optional_f64, parse_app_selector,
@@ -218,7 +218,7 @@ fn filter_ocr_matches_applies_confidence_and_region() {
 
 #[test]
 fn group_ocr_matches_into_rows_merges_nearby_vertical_observations() {
-  let matches = vec![
+  let matches = [
     OcrTextMatch {
       match_index: 0,
       text: "Song Title".to_string(),
@@ -318,12 +318,14 @@ fn build_click_point_call_populates_required_inputs() {
   let call = build_click_point_call(
     &target,
     &working_directory,
-    12.5,
-    48.25,
-    "left",
-    2,
-    Some(300),
-    Some("com.apple.TextEdit"),
+    ClickPointCallOptions {
+      x: 12.5,
+      y: 48.25,
+      button: "left",
+      click_count: 2,
+      settle_ms: Some(300),
+      app: Some("com.apple.TextEdit"),
+    },
   );
   assert_eq!(call.operation, "click_point");
   assert_eq!(call.working_directory, working_directory);
@@ -343,12 +345,14 @@ fn build_click_point_call_omits_optional_inputs_when_absent() {
   let call = build_click_point_call(
     &ExecutionTarget::default(),
     std::path::Path::new("."),
-    1.0,
-    2.0,
-    "right",
-    1,
-    None,
-    None,
+    ClickPointCallOptions {
+      x: 1.0,
+      y: 2.0,
+      button: "right",
+      click_count: 1,
+      settle_ms: None,
+      app: None,
+    },
   );
   assert!(!call.inputs.contains_key("settle_ms"));
   assert!(!call.inputs.contains_key("app"));

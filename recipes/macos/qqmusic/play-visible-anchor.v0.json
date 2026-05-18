@@ -278,7 +278,7 @@
     },
     {
       "id": "capture-evidence",
-      "command_id": "debug.captureScreen",
+      "command_id": "debug.captureDisplay",
       "disturbance": {
         "classes": [
           "none"

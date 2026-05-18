@@ -149,20 +149,20 @@ fn score_now_playing_ax_node_match(
   if !searchable.contains(expected_title) {
     return None;
   }
-  if let Some(expected_artist) = expected_artist {
-    if !searchable.contains(expected_artist) {
-      return None;
-    }
+  if let Some(expected_artist) = expected_artist
+    && !searchable.contains(expected_artist)
+  {
+    return None;
   }
 
   let mut score = 100 - node.depth as i64;
   if node.title.to_lowercase().contains(expected_title) {
     score += 40;
   }
-  if let Some(expected_artist) = expected_artist {
-    if node.title.to_lowercase().contains(expected_artist) {
-      score += 20;
-    }
+  if let Some(expected_artist) = expected_artist
+    && node.title.to_lowercase().contains(expected_artist)
+  {
+    score += 20;
   }
   if node.role == "AXUnknown" || node.role == "AXStaticText" {
     score += 10;

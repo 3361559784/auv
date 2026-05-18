@@ -1,5 +1,5 @@
 use super::super::*;
-use super::common::build_click_point_call;
+use super::common::{ClickPointCallOptions, build_click_point_call};
 use super::pointer::click_point;
 
 pub(crate) fn click_window_point(call: &DriverCall) -> AuvResult<DriverResponse> {
@@ -21,12 +21,14 @@ pub(crate) fn click_window_point(call: &DriverCall) -> AuvResult<DriverResponse>
   let nested_call = build_click_point_call(
     &call.target,
     call.working_directory.as_path(),
-    logical_x,
-    logical_y,
-    &button_label,
-    click_count,
-    None,
-    Some(&app),
+    ClickPointCallOptions {
+      x: logical_x,
+      y: logical_y,
+      button: &button_label,
+      click_count,
+      settle_ms: None,
+      app: Some(&app),
+    },
   );
   let _ = click_point(&nested_call)?;
 

@@ -4,6 +4,15 @@ use std::time::Duration;
 use super::super::*;
 use crate::model::ExecutionTarget;
 
+pub(crate) struct ClickPointCallOptions<'a> {
+  pub(crate) x: f64,
+  pub(crate) y: f64,
+  pub(crate) button: &'a str,
+  pub(crate) click_count: i64,
+  pub(crate) settle_ms: Option<u64>,
+  pub(crate) app: Option<&'a str>,
+}
+
 pub(super) fn activate_app_if_needed(app: &str) -> AuvResult<()> {
   if !app.is_empty() {
     activate_target_app(app)?;
@@ -25,23 +34,18 @@ pub(super) fn send_reveal_shortcut_if_needed(
 pub(crate) fn build_click_point_call(
   target: &ExecutionTarget,
   working_directory: &std::path::Path,
-  x: f64,
-  y: f64,
-  button: &str,
-  click_count: i64,
-  settle_ms: Option<u64>,
-  app: Option<&str>,
+  options: ClickPointCallOptions<'_>,
 ) -> DriverCall {
   let mut inputs = std::collections::BTreeMap::from([
-    ("x".to_string(), format!("{x:.3}")),
-    ("y".to_string(), format!("{y:.3}")),
-    ("button".to_string(), button.to_string()),
-    ("click_count".to_string(), click_count.to_string()),
+    ("x".to_string(), format!("{:.3}", options.x)),
+    ("y".to_string(), format!("{:.3}", options.y)),
+    ("button".to_string(), options.button.to_string()),
+    ("click_count".to_string(), options.click_count.to_string()),
   ]);
-  if let Some(settle_ms) = settle_ms {
+  if let Some(settle_ms) = options.settle_ms {
     inputs.insert("settle_ms".to_string(), settle_ms.to_string());
   }
-  if let Some(app) = app.filter(|value| !value.is_empty()) {
+  if let Some(app) = options.app.filter(|value| !value.is_empty()) {
     inputs.insert("app".to_string(), app.to_string());
   }
 

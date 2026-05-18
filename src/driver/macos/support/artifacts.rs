@@ -1,7 +1,7 @@
 use std::env;
 use std::fs;
 use std::io::ErrorKind;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::super::*;
@@ -22,7 +22,7 @@ pub(crate) fn run_swift_script(source: &str) -> AuvResult<String> {
   result
 }
 
-pub(crate) fn run_swift_script_with_fallback(script_path: &PathBuf) -> AuvResult<String> {
+pub(crate) fn run_swift_script_with_fallback(script_path: &Path) -> AuvResult<String> {
   let xcrun_args = vec!["swift".to_string(), script_path.display().to_string()];
   match run_command(XCRUN_BINARY, &xcrun_args) {
     Ok(output) => Ok(output.stdout),

@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::driver::{
   ObservedAxTreeSnapshot, ObservedDisplaySnapshot, ObservedRect, ObservedWindow, OcrTextSnapshot,
@@ -13,10 +13,14 @@ use crate::driver::{
 };
 use crate::model::{AuvResult, ExecutionTarget, InvokeRequest, RunStatus, now_millis};
 use crate::runtime::Runtime;
-use crate::skill::SkillStrategy;
+use crate::skill::{
+  SkillCaseMatrix, SkillManifest, SkillStrategy, validate_case_matrix_against_skill,
+  validate_case_matrix_manifest, validate_skill_manifest,
+};
 
 const APP_PROBE_VERSION: &str = "v0";
 const APP_ANALYSIS_VERSION: &str = "v0";
+const APP_DISTILL_VERSION: &str = "v0";
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AppIdentity {
@@ -59,6 +63,33 @@ pub struct AppAnalyzeOutput {
   pub analysis: AppAnalysis,
   pub analysis_path: PathBuf,
   pub report_path: PathBuf,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AppDistillOutput {
+  pub distillation: AppDistillation,
+  pub distillation_path: PathBuf,
+  pub report_path: PathBuf,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AppDistillation {
+  pub distill_version: String,
+  pub created_at_millis: u128,
+  pub source_analysis_path: PathBuf,
+  pub app_identity: AppIdentity,
+  pub candidates: Vec<AppDistilledCandidate>,
+  pub known_boundaries: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AppDistilledCandidate {
+  pub recipe_id: String,
+  pub taxonomy_id: String,
+  pub status: AssessmentStatus,
+  pub rationale: String,
+  pub recipe_path: PathBuf,
+  pub case_matrix_path: PathBuf,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -356,6 +387,97 @@ pub fn analyze_app_probe(query: &Path) -> AuvResult<AppAnalyzeOutput> {
   Ok(AppAnalyzeOutput {
     analysis,
     analysis_path,
+    report_path,
+  })
+}
+
+pub fn distill_app_analysis(
+  query: &Path,
+  output_dir: Option<PathBuf>,
+) -> AuvResult<AppDistillOutput> {
+  let analysis_path = resolve_analysis_path(query)?;
+  let analysis: AppAnalysis = read_json(&analysis_path)?;
+  let output_dir =
+    output_dir.unwrap_or_else(|| default_distill_output_dir(&analysis_path, &analysis));
+  if output_dir.exists() {
+    return Err(format!(
+      "distillation output directory already exists: {}",
+      output_dir.display()
+    ));
+  }
+  fs::create_dir_all(output_dir.join("candidates")).map_err(|error| {
+    format!(
+      "failed to create app distillation directory {}: {error}",
+      output_dir.display()
+    )
+  })?;
+
+  let mut candidates = Vec::new();
+  for strategy in &analysis.recommended_strategies {
+    let recipe_value = render_candidate_recipe(&analysis, strategy)?;
+    let matrix_value = render_candidate_case_matrix(&analysis, strategy)?;
+    let manifest: SkillManifest =
+      serde_json::from_value(recipe_value.clone()).map_err(|error| {
+        format!(
+          "failed to parse generated candidate recipe for {}: {error}",
+          strategy.taxonomy_id
+        )
+      })?;
+    validate_skill_manifest(&manifest)?;
+    let matrix: SkillCaseMatrix =
+      serde_json::from_value(matrix_value.clone()).map_err(|error| {
+        format!(
+          "failed to parse generated candidate case matrix for {}: {error}",
+          strategy.taxonomy_id
+        )
+      })?;
+    validate_case_matrix_manifest(&matrix)?;
+    validate_case_matrix_against_skill(&manifest, &matrix)?;
+
+    let candidate_slug = candidate_slug(&strategy.taxonomy_id);
+    let recipe_path = output_dir
+      .join("candidates")
+      .join(format!("{candidate_slug}.recipe.json"));
+    let case_matrix_path = output_dir
+      .join("candidates")
+      .join(format!("{candidate_slug}.cases.json"));
+    write_pretty_json(&recipe_path, &recipe_value)?;
+    write_pretty_json(&case_matrix_path, &matrix_value)?;
+    candidates.push(AppDistilledCandidate {
+      recipe_id: manifest.recipe_id.clone(),
+      taxonomy_id: strategy.taxonomy_id.clone(),
+      status: strategy.status,
+      rationale: strategy.rationale.clone(),
+      recipe_path,
+      case_matrix_path,
+    });
+  }
+
+  let distillation = AppDistillation {
+    distill_version: APP_DISTILL_VERSION.to_string(),
+    created_at_millis: now_millis(),
+    source_analysis_path: analysis_path.clone(),
+    app_identity: analysis.app_identity.clone(),
+    candidates,
+    known_boundaries: analysis.known_boundaries.clone(),
+  };
+  let distillation_path = output_dir.join("distillation.json");
+  let report_path = output_dir.join("report.md");
+  write_pretty_json(&distillation_path, &distillation)?;
+  fs::write(
+    &report_path,
+    render_app_distillation_report(&analysis, &distillation),
+  )
+  .map_err(|error| {
+    format!(
+      "failed to write app distillation report {}: {error}",
+      report_path.display()
+    )
+  })?;
+
+  Ok(AppDistillOutput {
+    distillation,
+    distillation_path,
     report_path,
   })
 }
@@ -838,6 +960,85 @@ fn render_app_analysis_report(analysis: &AppAnalysis) -> String {
   lines.join("\n") + "\n"
 }
 
+fn render_app_distillation_report(
+  analysis: &AppAnalysis,
+  distillation: &AppDistillation,
+) -> String {
+  let mut lines = vec![
+    format!(
+      "# App Distillation Report: {}",
+      if distillation.app_identity.app_name.is_empty() {
+        &distillation.app_identity.bundle_id
+      } else {
+        &distillation.app_identity.app_name
+      }
+    ),
+    String::new(),
+    format!(
+      "- source analysis: `{}`",
+      distillation.source_analysis_path.display()
+    ),
+    format!("- distill version: `{}`", distillation.distill_version),
+    format!(
+      "- generated candidate count: `{}`",
+      distillation.candidates.len()
+    ),
+    String::new(),
+    "## Candidate Outputs".to_string(),
+    String::new(),
+  ];
+  if distillation.candidates.is_empty() {
+    lines.push("- none generated".to_string());
+  } else {
+    for candidate in &distillation.candidates {
+      lines.push(format!(
+        "- `{}` (`{}`)",
+        candidate.recipe_id, candidate.taxonomy_id
+      ));
+      lines.push(format!("  - status: `{}`", candidate.status.as_str()));
+      lines.push(format!("  - recipe: `{}`", candidate.recipe_path.display()));
+      lines.push(format!(
+        "  - cases: `{}`",
+        candidate.case_matrix_path.display()
+      ));
+      lines.push(format!("  - rationale: {}", candidate.rationale));
+    }
+  }
+  lines.push(String::new());
+  lines.push("## Boundaries Carried Forward".to_string());
+  lines.push(String::new());
+  if distillation.known_boundaries.is_empty() {
+    lines.push("- none recorded".to_string());
+  } else {
+    for note in &distillation.known_boundaries {
+      lines.push(format!("- {note}"));
+    }
+  }
+  lines.push(String::new());
+  lines.push("## Analysis Reminder".to_string());
+  lines.push(String::new());
+  lines.push(format!(
+    "- available surfaces: AX=`{}`, keyboard-first=`{}`, pointer-fallback=`{}`",
+    analysis.available_surfaces.accessibility_tree.as_str(),
+    analysis.available_surfaces.keyboard_first_surface.as_str(),
+    analysis
+      .available_surfaces
+      .pointer_fallback_surface
+      .as_str()
+  ));
+  lines.push(format!(
+    "- grounding: OCR sample `{}` produced `{}` with matchCount={}",
+    analysis.grounding_assessment.ocr_sample_query,
+    analysis.grounding_assessment.ocr_sample_status.as_str(),
+    analysis.grounding_assessment.ocr_sample_match_count
+  ));
+  lines.push(
+    "- candidate outputs are scaffolds only; they are not validated skills until a later validate/promote step says so."
+      .to_string(),
+  );
+  lines.join("\n") + "\n"
+}
+
 fn parse_permission_state(probe: &AppProbe) -> AuvResult<AppPermissionState> {
   let report = read_named_text_artifact(probe, "probe-permissions", None)?;
   Ok(AppPermissionState {
@@ -1236,6 +1437,23 @@ fn resolve_probe_path(query: &Path) -> AuvResult<PathBuf> {
   Err(format!("probe path does not exist: {}", query.display()))
 }
 
+fn resolve_analysis_path(query: &Path) -> AuvResult<PathBuf> {
+  if query.is_file() {
+    return Ok(query.to_path_buf());
+  }
+  if query.is_dir() {
+    let candidate = query.join("analysis.json");
+    if candidate.exists() {
+      return Ok(candidate);
+    }
+    return Err(format!(
+      "analysis directory {} does not contain analysis.json",
+      query.display()
+    ));
+  }
+  Err(format!("analysis path does not exist: {}", query.display()))
+}
+
 fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> AuvResult<T> {
   let raw = fs::read_to_string(path)
     .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
@@ -1293,6 +1511,433 @@ fn first_non_empty_string(values: &[Option<String>]) -> Option<String> {
     } else {
       Some(value.to_string())
     }
+  })
+}
+
+fn default_distill_output_dir(analysis_path: &Path, analysis: &AppAnalysis) -> PathBuf {
+  let base = analysis_path.parent().unwrap_or_else(|| Path::new("."));
+  base.join("distill").join(format!(
+    "{}-{}",
+    recipe_app_slug(&analysis.app_identity),
+    now_millis()
+  ))
+}
+
+fn recipe_app_slug(app: &AppIdentity) -> String {
+  let source = if app.app_name.trim().is_empty() {
+    &app.bundle_id
+  } else {
+    &app.app_name
+  };
+  let mut slug = String::new();
+  let mut last_was_sep = false;
+  for character in source.chars() {
+    let lower = character.to_ascii_lowercase();
+    if lower.is_ascii_alphanumeric() {
+      slug.push(lower);
+      last_was_sep = false;
+    } else if !last_was_sep {
+      slug.push('_');
+      last_was_sep = true;
+    }
+  }
+  slug.trim_matches('_').to_string()
+}
+
+fn candidate_slug(taxonomy_id: &str) -> String {
+  taxonomy_id
+    .chars()
+    .map(|character| {
+      if character.is_ascii_alphanumeric() {
+        character.to_ascii_lowercase()
+      } else {
+        '_'
+      }
+    })
+    .collect::<String>()
+    .trim_matches('_')
+    .to_string()
+}
+
+fn render_candidate_recipe(
+  analysis: &AppAnalysis,
+  strategy: &AppRecommendedStrategy,
+) -> AuvResult<Value> {
+  match strategy.taxonomy_id.as_str() {
+    "search-entry.ax-text-input.clipboard-submit.capture-screen-evidence" => {
+      Ok(render_search_entry_candidate_recipe(analysis))
+    }
+    "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text" => {
+      Ok(render_native_text_candidate_recipe(analysis))
+    }
+    "result-selection.ocr-anchor.pointer-click.capture-screen-evidence" => {
+      Ok(render_result_selection_candidate_recipe(analysis))
+    }
+    other => Err(format!(
+      "no candidate distillation template exists yet for strategy taxonomy {}",
+      other
+    )),
+  }
+}
+
+fn render_candidate_case_matrix(
+  analysis: &AppAnalysis,
+  strategy: &AppRecommendedStrategy,
+) -> AuvResult<Value> {
+  match strategy.taxonomy_id.as_str() {
+    "search-entry.ax-text-input.clipboard-submit.capture-screen-evidence" => {
+      Ok(render_search_entry_candidate_cases(analysis))
+    }
+    "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text" => {
+      Ok(render_native_text_candidate_cases(analysis))
+    }
+    "result-selection.ocr-anchor.pointer-click.capture-screen-evidence" => {
+      Ok(render_result_selection_candidate_cases(analysis))
+    }
+    other => Err(format!(
+      "no candidate case-matrix distillation template exists yet for strategy taxonomy {}",
+      other
+    )),
+  }
+}
+
+fn render_search_entry_candidate_recipe(analysis: &AppAnalysis) -> Value {
+  let app_slug = recipe_app_slug(&analysis.app_identity);
+  json!({
+    "recipe_id": format!("macos.{app_slug}.search_entry_candidate.v0"),
+    "version": "0.1.0",
+    "status": "candidate-recipe",
+    "platform": "macOS",
+    "target_app": {
+      "name": analysis.app_identity.app_name,
+      "bundle_id": "${app_id}",
+      "display_mode": "live-desktop"
+    },
+    "strategy": {
+      "family": "search-entry",
+      "grounding": "ax-text-input",
+      "activation": "clipboard-submit",
+      "verificationContract": "captureScreenEvidence"
+    },
+    "objective": format!("Candidate search-entry slice for {} distilled from app-surface analysis.", analysis.app_identity.app_name),
+    "inputs": {
+      "app_id": { "type": "string", "default": analysis.app_identity.bundle_id },
+      "focus_query": { "type": "string", "note": "Replace with the best known search-field or entry-point AX query for this app." },
+      "query": { "type": "string", "note": "Replace with a real query during validation." },
+      "activate_settle_ms": { "type": "integer", "default": 250 },
+      "submit_settle_ms": { "type": "integer", "default": 600 }
+    },
+    "preconditions": [
+      "The host is macOS.",
+      format!("{} is installed and can be addressed by ${{app_id}}.", analysis.app_identity.app_name),
+      "Screen Recording and Accessibility permissions are already granted."
+    ],
+    "disturbance_policy": {
+      "max_disturbance": "pointer",
+      "declared_classes": ["none", "foreground_app", "keyboard", "clipboard", "pointer"],
+      "notes": [
+        "This is a candidate distilled from probe/analyze output, not a validated skill.",
+        "The search-field focus query is still provisional and must be validated live."
+      ]
+    },
+    "steps": [
+      {
+        "id": "activate-target-app",
+        "command_id": "debug.activateApp",
+        "disturbance": { "classes": ["foreground_app"], "max": "foreground_app" },
+        "args": { "target": "${app_id}", "settle_ms": "${activate_settle_ms}" },
+        "purpose": "Bring the app to the foreground before search-entry probing."
+      },
+      {
+        "id": "focus-search-input",
+        "command_id": "debug.focusTextInput",
+        "disturbance": { "classes": ["foreground_app", "keyboard", "pointer"], "max": "pointer" },
+        "args": { "target": "${app_id}", "query": "${focus_query}", "max_depth": 6, "max_children": 24 },
+        "purpose": "Try to focus the search-entry surface through AX."
+      },
+      {
+        "id": "paste-query",
+        "command_id": "debug.pasteTextPreserveClipboard",
+        "disturbance": { "classes": ["foreground_app", "keyboard", "clipboard"], "max": "clipboard" },
+        "args": { "target": "${app_id}", "text": "${query}", "replace_existing": true, "submit_key": "return", "submit_settle_ms": "${submit_settle_ms}" },
+        "purpose": "Paste and submit the candidate query while restoring the clipboard."
+      },
+      {
+        "id": "capture-evidence",
+        "command_id": "debug.captureScreen",
+        "disturbance": { "classes": ["none"], "max": "none" },
+        "args": { "target": "${app_id}", "activate_target_before_capture": true, "label": format!("{app_slug}-search-entry-${{query}}") },
+        "expect": { "artifact_count_at_least": 1 },
+        "purpose": "Capture post-submit evidence for later validation."
+      }
+    ],
+    "verification": {
+      "expected_signals": [
+        "The app can be foregrounded.",
+        "A candidate entry field can be focused through AX.",
+        "The query can be submitted with clipboard-backed input.",
+        "A post-submit screenshot artifact exists."
+      ],
+      "success_criteria": [
+        "The query is submitted through the shared runtime.",
+        "A post-submit screenshot artifact exists."
+      ],
+      "non_goals": [
+        "This candidate does not prove semantic result selection.",
+        "This candidate does not prove playback or action success."
+      ]
+    },
+    "known_limits": {
+      "candidate_only": "This recipe was distilled from analysis output and has not been validated yet.",
+      "focus_query": "The focus_query input must be grounded during validate.",
+      "semantic_success": "This candidate only covers search-entry and evidence capture."
+    }
+  })
+}
+
+fn render_native_text_candidate_recipe(analysis: &AppAnalysis) -> Value {
+  let app_slug = recipe_app_slug(&analysis.app_identity);
+  let marker = format!("AUV_{}_MARKER", app_slug.to_ascii_uppercase());
+  json!({
+    "recipe_id": format!("macos.{app_slug}.native_text_candidate.v0"),
+    "version": "0.1.0",
+    "status": "candidate-recipe",
+    "platform": "macOS",
+    "target_app": {
+      "name": analysis.app_identity.app_name,
+      "bundle_id": "${app_id}",
+      "display_mode": "live-desktop"
+    },
+    "strategy": {
+      "family": "native-text",
+      "grounding": "ax-text",
+      "activation": "pointer-focus-clipboard-paste",
+      "verificationContract": "verifyAxText"
+    },
+    "objective": format!("Candidate native-text slice for {} distilled from app-surface analysis.", analysis.app_identity.app_name),
+    "inputs": {
+      "app_id": { "type": "string", "default": analysis.app_identity.bundle_id },
+      "focus_query": { "type": "string", "note": "Replace with the best known editable text-area AX query for this app." },
+      "target_text": { "type": "string", "default": marker },
+      "activate_settle_ms": { "type": "integer", "default": 250 },
+      "type_settle_ms": { "type": "integer", "default": 250 }
+    },
+    "preconditions": [
+      "The host is macOS.",
+      format!("{} is installed and can be addressed by ${{app_id}}.", analysis.app_identity.app_name),
+      "Screen Recording and Accessibility permissions are already granted."
+    ],
+    "disturbance_policy": {
+      "max_disturbance": "pointer",
+      "declared_classes": ["none", "foreground_app", "keyboard", "clipboard", "pointer"],
+      "notes": [
+        "This is a candidate distilled from probe/analyze output, not a validated skill.",
+        "The focus_query input must be validated against a real editable text surface."
+      ]
+    },
+    "steps": [
+      {
+        "id": "activate-target-app",
+        "command_id": "debug.activateApp",
+        "disturbance": { "classes": ["foreground_app"], "max": "foreground_app" },
+        "args": { "target": "${app_id}", "settle_ms": "${activate_settle_ms}" },
+        "purpose": "Bring the app to the foreground before text interaction."
+      },
+      {
+        "id": "focus-text-surface",
+        "command_id": "debug.focusTextInput",
+        "disturbance": { "classes": ["foreground_app", "keyboard", "pointer"], "max": "pointer" },
+        "args": { "target": "${app_id}", "query": "${focus_query}", "max_depth": 6, "max_children": 40 },
+        "purpose": "Focus a text-bearing surface through AX."
+      },
+      {
+        "id": "paste-text",
+        "command_id": "debug.pasteTextPreserveClipboard",
+        "disturbance": { "classes": ["foreground_app", "keyboard", "clipboard"], "max": "clipboard" },
+        "args": { "target": "${app_id}", "text": "${target_text}", "replace_existing": true, "submit_settle_ms": "${type_settle_ms}" },
+        "purpose": "Write the marker through clipboard-backed text input."
+      },
+      {
+        "id": "verify-text",
+        "command_id": "debug.verifyAxText",
+        "disturbance": { "classes": ["none"], "max": "none" },
+        "args": { "target": "${app_id}", "target_text": "${target_text}", "max_depth": 6, "max_children": 48 },
+        "expect": { "output_must_contain": ["${target_text}"], "artifact_count_at_least": 1 },
+        "purpose": "Verify the marker through the AX tree."
+      }
+    ],
+    "verification": {
+      "expected_signals": [
+        "The app can be foregrounded.",
+        "A text-bearing surface can be focused.",
+        "The target text can be written.",
+        "The same marker can be matched through AX."
+      ],
+      "success_criteria": [
+        "The marker is visible in the AX tree.",
+        "The recipe completes without screenshot-only verification."
+      ],
+      "non_goals": [
+        "This candidate does not prove rich editing coverage.",
+        "This candidate does not prove cross-app semantic reuse by itself."
+      ]
+    },
+    "known_limits": {
+      "candidate_only": "This recipe was distilled from analysis output and has not been validated yet.",
+      "focus_query": "The focus_query input must be grounded during validate."
+    }
+  })
+}
+
+fn render_result_selection_candidate_recipe(analysis: &AppAnalysis) -> Value {
+  let app_slug = recipe_app_slug(&analysis.app_identity);
+  json!({
+    "recipe_id": format!("macos.{app_slug}.result_selection_candidate.v0"),
+    "version": "0.1.0",
+    "status": "candidate-recipe",
+    "platform": "macOS",
+    "target_app": {
+      "name": analysis.app_identity.app_name,
+      "bundle_id": "${app_id}",
+      "display_mode": "live-desktop"
+    },
+    "strategy": {
+      "family": "result-selection",
+      "grounding": "ocr-anchor",
+      "activation": "pointer-click",
+      "verificationContract": "captureScreenEvidence"
+    },
+    "objective": format!("Candidate OCR-anchor result-selection slice for {} distilled from app-surface analysis.", analysis.app_identity.app_name),
+    "inputs": {
+      "app_id": { "type": "string", "default": analysis.app_identity.bundle_id },
+      "anchor_text": { "type": "string", "note": "Replace with a visible OCR anchor when validating this candidate." },
+      "match_index": { "type": "integer", "default": 0 },
+      "post_click_settle_ms": { "type": "integer", "default": 700 }
+    },
+    "preconditions": [
+      "The host is macOS.",
+      format!("{} is installed and can be addressed by ${{app_id}}.", analysis.app_identity.app_name),
+      "Screen Recording and Accessibility permissions are already granted."
+    ],
+    "disturbance_policy": {
+      "max_disturbance": "pointer",
+      "declared_classes": ["none", "foreground_app", "pointer"],
+      "notes": [
+        "This is a candidate distilled from probe/analyze output, not a validated skill.",
+        "The visible OCR anchor must be validated live."
+      ]
+    },
+    "steps": [
+      {
+        "id": "activate-target-app",
+        "command_id": "debug.activateApp",
+        "disturbance": { "classes": ["foreground_app"], "max": "foreground_app" },
+        "args": { "target": "${app_id}", "settle_ms": 250 },
+        "purpose": "Bring the app to the foreground before result selection."
+      },
+      {
+        "id": "click-anchor",
+        "command_id": "debug.clickScreenText",
+        "disturbance": { "classes": ["pointer"], "max": "pointer" },
+        "args": { "target": "${app_id}", "query": "${anchor_text}", "match_index": "${match_index}" },
+        "purpose": "Click a visible OCR anchor as the candidate result-selection path."
+      },
+      {
+        "id": "capture-evidence",
+        "command_id": "debug.captureScreen",
+        "disturbance": { "classes": ["none"], "max": "none" },
+        "args": { "target": "${app_id}", "activate_target_before_capture": true, "label": format!("{app_slug}-result-selection-${{anchor_text}}") },
+        "expect": { "artifact_count_at_least": 1 },
+        "purpose": "Capture post-selection evidence for later validation."
+      }
+    ],
+    "verification": {
+      "expected_signals": [
+        "A visible OCR anchor can be resolved.",
+        "The pointer click succeeds.",
+        "A post-click screenshot artifact exists."
+      ],
+      "success_criteria": [
+        "The candidate anchor can be clicked through the runtime.",
+        "A post-click screenshot artifact exists."
+      ],
+      "non_goals": [
+        "This candidate does not prove semantic success.",
+        "This candidate does not prove playback or action completion."
+      ]
+    },
+    "known_limits": {
+      "candidate_only": "This recipe was distilled from analysis output and has not been validated yet.",
+      "anchor_text": "The anchor_text input must be grounded during validate.",
+      "semantic_success": "This candidate proves activation-attempt shape only, not semantic success."
+    }
+  })
+}
+
+fn render_search_entry_candidate_cases(analysis: &AppAnalysis) -> Value {
+  json!({
+    "skill_id": format!("macos.{}.search_entry_candidate.v0", recipe_app_slug(&analysis.app_identity)),
+    "version": "0.1.0",
+    "status": "candidate-case-matrix",
+    "cases": [
+      {
+        "case_id": "default-candidate",
+        "status": "candidate",
+        "inputs": {
+          "focus_query": "TODO_FOCUS_QUERY",
+          "query": "TODO_QUERY"
+        },
+        "disturbance": "pointer",
+        "notes": [
+          "Generated from app analyze output.",
+          "Replace focus_query and query with a real validated baseline during the validate step."
+        ]
+      }
+    ]
+  })
+}
+
+fn render_native_text_candidate_cases(analysis: &AppAnalysis) -> Value {
+  json!({
+    "skill_id": format!("macos.{}.native_text_candidate.v0", recipe_app_slug(&analysis.app_identity)),
+    "version": "0.1.0",
+    "status": "candidate-case-matrix",
+    "cases": [
+      {
+        "case_id": "default-candidate",
+        "status": "candidate",
+        "inputs": {
+          "focus_query": "TODO_TEXT_SURFACE_QUERY"
+        },
+        "disturbance": "pointer",
+        "notes": [
+          "Generated from app analyze output.",
+          "Replace focus_query with a concrete editable text surface before validate."
+        ]
+      }
+    ]
+  })
+}
+
+fn render_result_selection_candidate_cases(analysis: &AppAnalysis) -> Value {
+  json!({
+    "skill_id": format!("macos.{}.result_selection_candidate.v0", recipe_app_slug(&analysis.app_identity)),
+    "version": "0.1.0",
+    "status": "candidate-case-matrix",
+    "cases": [
+      {
+        "case_id": "default-candidate",
+        "status": "candidate",
+        "inputs": {
+          "anchor_text": "TODO_VISIBLE_ANCHOR_TEXT"
+        },
+        "disturbance": "pointer",
+        "notes": [
+          "Generated from app analyze output.",
+          "Replace anchor_text with a concrete visible OCR anchor during validate."
+        ]
+      }
+    ]
   })
 }
 
@@ -1433,6 +2078,113 @@ mod tests {
     assert!(report.contains("## 4. Control Strategy"));
     assert!(report.contains("## 5. Verification Assessment"));
     assert!(report.contains("Recommended Candidate Strategies"));
+  }
+
+  #[test]
+  fn search_entry_distillation_template_validates() {
+    let analysis = sample_analysis_with_strategy(
+      "search-entry.ax-text-input.clipboard-submit.capture-screen-evidence",
+    );
+    let recipe = render_search_entry_candidate_recipe(&analysis);
+    let manifest: SkillManifest =
+      serde_json::from_value(recipe).expect("candidate recipe should parse");
+    validate_skill_manifest(&manifest).expect("candidate recipe should validate");
+    let matrix_value = render_search_entry_candidate_cases(&analysis);
+    let matrix: SkillCaseMatrix =
+      serde_json::from_value(matrix_value).expect("candidate matrix should parse");
+    validate_case_matrix_manifest(&matrix).expect("candidate matrix should validate");
+    validate_case_matrix_against_skill(&manifest, &matrix).expect("candidate matrix should align");
+  }
+
+  #[test]
+  fn native_text_distillation_template_validates() {
+    let analysis = sample_analysis_with_strategy(
+      "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text",
+    );
+    let recipe = render_native_text_candidate_recipe(&analysis);
+    let manifest: SkillManifest =
+      serde_json::from_value(recipe).expect("candidate recipe should parse");
+    validate_skill_manifest(&manifest).expect("candidate recipe should validate");
+    let matrix_value = render_native_text_candidate_cases(&analysis);
+    let matrix: SkillCaseMatrix =
+      serde_json::from_value(matrix_value).expect("candidate matrix should parse");
+    validate_case_matrix_manifest(&matrix).expect("candidate matrix should validate");
+    validate_case_matrix_against_skill(&manifest, &matrix).expect("candidate matrix should align");
+  }
+
+  fn sample_analysis_with_strategy(taxonomy_id: &str) -> AppAnalysis {
+    AppAnalysis {
+      analysis_version: APP_ANALYSIS_VERSION.to_string(),
+      created_at_millis: 0,
+      probe_path: PathBuf::from("/tmp/probe.json"),
+      app_identity: AppIdentity {
+        bundle_id: "com.example.App".to_string(),
+        app_name: "Example".to_string(),
+        app_path: PathBuf::from("/Applications/Example.app"),
+        main_executable_path: None,
+        version: "1.0".to_string(),
+        build_version: "100".to_string(),
+        url_schemes: vec![],
+        apple_script_addressable: false,
+      },
+      window_context: AppWindowContext {
+        observed_window_count: 1,
+        observed_at: "2026-05-18T00:00:00Z".to_string(),
+        frontmost_app_name: "Example".to_string(),
+        frontmost_window_title: "Example".to_string(),
+        primary_window_title: "Example".to_string(),
+        primary_window_bounds: None,
+        primary_window_display_scale: None,
+      },
+      permissions: AppPermissionState {
+        screen_recording: "granted".to_string(),
+        accessibility: "granted".to_string(),
+        automation_to_system_events: "granted".to_string(),
+        launch_host_process: "Atlas".to_string(),
+      },
+      available_surfaces: AppAvailableSurfaces {
+        accessibility_tree: AssessmentStatus::Candidate,
+        menu_surface: AssessmentStatus::Unknown,
+        shortcut_surface: AssessmentStatus::Candidate,
+        apple_script_surface: AssessmentStatus::Unavailable,
+        url_scheme_surface: AssessmentStatus::Unavailable,
+        keyboard_first_surface: AssessmentStatus::Candidate,
+        pointer_fallback_surface: AssessmentStatus::Likely,
+      },
+      grounding_assessment: AppGroundingAssessment {
+        ocr_sample_query: "Example".to_string(),
+        ocr_sample_status: AssessmentStatus::Candidate,
+        ocr_sample_match_count: 1,
+        stable_anchor_candidates: vec![],
+        stable_region_candidates: vec![],
+        overlay_debug_artifacts_recommended: false,
+      },
+      control_assessment: AppControlAssessment {
+        preferred_path: "non-pointer first".to_string(),
+        non_pointer_path: AssessmentStatus::Candidate,
+        keyboard_path: AssessmentStatus::Candidate,
+        pointer_fallback: AssessmentStatus::Likely,
+        notes: vec![],
+      },
+      verification_assessment: AppVerificationAssessment {
+        ax_verify: AssessmentStatus::Candidate,
+        image_verify: AssessmentStatus::Candidate,
+        ui_state_verify: AssessmentStatus::Candidate,
+        semantic_success: AssessmentStatus::Unknown,
+        notes: vec![],
+      },
+      disturbance_profile: AppDisturbanceProfile {
+        observation: vec!["none".to_string()],
+        non_pointer_control: vec!["keyboard".to_string()],
+        pointer_fallback: vec!["pointer".to_string()],
+      },
+      known_boundaries: vec![],
+      recommended_strategies: vec![AppRecommendedStrategy {
+        taxonomy_id: taxonomy_id.to_string(),
+        status: AssessmentStatus::Candidate,
+        rationale: "test".to_string(),
+      }],
+    }
   }
 
   fn temp_dir(label: &str) -> PathBuf {

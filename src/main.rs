@@ -4,7 +4,7 @@ use std::env;
 use std::path::PathBuf;
 use std::process;
 
-use auv_cli::app::{analyze_app_probe, probe_app};
+use auv_cli::app::{analyze_app_probe, distill_app_analysis, probe_app};
 use auv_cli::build_default_runtime;
 use auv_cli::bundle::{
   SkillBundleCatalog, export_bundle, render_bundle_package_coverage, verify_bundle,
@@ -87,6 +87,14 @@ fn run() -> Result<(), String> {
       println!("status: analyzed");
       println!("analysis: {}", output.analysis_path.display());
       println!("report: {}", output.report_path.display());
+    }
+    CliCommand::AppDistill { query, output_dir } => {
+      let output = distill_app_analysis(&PathBuf::from(query), output_dir.map(PathBuf::from))?;
+      println!("app: {}", output.distillation.app_identity.bundle_id);
+      println!("status: distilled");
+      println!("distillation: {}", output.distillation_path.display());
+      println!("report: {}", output.report_path.display());
+      println!("candidates: {}", output.distillation.candidates.len());
     }
     CliCommand::Invoke(request) => {
       let result = runtime.invoke(request)?;

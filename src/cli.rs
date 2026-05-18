@@ -14,6 +14,10 @@ pub enum CliCommand {
   AppAnalyze {
     query: String,
   },
+  AppDistill {
+    query: String,
+    output_dir: Option<String>,
+  },
   Invoke(InvokeRequest),
   Inspect {
     run_id: String,
@@ -90,6 +94,7 @@ USAGE
   auv-cli list-drivers
   auv-cli app probe <bundle-id> [--output-dir <dir>]
   auv-cli app analyze <probe-dir-or-probe-json>
+  auv-cli app distill <analysis-dir-or-analysis-json> [--output-dir <dir>]
   auv-cli invoke <command-id> [--target <application-id>] [--label <text>]
   auv-cli inspect <run-id>
   auv-cli skill list
@@ -126,6 +131,7 @@ NOTES
   - `skill cases run` replays validated case-matrix entries serially; this is the current narrow-skill coverage entrypoint for QQ音乐 productization.
   - `app probe` is the deterministic raw-facts entrypoint for phase-2 distillation work; it records app identity plus runtime-backed surface probes into `.auv/app-probes/.../probe.json`.
   - `app analyze` turns one of those probe directories into `analysis.json` and `report.md`; use that as the input to later candidate-skill distillation instead of free-form chat summaries.
+  - `app distill` turns one analyzed app surface into candidate recipe/case-matrix scaffolds that already pass the current skill validators; they are candidate outputs, not validated skills.
 ",
   )
 }
@@ -145,8 +151,9 @@ fn parse_app(arguments: &[String]) -> AuvResult<CliCommand> {
         query: arguments[2].clone(),
       })
     }
+    "distill" => parse_app_distill(arguments),
     other => Err(format!(
-      "unknown app subcommand {other}; use `auv-cli app probe` or `auv-cli app analyze`"
+      "unknown app subcommand {other}; use `auv-cli app probe`, `auv-cli app analyze`, or `auv-cli app distill`"
     )),
   }
 }
@@ -178,6 +185,32 @@ fn parse_app_probe(arguments: &[String]) -> AuvResult<CliCommand> {
     bundle_id,
     output_dir,
   })
+}
+
+fn parse_app_distill(arguments: &[String]) -> AuvResult<CliCommand> {
+  if arguments.len() < 3 {
+    return Err(
+      "usage: auv-cli app distill <analysis-dir-or-analysis-json> [--output-dir <dir>]".to_string(),
+    );
+  }
+  let query = arguments[2].clone();
+  let mut output_dir = None;
+  let mut index = 3;
+  while index < arguments.len() {
+    match arguments[index].as_str() {
+      "--output-dir" => {
+        if index + 1 >= arguments.len() {
+          return Err("--output-dir requires a value".to_string());
+        }
+        output_dir = Some(arguments[index + 1].clone());
+        index += 2;
+      }
+      other => {
+        return Err(format!("unexpected app-distill argument {other}"));
+      }
+    }
+  }
+  Ok(CliCommand::AppDistill { query, output_dir })
 }
 
 fn parse_inspect(arguments: &[String]) -> AuvResult<CliCommand> {
@@ -365,6 +398,26 @@ mod tests {
       } => {
         assert_eq!(bundle_id, "com.tencent.QQMusicMac");
         assert_eq!(output_dir.as_deref(), Some("/tmp/probe"));
+      }
+      other => panic!("unexpected command: {other:?}"),
+    }
+  }
+
+  #[test]
+  fn parse_app_distill_command() {
+    let command = parse_cli(&[
+      "app".to_string(),
+      "distill".to_string(),
+      "/tmp/analysis".to_string(),
+      "--output-dir".to_string(),
+      "/tmp/out".to_string(),
+    ])
+    .expect("app distill command should parse");
+
+    match command {
+      CliCommand::AppDistill { query, output_dir } => {
+        assert_eq!(query, "/tmp/analysis");
+        assert_eq!(output_dir.as_deref(), Some("/tmp/out"));
       }
       other => panic!("unexpected command: {other:?}"),
     }

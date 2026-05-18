@@ -15,6 +15,7 @@ opinions. The `analyze` step must be grounded in deterministic probe artifacts.
 
 - `auv-cli app probe <bundle-id> [--output-dir <dir>]`
 - `auv-cli app analyze <probe-dir-or-probe-json>`
+- `auv-cli app distill <analysis-dir-or-analysis-json> [--output-dir <dir>]`
 
 ## Probe Output
 
@@ -75,6 +76,24 @@ The current report shape covers:
 The structured `analysis.json` is the machine-facing handoff to later
 distillation. The Markdown report is for humans and LLM review.
 
+## Distill Output
+
+`app distill` consumes `analysis.json` and writes:
+
+- `distillation.json`
+- `report.md`
+- `candidates/*.recipe.json`
+- `candidates/*.cases.json`
+
+The current distill step is intentionally narrow:
+
+- it generates candidate recipe and case-matrix scaffolds
+- it validates those generated artifacts against the current skill validators
+- it does **not** promote them to validated skills
+
+This means `distill` is allowed to produce useful candidate shapes, but not to
+invent success claims.
+
 ## Truth Boundaries
 
 `app analyze` is not a validator.
@@ -123,3 +142,7 @@ because a sample OCR query matched some visible text.
 
 This is the current honesty bar for `app analyze`: avoid over-claiming generic
 skill shapes that the sampled app surface does not justify.
+
+The same honesty bar now applies to `app distill`: candidate files must be
+machine-valid and strategy-consistent, but they must stay clearly marked as
+candidate-only until the validate/promote path proves them live.

@@ -2,7 +2,7 @@
 
 Date: 2026-05-17
 
-Status: working skill tree
+Status: phase 1 frozen skill tree
 
 ## Purpose
 
@@ -10,6 +10,11 @@ This tree tracks what has been proven on macOS native apps so far.
 
 It is not the final distillation format. It is the current stepwise map for
 what has actually been validated in the live runtime.
+
+As of 2026-05-18, this tree is frozen for phase 1. That means the narrow-skill
+product slice is considered good enough to stop reopening the same exploration
+loop, while unresolved boundaries remain explicit instead of being hand-waved
+away.
 
 ## Tree
 
@@ -60,6 +65,20 @@ graph TD
 - browser reuse
 - cloud reuse
 - universal AX coverage across all native apps
+- QQ音乐 Chinese requested-title semantic selection through row fallback
+
+## Phase 1 Freeze Decision
+
+Phase 1 is frozen with the following interpretation:
+
+- keep the validated sample set narrow
+- keep the current runtime / recipe / case-matrix / bundle / package flow as
+  the source of truth
+- accept the remaining QQ音乐 Chinese semantic-selection gap as an explicit
+  boundary
+- do not reopen the same OCR-chasing loop and pretend it is phase-1 work
+
+This is a freeze of scope, not a claim that every QQ音乐 edge case is solved.
 
 ## Evidence
 
@@ -67,6 +86,7 @@ graph TD
 - QQ音乐 narrow coverage: `docs/ai/references/2026-05-17-qqmusic-narrow-skill-coverage.md`
 - QQ音乐 row fallback: `docs/ai/references/2026-05-16-qqmusic-row-fallback-case-matrix.md`
 - QQ音乐 narrow coverage: `docs/ai/references/2026-05-17-qqmusic-narrow-skill-coverage.md`
+- Phase 1 freeze note: `docs/ai/references/2026-05-18-phase-1-freeze.md`
 - Notes sample: `docs/ai/references/2026-05-17-notes-ax-text-sample.md`
 - TextEdit sample: `recipes/macos/textedit/README.md`
 - Distillation template: `docs/ai/references/2026-05-17-distillation-template-v0.md`

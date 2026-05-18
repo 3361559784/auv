@@ -2,7 +2,7 @@
 
 Date: 2026-05-17
 
-Status: active productization coverage note
+Status: phase 1 frozen coverage note
 
 ## Purpose
 
@@ -102,6 +102,10 @@ The Chinese row case currently records:
 That is not a minor wording issue. It means the current row fallback is a
 validated activation strategy on the Chinese result page, but not yet a
 validated "play the requested song" strategy for Chinese result selection.
+
+This unresolved gap is now accepted as a phase-1 freeze boundary. It is not
+being silently promoted to “good enough”, and it is not being used as an excuse
+to reopen endless OCR chasing inside phase 1.
 
 ## Current Product Truth
 

@@ -5,7 +5,7 @@
     "id": "native.app.skill-tree.v0",
     "name": "AUV Native App Skill Tree",
     "version": "0.1.0",
-    "status": "working"
+    "status": "phase-1-frozen"
   },
   "target": {
     "applicationFamily": "native-macos-apps",
@@ -135,17 +135,20 @@
     ],
     "successCriteria": [
       "The bundle can be listed and shown through the CLI.",
-      "The validated sample set is preserved without rewriting target titles or broadening scope."
+      "The validated sample set is preserved without rewriting target titles or broadening scope.",
+      "Phase 1 freezes the narrow-skill product slice without pretending unresolved Chinese semantic selection is solved."
     ],
     "nonGoals": [
       "This bundle does not claim generalized cross-app distillation.",
       "This bundle does not claim universal AX coverage.",
-      "This bundle does not collapse native text verification into QQ音乐 playback."
+      "This bundle does not collapse native text verification into QQ音乐 playback.",
+      "This bundle does not claim Chinese requested-title semantic selection is solved for QQ音乐 row fallback."
     ]
   },
   "knownLimits": [
     "This is the first bundle-shaped artifact, not the final schema.",
     "The bundle intentionally stays shallow and app-centered.",
-    "Target application version compatibility is still unresolved."
+    "Target application version compatibility is still unresolved.",
+    "QQ音乐 Chinese requested-title semantic selection remains unresolved in the row-fallback member and is accepted as a phase-1 freeze boundary."
   ]
 }

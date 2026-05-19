@@ -22,7 +22,7 @@ Terminology follows `docs/TERMS_AND_CONCEPTS.md`.
 
 In scope:
 
-- A unified trace/run/span/event/checkpoint/artifact model.
+- A unified trace/run/span/event/artifact model.
 - A canonical `.auv/runs/{run_id}/` storage layout.
 - `v1alpha1` API version markers on all canonical records.
 - Read-only HTTP APIs for viewer data access.
@@ -51,8 +51,11 @@ A run is the top-level user-visible record and the storage unit under
 
 - `run_id`: user-facing run handle and directory name.
 - `trace_id`: OpenTelemetry-compatible trace identifier.
-- `kind`: `command`, `execute`, `probe`, `analyze`, `distill`, or `validate`.
-- `status`: `running`, `completed`, or `failed`.
+- `run_type`: `command`, `execute`, `probe`, `analyze`, `distill`, or
+  `validate`.
+- `state`: `running` or `ended`.
+- `status_code`: `unset`, `ok`, or `error`, matching the OpenTelemetry span
+  status vocabulary.
 - `started_at` and optional `finished_at`.
 - `root_span_id`.
 - `attributes`: structured metadata such as recipe id, target application id,
@@ -61,7 +64,9 @@ A run is the top-level user-visible record and the storage unit under
 - `failure`: optional structured failure information.
 
 `run_id` remains optimized for humans and local paths. `trace_id` is optimized
-for telemetry compatibility.
+for telemetry compatibility. Implementation should keep one top-level run
+record type that includes telemetry identifiers; it should not introduce a
+second top-level trace record with duplicate fields.
 
 ### Span
 
@@ -73,13 +78,19 @@ Each line in `spans.jsonl` uses `api_version: "auv.span.v1alpha1"` and contains:
 - `span_id`.
 - `parent_span_id`, omitted for the root span.
 - `name`, such as `auv.execute`, `auv.recipe.step`, or `auv.command.invoke`.
-- `status`: `running`, `completed`, or `failed`.
+- `state`: `running` or `ended`.
+- `status_code`: `unset`, `ok`, or `error`, matching the OpenTelemetry span
+  status vocabulary.
 - `started_at` and optional `finished_at`.
 - `attributes`.
 - Optional `summary` and `failure`.
 
 Expected span levels include workflow phases, case-matrix cases, recipe steps,
 command invocations, and driver actions.
+
+OpenTelemetry stores events inside spans. AUV stores events in `events.jsonl`
+for append-friendly local writes and live streaming. Exporters should group
+events back under their parent spans by `span_id` when converting to OTLP.
 
 ### Event
 
@@ -96,28 +107,9 @@ contains:
 - `timestamp`.
 - `attributes`.
 - Optional `message`.
-- Optional references to `checkpoint_id` or `artifact_id`.
+- Optional references to `artifact_ids`.
 
 Events should not embed large payloads.
-
-### Checkpoint
-
-A checkpoint is a named inspectable state point in a span. It groups one or more
-artifacts that describe the state around an action or decision.
-
-Each line in `checkpoints.jsonl` uses
-`api_version: "auv.checkpoint.v1alpha1"` and contains:
-
-- `checkpoint_id`.
-- `span_id`.
-- `name`, such as `before_action`, `after_action`, `after_probe_step`,
-  `candidate_generated`, `distillation_result`, or `case_result`.
-- `timestamp`.
-- `artifact_ids`.
-- `attributes`.
-- Optional `summary`.
-
-Viewers should use checkpoints as primary state transitions in the timeline.
 
 ### Artifact
 
@@ -128,7 +120,7 @@ contains:
 
 - `artifact_id`.
 - `span_id`.
-- Optional `checkpoint_id`.
+- Optional `event_id`.
 - `role`, such as `screenshot.before`, `screenshot.after`, `ax.before`,
   `ax.after`, `click.overlay`, `driver.output`, `distillation.report`, or
   `validation.report`.
@@ -150,7 +142,6 @@ New runs use this layout:
   run.json
   spans.jsonl
   events.jsonl
-  checkpoints.jsonl
   artifacts.jsonl
 
   artifacts/
@@ -177,7 +168,6 @@ Supported first-version values are:
 - `auv.run.v1alpha1`
 - `auv.span.v1alpha1`
 - `auv.event.v1alpha1`
-- `auv.checkpoint.v1alpha1`
 - `auv.artifact.v1alpha1`
 
 Read rules:
@@ -213,12 +203,17 @@ Writers should append events as they happen, register artifacts when persisted,
 and update spans/run status when work completes or fails. The inspect server's
 live stream can reuse the same record shapes.
 
+For `v1alpha1`, `events.jsonl` is append-only. `spans.jsonl`, `artifacts.jsonl`,
+and `run.json` represent current state and should be rewritten atomically when
+their records change. This avoids turning the run store into an event-sourced
+database while still keeping events append-friendly.
+
 ## Workflow Mapping
 
 ### Ad-hoc Command
 
 ```text
-Run kind: command
+Run type: command
 Span tree:
   auv.command
     auv.command.invoke
@@ -230,7 +225,7 @@ This covers direct runtime invocations.
 ### Recipe Execute
 
 ```text
-Run kind: execute
+Run type: execute
 Span tree:
   auv.execute
     auv.recipe.step step_id=open
@@ -247,7 +242,7 @@ unrelated top-level runs.
 ### Case Matrix Validate
 
 ```text
-Run kind: validate
+Run type: validate
 Span tree:
   auv.validate
     auv.case case_id=...
@@ -261,7 +256,7 @@ of only retaining success or failure summaries.
 ### App Probe
 
 ```text
-Run kind: probe
+Run type: probe
 Span tree:
   auv.probe
     auv.probe.step id=permissions
@@ -276,7 +271,7 @@ run model.
 ### App Analyze
 
 ```text
-Run kind: analyze
+Run type: analyze
 Span tree:
   auv.analyze
     auv.analysis.input
@@ -284,12 +279,12 @@ Span tree:
 ```
 
 The analysis result remains a domain document, persisted as artifacts and linked
-from spans or checkpoints.
+from spans or events.
 
 ### App Distill
 
 ```text
-Run kind: distill
+Run type: distill
 Span tree:
   auv.distill
     auv.distill.candidate recipe_id=...
@@ -303,7 +298,7 @@ model but does not reuse execute action payloads.
 ### App Validate
 
 ```text
-Run kind: validate
+Run type: validate
 Span tree:
   auv.validate
     auv.distilled_candidate recipe_id=...
@@ -327,7 +322,6 @@ GET /runs
 GET /runs/{run_id}
 GET /runs/{run_id}/spans
 GET /runs/{run_id}/events
-GET /runs/{run_id}/checkpoints
 GET /runs/{run_id}/artifacts
 GET /runs/{run_id}/artifacts/{artifact_id}
 ```
@@ -344,7 +338,6 @@ Endpoint behavior:
 - `GET /runs/{run_id}` returns `run.json`.
 - `GET /runs/{run_id}/spans` returns all span records.
 - `GET /runs/{run_id}/events` returns all event records.
-- `GET /runs/{run_id}/checkpoints` returns all checkpoint records.
 - `GET /runs/{run_id}/artifacts` returns artifact metadata.
 - `GET /runs/{run_id}/artifacts/{artifact_id}` returns the artifact file or
   redirects to a local static-file route.
@@ -354,10 +347,10 @@ Viewer load flow:
 
 ```text
 1. GET /runs/{run_id}
-2. In parallel, GET spans, events, checkpoints, and artifacts.
+2. In parallel, GET spans, events, and artifacts.
 3. Render the current timeline and artifact panels.
 4. If the run is still running, connect to WS /runs/{run_id}/stream.
-5. Append span, event, checkpoint, artifact, and run updates as they arrive.
+5. Append span, event, artifact, and run updates as they arrive.
 ```
 
 WebSocket messages should reuse the canonical shapes:
@@ -365,7 +358,6 @@ WebSocket messages should reuse the canonical shapes:
 ```json
 { "type": "span.started", "span": {} }
 { "type": "event.appended", "event": {} }
-{ "type": "checkpoint.created", "checkpoint": {} }
 { "type": "artifact.created", "artifact": {} }
 { "type": "span.finished", "span": {} }
 { "type": "run.finished", "run": {} }
@@ -378,20 +370,22 @@ records should remain the same records persisted to disk.
 
 Suggested implementation components:
 
-- `trace` or `recording` module for run/span/event/checkpoint/artifact types.
-- `RunWriter` for append-friendly canonical writes.
+- `trace` or `recording` module for run/span/event/artifact types.
+- `RunWriter` for canonical writes.
 - `RunReader` for validated reads from `.auv/runs/{run_id}`.
 - Runtime recording context passed through command, skill, probe, distill, and
   validate flows.
 - Formatter layer for `auv inspect` output.
 - Inspect server using `axum`, `tokio`, `tower-http`, and `serde_json`.
 - Live stream fanout using `tokio::sync::broadcast`.
-- Optional `notify` support only if the server needs to observe runs written by
-  another process.
 
 The first implementation does not need to build the browser viewer. It only
 needs to make the data and server contract reliable enough for a viewer to
 consume.
+
+The first implementation should treat runtime recording and the inspect server
+as same-process components for live streaming. Cross-process file watching is
+out of scope for `v1alpha1`.
 
 ## Error Handling
 
@@ -400,7 +394,7 @@ Recording failures should not silently produce malformed runs.
 Rules:
 
 - If a run cannot write `run.json`, the command should fail early.
-- If a span/event/checkpoint/artifact record cannot be written, the active span
+- If a span/event/artifact record cannot be written, the active span
   and run should be marked failed when possible.
 - If artifact file persistence fails, record an `artifact.failed` event and fail
   the associated span unless the caller explicitly marks the artifact optional.
@@ -415,7 +409,6 @@ Focused tests should cover:
 - Creating an ad-hoc command run with valid `v1alpha1` files.
 - Executing a multi-step recipe as one run with child spans.
 - Validating a case matrix as one run with case and execute child spans.
-- Writing checkpoints that reference multiple artifacts.
 - Rejecting run directories without `run.json`.
 - Rejecting unsupported `api_version` values.
 - Serving historical run data through HTTP endpoints.
@@ -429,7 +422,6 @@ These decisions are intentionally left for implementation planning:
 
 - Exact Rust module names.
 - Exact `run_id`, `trace_id`, and `span_id` generation functions.
-- Whether JSONL files are rewritten, appended only, or compacted at run finish.
 - Whether the inspect server is started by a CLI subcommand, embedded in future
   UI flows, or both.
 - Whether artifact hashes are required on every artifact or best-effort for

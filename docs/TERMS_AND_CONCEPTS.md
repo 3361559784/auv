@@ -51,21 +51,8 @@ Examples include screenshots, click-overlay images, accessibility snapshots,
 driver input/output JSON, distillation reports, validation reports, and video
 segments.
 
-Artifacts are referenced from spans, events, or checkpoints by metadata. Large
-payloads should remain as files or blobs rather than being embedded directly in
-events.
-
-## Checkpoint
-
-A checkpoint is a named inspectable state point in a span. It groups one or more
-artifacts that describe the state around an action or decision.
-
-Examples include `before_action`, `after_action`, `after_probe_step`, and
-`validation_result`.
-
-Checkpoints are primarily for inspection and viewer ergonomics. They help a UI
-show meaningful state transitions without requiring users to manually correlate
-individual screenshots, accessibility snapshots, and action metadata.
+Artifacts are referenced from spans or events by metadata. Large payloads should
+remain as files or blobs rather than being embedded directly in events.
 
 ## Inspect Server
 
@@ -84,5 +71,5 @@ A viewer is any UI that renders run data from the inspect server or directly
 from the run store. The first viewer is expected to be browser-based so it can
 work across desktop, remote, and mobile contexts.
 
-The viewer should render spans, events, checkpoints, and artifacts as an
-inspectable timeline.
+The viewer should render spans, events, and artifacts as an inspectable
+timeline.

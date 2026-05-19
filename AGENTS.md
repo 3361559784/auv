@@ -13,9 +13,9 @@ frontends, run storage, and reference documentation. Keep CLI, MCP, library
 calls, and future UI surfaces on the same execution model.
 
 Use `docs/TERMS_AND_CONCEPTS.md` as the shared vocabulary for run recording,
-inspection, trace data, artifacts, checkpoints, and viewer-facing APIs. When a
-design introduces or changes a core term, update that document instead of
-defining the term only inside a transient spec.
+inspection, trace data, artifacts, and viewer-facing APIs. When a design
+introduces or changes a core term, update that document instead of defining the
+term only inside a transient spec.
 
 > Many project details are still undecided. During design and implementation,
 > communicate with users frequently and clearly to avoid misunderstandings,

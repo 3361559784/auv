@@ -1,5 +1,8 @@
 use super::super::*;
-use super::common::{activate_app_if_needed, build_ax_click_notes, send_reveal_shortcut_if_needed};
+use super::common::{
+  DEFAULT_CLICK_INTERVAL_MS, activate_app_if_needed, build_ax_click_notes,
+  send_reveal_shortcut_if_needed,
+};
 
 pub(crate) fn focus_text_input(call: &DriverCall) -> AuvResult<DriverResponse> {
   let app = app_identifier(call).unwrap_or_default();
@@ -23,7 +26,13 @@ pub(crate) fn focus_text_input(call: &DriverCall) -> AuvResult<DriverResponse> {
   let matched = find_best_ax_node(&snapshot, &query)
     .ok_or_else(|| no_matching_ax_node_error(&snapshot, &query, "text input-like"))?;
   let (center_x, center_y) = ax_node_center(matched);
-  run_swift_script(&build_click_point_script(center_x, center_y, 0, 1))?;
+  run_swift_script(&build_click_point_script(
+    center_x,
+    center_y,
+    0,
+    1,
+    DEFAULT_CLICK_INTERVAL_MS,
+  ))?;
 
   let report = render_ax_interaction_report("focus-text-input", &snapshot, matched, &query);
   let artifact = build_text_artifact(
@@ -98,7 +107,13 @@ pub(crate) fn press_button(call: &DriverCall) -> AuvResult<DriverResponse> {
   let matched = find_best_ax_node(&snapshot, &query)
     .ok_or_else(|| no_matching_ax_node_error(&snapshot, &query, "button-like"))?;
   let (center_x, center_y) = ax_node_center(matched);
-  run_swift_script(&build_click_point_script(center_x, center_y, 0, 1))?;
+  run_swift_script(&build_click_point_script(
+    center_x,
+    center_y,
+    0,
+    1,
+    DEFAULT_CLICK_INTERVAL_MS,
+  ))?;
 
   let report = render_ax_interaction_report("press-button", &snapshot, matched, &query);
   let artifact = build_text_artifact(

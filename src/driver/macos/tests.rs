@@ -323,6 +323,7 @@ fn build_click_point_call_populates_required_inputs() {
       y: 48.25,
       button: "left",
       click_count: 2,
+      click_interval_ms: Some(80),
       settle_ms: Some(300),
       app: Some("com.apple.TextEdit"),
     },
@@ -333,6 +334,10 @@ fn build_click_point_call_populates_required_inputs() {
   assert_eq!(call.inputs.get("y"), Some(&"48.250".to_string()));
   assert_eq!(call.inputs.get("button"), Some(&"left".to_string()));
   assert_eq!(call.inputs.get("click_count"), Some(&"2".to_string()));
+  assert_eq!(
+    call.inputs.get("click_interval_ms"),
+    Some(&"80".to_string())
+  );
   assert_eq!(call.inputs.get("settle_ms"), Some(&"300".to_string()));
   assert_eq!(
     call.inputs.get("app"),
@@ -350,10 +355,12 @@ fn build_click_point_call_omits_optional_inputs_when_absent() {
       y: 2.0,
       button: "right",
       click_count: 1,
+      click_interval_ms: None,
       settle_ms: None,
       app: None,
     },
   );
+  assert!(!call.inputs.contains_key("click_interval_ms"));
   assert!(!call.inputs.contains_key("settle_ms"));
   assert!(!call.inputs.contains_key("app"));
 }

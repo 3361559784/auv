@@ -7,7 +7,7 @@ use crate::model::{
   AuvResult, DriverCall, DriverDescriptor, InvokeRequest, InvokeResult, RunStatus, now_millis,
 };
 use crate::recording::{MemoryRunEventSink, RunEventSink};
-use crate::store::LocalStore;
+use crate::store::{ArtifactFileSource, LocalStore};
 use crate::trace::{
   EVENT_API_VERSION, EventRecordV1Alpha1, RUN_API_VERSION, RunId, RunRecordV1Alpha1, RunType,
   SPAN_API_VERSION, SpanRecordV1Alpha1, TraceFailure, TraceState, TraceStatusCode, new_event_id,
@@ -369,10 +369,12 @@ impl Runtime {
       run.artifact_count(),
       span.id(),
       Some(event_id.clone()),
-      role.into(),
-      source_path.to_path_buf(),
-      preferred_name.into(),
-      summary,
+      ArtifactFileSource {
+        role: role.into(),
+        source_path: source_path.to_path_buf(),
+        preferred_name: preferred_name.into(),
+        summary,
+      },
     )?;
     record_event_with_id(
       run,

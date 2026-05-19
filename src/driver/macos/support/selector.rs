@@ -192,10 +192,10 @@ fn first_non_empty_bundle_id(windows: &[&ObservedWindow]) -> Option<String> {
 }
 
 fn window_matches_resolved_app(window: &ObservedWindow, resolved_app: &ResolvedAppRef) -> bool {
-  if let Some(bundle_id) = resolved_app.resolved_bundle_id.as_deref() {
-    if !window.owner_bundle_id.trim().is_empty() {
-      return window.owner_bundle_id.eq_ignore_ascii_case(bundle_id);
-    }
+  if let Some(bundle_id) = resolved_app.resolved_bundle_id.as_deref()
+    && !window.owner_bundle_id.trim().is_empty()
+  {
+    return window.owner_bundle_id.eq_ignore_ascii_case(bundle_id);
   }
 
   if resolved_app.owner_pids.contains(&window.owner_pid) {

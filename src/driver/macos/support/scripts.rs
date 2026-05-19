@@ -117,12 +117,14 @@ pub(crate) fn build_click_point_script(
   y: f64,
   button_code: i32,
   click_count: i64,
+  click_interval_ms: u64,
 ) -> String {
   CLICK_POINT_SCRIPT_TEMPLATE
     .replace("__X__", &format!("{x:.3}"))
     .replace("__Y__", &format!("{y:.3}"))
     .replace("__BUTTON__", &button_code.to_string())
     .replace("__CLICK_COUNT__", &click_count.to_string())
+    .replace("__CLICK_INTERVAL_MS__", &click_interval_ms.to_string())
 }
 
 pub(crate) fn build_scroll_point_script(x: f64, y: f64, delta_x: f64, delta_y: f64) -> String {

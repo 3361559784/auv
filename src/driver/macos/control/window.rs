@@ -1,5 +1,5 @@
 use super::super::*;
-use super::common::{ClickPointCallOptions, build_click_point_call};
+use super::common::{ClickPointCallOptions, build_click_point_call, resolve_click_interval_ms};
 use super::pointer::click_point;
 
 pub(crate) fn click_window_point(call: &DriverCall) -> AuvResult<DriverResponse> {
@@ -18,6 +18,7 @@ pub(crate) fn click_window_point(call: &DriverCall) -> AuvResult<DriverResponse>
   let (logical_x, logical_y, coordinate_summary) = resolve_window_point(call, &window)?;
   let button_label = optional_string(call, "button").unwrap_or_else(|| "left".to_string());
   let click_count = optional_i64(call, "click_count")?.unwrap_or(1).clamp(1, 4);
+  let click_interval_ms = resolve_click_interval_ms(call)?;
   let nested_call = build_click_point_call(
     &call.target,
     call.working_directory.as_path(),
@@ -26,6 +27,7 @@ pub(crate) fn click_window_point(call: &DriverCall) -> AuvResult<DriverResponse>
       y: logical_y,
       button: &button_label,
       click_count,
+      click_interval_ms: Some(click_interval_ms),
       settle_ms: None,
       app: Some(&app),
     },
@@ -57,6 +59,7 @@ pub(crate) fn click_window_point(call: &DriverCall) -> AuvResult<DriverResponse>
       coordinate_summary.clone(),
       format!("button={button_label}"),
       format!("clickCount={click_count}"),
+      format!("clickIntervalMs={click_interval_ms}"),
     ]
     .join("\n"),
     "Clicked a point relative to a resolved macOS app window.",
@@ -76,6 +79,7 @@ pub(crate) fn click_window_point(call: &DriverCall) -> AuvResult<DriverResponse>
     format!("windowBounds={}", render_rect_compact(&window.bounds)),
     format!("logicalPoint={logical_x:.3},{logical_y:.3}"),
     coordinate_summary,
+    format!("clickIntervalMs={click_interval_ms}"),
   ];
   if !window.owner_bundle_id.is_empty() {
     notes.push(format!("ownerBundleId={}", window.owner_bundle_id));

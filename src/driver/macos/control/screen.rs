@@ -1,5 +1,5 @@
 use super::super::*;
-use super::common::{ClickPointCallOptions, build_click_point_call};
+use super::common::{ClickPointCallOptions, build_click_point_call, resolve_click_interval_ms};
 use super::pointer::click_point;
 
 pub(crate) fn click_screen_text(call: &DriverCall) -> AuvResult<DriverResponse> {
@@ -55,6 +55,7 @@ pub(crate) fn click_screen_text(call: &DriverCall) -> AuvResult<DriverResponse> 
     )?;
   let button_label = optional_string(call, "button").unwrap_or_else(|| "left".to_string());
   let click_count = optional_i64(call, "click_count")?.unwrap_or(1).clamp(1, 4);
+  let click_interval_ms = resolve_click_interval_ms(call)?;
   let settle_ms = optional_positive_u64(call, "settle_ms")?.unwrap_or(0);
   let nested_call = build_click_point_call(
     &call.target,
@@ -64,6 +65,7 @@ pub(crate) fn click_screen_text(call: &DriverCall) -> AuvResult<DriverResponse> 
       y: logical_y,
       button: &button_label,
       click_count,
+      click_interval_ms: Some(click_interval_ms),
       settle_ms: Some(settle_ms),
       app: None,
     },
@@ -87,6 +89,7 @@ pub(crate) fn click_screen_text(call: &DriverCall) -> AuvResult<DriverResponse> 
       format!("logicalPoint={logical_x:.3},{logical_y:.3}"),
       format!("button={button_label}"),
       format!("clickCount={click_count}"),
+      format!("clickIntervalMs={click_interval_ms}"),
       format!("settleMs={settle_ms}"),
     ]
     .join("\n"),
@@ -110,6 +113,7 @@ pub(crate) fn click_screen_text(call: &DriverCall) -> AuvResult<DriverResponse> 
     format!("logicalPoint={logical_x:.3},{logical_y:.3}"),
     format!("button={button_label}"),
     format!("clickCount={click_count}"),
+    format!("clickIntervalMs={click_interval_ms}"),
     format!("settleMs={settle_ms}"),
   ];
   if let Some(app) = activated_app {
@@ -209,6 +213,7 @@ pub(crate) fn click_screen_row(call: &DriverCall) -> AuvResult<DriverResponse> {
     )?;
   let button_label = optional_string(call, "button").unwrap_or_else(|| "left".to_string());
   let click_count = optional_i64(call, "click_count")?.unwrap_or(1).clamp(1, 4);
+  let click_interval_ms = resolve_click_interval_ms(call)?;
   let settle_ms = optional_positive_u64(call, "settle_ms")?.unwrap_or(0);
   let nested_call = build_click_point_call(
     &call.target,
@@ -218,6 +223,7 @@ pub(crate) fn click_screen_row(call: &DriverCall) -> AuvResult<DriverResponse> {
       y: logical_y,
       button: &button_label,
       click_count,
+      click_interval_ms: Some(click_interval_ms),
       settle_ms: Some(settle_ms),
       app: None,
     },
@@ -244,6 +250,7 @@ pub(crate) fn click_screen_row(call: &DriverCall) -> AuvResult<DriverResponse> {
       format!("logicalPoint={logical_x:.3},{logical_y:.3}"),
       format!("button={button_label}"),
       format!("clickCount={click_count}"),
+      format!("clickIntervalMs={click_interval_ms}"),
       format!("settleMs={settle_ms}"),
     ]
     .join("\n"),
@@ -265,6 +272,9 @@ pub(crate) fn click_screen_row(call: &DriverCall) -> AuvResult<DriverResponse> {
     format!("rowAnchorMode={row_anchor_mode}"),
     format!("rowAnchorRatio={row_anchor_x_ratio:.3},{row_anchor_y_ratio:.3}"),
     format!("logicalPoint={logical_x:.3},{logical_y:.3}"),
+    format!("button={button_label}"),
+    format!("clickCount={click_count}"),
+    format!("clickIntervalMs={click_interval_ms}"),
     format!("settleMs={settle_ms}"),
   ];
   if let Some(app) = activated_app {

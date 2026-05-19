@@ -27,6 +27,7 @@ func mouseUpType(_ button: CGMouseButton) -> CGEventType {
 
 let button = mouseButton(__BUTTON__)
 let clickCount = max(__CLICK_COUNT__, 1)
+let clickIntervalSeconds = Double(max(__CLICK_INTERVAL_MS__, 0)) / 1000.0
 let location = CGPoint(x: __X__, y: __Y__)
 let originalLocation = CGEvent(source: nil)?.location ?? location
 
@@ -36,13 +37,16 @@ defer {
 
 CGWarpMouseCursorPosition(location)
 
-for _ in 0..<clickCount {
+for clickNumber in 1...clickCount {
   if let down = CGEvent(mouseEventSource: nil, mouseType: mouseDownType(button), mouseCursorPosition: location, mouseButton: button),
      let up = CGEvent(mouseEventSource: nil, mouseType: mouseUpType(button), mouseCursorPosition: location, mouseButton: button) {
-    down.setIntegerValueField(.mouseEventClickState, value: Int64(clickCount))
-    up.setIntegerValueField(.mouseEventClickState, value: Int64(clickCount))
+    down.setIntegerValueField(.mouseEventClickState, value: Int64(clickNumber))
+    up.setIntegerValueField(.mouseEventClickState, value: Int64(clickNumber))
     down.post(tap: .cghidEventTap)
     up.post(tap: .cghidEventTap)
+  }
+  if clickNumber < clickCount && clickIntervalSeconds > 0 {
+    Thread.sleep(forTimeInterval: clickIntervalSeconds)
   }
 }
 

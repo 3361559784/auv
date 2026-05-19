@@ -638,17 +638,17 @@ pub(crate) fn run_skill_manifest_into_run(
       ),
     )?;
 
-    let step_result = run_skill_step_into_span(
-      runtime,
-      run,
-      &step_span,
-      manifest,
-      step,
-      index,
-      &step_id,
-      options.dry_run,
-      &mut variables,
-    );
+    let step_result = {
+      let mut step_context = SkillStepRuntime {
+        runtime,
+        run,
+        step_span: &step_span,
+        manifest,
+        dry_run: options.dry_run,
+        variables: &mut variables,
+      };
+      run_skill_step_into_span(&mut step_context, step, index, &step_id)
+    };
 
     match step_result {
       Ok(()) => run.finish_span(
@@ -680,18 +680,22 @@ pub(crate) fn run_skill_manifest_into_run(
   Ok(())
 }
 
+struct SkillStepRuntime<'a> {
+  runtime: &'a Runtime,
+  run: &'a mut crate::recording::RecordingRun,
+  step_span: &'a crate::recording::SpanRef,
+  manifest: &'a SkillManifest,
+  dry_run: bool,
+  variables: &'a mut BTreeMap<String, String>,
+}
+
 fn run_skill_step_into_span(
-  runtime: &Runtime,
-  run: &mut crate::recording::RecordingRun,
-  step_span: &crate::recording::SpanRef,
-  manifest: &SkillManifest,
+  context: &mut SkillStepRuntime<'_>,
   step: &SkillStep,
   index: usize,
   step_id: &str,
-  dry_run: bool,
-  variables: &mut BTreeMap<String, String>,
 ) -> AuvResult<()> {
-  let request = build_invoke_request(step, variables)?;
+  let request = build_invoke_request(step, context.variables)?;
   let step_max = parse_step_max(step)?;
   let step_classes = if step.disturbance.classes.is_empty() {
     "none".to_string()
@@ -700,21 +704,23 @@ fn run_skill_step_into_span(
   };
   print_step_preview(
     index + 1,
-    manifest.steps.len(),
+    context.manifest.steps.len(),
     step_id,
     &request,
     step_max,
     &step_classes,
   );
 
-  if dry_run {
+  if context.dry_run {
     return Ok(());
   }
 
-  let result = runtime.invoke_in_span(run, step_span, request)?;
+  let result = context
+    .runtime
+    .invoke_in_span(context.run, context.step_span, request)?;
   print_invoke_result(&result);
-  enforce_step_expectations(step_id, step, &result, variables)?;
-  export_step_variables(step_id, &result, variables);
+  enforce_step_expectations(step_id, step, &result, context.variables)?;
+  export_step_variables(step_id, &result, context.variables);
   enforce_invoke_success(&result)?;
   Ok(())
 }

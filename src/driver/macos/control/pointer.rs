@@ -2,12 +2,13 @@ use std::thread;
 use std::time::Duration;
 
 use super::super::*;
-use super::common::activate_app_if_needed;
+use super::common::{activate_app_if_needed, resolve_click_interval_ms};
 
 pub(crate) fn click_point(call: &DriverCall) -> AuvResult<DriverResponse> {
   let x = required_f64(call, "x")?;
   let y = required_f64(call, "y")?;
   let click_count = optional_i64(call, "click_count")?.unwrap_or(1).clamp(1, 4);
+  let click_interval_ms = resolve_click_interval_ms(call)?;
   let settle_ms = optional_positive_u64(call, "settle_ms")?.unwrap_or(0);
   let (button_name, button_code) = parse_mouse_button(call)?;
   let snapshot = enumerate_displays()?;
@@ -15,7 +16,13 @@ pub(crate) fn click_point(call: &DriverCall) -> AuvResult<DriverResponse> {
     .ok_or_else(|| format!("logical point ({x:.3}, {y:.3}) is outside all connected displays"))?;
 
   activate_app_if_needed(&app_identifier(call).unwrap_or_default())?;
-  run_swift_script(&build_click_point_script(x, y, button_code, click_count))?;
+  run_swift_script(&build_click_point_script(
+    x,
+    y,
+    button_code,
+    click_count,
+    click_interval_ms,
+  ))?;
   if settle_ms > 0 {
     thread::sleep(Duration::from_millis(settle_ms));
   }
@@ -30,6 +37,7 @@ pub(crate) fn click_point(call: &DriverCall) -> AuvResult<DriverResponse> {
     format!("displayId={}", resolution.display.display_id),
     format!("button={button_name}"),
     format!("clickCount={click_count}"),
+    format!("clickIntervalMs={click_interval_ms}"),
     format!("settleMs={settle_ms}"),
     "coordinateSpace=global-logical".to_string(),
     "cursorAfter=target".to_string(),
@@ -58,6 +66,7 @@ pub(crate) fn click_point(call: &DriverCall) -> AuvResult<DriverResponse> {
       "coordinateSpace=global-logical".to_string(),
       format!("button={button_name}"),
       format!("clickCount={click_count}"),
+      format!("clickIntervalMs={click_interval_ms}"),
       format!("settleMs={settle_ms}"),
       format!(
         "backingPixelPoint={},{}",

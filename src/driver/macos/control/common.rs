@@ -4,11 +4,15 @@ use std::time::Duration;
 use super::super::*;
 use crate::model::ExecutionTarget;
 
+pub(crate) const DEFAULT_CLICK_INTERVAL_MS: u64 = 80;
+pub(crate) const MAX_CLICK_INTERVAL_MS: u64 = 1000;
+
 pub(crate) struct ClickPointCallOptions<'a> {
   pub(crate) x: f64,
   pub(crate) y: f64,
   pub(crate) button: &'a str,
   pub(crate) click_count: i64,
+  pub(crate) click_interval_ms: Option<u64>,
   pub(crate) settle_ms: Option<u64>,
   pub(crate) app: Option<&'a str>,
 }
@@ -18,6 +22,12 @@ pub(super) fn activate_app_if_needed(app: &str) -> AuvResult<()> {
     activate_target_app(app)?;
   }
   Ok(())
+}
+
+pub(crate) fn resolve_click_interval_ms(call: &DriverCall) -> AuvResult<u64> {
+  let value =
+    optional_positive_u64(call, "click_interval_ms")?.unwrap_or(DEFAULT_CLICK_INTERVAL_MS);
+  Ok(value.min(MAX_CLICK_INTERVAL_MS))
 }
 
 pub(super) fn send_reveal_shortcut_if_needed(
@@ -42,6 +52,12 @@ pub(crate) fn build_click_point_call(
     ("button".to_string(), options.button.to_string()),
     ("click_count".to_string(), options.click_count.to_string()),
   ]);
+  if let Some(click_interval_ms) = options.click_interval_ms {
+    inputs.insert(
+      "click_interval_ms".to_string(),
+      click_interval_ms.to_string(),
+    );
+  }
   if let Some(settle_ms) = options.settle_ms {
     inputs.insert("settle_ms".to_string(), settle_ms.to_string());
   }

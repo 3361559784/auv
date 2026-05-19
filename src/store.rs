@@ -23,6 +23,13 @@ pub struct LocalStore {
   root: PathBuf,
 }
 
+pub struct ArtifactFileSource {
+  pub role: String,
+  pub source_path: PathBuf,
+  pub preferred_name: String,
+  pub summary: Option<String>,
+}
+
 impl LocalStore {
   pub fn new(root: PathBuf) -> AuvResult<Self> {
     fs::create_dir_all(root.join("runs"))
@@ -136,10 +143,12 @@ impl LocalStore {
       index,
       span_id,
       event_id,
-      artifact.kind,
-      artifact.source_path,
-      artifact.preferred_name,
-      artifact.note,
+      ArtifactFileSource {
+        role: artifact.kind,
+        source_path: artifact.source_path,
+        preferred_name: artifact.preferred_name,
+        summary: artifact.note,
+      },
     )
   }
 
@@ -149,35 +158,36 @@ impl LocalStore {
     index: usize,
     span_id: &SpanId,
     event_id: Option<EventId>,
-    role: String,
-    source_path: PathBuf,
-    preferred_name: String,
-    summary: Option<String>,
+    artifact: ArtifactFileSource,
   ) -> AuvResult<ArtifactRecordV1Alpha1> {
     let artifact_id = ArtifactId::new(format!("artifact_{:04}", index + 1));
-    let extension = source_path
+    let extension = artifact
+      .source_path
       .extension()
       .and_then(|extension| extension.to_str())
       .unwrap_or("bin");
-    let base_name =
-      sanitized_artifact_name(preferred_name.trim_end_matches(&format!(".{extension}")));
+    let base_name = sanitized_artifact_name(
+      artifact
+        .preferred_name
+        .trim_end_matches(&format!(".{extension}")),
+    );
     let relative_path =
       PathBuf::from("artifacts").join(format!("{}_{base_name}.{extension}", artifact_id.as_str()));
     let destination = self.run_dir(run_id)?.join(&relative_path);
 
-    copy_file(&source_path, &destination)?;
+    copy_file(&artifact.source_path, &destination)?;
 
     Ok(ArtifactRecordV1Alpha1 {
       api_version: ARTIFACT_API_VERSION.to_string(),
       artifact_id,
       span_id: span_id.clone(),
       event_id,
-      role,
+      role: artifact.role,
       mime_type: mime_type_for_extension(extension).to_string(),
       path: relative_path.to_string_lossy().into_owned(),
       sha256: None,
       attributes: Default::default(),
-      summary,
+      summary: artifact.summary,
     })
   }
 
@@ -588,10 +598,12 @@ mod tests {
         0,
         &span.span_id,
         None,
-        "driver.output".to_string(),
-        source_path.clone(),
-        "output.txt".to_string(),
-        Some("output".to_string()),
+        ArtifactFileSource {
+          role: "driver.output".to_string(),
+          source_path: source_path.clone(),
+          preferred_name: "output.txt".to_string(),
+          summary: Some("output".to_string()),
+        },
       )
       .expect("artifact should stage");
 

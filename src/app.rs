@@ -55,7 +55,6 @@ pub struct AppProbeStep {
   pub status: String,
   pub output_summary: String,
   pub artifact_paths: Vec<PathBuf>,
-  pub inspect_path: PathBuf,
   pub failure_message: Option<String>,
 }
 
@@ -306,7 +305,6 @@ pub fn probe_app(
 
   let mut steps = Vec::new();
   steps.push(invoke_probe_step(
-    project_root,
     runtime,
     "probe-permissions",
     "debug.probePermissions",
@@ -314,7 +312,6 @@ pub fn probe_app(
     BTreeMap::new(),
   )?);
   steps.push(invoke_probe_step(
-    project_root,
     runtime,
     "list-displays",
     "debug.listDisplays",
@@ -322,7 +319,6 @@ pub fn probe_app(
     BTreeMap::new(),
   )?);
   steps.push(invoke_probe_step(
-    project_root,
     runtime,
     "probe-coordinate-readiness",
     "debug.probeCoordinateReadiness",
@@ -333,7 +329,6 @@ pub fn probe_app(
   let mut window_inputs = BTreeMap::new();
   window_inputs.insert("limit".to_string(), "20".to_string());
   steps.push(invoke_probe_step(
-    project_root,
     runtime,
     "observe-windows",
     "debug.observeWindows",
@@ -345,7 +340,6 @@ pub fn probe_app(
   tree_inputs.insert("max_depth".to_string(), "6".to_string());
   tree_inputs.insert("max_children".to_string(), "24".to_string());
   steps.push(invoke_probe_step(
-    project_root,
     runtime,
     "observe-window-tree",
     "debug.observeWindowTree",
@@ -361,7 +355,6 @@ pub fn probe_app(
     "true".to_string(),
   );
   let capture_step = invoke_probe_step(
-    project_root,
     runtime,
     "capture-display",
     "debug.captureDisplay",
@@ -401,7 +394,6 @@ pub fn probe_app(
   );
   ocr_inputs.insert("min_confidence".to_string(), "0.55".to_string());
   steps.push(invoke_probe_step(
-    project_root,
     runtime,
     "ocr-sample",
     "debug.findImageText",
@@ -1845,7 +1837,6 @@ fn default_probe_output_dir(project_root: &Path, bundle_id: &str) -> PathBuf {
 }
 
 fn invoke_probe_step(
-  project_root: &Path,
   runtime: &Runtime,
   step_id: &str,
   command_id: &str,
@@ -1876,11 +1867,6 @@ fn invoke_probe_step(
     command_id: command_id.to_string(),
     target_application_id,
     inputs,
-    inspect_path: project_root
-      .join(".auv")
-      .join("runs")
-      .join(&result.run_id)
-      .join("inspect.txt"),
     run_id: result.run_id,
     status: result.status.as_str().to_string(),
     output_summary: result.output_summary,

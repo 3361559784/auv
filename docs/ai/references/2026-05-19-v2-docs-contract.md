@@ -94,6 +94,17 @@ machine-consumable grounding hints. It should be able to represent at least:
 - visible-row candidates for list-like UI targets
 - stable window or region candidates
 
+Those candidates should not only name things. They should also be able to carry
+small target-spec fields such as:
+
+- `coordinate_space`
+- `bounds`
+- `click_point`
+- `input_bindings`
+
+That is the minimum needed to keep fixed-layout local baselines machine-readable
+without pretending they are already general-purpose semantic skills.
+
 But when the probe truth is too weak, the correct output is still:
 
 - zero candidates

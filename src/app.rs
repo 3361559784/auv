@@ -278,10 +278,14 @@ pub struct AppSurfaceCandidate {
   pub secondary_text: String,
   #[serde(default)]
   pub query_value: String,
+  #[serde(default)]
+  pub coordinate_space: String,
   pub bounds: Option<AppRect>,
   pub click_point: Option<AppPoint>,
   pub confidence: Option<f64>,
   pub evidence_step_id: String,
+  #[serde(default)]
+  pub input_bindings: BTreeMap<String, String>,
   #[serde(default)]
   pub notes: Vec<String>,
 }
@@ -1435,6 +1439,12 @@ fn render_app_analysis_report(analysis: &AppAnalysis) -> String {
       if !candidate.query_value.trim().is_empty() {
         lines.push(format!("  - queryValue: `{}`", candidate.query_value));
       }
+      if !candidate.coordinate_space.trim().is_empty() {
+        lines.push(format!(
+          "  - coordinateSpace: `{}`",
+          candidate.coordinate_space
+        ));
+      }
       if let Some(bounds) = &candidate.bounds {
         lines.push(format!("  - bounds: `{}`", bounds.render_compact()));
       }
@@ -1448,6 +1458,12 @@ fn render_app_analysis_report(analysis: &AppAnalysis) -> String {
         "  - evidenceStep: `{}`",
         candidate.evidence_step_id
       ));
+      if !candidate.input_bindings.is_empty() {
+        lines.push("  - inputBindings:".to_string());
+        for (key, value) in &candidate.input_bindings {
+          lines.push(format!("    - `{key}` = `{value}`"));
+        }
+      }
       for note in &candidate.notes {
         lines.push(format!("  - note: {note}"));
       }
@@ -1797,6 +1813,7 @@ fn build_annotation_candidates(
   let mut candidates = Vec::new();
 
   if let Some(bounds) = primary_window_bounds.cloned() {
+    let compact_bounds = bounds.render_compact();
     candidates.push(AppSurfaceCandidate {
       candidate_id: "window-primary-region".to_string(),
       area: "window.primary".to_string(),
@@ -1808,11 +1825,13 @@ fn build_annotation_candidates(
         .filter(|title| !title.trim().is_empty())
         .unwrap_or_else(|| app.app_name.clone()),
       secondary_text: app.bundle_id.clone(),
-      query_value: bounds.render_compact(),
+      query_value: compact_bounds.clone(),
+      coordinate_space: "global-logical".to_string(),
       click_point: Some(bounds.center_point()),
       bounds: Some(bounds),
       confidence: None,
       evidence_step_id: "observe-windows".to_string(),
+      input_bindings: BTreeMap::from([("window_bounds".to_string(), compact_bounds)]),
       notes: vec!["Primary visible window bounds from the window snapshot.".to_string()],
     });
   }
@@ -1870,10 +1889,12 @@ fn build_annotation_candidates(
       primary_text: matched.text.clone(),
       secondary_text: String::new(),
       query_value: matched.text.clone(),
+      coordinate_space: "global-logical".to_string(),
       click_point: Some(bounds.center_point()),
       bounds: Some(bounds),
       confidence: Some(matched.confidence),
       evidence_step_id: "ocr-sample".to_string(),
+      input_bindings: BTreeMap::from([("anchor_text".to_string(), matched.text.clone())]),
       notes,
     });
   }
@@ -1898,6 +1919,7 @@ fn ax_focus_candidate(
   note: &str,
 ) -> AppSurfaceCandidate {
   let bounds = AppRect::from_observed(&node.bounds);
+  let focus_query = query_value.clone();
   AppSurfaceCandidate {
     candidate_id: candidate_id.to_string(),
     area: area.to_string(),
@@ -1907,10 +1929,12 @@ fn ax_focus_candidate(
     primary_text: summarize_ax_node_text(node),
     secondary_text: format!("role={} path={}", node.role, node.path),
     query_value,
+    coordinate_space: "global-logical".to_string(),
     click_point: Some(bounds.center_point()),
     bounds: Some(bounds),
     confidence: None,
     evidence_step_id: evidence_step_id.to_string(),
+    input_bindings: BTreeMap::from([("focus_query".to_string(), focus_query)]),
     notes: vec![note.to_string()],
   }
 }
@@ -1931,10 +1955,12 @@ fn row_candidate(row: ObservedOcrRow) -> AppSurfaceCandidate {
     primary_text: row.text_fragments.join(" | "),
     secondary_text: format!("rowIndex={}", row.row_index + 1),
     query_value: format!("{}", row.row_index + 1),
+    coordinate_space: "global-logical".to_string(),
     click_point: Some(bounds.center_point()),
     bounds: Some(bounds),
     confidence: None,
     evidence_step_id: "ocr-sample".to_string(),
+    input_bindings: BTreeMap::from([("row_index".to_string(), format!("{}", row.row_index + 1))]),
     notes: vec![
       "Visible row candidate grouped from OCR observations; useful for list-like UI targets."
         .to_string(),
@@ -3508,6 +3534,7 @@ mod tests {
         primary_text: "Search".to_string(),
         secondary_text: "role=AXTextField path=0.1".to_string(),
         query_value: "Search".to_string(),
+        coordinate_space: "global-logical".to_string(),
         bounds: Some(AppRect {
           x: 10,
           y: 10,
@@ -3517,6 +3544,7 @@ mod tests {
         click_point: Some(AppPoint { x: 50, y: 20 }),
         confidence: None,
         evidence_step_id: "observe-window-tree".to_string(),
+        input_bindings: BTreeMap::from([("focus_query".to_string(), "Search".to_string())]),
         notes: vec!["sample note".to_string()],
       }],
       known_boundaries: vec!["one boundary".to_string()],
@@ -3538,6 +3566,8 @@ mod tests {
     assert!(report.contains("## 2. Available Surfaces"));
     assert!(report.contains("## 3. Grounding Assessment"));
     assert!(report.contains("## 4. Candidate / Annotation Layer"));
+    assert!(report.contains("coordinateSpace"));
+    assert!(report.contains("inputBindings"));
     assert!(report.contains("## 5. Control Strategy"));
     assert!(report.contains("## 6. Verification Assessment"));
     assert!(report.contains("Recommended Candidate Strategies"));

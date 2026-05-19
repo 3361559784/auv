@@ -98,6 +98,17 @@ list-like UI targets and ambiguous grounding:
 - grouped visible-row candidates when the sampled surface looks collection-like
 - primary-window region candidates
 
+Candidate objects should now be read as small target specs, not just labels.
+At minimum they may carry:
+
+- `coordinate_space`
+- `bounds`
+- `click_point`
+- `input_bindings`
+
+This is the start of a contract that can later describe fixed-layout or
+window-relative action targets without collapsing back into ad-hoc README prose.
+
 If the probe captured only a partial app identity or some target-specific
 steps failed, `app analyze` should still produce `analysis.json` and `report.md`
 as long as enough deterministic baseline facts remain to speak honestly. In

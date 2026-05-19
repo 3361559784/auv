@@ -313,7 +313,9 @@ fn validate_unpublished_run_directory(run_directory: &Path) -> AuvResult<()> {
 
 fn cleanup_run_record_files(run_directory: &Path) {
   for file_name in ["run.json", "spans.jsonl", "events.jsonl", "artifacts.jsonl"] {
-    let _ = fs::remove_file(run_directory.join(file_name));
+    let path = run_directory.join(file_name);
+    let _ = fs::remove_file(&path);
+    let _ = fs::remove_file(path.with_extension("tmp"));
   }
 }
 
@@ -567,6 +569,30 @@ mod tests {
       .read_run("run_staged_artifact")
       .expect("persisted run should read");
     assert_eq!(loaded.artifacts.len(), 1);
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn cleanup_removes_canonical_record_temp_files() {
+    let root = temp_dir("store-cleanup-temp");
+    let run_dir = root.join("runs").join("run_cleanup_temp");
+    fs::create_dir_all(run_dir.join("artifacts")).expect("run dir");
+
+    for file_name in ["run.json", "spans.jsonl", "events.jsonl", "artifacts.jsonl"] {
+      let path = run_dir.join(file_name);
+      fs::write(&path, "final").expect("final file");
+      fs::write(path.with_extension("tmp"), "temp").expect("temp file");
+    }
+
+    cleanup_run_record_files(&run_dir);
+
+    for file_name in ["run.json", "spans.jsonl", "events.jsonl", "artifacts.jsonl"] {
+      let path = run_dir.join(file_name);
+      assert!(!path.exists());
+      assert!(!path.with_extension("tmp").exists());
+    }
+    assert!(run_dir.join("artifacts").exists());
 
     let _ = fs::remove_dir_all(root);
   }

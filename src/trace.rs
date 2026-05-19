@@ -184,7 +184,11 @@ pub fn new_run_id() -> RunId {
 
 pub fn new_trace_id() -> TraceId {
   let sequence = TRACE_COUNTER.fetch_add(1, Ordering::Relaxed);
-  TraceId::new(format!("{:016x}{:016x}", now_millis() as u64, sequence))
+  TraceId::new(format_trace_id(
+    now_millis() as u64,
+    process::id(),
+    sequence,
+  ))
 }
 
 pub fn new_span_id() -> SpanId {
@@ -201,9 +205,19 @@ pub fn string_attr(value: impl Into<String>) -> serde_json::Value {
   serde_json::Value::String(value.into())
 }
 
+fn format_trace_id(timestamp_millis: u64, process_id: u32, sequence: u64) -> String {
+  format!(
+    "{:012x}{:08x}{:012x}",
+    timestamp_millis & 0x0000_ffff_ffff_ffff,
+    process_id,
+    sequence & 0x0000_ffff_ffff_ffff
+  )
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
+  use serde_json::json;
 
   #[test]
   fn api_versions_are_v1alpha1() {
@@ -229,9 +243,213 @@ mod tests {
   }
 
   #[test]
+  fn trace_id_format_uses_timestamp_process_and_counter_bits() {
+    let trace_id = format_trace_id(0x1234_5678_9abc, 0xdef0_1234, 0x5678_9abc_def0);
+
+    assert_eq!(trace_id, "123456789abcdef0123456789abcdef0");
+    assert_eq!(trace_id.len(), 32);
+    assert!(
+      trace_id
+        .chars()
+        .all(|character| character.is_ascii_hexdigit())
+    );
+    assert!(
+      trace_id
+        .chars()
+        .all(|character| !character.is_ascii_uppercase())
+    );
+    assert_ne!(
+      format_trace_id(0x1234_5678_9abc, 0xdef0_1234, 0),
+      format_trace_id(0x1234_5678_9abc, 0xdef0_1235, 0)
+    );
+  }
+
+  #[test]
   fn status_codes_match_otel_words() {
     assert_eq!(TraceStatusCode::Unset.as_str(), "unset");
     assert_eq!(TraceStatusCode::Ok.as_str(), "ok");
     assert_eq!(TraceStatusCode::Error.as_str(), "error");
+  }
+
+  #[test]
+  fn run_record_serializes_versioned_json_contract() {
+    let record = RunRecordV1Alpha1 {
+      api_version: RUN_API_VERSION.to_string(),
+      run_id: RunId::new("run_contract"),
+      trace_id: TraceId::new("123456789abcdef0123456789abcdef0"),
+      run_type: RunType::Command,
+      state: TraceState::Ended,
+      status_code: TraceStatusCode::Ok,
+      started_at_millis: 100,
+      finished_at_millis: Some(200),
+      root_span_id: SpanId::new("0000000000000001"),
+      attributes: BTreeMap::from([("target".to_string(), string_attr("TextEdit"))]),
+      summary: Some("completed".to_string()),
+      failure: None,
+    };
+
+    let value = serde_json::to_value(&record).expect("run record should serialize");
+    assert_eq!(
+      value,
+      json!({
+        "api_version": "auv.run.v1alpha1",
+        "run_id": "run_contract",
+        "trace_id": "123456789abcdef0123456789abcdef0",
+        "run_type": "command",
+        "state": "ended",
+        "status_code": "ok",
+        "started_at_millis": 100,
+        "finished_at_millis": 200,
+        "root_span_id": "0000000000000001",
+        "attributes": {
+          "target": "TextEdit"
+        },
+        "summary": "completed",
+        "failure": null
+      })
+    );
+
+    let decoded: RunRecordV1Alpha1 =
+      serde_json::from_value(value).expect("run record should deserialize");
+    assert_eq!(decoded.api_version, RUN_API_VERSION);
+    assert_eq!(decoded.run_id.as_str(), "run_contract");
+    assert_eq!(decoded.run_type, RunType::Command);
+    assert_eq!(decoded.state, TraceState::Ended);
+    assert_eq!(decoded.status_code, TraceStatusCode::Ok);
+  }
+
+  #[test]
+  fn span_record_serializes_versioned_json_contract() {
+    let record = SpanRecordV1Alpha1 {
+      api_version: SPAN_API_VERSION.to_string(),
+      span_id: SpanId::new("0000000000000002"),
+      parent_span_id: Some(SpanId::new("0000000000000001")),
+      name: "driver.invoke".to_string(),
+      state: TraceState::Running,
+      status_code: TraceStatusCode::Unset,
+      started_at_millis: 110,
+      finished_at_millis: None,
+      attributes: BTreeMap::from([("driver".to_string(), string_attr("macos"))]),
+      summary: None,
+      failure: Some(TraceFailure {
+        message: "pending".to_string(),
+      }),
+    };
+
+    let value = serde_json::to_value(&record).expect("span record should serialize");
+    assert_eq!(
+      value,
+      json!({
+        "api_version": "auv.span.v1alpha1",
+        "span_id": "0000000000000002",
+        "parent_span_id": "0000000000000001",
+        "name": "driver.invoke",
+        "state": "running",
+        "status_code": "unset",
+        "started_at_millis": 110,
+        "finished_at_millis": null,
+        "attributes": {
+          "driver": "macos"
+        },
+        "summary": null,
+        "failure": {
+          "message": "pending"
+        }
+      })
+    );
+
+    let decoded: SpanRecordV1Alpha1 =
+      serde_json::from_value(value).expect("span record should deserialize");
+    assert_eq!(decoded.api_version, SPAN_API_VERSION);
+    assert_eq!(decoded.span_id.as_str(), "0000000000000002");
+    assert_eq!(
+      decoded.parent_span_id.expect("parent span").as_str(),
+      "0000000000000001"
+    );
+    assert_eq!(decoded.state, TraceState::Running);
+    assert_eq!(decoded.status_code, TraceStatusCode::Unset);
+  }
+
+  #[test]
+  fn event_record_serializes_versioned_json_contract() {
+    let record = EventRecordV1Alpha1 {
+      api_version: EVENT_API_VERSION.to_string(),
+      event_id: EventId::new("event_contract"),
+      span_id: SpanId::new("0000000000000002"),
+      name: "artifact.captured".to_string(),
+      timestamp_millis: 120,
+      attributes: BTreeMap::from([("kind".to_string(), string_attr("screenshot"))]),
+      message: Some("captured screenshot".to_string()),
+      artifact_ids: vec![ArtifactId::new("artifact_contract")],
+    };
+
+    let value = serde_json::to_value(&record).expect("event record should serialize");
+    assert_eq!(
+      value,
+      json!({
+        "api_version": "auv.event.v1alpha1",
+        "event_id": "event_contract",
+        "span_id": "0000000000000002",
+        "name": "artifact.captured",
+        "timestamp_millis": 120,
+        "attributes": {
+          "kind": "screenshot"
+        },
+        "message": "captured screenshot",
+        "artifact_ids": ["artifact_contract"]
+      })
+    );
+
+    let decoded: EventRecordV1Alpha1 =
+      serde_json::from_value(value).expect("event record should deserialize");
+    assert_eq!(decoded.api_version, EVENT_API_VERSION);
+    assert_eq!(decoded.event_id.as_str(), "event_contract");
+    assert_eq!(decoded.span_id.as_str(), "0000000000000002");
+    assert_eq!(decoded.artifact_ids[0].as_str(), "artifact_contract");
+  }
+
+  #[test]
+  fn artifact_record_serializes_versioned_json_contract() {
+    let record = ArtifactRecordV1Alpha1 {
+      api_version: ARTIFACT_API_VERSION.to_string(),
+      artifact_id: ArtifactId::new("artifact_contract"),
+      span_id: SpanId::new("0000000000000002"),
+      event_id: Some(EventId::new("event_contract")),
+      role: "driver.output".to_string(),
+      mime_type: "text/plain".to_string(),
+      path: "artifacts/output.txt".to_string(),
+      sha256: Some("abc123".to_string()),
+      attributes: BTreeMap::from([("encoding".to_string(), string_attr("utf-8"))]),
+      summary: Some("output".to_string()),
+    };
+
+    let value = serde_json::to_value(&record).expect("artifact record should serialize");
+    assert_eq!(
+      value,
+      json!({
+        "api_version": "auv.artifact.v1alpha1",
+        "artifact_id": "artifact_contract",
+        "span_id": "0000000000000002",
+        "event_id": "event_contract",
+        "role": "driver.output",
+        "mime_type": "text/plain",
+        "path": "artifacts/output.txt",
+        "sha256": "abc123",
+        "attributes": {
+          "encoding": "utf-8"
+        },
+        "summary": "output"
+      })
+    );
+
+    let decoded: ArtifactRecordV1Alpha1 =
+      serde_json::from_value(value).expect("artifact record should deserialize");
+    assert_eq!(decoded.api_version, ARTIFACT_API_VERSION);
+    assert_eq!(decoded.artifact_id.as_str(), "artifact_contract");
+    assert_eq!(decoded.span_id.as_str(), "0000000000000002");
+    assert_eq!(
+      decoded.event_id.expect("artifact event").as_str(),
+      "event_contract"
+    );
   }
 }

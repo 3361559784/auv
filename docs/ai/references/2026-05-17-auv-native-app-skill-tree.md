@@ -95,6 +95,7 @@ This is a freeze of scope, not a claim that every QQ音乐 edge case is solved.
 - QQ音乐 row fallback: `docs/ai/references/2026-05-16-qqmusic-row-fallback-case-matrix.md`
 - QQ音乐 narrow coverage: `docs/ai/references/2026-05-17-qqmusic-narrow-skill-coverage.md`
 - Phase 1 freeze note: `docs/ai/references/2026-05-18-phase-1-freeze.md`
+- Phase 2 / V2 contract: `docs/ai/references/2026-05-19-v2-docs-contract.md`
 - Notes sample: `docs/ai/references/2026-05-17-notes-ax-text-sample.md`
 - TextEdit sample: `recipes/macos/textedit/README.md`
 - Distillation template: `docs/ai/references/2026-05-17-distillation-template-v0.md`

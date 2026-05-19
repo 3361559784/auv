@@ -1,0 +1,250 @@
+# AUV V2 Docs Contract
+
+Date: 2026-05-19
+
+Status: working phase-2 contract
+
+## Purpose
+
+This note defines what "V2" means after:
+
+- phase 1 freeze
+- the current `probe -> analyze -> distill -> validate` workflow landing
+- the macOS capture backend switching to `xcap`
+
+The goal is to stop phase 2 from turning into another vague exploration loop.
+V2 needs a clear scope, clear inputs, and clear non-goals.
+
+## Current Code Truth
+
+As of `origin/main` at `ed4a93e`, the current capture surface is already
+renamed and implemented through `xcap`:
+
+- `debug.captureDisplay`
+- `debug.captureRegion`
+- `debug.captureWindow`
+- `debug.listDisplays`
+
+Important:
+
+- `debug.captureScreen` is **not** currently present in the command catalog.
+- `debug.probeDisplays` is **not** currently present in the command catalog.
+
+If a legacy alias is desired later, that is a compatibility discussion. It is
+not the current repo truth.
+
+V2 should therefore consume the current `xcap`-based capture surface instead of
+reopening the naming or migration argument inside this phase.
+
+## V2 Objective
+
+V2 is the phase where AUV stops being only a collection of validated narrow
+skills and starts becoming a repeatable app-surface distillation workflow.
+
+The target workflow is:
+
+`probe -> analyze -> distill -> validate -> promote`
+
+The product goal is:
+
+- analyze one app surface from deterministic probe artifacts
+- generate candidate recipes and case matrices
+- validate those candidates through the shared runtime
+- promote only the validated slices into the skill tree or bundle product
+
+## V2 Scope
+
+V2 should focus on five concrete contracts.
+
+### 1. App-Surface Analysis Contract
+
+`app analyze` must keep producing:
+
+- machine-consumable `analysis.json`
+- human-readable `report.md`
+
+The report should describe:
+
+- app identity
+- available surfaces
+- grounding assessment
+- control assessment
+- verification assessment
+- known boundaries
+- recommended strategies
+
+But it must not silently upgrade recommendation into validation truth.
+
+### 2. Distillation Contract
+
+`app distill` must keep producing candidate-only artifacts:
+
+- `distillation.json`
+- `candidates/*.recipe.json`
+- `candidates/*.cases.json`
+- `report.md`
+
+The output must be:
+
+- machine-valid
+- strategy-consistent
+- still clearly candidate-only
+
+This phase is about generating candidate shapes, not inventing success claims.
+
+### 3. Validation And Promotion Contract
+
+`app validate` is where candidate truth becomes differentiated:
+
+- `validated`
+- `candidate`
+- `rejected`
+
+V2 should keep that honesty boundary and extend it into promotion:
+
+- only validated slices are allowed to promote
+- candidate slices stay candidate even if they look promising
+- rejected slices stay recorded as failure evidence, not silently rewritten
+
+### 4. Target Resolution Contract
+
+V2 should explicitly recognize that app identity and window identity are not
+the same thing.
+
+The next execution-side contract should be built around:
+
+- `AppSelector`
+- `ResolvedAppRef`
+- `WindowRef`
+
+This is the next productization seam for app control.
+
+The problem V2 needs to solve is:
+
+- app selection should not succeed at the bundle-id layer
+- then degrade into string heuristics at the window layer
+
+Target resolution has to stay coherent from:
+
+- app identity
+- to foregrounding
+- to window selection
+- to action execution
+
+### 5. Verification Provider Contract
+
+V2 should formalize verification as a provider hierarchy instead of treating
+OCR as the only truth source.
+
+Current useful verification families already visible in the repo are:
+
+- image evidence verification
+- AX text verification
+- AX now-playing verification
+
+V2 should make it clearer which verification surface a skill is using, and
+which level of truth it supports:
+
+- activation-only success
+- semantic-selection success
+- state verification success
+
+## V2 Sample Set
+
+V2 should still keep the validated sample base narrow.
+
+Validated base:
+
+- QQ音乐
+- Notes
+- TextEdit
+
+Candidate expansion target:
+
+- NetEaseMusic / 网易云音乐
+
+But NetEaseMusic should enter V2 as:
+
+- probe/analyze/distill/validate target
+
+not as a pre-validated product slice.
+
+## V2 Non-Goals
+
+The following are explicitly out of scope for V2.
+
+### Do Not Reopen Capture API Design
+
+Do not use V2 to redesign or re-split the capture API again.
+
+Consume:
+
+- `debug.captureDisplay`
+- `debug.captureRegion`
+- `debug.captureWindow`
+- `debug.listDisplays`
+
+Do not turn V2 into another capture naming or migration argument.
+
+### Do Not Reopen Phase 1 OCR Chasing
+
+V2 is not permission to start another endless "one more OCR edge case" loop.
+
+Phase 1 already froze with explicit unresolved boundaries.
+V2 should build contracts and promotion logic on top of that truth.
+
+### Do Not Expand To Realtime Tracking
+
+Realtime trace / YOLO / moving-target execution is not V2 work.
+
+That belongs to a later lane because it changes:
+
+- control timing
+- state freshness rules
+- execution model
+- model/provider assumptions
+
+If the team wants:
+
+- async tracking thread
+- moving target alignment
+- low-latency detector feedback
+
+that should be treated as a separate V3 problem, not quietly smuggled into V2.
+
+### Do Not Widen To Broad Cross-Platform Claims
+
+V2 should not market itself as broad cross-platform reuse.
+
+It should first prove that:
+
+- the distillation workflow is honest
+- the strategy contract is stable
+- promotion boundaries are real
+
+on the current macOS-native sample set.
+
+## Immediate Next Work
+
+The next V2 steps should be:
+
+1. consume the current `xcap` capture surface without redesigning it
+2. tighten selector coherence around `AppSelector / ResolvedAppRef / WindowRef`
+3. add a candidate or annotation layer for list-like UI targets
+4. formalize verification-provider truth and semantic-vs-activation boundaries
+5. only then promote newly validated slices into the skill tree or bundle layer
+
+## Short Version
+
+V2 is:
+
+- app-surface distillation productization
+- contract extraction
+- validation and promotion discipline
+
+V2 is not:
+
+- capture API redesign
+- another phase-1 OCR spiral
+- realtime YOLO tracking
+- broad platform expansion

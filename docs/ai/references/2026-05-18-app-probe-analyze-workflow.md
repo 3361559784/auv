@@ -1,4 +1,4 @@
-# AUV App Probe and Analyze Workflow v0
+  # AUV App Probe and Analyze Workflow v0
 
 Date: 2026-05-18
 
@@ -202,3 +202,18 @@ This is the current honesty bar for `app validate`:
 - promote only the slices that really run live
 - keep unresolved candidate slices in `candidate`
 - do not use auto-grounding as permission to fabricate validation
+
+## Relationship To V2
+
+This workflow is the execution spine for V2, not the full V2 scope by itself.
+
+See also:
+
+- `docs/ai/references/2026-05-19-v2-docs-contract.md`
+
+That note defines:
+
+- what V2 is allowed to focus on
+- what V2 must not reopen
+- why `xcap` capture should now be consumed as current truth instead of
+  redesigned again inside this phase

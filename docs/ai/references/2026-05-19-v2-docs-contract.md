@@ -196,6 +196,13 @@ But NetEaseMusic should enter V2 as:
 
 not as a pre-validated product slice.
 
+There is now also a narrow fixed-layout local NetEaseMusic baseline under
+`recipes/macos/netease-cloud-music/`.
+
+That is useful V2 evidence, but it still should not be treated as a promoted
+bundle member until the workflow can describe and validate it through the same
+truth model used for the existing frozen sample set.
+
 ## V2 Non-Goals
 
 The following are explicitly out of scope for V2.

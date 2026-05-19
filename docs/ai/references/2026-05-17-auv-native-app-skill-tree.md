@@ -74,6 +74,7 @@ graph TD
 - cloud reuse
 - universal AX coverage across all native apps
 - QQ音乐 Chinese requested-title semantic selection through row fallback
+- NetEaseMusic fixed-layout playback as a promoted native-app bundle member
 
 ## Phase 1 Freeze Decision
 
@@ -88,6 +89,16 @@ Phase 1 is frozen with the following interpretation:
 
 This is a freeze of scope, not a claim that every QQ音乐 edge case is solved.
 
+## Post-Freeze Note
+
+After the freeze, the repo gained a local NetEaseMusic fixed-layout playback
+baseline under `recipes/macos/netease-cloud-music/`.
+
+That baseline is real, but it is not part of the frozen phase-1 skill tree.
+It currently belongs to the V2 lane as a useful local sample that still needs
+workflow-backed promotion truth instead of being stuffed directly into the
+bundle.
+
 ## Evidence
 
 - QQ音乐 narrow baseline: `docs/ai/references/2026-05-15-qqmusic-playback-verification.md`
@@ -98,6 +109,7 @@ This is a freeze of scope, not a claim that every QQ音乐 edge case is solved.
 - Phase 2 / V2 contract: `docs/ai/references/2026-05-19-v2-docs-contract.md`
 - Notes sample: `docs/ai/references/2026-05-17-notes-ax-text-sample.md`
 - TextEdit sample: `recipes/macos/textedit/README.md`
+- NetEaseMusic fixed-layout baseline: `docs/ai/references/2026-05-19-netease-cloud-music-fixed-layout-baseline.md`
 - Distillation template: `docs/ai/references/2026-05-17-distillation-template-v0.md`
 - Notes live replay: `run_1778947574511_68037_4`
 - TextEdit live replay: `run_1778949229186_72054_3`

@@ -271,7 +271,7 @@ impl Runtime {
                 Some(render_artifact_event(&stored_artifact)),
                 vec![stored_artifact.artifact_id.clone()],
               );
-              artifact_paths.push(PathBuf::from(&stored_artifact.path));
+              artifact_paths.push(self.store.run_dir(run.id())?.join(&stored_artifact.path));
               run.record_artifact(stored_artifact);
             }
             Err(error) => {
@@ -725,6 +725,16 @@ mod tests {
       .expect("artifact event should be recorded");
     assert_eq!(event.name, "artifact.captured");
     assert_eq!(event.artifact_ids, vec![artifact.artifact_id.clone()]);
+    assert_eq!(
+      result.artifact_paths,
+      vec![
+        store_root
+          .join("runs")
+          .join(&result.run_id)
+          .join(&artifact.path)
+      ]
+    );
+    assert!(result.artifact_paths[0].exists());
 
     let _ = fs::remove_dir_all(project_root);
     let _ = fs::remove_dir_all(store_root);

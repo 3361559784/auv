@@ -327,6 +327,15 @@ impl AppRect {
   fn render_compact(&self) -> String {
     format!("{},{},{},{}", self.x, self.y, self.width, self.height)
   }
+
+  fn relative_point(&self, point: &AppPoint) -> Option<(f64, f64)> {
+    if self.width <= 0 || self.height <= 0 {
+      return None;
+    }
+    let relative_x = (point.x - self.x) as f64 / self.width as f64;
+    let relative_y = (point.y - self.y) as f64 / self.height as f64;
+    Some((relative_x, relative_y))
+  }
 }
 
 pub fn probe_app(
@@ -1774,6 +1783,10 @@ fn apply_candidate_grounding(
   let native_text_annotation = find_annotation_candidate(analysis, "native-text", "focus-query");
   let result_selection_annotation =
     find_annotation_candidate(analysis, "result-selection", "anchor-text");
+  let window_primary_region_annotation = analysis
+    .annotation_candidates
+    .iter()
+    .find(|candidate| candidate.candidate_id == "window-primary-region");
 
   for case in &mut matrix.cases {
     for (key, value) in &mut case.inputs {
@@ -1813,6 +1826,26 @@ fn apply_candidate_grounding(
             first_stable_anchor_value(&analysis.grounding_assessment.stable_anchor_candidates)
           }
         }
+        ("window-action.window-point.pointer-click.capture-evidence", "relative_x") => {
+          if let Some(candidate) = window_primary_region_annotation {
+            candidate.input_bindings.get("relative_x").map(|value| {
+              used_annotation_ids.insert(candidate.candidate_id.clone());
+              value.clone()
+            })
+          } else {
+            None
+          }
+        }
+        ("window-action.window-point.pointer-click.capture-evidence", "relative_y") => {
+          if let Some(candidate) = window_primary_region_annotation {
+            candidate.input_bindings.get("relative_y").map(|value| {
+              used_annotation_ids.insert(candidate.candidate_id.clone());
+              value.clone()
+            })
+          } else {
+            None
+          }
+        }
         _ => None,
       };
 
@@ -1843,6 +1876,8 @@ fn build_annotation_candidates(
 
   if let Some(bounds) = primary_window_bounds.cloned() {
     let compact_bounds = bounds.render_compact();
+    let click_point = bounds.center_point();
+    let input_bindings = window_region_input_bindings(&compact_bounds, &click_point, &bounds);
     let evidence_step_id = if primary_window.is_some() {
       "observe-windows"
     } else {
@@ -1870,11 +1905,11 @@ fn build_annotation_candidates(
       secondary_text: app.bundle_id.clone(),
       query_value: compact_bounds.clone(),
       coordinate_space: "global-logical".to_string(),
-      click_point: Some(bounds.center_point()),
+      click_point: Some(click_point.clone()),
       bounds: Some(bounds),
       confidence: None,
       evidence_step_id: evidence_step_id.to_string(),
-      input_bindings: BTreeMap::from([("window_bounds".to_string(), compact_bounds)]),
+      input_bindings,
       notes: vec![note.to_string()],
     });
   }
@@ -1950,6 +1985,19 @@ fn build_annotation_candidates(
   }
 
   candidates
+}
+
+fn window_region_input_bindings(
+  compact_bounds: &str,
+  click_point: &AppPoint,
+  bounds: &AppRect,
+) -> BTreeMap<String, String> {
+  let mut bindings = BTreeMap::from([("window_bounds".to_string(), compact_bounds.to_string())]);
+  if let Some((relative_x, relative_y)) = bounds.relative_point(click_point) {
+    bindings.insert("relative_x".to_string(), format!("{relative_x:.6}"));
+    bindings.insert("relative_y".to_string(), format!("{relative_y:.6}"));
+  }
+  bindings
 }
 
 fn ax_focus_candidate(
@@ -3818,6 +3866,65 @@ mod tests {
   }
 
   #[test]
+  fn apply_candidate_grounding_resolves_window_action_from_window_region_annotation() {
+    let mut analysis =
+      sample_analysis_with_strategy("window-action.window-point.pointer-click.capture-evidence");
+    analysis.annotation_candidates.push(AppSurfaceCandidate {
+      candidate_id: "window-primary-region".to_string(),
+      area: "window.primary".to_string(),
+      kind: "region".to_string(),
+      source: "ax".to_string(),
+      status: AssessmentStatus::Candidate,
+      primary_text: "Example".to_string(),
+      secondary_text: "com.example.App".to_string(),
+      query_value: "100,200,800,600".to_string(),
+      coordinate_space: "global-logical".to_string(),
+      bounds: Some(AppRect {
+        x: 100,
+        y: 200,
+        width: 800,
+        height: 600,
+      }),
+      click_point: Some(AppPoint { x: 500, y: 500 }),
+      confidence: None,
+      evidence_step_id: "observe-window-tree".to_string(),
+      input_bindings: BTreeMap::from([
+        ("window_bounds".to_string(), "100,200,800,600".to_string()),
+        ("relative_x".to_string(), "0.500000".to_string()),
+        ("relative_y".to_string(), "0.500000".to_string()),
+      ]),
+      notes: vec!["sample window region".to_string()],
+    });
+    let mut matrix: SkillCaseMatrix =
+      serde_json::from_value(render_window_action_candidate_cases(&analysis))
+        .expect("candidate matrix should parse");
+    let mut resolved = BTreeMap::new();
+    let (unresolved, used_annotations) = apply_candidate_grounding(
+      &analysis,
+      None,
+      "window-action.window-point.pointer-click.capture-evidence",
+      &mut matrix,
+      &mut resolved,
+    );
+    assert!(unresolved.is_empty());
+    assert_eq!(resolved.get("relative_x"), Some(&"0.500000".to_string()));
+    assert_eq!(resolved.get("relative_y"), Some(&"0.500000".to_string()));
+    assert!(
+      used_annotations
+        .iter()
+        .any(|candidate_id| candidate_id == "window-primary-region")
+    );
+    assert_eq!(
+      matrix.cases[0].inputs.get("relative_x"),
+      Some(&"0.500000".to_string())
+    );
+    assert_eq!(
+      matrix.cases[0].inputs.get("relative_y"),
+      Some(&"0.500000".to_string())
+    );
+  }
+
+  #[test]
   fn validate_app_distillation_nests_case_runs_in_app_validate_run() {
     let root = temp_dir("app-validate-nested-cases");
     let sink = Arc::new(MemoryRunEventSink::new());
@@ -3959,6 +4066,112 @@ mod tests {
     assert!(canonical.spans.iter().any(|span| {
       span.name == "auv.app.validate.candidate" && span.status_code == TraceStatusCode::Error
     }));
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn validate_app_distillation_validates_window_action_after_auto_grounding() {
+    let root = temp_dir("app-validate-window-action");
+    let sink = Arc::new(MemoryRunEventSink::new());
+    let runtime = test_runtime(root.clone()).with_event_sink(sink.clone());
+    let analysis_path = root.join("analysis.json");
+    let distillation_path = root.join("distillation.json");
+    let recipe_path = root.join("window-action.recipe.json");
+    let case_matrix_path = root.join("window-action.cases.json");
+
+    let mut analysis =
+      sample_analysis_with_strategy("window-action.window-point.pointer-click.capture-evidence");
+    analysis.probe_path = root.join("missing-probe.json");
+    analysis.annotation_candidates.push(AppSurfaceCandidate {
+      candidate_id: "window-primary-region".to_string(),
+      area: "window.primary".to_string(),
+      kind: "region".to_string(),
+      source: "ax".to_string(),
+      status: AssessmentStatus::Candidate,
+      primary_text: "Example".to_string(),
+      secondary_text: "com.example.App".to_string(),
+      query_value: "100,200,800,600".to_string(),
+      coordinate_space: "global-logical".to_string(),
+      bounds: Some(AppRect {
+        x: 100,
+        y: 200,
+        width: 800,
+        height: 600,
+      }),
+      click_point: Some(AppPoint { x: 500, y: 500 }),
+      confidence: None,
+      evidence_step_id: "observe-window-tree".to_string(),
+      input_bindings: BTreeMap::from([
+        ("window_bounds".to_string(), "100,200,800,600".to_string()),
+        ("relative_x".to_string(), "0.500000".to_string()),
+        ("relative_y".to_string(), "0.500000".to_string()),
+      ]),
+      notes: vec!["sample window region".to_string()],
+    });
+    write_pretty_json(&analysis_path, &analysis).expect("analysis should write");
+
+    write_pretty_json(&recipe_path, &test_window_action_candidate_manifest_value())
+      .expect("candidate recipe should write");
+    write_pretty_json(
+      &case_matrix_path,
+      &test_window_action_candidate_matrix_value(),
+    )
+    .expect("candidate matrix should write");
+    let distillation = AppDistillation {
+      distill_version: APP_DISTILL_VERSION.to_string(),
+      created_at_millis: 0,
+      source_analysis_path: analysis_path,
+      app_identity: analysis.app_identity.clone(),
+      candidates: vec![AppDistilledCandidate {
+        recipe_id: "test.window.action".to_string(),
+        taxonomy_id: "window-action.window-point.pointer-click.capture-evidence".to_string(),
+        status: AssessmentStatus::Candidate,
+        rationale: "test".to_string(),
+        suggested_annotation_ids: vec!["window-primary-region".to_string()],
+        recipe_path,
+        case_matrix_path,
+      }],
+      known_boundaries: Vec::new(),
+    };
+    write_pretty_json(&distillation_path, &distillation).expect("distillation should write");
+
+    let output =
+      validate_app_distillation(&runtime, &distillation_path).expect("validation should complete");
+    assert_eq!(
+      output.validation.candidates[0].status,
+      AppValidationStatus::Validated
+    );
+    assert_eq!(
+      output.validation.candidates[0]
+        .resolved_inputs
+        .get("relative_x"),
+      Some(&"0.500000".to_string())
+    );
+    assert_eq!(
+      output.validation.candidates[0]
+        .resolved_inputs
+        .get("relative_y"),
+      Some(&"0.500000".to_string())
+    );
+    assert!(
+      output.validation.candidates[0]
+        .used_annotation_ids
+        .iter()
+        .any(|candidate_id| candidate_id == "window-primary-region")
+    );
+    assert!(output.validation.candidates[0].unresolved_inputs.is_empty());
+
+    let finished_runs = sink
+      .drain_for_test()
+      .into_iter()
+      .filter_map(|event| match event {
+        RunStreamEvent::RunFinished { run, .. } => Some(run),
+        _ => None,
+      })
+      .collect::<Vec<_>>();
+    assert_eq!(finished_runs.len(), 1);
+    assert_eq!(finished_runs[0].run_type, RunType::Validate);
 
     let _ = fs::remove_dir_all(root);
   }
@@ -4177,6 +4390,14 @@ mod tests {
       .expect("window candidate should exist");
     assert_eq!(window_candidate.source, "ax");
     assert_eq!(window_candidate.evidence_step_id, "observe-window-tree");
+    assert_eq!(
+      window_candidate.input_bindings.get("relative_x"),
+      Some(&"0.500000".to_string())
+    );
+    assert_eq!(
+      window_candidate.input_bindings.get("relative_y"),
+      Some(&"0.500000".to_string())
+    );
     assert!(analysis.recommended_strategies.iter().any(|strategy| {
       strategy.taxonomy_id == "window-action.window-point.pointer-click.capture-evidence"
     }));
@@ -4378,6 +4599,63 @@ mod tests {
         "case_id": "baseline",
         "status": "validated",
         "inputs": {},
+        "disturbance": "none"
+      }]
+    })
+  }
+
+  fn test_window_action_candidate_manifest_value() -> Value {
+    serde_json::json!({
+      "recipe_id": "test.window.action",
+      "version": "0.1.0",
+      "status": "candidate-recipe",
+      "platform": "macOS",
+      "target_app": { "bundle_id": "fixture.app", "display_mode": "fixture" },
+      "strategy": {
+        "family": "window-action",
+        "grounding": "window-point",
+        "activation": "pointer-click",
+        "verificationContract": "captureEvidence"
+      },
+      "objective": "test window action validation",
+      "disturbance_policy": {
+        "max_disturbance": "none",
+        "declared_classes": ["none"]
+      },
+      "inputs": {
+        "relative_x": { "type": "number" },
+        "relative_y": { "type": "number" }
+      },
+      "steps": [{
+        "id": "first",
+        "command_id": "test.skill.invoke",
+        "disturbance": {
+          "classes": ["none"],
+          "max": "none"
+        },
+        "expect": {
+          "output_must_contain": ["ok"]
+        }
+      }],
+      "verification": {
+        "expected_signals": ["signal"],
+        "success_criteria": ["criteria"]
+      }
+    })
+  }
+
+  fn test_window_action_candidate_matrix_value() -> Value {
+    serde_json::json!({
+      "skill_id": "test.window.action",
+      "version": "0.1.0",
+      "status": "candidate-case-matrix",
+      "cases": [{
+        "case_id": "default-candidate",
+        "status": "candidate",
+        "inputs": {
+          "relative_x": "TODO_RELATIVE_X",
+          "relative_y": "TODO_RELATIVE_Y"
+        },
         "disturbance": "none"
       }]
     })

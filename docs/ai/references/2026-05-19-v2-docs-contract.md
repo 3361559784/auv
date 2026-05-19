@@ -210,6 +210,15 @@ not as a pre-validated product slice.
 There is now also a narrow fixed-layout local NetEaseMusic baseline under
 `recipes/macos/netease-cloud-music/`.
 
+The current V2 truth for that app is narrower than a playback skill but
+stronger than a paper candidate:
+
+- one `window-action.window-point.pointer-click.capture-evidence` slice can now
+  validate live from a `window-primary-region` annotation
+- that slice is still only an activation-level pointer contract
+- it does not yet validate semantic search entry, result selection, or playback
+  state truth
+
 That is useful V2 evidence, but it still should not be treated as a promoted
 bundle member until the workflow can describe and validate it through the same
 truth model used for the existing frozen sample set.

@@ -65,10 +65,12 @@ re-expresses part of this slice so far:
 
 - `app analyze` can now emit one `window-primary-region` annotation from the
   AX root window fallback
+- that annotation now carries `window_bounds`, `relative_x`, and `relative_y`
+  bindings for one conservative window-relative target
 - `app distill` can now emit one
   `window-action.window-point.pointer-click.capture-evidence` candidate
-- `app validate` keeps that candidate in `candidate` because `relative_x` and
-  `relative_y` are still unresolved
+- `app validate` can now auto-ground those bindings and validate one
+  activation-level window-relative pointer slice live
 
 That is useful progress, but it still does not produce:
 
@@ -83,7 +85,8 @@ The right classification for this NetEaseMusic slice is:
 - `local-validated-recipe`
 - `fixed-layout baseline`
 - `phase-2 input`
-- `window-relative pointer candidate available`
+- `window-relative pointer slice validated`
+- `activation-level only`
 - `not yet promoted`
 
 The wrong classification would be:

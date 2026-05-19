@@ -270,13 +270,23 @@ The current NetEaseMusic V2 pass now covers a different kind of truth:
   root window even when `observe-windows` reports zero visible windows
 - `app distill` can emit one generic
   `window-action.window-point.pointer-click.capture-evidence` candidate
-- `app validate` keeps that candidate in `candidate` until `relative_x` and
-  `relative_y` are grounded live
+- that candidate now carries machine-readable `window_bounds`, `relative_x`,
+  and `relative_y` bindings derived from the primary window region
+- `app validate` can conservatively auto-ground `relative_x` and `relative_y`
+  from that same annotation and run the slice live
+- the current live NetEaseMusic smoke therefore validates one
+  `window-action.window-point.pointer-click.capture-evidence` slice through:
+  - `debug.activateApp`
+  - `debug.clickWindowPoint`
+  - `debug.captureWindow`
 
 That is the current honesty bar for fixed-layout baselines:
 
 - keep the window-relative pointer slice machine-readable
-- do not pretend it is already a semantic search or playback skill
+- allow activation-level pointer slices to validate when the analysis really
+  carries enough grounding data
+- do not pretend that this is already a semantic search, result-selection, or
+  playback skill
 
 ## Relationship To V2
 

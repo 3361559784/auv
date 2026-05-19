@@ -1,0 +1,368 @@
+{
+  "recipe_id": "macos.netease_cloud_music.play_visible_anchor.v0",
+  "version": "0.1.0",
+  "status": "local-validated-recipe",
+  "platform": "macOS",
+  "target_app": {
+    "name": "NetEaseMusic",
+    "bundle_id": "${app_id}",
+    "display_mode": "live-desktop"
+  },
+  "strategy": {
+    "family": "playback",
+    "grounding": "ocr-anchor",
+    "activation": "pointer-double-click",
+    "verificationContract": "verifyImageText"
+  },
+  "objective": "Activate NetEaseMusic, submit a known search query, double-click the observed first song result, and verify the bottom-player title and artist from a captured window image.",
+  "inputs": {
+    "app_id": {
+      "type": "string",
+      "default": "com.netease.163music"
+    },
+    "query": {
+      "type": "string",
+      "default": "AURORA Cure For Me"
+    },
+    "search_click_x": {
+      "type": "number",
+      "default": 3509,
+      "note": "Global logical x for the current NetEaseMusic search box middle, derived from the validated window capture on display_1."
+    },
+    "search_click_y": {
+      "type": "number",
+      "default": 398,
+      "note": "Global logical y for the current NetEaseMusic search box middle, derived from the validated window capture on display_1."
+    },
+    "result_click_x": {
+      "type": "number",
+      "default": 3457,
+      "note": "Global logical x for the first left-list Cure For Me result in the validated layout."
+    },
+    "result_click_y": {
+      "type": "number",
+      "default": 727,
+      "note": "Global logical y for the first left-list Cure For Me result in the validated layout."
+    },
+    "search_click_settle_ms": {
+      "type": "integer",
+      "default": 500
+    },
+    "click_interval_ms": {
+      "type": "integer",
+      "default": 80,
+      "note": "Validated delay between generated mouse clicks for multi-click gestures. NetEaseMusic did not reliably treat an immediate two-event sequence as a double-click."
+    },
+    "submit_settle_ms": {
+      "type": "integer",
+      "default": 1200
+    },
+    "activation_settle_ms": {
+      "type": "integer",
+      "default": 1500
+    },
+    "result_title": {
+      "type": "string",
+      "default": "Cure For Me"
+    },
+    "result_artist": {
+      "type": "string",
+      "default": "AURORA"
+    },
+    "result_min_confidence": {
+      "type": "number",
+      "default": 0.30
+    },
+    "verification_min_confidence": {
+      "type": "number",
+      "default": 0.30
+    },
+    "max_observations": {
+      "type": "integer",
+      "default": 256
+    },
+    "player_region_left_ratio": {
+      "type": "number",
+      "default": 0.03
+    },
+    "player_region_top_ratio": {
+      "type": "number",
+      "default": 0.86
+    },
+    "player_region_right_ratio": {
+      "type": "number",
+      "default": 0.35
+    },
+    "player_region_bottom_ratio": {
+      "type": "number",
+      "default": 1.0
+    }
+  },
+  "preconditions": [
+    "The host is macOS.",
+    "NetEaseMusic is installed and can be addressed by ${app_id}.",
+    "Screen Recording, Accessibility, and Automation permissions are already granted.",
+    "The NetEaseMusic window is in the validated two-display layout used to derive the fixed global click coordinates.",
+    "The recipe runs on the live desktop and uses pointer disturbance for search-box focus and result activation."
+  ],
+  "disturbance_policy": {
+    "max_disturbance": "pointer",
+    "declared_classes": [
+      "none",
+      "foreground_app",
+      "keyboard",
+      "clipboard",
+      "pointer"
+    ],
+    "notes": [
+      "This recipe is a narrow local baseline, not a general NetEaseMusic play-song contract.",
+      "The search and result activation steps use fixed global logical coordinates discovered through invoke-level exploration.",
+      "Click steps pass the target app as --app so the driver activates NetEaseMusic before clicking.",
+      "The result activation step uses click_interval_ms=80 because the previously immediate click_count=2 sequence was too fast for stable NetEaseMusic activation."
+    ]
+  },
+  "steps": [
+    {
+      "id": "capture-before-search",
+      "command_id": "debug.captureWindow",
+      "disturbance": {
+        "classes": [
+          "none"
+        ],
+        "max": "none"
+      },
+      "args": {
+        "target": "${app_id}",
+        "activate_target_before_capture": true,
+        "label": "netease-before-search-${query}"
+      },
+      "expect": {
+        "artifact_count_at_least": 1
+      }
+    },
+    {
+      "id": "click-search-box",
+      "command_id": "debug.clickPoint",
+      "disturbance": {
+        "classes": [
+          "foreground_app",
+          "pointer"
+        ],
+        "max": "pointer"
+      },
+      "args": {
+        "app": "${app_id}",
+        "x": "${search_click_x}",
+        "y": "${search_click_y}",
+        "click_count": 1,
+        "click_interval_ms": "${click_interval_ms}",
+        "settle_ms": "${search_click_settle_ms}"
+      }
+    },
+    {
+      "id": "paste-query",
+      "command_id": "debug.pasteTextPreserveClipboard",
+      "disturbance": {
+        "classes": [
+          "foreground_app",
+          "keyboard",
+          "clipboard"
+        ],
+        "max": "clipboard"
+      },
+      "args": {
+        "target": "${app_id}",
+        "text": "${query}",
+        "replace_existing": true,
+        "submit_key": "return",
+        "submit_settle_ms": "${submit_settle_ms}"
+      }
+    },
+    {
+      "id": "capture-after-search",
+      "command_id": "debug.captureWindow",
+      "disturbance": {
+        "classes": [
+          "none"
+        ],
+        "max": "none"
+      },
+      "args": {
+        "target": "${app_id}",
+        "activate_target_before_capture": true,
+        "label": "netease-after-search-${query}"
+      },
+      "expect": {
+        "artifact_count_at_least": 1
+      }
+    },
+    {
+      "id": "verify-search-result-title",
+      "command_id": "debug.findImageText",
+      "disturbance": {
+        "classes": [
+          "none"
+        ],
+        "max": "none"
+      },
+      "args": {
+        "image_path": "${step_capture_after_search_artifact_image_0}",
+        "query": "${result_title}",
+        "min_confidence": "${result_min_confidence}",
+        "max_observations": "${max_observations}"
+      },
+      "expect": {
+        "output_must_contain": [
+          "${result_title}"
+        ],
+        "output_must_not_contain": [
+          "Found 0 OCR text matches"
+        ]
+      }
+    },
+    {
+      "id": "verify-search-result-artist",
+      "command_id": "debug.findImageText",
+      "disturbance": {
+        "classes": [
+          "none"
+        ],
+        "max": "none"
+      },
+      "args": {
+        "image_path": "${step_capture_after_search_artifact_image_0}",
+        "query": "${result_artist}",
+        "min_confidence": "${result_min_confidence}",
+        "max_observations": "${max_observations}"
+      },
+      "expect": {
+        "output_must_contain": [
+          "${result_artist}"
+        ],
+        "output_must_not_contain": [
+          "Found 0 OCR text matches"
+        ]
+      }
+    },
+    {
+      "id": "double-click-result",
+      "command_id": "debug.clickPoint",
+      "disturbance": {
+        "classes": [
+          "foreground_app",
+          "pointer"
+        ],
+        "max": "pointer"
+      },
+      "args": {
+        "app": "${app_id}",
+        "x": "${result_click_x}",
+        "y": "${result_click_y}",
+        "click_count": 2,
+        "click_interval_ms": "${click_interval_ms}",
+        "settle_ms": "${activation_settle_ms}"
+      }
+    },
+    {
+      "id": "capture-after-play",
+      "command_id": "debug.captureWindow",
+      "disturbance": {
+        "classes": [
+          "none"
+        ],
+        "max": "none"
+      },
+      "args": {
+        "target": "${app_id}",
+        "activate_target_before_capture": true,
+        "label": "netease-after-play-${query}"
+      },
+      "expect": {
+        "artifact_count_at_least": 1
+      }
+    },
+    {
+      "id": "verify-player-title",
+      "command_id": "debug.findImageText",
+      "disturbance": {
+        "classes": [
+          "none"
+        ],
+        "max": "none"
+      },
+      "args": {
+        "image_path": "${step_capture_after_play_artifact_image_0}",
+        "query": "${result_title}",
+        "min_confidence": "${verification_min_confidence}",
+        "max_observations": "${max_observations}",
+        "region_left_ratio": "${player_region_left_ratio}",
+        "region_top_ratio": "${player_region_top_ratio}",
+        "region_right_ratio": "${player_region_right_ratio}",
+        "region_bottom_ratio": "${player_region_bottom_ratio}"
+      },
+      "expect": {
+        "output_must_contain": [
+          "${result_title}"
+        ],
+        "output_must_not_contain": [
+          "Found 0 OCR text matches"
+        ]
+      }
+    },
+    {
+      "id": "verify-player-artist",
+      "command_id": "debug.findImageText",
+      "disturbance": {
+        "classes": [
+          "none"
+        ],
+        "max": "none"
+      },
+      "args": {
+        "image_path": "${step_capture_after_play_artifact_image_0}",
+        "query": "${result_artist}",
+        "min_confidence": "${verification_min_confidence}",
+        "max_observations": "${max_observations}",
+        "region_left_ratio": "${player_region_left_ratio}",
+        "region_top_ratio": "${player_region_top_ratio}",
+        "region_right_ratio": "${player_region_right_ratio}",
+        "region_bottom_ratio": "${player_region_bottom_ratio}"
+      },
+      "expect": {
+        "output_must_contain": [
+          "${result_artist}"
+        ],
+        "output_must_not_contain": [
+          "Found 0 OCR text matches"
+        ]
+      }
+    }
+  ],
+  "verification": {
+    "expected_signals": [
+      "The NetEaseMusic window is captured through debug.captureWindow.",
+      "The search box is focused through an app-activated global logical click.",
+      "The query is submitted through clipboard-backed search entry.",
+      "The search result page contains the expected title and artist OCR anchors.",
+      "The fixed first-result point is double-clicked.",
+      "The bottom-player region in the captured post-play window contains the expected title and artist."
+    ],
+    "success_criteria": [
+      "The recipe reaches the NetEaseMusic search result page for ${query}.",
+      "The expected result title and artist are visible in the search results image.",
+      "The post-play evidence image contains ${result_title} and ${result_artist} in the bottom-player region."
+    ],
+    "non_goals": [
+      "This recipe does not prove generalized semantic song selection.",
+      "This recipe does not prove layout-independent search-box discovery.",
+      "This recipe does not provide a media-player API verification provider."
+    ]
+  },
+  "known_limits": {
+    "narrow_baseline": "This recipe is a local validated baseline for AURORA Cure For Me, not a general NetEaseMusic playback skill.",
+    "fixed_coordinates": "Search-box focus and result activation depend on fixed global logical coordinates derived from one observed window layout.",
+    "window_layout": "If the NetEaseMusic window moves or changes size, search_click_x/search_click_y/result_click_x/result_click_y must be rediscovered.",
+    "ocr_verification": "Playback verification uses OCR over a captured window image, not a system media-player status API.",
+    "shared_app_state": "Do not run multiple NetEaseMusic recipes against the same live app instance at once."
+  }
+}

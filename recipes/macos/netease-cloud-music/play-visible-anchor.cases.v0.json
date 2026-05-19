@@ -1,0 +1,29 @@
+{
+  "skill_id": "macos.netease_cloud_music.play_visible_anchor.v0",
+  "version": "0.1.0",
+  "status": "active-case-matrix",
+  "cases": [
+    {
+      "case_id": "aurora-cure-for-me-fixed-layout",
+      "status": "validated-local",
+      "inputs": {
+        "query": "AURORA Cure For Me",
+        "result_title": "Cure For Me",
+        "result_artist": "AURORA",
+        "search_click_x": "3509",
+        "search_click_y": "398",
+        "result_click_x": "3457",
+        "result_click_y": "727",
+        "click_interval_ms": "80"
+      },
+      "disturbance": "pointer",
+      "notes": [
+        "Validated manually through invoke on 2026-05-19 against the current NetEaseMusic window layout.",
+        "The search-box click point uses --app com.netease.163music so the driver activates NetEaseMusic before clicking.",
+        "The result click point targets the first left-list Cure For Me result observed after searching AURORA Cure For Me.",
+        "The result double-click is validated with click_interval_ms=80; without an interval, the app observed the multi-click sequence unreliably.",
+        "This case should be treated as fixed-layout coverage, not as semantic music selection."
+      ]
+    }
+  ]
+}

@@ -12,10 +12,15 @@ use crate::driver::{
   parse_window_line, report_value, sanitized_artifact_name,
 };
 use crate::model::{AuvResult, ExecutionTarget, InvokeRequest, RunStatus, now_millis};
+use crate::recording::{RecordingRun, RunFinish, RunSpec, SpanFinish, SpanRef};
 use crate::runtime::Runtime;
 use crate::skill::{
   SkillCaseMatrix, SkillCaseRunOptions, SkillManifest, SkillStrategy, run_skill_case_matrix_inline,
   validate_case_matrix_against_skill, validate_case_matrix_manifest, validate_skill_manifest,
+};
+use crate::trace::{
+  RunType, SPAN_API_VERSION, SpanRecordV1Alpha1, TraceState, TraceStatusCode, new_span_id,
+  string_attr,
 };
 
 const APP_PROBE_VERSION: &str = "v0";
@@ -303,9 +308,47 @@ pub fn probe_app(
     )
   })?;
 
+  let mut run = runtime.start_run(RunSpec::new(RunType::Probe, "auv.probe"))?;
+  let root_span = run.root_span();
+  let result = probe_app_into_run(
+    project_root,
+    runtime,
+    &app,
+    &output_dir,
+    &mut run,
+    &root_span,
+  );
+  match result {
+    Ok(probe) => {
+      runtime.finish_run(
+        run,
+        RunFinish {
+          status_code: TraceStatusCode::Ok,
+          summary: Some(format!("Probed app {}", probe.app.bundle_id)),
+          failure: None,
+        },
+      )?;
+      Ok(probe)
+    }
+    Err(error) => {
+      finish_failed_app_run(runtime, run, error, format!("App probe {bundle_id} failed"))
+    }
+  }
+}
+
+fn probe_app_into_run(
+  project_root: &Path,
+  runtime: &Runtime,
+  app: &AppIdentity,
+  output_dir: &Path,
+  run: &mut RecordingRun,
+  parent: &SpanRef,
+) -> AuvResult<AppProbe> {
   let mut steps = Vec::new();
   steps.push(invoke_probe_step(
     runtime,
+    run,
+    parent,
     "probe-permissions",
     "debug.probePermissions",
     None,
@@ -313,6 +356,8 @@ pub fn probe_app(
   )?);
   steps.push(invoke_probe_step(
     runtime,
+    run,
+    parent,
     "list-displays",
     "debug.listDisplays",
     None,
@@ -320,6 +365,8 @@ pub fn probe_app(
   )?);
   steps.push(invoke_probe_step(
     runtime,
+    run,
+    parent,
     "probe-coordinate-readiness",
     "debug.probeCoordinateReadiness",
     None,
@@ -330,9 +377,11 @@ pub fn probe_app(
   window_inputs.insert("limit".to_string(), "20".to_string());
   steps.push(invoke_probe_step(
     runtime,
+    run,
+    parent,
     "observe-windows",
     "debug.observeWindows",
-    Some(bundle_id.to_string()),
+    Some(app.bundle_id.clone()),
     window_inputs,
   )?);
 
@@ -341,13 +390,15 @@ pub fn probe_app(
   tree_inputs.insert("max_children".to_string(), "24".to_string());
   steps.push(invoke_probe_step(
     runtime,
+    run,
+    parent,
     "observe-window-tree",
     "debug.observeWindowTree",
-    Some(bundle_id.to_string()),
+    Some(app.bundle_id.clone()),
     tree_inputs,
   )?);
 
-  let capture_label = format!("app-probe-{}", sanitized_artifact_name(bundle_id));
+  let capture_label = format!("app-probe-{}", sanitized_artifact_name(&app.bundle_id));
   let mut capture_inputs = BTreeMap::new();
   capture_inputs.insert("label".to_string(), capture_label);
   capture_inputs.insert(
@@ -356,9 +407,11 @@ pub fn probe_app(
   );
   let capture_step = invoke_probe_step(
     runtime,
+    run,
+    parent,
     "capture-display",
     "debug.captureDisplay",
-    Some(bundle_id.to_string()),
+    Some(app.bundle_id.clone()),
     capture_inputs,
   )?;
   let screenshot_artifact_path = capture_step
@@ -374,7 +427,7 @@ pub fn probe_app(
     .ok_or_else(|| {
       format!(
         "capture-display probe step did not produce a screenshot artifact for {}",
-        bundle_id
+        app.bundle_id
       )
     })?;
   steps.push(capture_step);
@@ -395,6 +448,8 @@ pub fn probe_app(
   ocr_inputs.insert("min_confidence".to_string(), "0.55".to_string());
   steps.push(invoke_probe_step(
     runtime,
+    run,
+    parent,
     "ocr-sample",
     "debug.findImageText",
     None,
@@ -405,8 +460,8 @@ pub fn probe_app(
     probe_version: APP_PROBE_VERSION.to_string(),
     created_at_millis: now_millis(),
     project_root: project_root.to_path_buf(),
-    output_dir: output_dir.clone(),
-    app,
+    output_dir: output_dir.to_path_buf(),
+    app: app.clone(),
     steps,
   };
   let probe_path = output_dir.join("probe.json");
@@ -414,7 +469,35 @@ pub fn probe_app(
   Ok(probe)
 }
 
-pub fn analyze_app_probe(query: &Path) -> AuvResult<AppAnalyzeOutput> {
+pub fn analyze_app_probe(runtime: &Runtime, query: &Path) -> AuvResult<AppAnalyzeOutput> {
+  let mut run = runtime.start_run(RunSpec::new(RunType::Analyze, "auv.analyze"))?;
+  let root_span = run.root_span();
+  let result = analyze_app_probe_into_run(runtime, &mut run, &root_span, query);
+  match result {
+    Ok(output) => {
+      runtime.finish_run(
+        run,
+        RunFinish {
+          status_code: TraceStatusCode::Ok,
+          summary: Some(format!(
+            "Analyzed app {}",
+            output.analysis.app_identity.bundle_id
+          )),
+          failure: None,
+        },
+      )?;
+      Ok(output)
+    }
+    Err(error) => finish_failed_app_run(runtime, run, error, "App analysis failed".to_string()),
+  }
+}
+
+fn analyze_app_probe_into_run(
+  runtime: &Runtime,
+  run: &mut RecordingRun,
+  span: &SpanRef,
+  query: &Path,
+) -> AuvResult<AppAnalyzeOutput> {
   let probe_path = resolve_probe_path(query)?;
   let probe: AppProbe = read_json(&probe_path)?;
   let analysis = build_app_analysis(&probe_path, &probe)?;
@@ -427,6 +510,22 @@ pub fn analyze_app_probe(query: &Path) -> AuvResult<AppAnalyzeOutput> {
       report_path.display()
     )
   })?;
+  stage_app_artifact(
+    runtime,
+    run,
+    span,
+    "analysis.output",
+    &analysis_path,
+    "analysis.json",
+  )?;
+  stage_app_artifact(
+    runtime,
+    run,
+    span,
+    "analysis.report",
+    &report_path,
+    "analysis-report.md",
+  )?;
   Ok(AppAnalyzeOutput {
     analysis,
     analysis_path,
@@ -435,6 +534,36 @@ pub fn analyze_app_probe(query: &Path) -> AuvResult<AppAnalyzeOutput> {
 }
 
 pub fn distill_app_analysis(
+  runtime: &Runtime,
+  query: &Path,
+  output_dir: Option<PathBuf>,
+) -> AuvResult<AppDistillOutput> {
+  let mut run = runtime.start_run(RunSpec::new(RunType::Distill, "auv.distill"))?;
+  let root_span = run.root_span();
+  let result = distill_app_analysis_into_run(runtime, &mut run, &root_span, query, output_dir);
+  match result {
+    Ok(output) => {
+      runtime.finish_run(
+        run,
+        RunFinish {
+          status_code: TraceStatusCode::Ok,
+          summary: Some(format!(
+            "Distilled app {}",
+            output.distillation.app_identity.bundle_id
+          )),
+          failure: None,
+        },
+      )?;
+      Ok(output)
+    }
+    Err(error) => finish_failed_app_run(runtime, run, error, "App distillation failed".to_string()),
+  }
+}
+
+fn distill_app_analysis_into_run(
+  runtime: &Runtime,
+  run: &mut RecordingRun,
+  span: &SpanRef,
   query: &Path,
   output_dir: Option<PathBuf>,
 ) -> AuvResult<AppDistillOutput> {
@@ -517,6 +646,22 @@ pub fn distill_app_analysis(
       report_path.display()
     )
   })?;
+  stage_app_artifact(
+    runtime,
+    run,
+    span,
+    "distillation.output",
+    &distillation_path,
+    "distillation.json",
+  )?;
+  stage_app_artifact(
+    runtime,
+    run,
+    span,
+    "distillation.report",
+    &report_path,
+    "distillation-report.md",
+  )?;
 
   Ok(AppDistillOutput {
     distillation,
@@ -526,6 +671,34 @@ pub fn distill_app_analysis(
 }
 
 pub fn validate_app_distillation(runtime: &Runtime, query: &Path) -> AuvResult<AppValidateOutput> {
+  let mut run = runtime.start_run(RunSpec::new(RunType::Validate, "auv.validate"))?;
+  let root_span = run.root_span();
+  let result = validate_app_distillation_into_run(runtime, &mut run, &root_span, query);
+  match result {
+    Ok(output) => {
+      runtime.finish_run(
+        run,
+        RunFinish {
+          status_code: TraceStatusCode::Ok,
+          summary: Some(format!(
+            "Validated app {}",
+            output.validation.app_identity.bundle_id
+          )),
+          failure: None,
+        },
+      )?;
+      Ok(output)
+    }
+    Err(error) => finish_failed_app_run(runtime, run, error, "App validation failed".to_string()),
+  }
+}
+
+fn validate_app_distillation_into_run(
+  runtime: &Runtime,
+  run: &mut RecordingRun,
+  span: &SpanRef,
+  query: &Path,
+) -> AuvResult<AppValidateOutput> {
   let distillation_path = resolve_distillation_path(query)?;
   let distillation: AppDistillation = read_json(&distillation_path)?;
   let analysis: AppAnalysis = read_json(&distillation.source_analysis_path)?;
@@ -629,6 +802,22 @@ pub fn validate_app_distillation(runtime: &Runtime, query: &Path) -> AuvResult<A
       report_path.display()
     )
   })?;
+  stage_app_artifact(
+    runtime,
+    run,
+    span,
+    "validation.output",
+    &validation_path,
+    "validation.json",
+  )?;
+  stage_app_artifact(
+    runtime,
+    run,
+    span,
+    "validation.report",
+    &report_path,
+    "validation-report.md",
+  )?;
   Ok(AppValidateOutput {
     validation,
     validation_path,
@@ -1838,11 +2027,20 @@ fn default_probe_output_dir(project_root: &Path, bundle_id: &str) -> PathBuf {
 
 fn invoke_probe_step(
   runtime: &Runtime,
+  run: &mut RecordingRun,
+  parent: &SpanRef,
   step_id: &str,
   command_id: &str,
   target_application_id: Option<String>,
   inputs: BTreeMap<String, String>,
 ) -> AuvResult<AppProbeStep> {
+  let step_span = run.start_span(
+    parent,
+    app_span_record(
+      "auv.probe.step",
+      BTreeMap::from([("auv.probe.step_id".to_string(), string_attr(step_id))]),
+    ),
+  )?;
   let request = InvokeRequest {
     command_id: command_id.to_string(),
     target: ExecutionTarget {
@@ -1850,7 +2048,37 @@ fn invoke_probe_step(
     },
     inputs: inputs.clone(),
   };
-  let result = runtime.invoke(request)?;
+  let result = match runtime.invoke_in_span(run, &step_span, request) {
+    Ok(result) => result,
+    Err(error) => {
+      if let Err(finish_error) = run.finish_span(
+        &step_span,
+        SpanFinish {
+          status_code: TraceStatusCode::Error,
+          summary: Some(format!("Probe step {step_id} failed")),
+          failure: Some(error.clone()),
+        },
+      ) {
+        return Err(format!(
+          "{error}; additionally failed to finish failed probe step span: {finish_error}"
+        ));
+      }
+      return Err(error);
+    }
+  };
+  let status_code = if result.status == RunStatus::Completed {
+    TraceStatusCode::Ok
+  } else {
+    TraceStatusCode::Error
+  };
+  run.finish_span(
+    &step_span,
+    SpanFinish {
+      status_code,
+      summary: Some(result.output_summary.clone()),
+      failure: result.failure_message.clone(),
+    },
+  )?;
   if result.status != RunStatus::Completed {
     return Err(format!(
       "probe step {} ({}) failed: {}",
@@ -1867,7 +2095,7 @@ fn invoke_probe_step(
     command_id: command_id.to_string(),
     target_application_id,
     inputs,
-    run_id: result.run_id,
+    run_id: run.id().to_string(),
     status: result.status.as_str().to_string(),
     output_summary: result.output_summary,
     artifact_paths: result.artifact_paths,
@@ -1943,6 +2171,65 @@ fn write_pretty_json<T: Serialize>(path: &Path, value: &T) -> AuvResult<()> {
     )
   })?;
   fs::write(path, rendered).map_err(|error| format!("failed to write {}: {error}", path.display()))
+}
+
+fn stage_app_artifact(
+  runtime: &Runtime,
+  run: &mut RecordingRun,
+  span: &SpanRef,
+  role: &str,
+  path: &Path,
+  preferred_name: &str,
+) -> AuvResult<()> {
+  runtime.stage_artifact_file(
+    run,
+    span,
+    role,
+    path,
+    preferred_name,
+    Some(format!("Generated app workflow artifact {role}")),
+  )?;
+  Ok(())
+}
+
+fn finish_failed_app_run<T>(
+  runtime: &Runtime,
+  run: RecordingRun,
+  error: String,
+  summary: String,
+) -> AuvResult<T> {
+  if let Err(finish_error) = runtime.finish_run(
+    run,
+    RunFinish {
+      status_code: TraceStatusCode::Error,
+      summary: Some(summary),
+      failure: Some(error.clone()),
+    },
+  ) {
+    return Err(format!(
+      "{error}; additionally failed to persist failed workflow run: {finish_error}"
+    ));
+  }
+  Err(error)
+}
+
+fn app_span_record(
+  name: impl Into<String>,
+  attributes: crate::recording::Attributes,
+) -> SpanRecordV1Alpha1 {
+  SpanRecordV1Alpha1 {
+    api_version: SPAN_API_VERSION.to_string(),
+    span_id: new_span_id(),
+    parent_span_id: None,
+    name: name.into(),
+    state: TraceState::Running,
+    status_code: TraceStatusCode::Unset,
+    started_at_millis: now_millis(),
+    finished_at_millis: None,
+    attributes,
+    summary: None,
+    failure: None,
+  }
 }
 
 fn run_command_capture(binary: &str, args: &[&str]) -> AuvResult<String> {
@@ -2433,6 +2720,34 @@ struct WindowSnapshotAnalysis {
 #[cfg(test)]
 mod tests {
   use super::*;
+  use crate::catalog::CommandCatalog;
+  use crate::driver::{Driver, DriverRegistry};
+  use crate::model::{CommandSpec, DisturbanceClass, DriverCall, DriverDescriptor, DriverResponse};
+  use crate::recording::RunSpec;
+  use crate::store::LocalStore;
+  use crate::trace::RunType;
+
+  struct TestProbeDriver;
+
+  impl Driver for TestProbeDriver {
+    fn descriptor(&self) -> DriverDescriptor {
+      DriverDescriptor {
+        id: "test.probe",
+        summary: "Test probe driver",
+        capabilities: &["test"],
+        donor_boundary: "test",
+      }
+    }
+
+    fn invoke(&self, call: &DriverCall) -> AuvResult<DriverResponse> {
+      Ok(DriverResponse {
+        summary: format!("{} ok", call.operation),
+        artifacts: Vec::new(),
+        notes: Vec::new(),
+        backend: None,
+      })
+    }
+  }
 
   #[test]
   fn parse_probe_directory_resolves_probe_json() {
@@ -2467,6 +2782,42 @@ mod tests {
       strategy.taxonomy_id,
       "search-entry.ax-text-input.clipboard-submit.capture-evidence"
     );
+  }
+
+  #[test]
+  fn invoke_probe_steps_share_parent_probe_run_id() {
+    let root = temp_dir("probe-step-parent-run");
+    let runtime = test_runtime(root.clone());
+    let mut run = runtime
+      .start_run(RunSpec::new(RunType::Probe, "auv.probe"))
+      .expect("probe run should start");
+    let root_span = run.root_span();
+
+    let first = invoke_probe_step(
+      &runtime,
+      &mut run,
+      &root_span,
+      "first",
+      "test.first",
+      None,
+      BTreeMap::new(),
+    )
+    .expect("first step should complete");
+    let second = invoke_probe_step(
+      &runtime,
+      &mut run,
+      &root_span,
+      "second",
+      "test.second",
+      None,
+      BTreeMap::new(),
+    )
+    .expect("second step should complete");
+
+    assert_eq!(first.run_id, run.id().as_str());
+    assert_eq!(second.run_id, run.id().as_str());
+    assert_eq!(first.run_id, second.run_id);
+    let _ = fs::remove_dir_all(root);
   }
 
   #[test]
@@ -2696,5 +3047,33 @@ mod tests {
     let _ = fs::remove_dir_all(&path);
     fs::create_dir_all(&path).expect("temp dir should be creatable");
     path
+  }
+
+  fn test_runtime(project_root: PathBuf) -> Runtime {
+    let commands = CommandCatalog::new(vec![
+      CommandSpec {
+        id: "test.first",
+        summary: "Test first command",
+        driver_id: "test.probe",
+        operation: "first",
+        disturbance_classes: &[DisturbanceClass::None],
+        max_disturbance: DisturbanceClass::None,
+      },
+      CommandSpec {
+        id: "test.second",
+        summary: "Test second command",
+        driver_id: "test.probe",
+        operation: "second",
+        disturbance_classes: &[DisturbanceClass::None],
+        max_disturbance: DisturbanceClass::None,
+      },
+    ]);
+    let drivers = DriverRegistry::new(vec![Box::new(TestProbeDriver)]);
+    Runtime::new(
+      project_root.clone(),
+      commands,
+      drivers,
+      LocalStore::new(project_root).expect("store should initialize"),
+    )
   }
 }

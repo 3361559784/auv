@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::catalog::CommandCatalog;
@@ -352,6 +352,39 @@ impl Runtime {
       artifact_paths,
       failure_message,
     })
+  }
+
+  pub fn stage_artifact_file(
+    &self,
+    run: &mut crate::recording::RecordingRun,
+    span: &crate::recording::SpanRef,
+    role: impl Into<String>,
+    source_path: &Path,
+    preferred_name: impl Into<String>,
+    summary: Option<String>,
+  ) -> AuvResult<PathBuf> {
+    let event_id = new_event_id();
+    let artifact = self.store.stage_artifact_file(
+      run.id(),
+      run.artifact_count(),
+      span.id(),
+      Some(event_id.clone()),
+      role.into(),
+      source_path.to_path_buf(),
+      preferred_name.into(),
+      summary,
+    )?;
+    record_event_with_id(
+      run,
+      span.id(),
+      event_id,
+      "artifact.captured",
+      Some(render_artifact_event(&artifact)),
+      vec![artifact.artifact_id.clone()],
+    );
+    let staged_path = self.store.run_dir(run.id())?.join(&artifact.path);
+    run.record_artifact(artifact);
+    Ok(staged_path)
   }
 }
 

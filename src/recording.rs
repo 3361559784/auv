@@ -341,6 +341,10 @@ impl RecordingRun {
     artifact_id
   }
 
+  pub fn artifact_count(&self) -> usize {
+    self.artifacts.len()
+  }
+
   pub fn finish(
     mut self,
     status_code: TraceStatusCode,

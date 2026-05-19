@@ -82,14 +82,18 @@ fn run() -> Result<(), String> {
       println!("steps: {}", probe.steps.len());
     }
     CliCommand::AppAnalyze { query } => {
-      let output = analyze_app_probe(&PathBuf::from(query))?;
+      let output = analyze_app_probe(&runtime, &PathBuf::from(query))?;
       println!("app: {}", output.analysis.app_identity.bundle_id);
       println!("status: analyzed");
       println!("analysis: {}", output.analysis_path.display());
       println!("report: {}", output.report_path.display());
     }
     CliCommand::AppDistill { query, output_dir } => {
-      let output = distill_app_analysis(&PathBuf::from(query), output_dir.map(PathBuf::from))?;
+      let output = distill_app_analysis(
+        &runtime,
+        &PathBuf::from(query),
+        output_dir.map(PathBuf::from),
+      )?;
       println!("app: {}", output.distillation.app_identity.bundle_id);
       println!("status: distilled");
       println!("distillation: {}", output.distillation_path.display());

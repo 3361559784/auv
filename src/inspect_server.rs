@@ -17,7 +17,7 @@ use crate::recording::BroadcastRunEventSink;
 use crate::store::LocalStore;
 
 pub const DEFAULT_INSPECT_HOST: &str = "127.0.0.1";
-pub const DEFAULT_INSPECT_PORT: u16 = 7319;
+pub const DEFAULT_INSPECT_PORT: u16 = 8765;
 
 #[derive(Clone)]
 struct InspectServerState {
@@ -70,6 +70,7 @@ pub async fn serve(
   let local_address = listener
     .local_addr()
     .map_err(|error| format!("failed to read inspect server address: {error}"))?;
+  println!("inspect server: http://{local_address}");
   axum::serve(listener, router(store, event_sink))
     .await
     .map_err(|error| format!("inspect server failed: {error}"))?;
@@ -92,7 +93,7 @@ async fn get_run(
     .store
     .read_run(&run_id)
     .map_err(InspectHttpError::from_store)?;
-  Ok(Json(run).into_response())
+  Ok(Json(run.run).into_response())
 }
 
 async fn get_spans(
@@ -151,15 +152,19 @@ async fn stream_run(
   Path(run_id): Path<String>,
   websocket: WebSocketUpgrade,
 ) -> Result<Response, InspectHttpError> {
-  state
-    .store
-    .run_dir(&run_id)
-    .map_err(InspectHttpError::from_store)?;
+  ensure_stream_run_exists(&state.store, &run_id)?;
   Ok(
     websocket
       .on_upgrade(move |socket| stream_run_events(socket, state.event_sink, run_id))
       .into_response(),
   )
+}
+
+fn ensure_stream_run_exists(store: &LocalStore, run_id: &str) -> Result<(), InspectHttpError> {
+  store
+    .read_run(run_id)
+    .map(|_| ())
+    .map_err(InspectHttpError::from_store)
 }
 
 async fn stream_run_events(
@@ -168,19 +173,26 @@ async fn stream_run_events(
   run_id: String,
 ) {
   let mut receiver = event_sink.subscribe();
+  while let Some(payload) = next_stream_payload(&mut receiver, &run_id).await {
+    if socket.send(Message::Text(payload.into())).await.is_err() {
+      break;
+    }
+  }
+}
+
+async fn next_stream_payload(
+  receiver: &mut broadcast::Receiver<crate::recording::RunStreamEvent>,
+  run_id: &str,
+) -> Option<String> {
   loop {
     match receiver.recv().await {
-      Ok(event) if event.run_id().as_str() == run_id => {
-        let Ok(payload) = serde_json::to_string(&event) else {
-          continue;
-        };
-        if socket.send(Message::Text(payload.into())).await.is_err() {
-          break;
-        }
-      }
+      Ok(event) if event.run_id().as_str() == run_id => match serde_json::to_string(&event) {
+        Ok(payload) => return Some(payload),
+        Err(_) => continue,
+      },
       Ok(_) => {}
       Err(broadcast::error::RecvError::Lagged(_)) => {}
-      Err(broadcast::error::RecvError::Closed) => break,
+      Err(broadcast::error::RecvError::Closed) => return None,
     }
   }
 }
@@ -195,6 +207,8 @@ impl InspectHttpError {
   fn from_store(error: String) -> Self {
     let status = if error.contains("invalid run id") {
       StatusCode::BAD_REQUEST
+    } else if error.contains("escapes run directory") {
+      StatusCode::FORBIDDEN
     } else if error.contains("failed to read") || error.contains("not found") {
       StatusCode::NOT_FOUND
     } else {
@@ -236,9 +250,9 @@ mod tests {
   use axum::http::{Request, StatusCode};
   use tower::ServiceExt;
 
-  use super::router;
+  use super::{ensure_stream_run_exists, next_stream_payload, router};
   use crate::model::now_millis;
-  use crate::recording::BroadcastRunEventSink;
+  use crate::recording::{BroadcastRunEventSink, RunEventSink, RunStreamEvent};
   use crate::store::{CanonicalRun, LocalStore};
   use crate::trace::{
     ARTIFACT_API_VERSION, ArtifactId, ArtifactRecordV1Alpha1, EVENT_API_VERSION, EventId,
@@ -251,61 +265,7 @@ mod tests {
     let root = temp_dir("inspect-server-routes");
     let store = LocalStore::new(root.clone()).expect("store should initialize");
     let run_id = RunId::new("run_inspect_server_test");
-    let span_id = SpanId::new("0000000000000001");
-    let artifact_id = ArtifactId::new("artifact_server_test");
-    store
-      .write_run_snapshot(&CanonicalRun {
-        run: RunRecordV1Alpha1 {
-          api_version: RUN_API_VERSION.to_string(),
-          run_id: run_id.clone(),
-          trace_id: TraceId::new("00000000000000000000000000000001"),
-          run_type: RunType::Command,
-          state: TraceState::Ended,
-          status_code: TraceStatusCode::Ok,
-          started_at_millis: 100,
-          finished_at_millis: Some(101),
-          root_span_id: span_id.clone(),
-          attributes: BTreeMap::new(),
-          summary: Some("done".to_string()),
-          failure: None,
-        },
-        spans: vec![SpanRecordV1Alpha1 {
-          api_version: SPAN_API_VERSION.to_string(),
-          span_id: span_id.clone(),
-          parent_span_id: None,
-          name: "auv.inspect.server".to_string(),
-          state: TraceState::Ended,
-          status_code: TraceStatusCode::Ok,
-          started_at_millis: 100,
-          finished_at_millis: Some(101),
-          attributes: BTreeMap::new(),
-          summary: None,
-          failure: None,
-        }],
-        events: vec![EventRecordV1Alpha1 {
-          api_version: EVENT_API_VERSION.to_string(),
-          event_id: EventId::new("event_server_test"),
-          span_id: span_id.clone(),
-          name: "inspect.event".to_string(),
-          timestamp_millis: 100,
-          attributes: BTreeMap::new(),
-          message: None,
-          artifact_ids: vec![artifact_id.clone()],
-        }],
-        artifacts: vec![ArtifactRecordV1Alpha1 {
-          api_version: ARTIFACT_API_VERSION.to_string(),
-          artifact_id: artifact_id.clone(),
-          span_id,
-          event_id: None,
-          role: "driver.output".to_string(),
-          mime_type: "text/plain".to_string(),
-          path: "artifacts/artifact_server_test.txt".to_string(),
-          sha256: None,
-          attributes: BTreeMap::new(),
-          summary: None,
-        }],
-      })
-      .expect("run should persist");
+    write_test_run(&store, run_id.clone(), Some("artifact_server_test.txt"));
     let artifact_path = root
       .join("runs")
       .join(run_id.as_str())
@@ -314,6 +274,27 @@ mod tests {
     fs::write(&artifact_path, "artifact body").expect("artifact should write");
 
     let app = router(store, Arc::new(BroadcastRunEventSink::new(16)));
+    let run_response = app
+      .clone()
+      .oneshot(
+        Request::builder()
+          .uri("/runs/run_inspect_server_test")
+          .body(Body::empty())
+          .expect("request should build"),
+      )
+      .await
+      .expect("route should respond");
+    assert_eq!(run_response.status(), StatusCode::OK);
+    let run_body = to_bytes(run_response.into_body(), usize::MAX)
+      .await
+      .expect("body should read");
+    let run: serde_json::Value = serde_json::from_slice(&run_body).expect("run should be json");
+    assert_eq!(run["run_id"], "run_inspect_server_test");
+    assert!(
+      run.get("spans").is_none(),
+      "/runs/{run_id} should return run metadata only"
+    );
+
     let spans_response = app
       .clone()
       .oneshot(
@@ -357,10 +338,158 @@ mod tests {
     let _ = fs::remove_dir_all(root);
   }
 
+  #[tokio::test]
+  async fn stream_payload_filters_events_by_run_id() {
+    let run_a = RunId::new("run_stream_a");
+    let run_b = RunId::new("run_stream_b");
+    let sink = BroadcastRunEventSink::new(16);
+    let mut receiver = sink.subscribe();
+    sink.on_event(RunStreamEvent::EventAppended {
+      run_id: run_b.clone(),
+      event: test_event("event_stream_b"),
+    });
+    sink.on_event(RunStreamEvent::EventAppended {
+      run_id: run_a.clone(),
+      event: test_event("event_stream_a"),
+    });
+
+    let payload = tokio::time::timeout(
+      std::time::Duration::from_secs(2),
+      next_stream_payload(&mut receiver, run_a.as_str()),
+    )
+    .await
+    .expect("matching run event should arrive")
+    .expect("matching run event should serialize");
+    assert!(payload.contains("run_stream_a"));
+    assert!(payload.contains("event_stream_a"));
+    assert!(!payload.contains("run_stream_b"));
+  }
+
+  #[tokio::test]
+  async fn stream_rejects_missing_run_before_upgrade() {
+    let root = temp_dir("inspect-server-missing-stream");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let error =
+      ensure_stream_run_exists(&store, "run_missing").expect_err("missing run should reject");
+    assert_eq!(error.status, StatusCode::NOT_FOUND);
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[cfg(unix)]
+  #[tokio::test]
+  async fn artifact_endpoint_rejects_symlink_escape() {
+    let root = temp_dir("inspect-server-symlink");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let run_id = RunId::new("run_symlink_escape");
+    write_test_run(&store, run_id.clone(), Some("escape.txt"));
+    let outside = root.join("outside.txt");
+    fs::write(&outside, "secret").expect("outside file should write");
+    let link = root
+      .join("runs")
+      .join(run_id.as_str())
+      .join("artifacts")
+      .join("escape.txt");
+    let _ = fs::remove_file(&link);
+    std::os::unix::fs::symlink(&outside, &link).expect("symlink should write");
+
+    let app = router(store, Arc::new(BroadcastRunEventSink::new(16)));
+    let response = app
+      .oneshot(
+        Request::builder()
+          .uri("/runs/run_symlink_escape/artifacts/artifact_server_test")
+          .body(Body::empty())
+          .expect("request should build"),
+      )
+      .await
+      .expect("route should respond");
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+
+    let _ = fs::remove_dir_all(root);
+  }
+
   fn temp_dir(label: &str) -> std::path::PathBuf {
     let path = std::env::temp_dir().join(format!("auv-{}-{}", label, now_millis()));
     let _ = fs::remove_dir_all(&path);
     fs::create_dir_all(&path).expect("temp dir should be creatable");
     path
+  }
+
+  fn write_test_run(store: &LocalStore, run_id: RunId, artifact_name: Option<&str>) {
+    let span_id = SpanId::new("0000000000000001");
+    let artifact_id = ArtifactId::new("artifact_server_test");
+    let artifacts = artifact_name
+      .map(|name| {
+        vec![ArtifactRecordV1Alpha1 {
+          api_version: ARTIFACT_API_VERSION.to_string(),
+          artifact_id: artifact_id.clone(),
+          span_id: span_id.clone(),
+          event_id: None,
+          role: "driver.output".to_string(),
+          mime_type: "text/plain".to_string(),
+          path: format!("artifacts/{name}"),
+          sha256: None,
+          attributes: BTreeMap::new(),
+          summary: None,
+        }]
+      })
+      .unwrap_or_default();
+    store
+      .write_run_snapshot(&CanonicalRun {
+        run: RunRecordV1Alpha1 {
+          api_version: RUN_API_VERSION.to_string(),
+          run_id,
+          trace_id: TraceId::new("00000000000000000000000000000001"),
+          run_type: RunType::Command,
+          state: TraceState::Ended,
+          status_code: TraceStatusCode::Ok,
+          started_at_millis: 100,
+          finished_at_millis: Some(101),
+          root_span_id: span_id.clone(),
+          attributes: BTreeMap::new(),
+          summary: Some("done".to_string()),
+          failure: None,
+        },
+        spans: vec![SpanRecordV1Alpha1 {
+          api_version: SPAN_API_VERSION.to_string(),
+          span_id: span_id.clone(),
+          parent_span_id: None,
+          name: "auv.inspect.server".to_string(),
+          state: TraceState::Ended,
+          status_code: TraceStatusCode::Ok,
+          started_at_millis: 100,
+          finished_at_millis: Some(101),
+          attributes: BTreeMap::new(),
+          summary: None,
+          failure: None,
+        }],
+        events: vec![EventRecordV1Alpha1 {
+          api_version: EVENT_API_VERSION.to_string(),
+          event_id: EventId::new("event_server_test"),
+          span_id,
+          name: "inspect.event".to_string(),
+          timestamp_millis: 100,
+          attributes: BTreeMap::new(),
+          message: None,
+          artifact_ids: artifacts
+            .iter()
+            .map(|artifact| artifact.artifact_id.clone())
+            .collect(),
+        }],
+        artifacts,
+      })
+      .expect("run should persist");
+  }
+
+  fn test_event(event_id: &str) -> EventRecordV1Alpha1 {
+    EventRecordV1Alpha1 {
+      api_version: EVENT_API_VERSION.to_string(),
+      event_id: EventId::new(event_id),
+      span_id: SpanId::new("0000000000000001"),
+      name: "inspect.event".to_string(),
+      timestamp_millis: 100,
+      attributes: BTreeMap::new(),
+      message: None,
+      artifact_ids: Vec::new(),
+    }
   }
 }

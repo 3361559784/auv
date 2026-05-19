@@ -18,6 +18,7 @@ pub struct CanonicalRun {
   pub artifacts: Vec<ArtifactRecordV1Alpha1>,
 }
 
+#[derive(Clone)]
 pub struct LocalStore {
   root: PathBuf,
 }
@@ -262,7 +263,28 @@ impl LocalStore {
         artifact.path
       ));
     }
-    Ok((artifact, self.run_dir(run_id)?.join(relative_path)))
+    let run_directory = self.run_dir(run_id)?;
+    let candidate_path = run_directory.join(relative_path);
+    let canonical_run_directory = fs::canonicalize(&run_directory).map_err(|error| {
+      format!(
+        "failed to resolve run directory {}: {error}",
+        run_directory.display()
+      )
+    })?;
+    let canonical_artifact_path = fs::canonicalize(&candidate_path).map_err(|error| {
+      format!(
+        "failed to resolve artifact file {}: {error}",
+        candidate_path.display()
+      )
+    })?;
+    if !canonical_artifact_path.starts_with(&canonical_run_directory) {
+      return Err(format!(
+        "artifact path {} escapes run directory {}",
+        canonical_artifact_path.display(),
+        canonical_run_directory.display()
+      ));
+    }
+    Ok((artifact, canonical_artifact_path))
   }
 }
 

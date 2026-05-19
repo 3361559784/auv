@@ -38,7 +38,6 @@ async fn run() -> Result<(), String> {
       host: host.clone(),
       port: *port,
     };
-    println!("inspect server: http://{}:{}", config.host, config.port);
     auv_cli::inspect_server::serve(store, event_sink, config).await?;
     return Ok(());
   }

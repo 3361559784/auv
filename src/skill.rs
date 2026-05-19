@@ -10,8 +10,11 @@ use serde_json::Value;
 
 use crate::catalog::default_command_catalog;
 use crate::driver::{clear_stale_lock_file, describe_lock_owner};
-use crate::model::{AuvResult, DisturbanceClass, ExecutionTarget, InvokeRequest, InvokeResult};
+use crate::model::{
+  AuvResult, DisturbanceClass, ExecutionTarget, InvokeRequest, InvokeResult, now_millis,
+};
 use crate::runtime::Runtime;
+use crate::trace::{RunId, TraceStatusCode, new_span_id, string_attr};
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct SkillManifest {
@@ -563,6 +566,50 @@ pub(crate) fn run_skill_manifest(
   manifest: &SkillManifest,
   options: SkillRunOptions,
 ) -> AuvResult<()> {
+  run_skill_manifest_recorded(runtime, manifest, options).map(|_| ())
+}
+
+pub(crate) fn run_skill_manifest_recorded(
+  runtime: &Runtime,
+  manifest: &SkillManifest,
+  options: SkillRunOptions,
+) -> AuvResult<RunId> {
+  let mut attributes = crate::recording::Attributes::new();
+  attributes.insert(
+    "auv.recipe.id".to_string(),
+    string_attr(manifest.recipe_id.clone()),
+  );
+  let mut run = runtime.start_run(
+    crate::recording::RunSpec::new(crate::trace::RunType::Execute, "auv.execute")
+      .with_attributes(attributes),
+  )?;
+  let root = run.root_span();
+
+  match run_skill_manifest_into_run(runtime, &mut run, &root, manifest, options) {
+    Ok(()) => runtime.finish_run(
+      run,
+      crate::recording::RunFinish {
+        status_code: TraceStatusCode::Ok,
+        summary: Some(format!("Executed skill {}", manifest.recipe_id)),
+        failure: None,
+      },
+    ),
+    Err(error) => finish_failed_recorded_run(
+      runtime,
+      run,
+      error,
+      format!("Skill {} failed", manifest.recipe_id),
+    ),
+  }
+}
+
+pub(crate) fn run_skill_manifest_into_run(
+  runtime: &Runtime,
+  run: &mut crate::recording::RecordingRun,
+  parent: &crate::recording::SpanRef,
+  manifest: &SkillManifest,
+  options: SkillRunOptions,
+) -> AuvResult<()> {
   validate_skill_manifest_with_commands(manifest, runtime.list_commands())?;
   let mut variables = default_inputs(manifest)?;
   for (key, value) in options.overrides {
@@ -582,38 +629,93 @@ pub(crate) fn run_skill_manifest(
   println!("max disturbance: {}", active_max.as_str());
 
   for (index, step) in manifest.steps.iter().enumerate() {
-    let step_id = if step.id.is_empty() {
-      format!("step-{}", index + 1)
-    } else {
-      step.id.clone()
-    };
-    let request = build_invoke_request(step, &variables)?;
-    let step_max = parse_step_max(step)?;
-    let step_classes = if step.disturbance.classes.is_empty() {
-      "none".to_string()
-    } else {
-      step.disturbance.classes.join(", ")
-    };
-    print_step_preview(
-      index + 1,
-      manifest.steps.len(),
+    let step_id = step_id(step, index);
+    let step_span = run.start_span(
+      parent,
+      span_record(
+        "auv.recipe.step",
+        BTreeMap::from([("auv.recipe.step_id".to_string(), string_attr(&step_id))]),
+      ),
+    )?;
+
+    let step_result = run_skill_step_into_span(
+      runtime,
+      run,
+      &step_span,
+      manifest,
+      step,
+      index,
       &step_id,
-      &request,
-      step_max,
-      &step_classes,
+      options.dry_run,
+      &mut variables,
     );
 
-    if options.dry_run {
-      continue;
+    match step_result {
+      Ok(()) => run.finish_span(
+        &step_span,
+        crate::recording::SpanFinish {
+          status_code: TraceStatusCode::Ok,
+          summary: Some(format!("Completed recipe step {step_id}")),
+          failure: None,
+        },
+      )?,
+      Err(error) => {
+        if let Err(finish_error) = run.finish_span(
+          &step_span,
+          crate::recording::SpanFinish {
+            status_code: TraceStatusCode::Error,
+            summary: Some(format!("Recipe step {step_id} failed")),
+            failure: Some(error.clone()),
+          },
+        ) {
+          return Err(format!(
+            "{error}; additionally failed to finish failed step span: {finish_error}"
+          ));
+        }
+        return Err(error);
+      }
     }
-
-    let result = runtime.invoke(request)?;
-    print_invoke_result(&result);
-    enforce_step_expectations(&step_id, step, &result, &variables)?;
-    export_step_variables(&step_id, &result, &mut variables);
-    enforce_invoke_success(&result)?;
   }
 
+  Ok(())
+}
+
+fn run_skill_step_into_span(
+  runtime: &Runtime,
+  run: &mut crate::recording::RecordingRun,
+  step_span: &crate::recording::SpanRef,
+  manifest: &SkillManifest,
+  step: &SkillStep,
+  index: usize,
+  step_id: &str,
+  dry_run: bool,
+  variables: &mut BTreeMap<String, String>,
+) -> AuvResult<()> {
+  let request = build_invoke_request(step, variables)?;
+  let step_max = parse_step_max(step)?;
+  let step_classes = if step.disturbance.classes.is_empty() {
+    "none".to_string()
+  } else {
+    step.disturbance.classes.join(", ")
+  };
+  print_step_preview(
+    index + 1,
+    manifest.steps.len(),
+    step_id,
+    &request,
+    step_max,
+    &step_classes,
+  );
+
+  if dry_run {
+    return Ok(());
+  }
+
+  let result = runtime.invoke_in_span(run, step_span, request)?;
+  print_invoke_result(&result);
+  enforce_step_expectations(step_id, step, &result, variables)?;
+  export_step_variables(step_id, &result, variables);
+  enforce_invoke_success(&result)?;
   Ok(())
 }
 
@@ -867,9 +969,28 @@ pub(crate) fn run_skill_case_matrix_inline(
   matrix: &SkillCaseMatrix,
   options: SkillCaseRunOptions,
 ) -> AuvResult<()> {
+  run_skill_case_matrix_recorded(runtime, manifest, matrix, options).map(|_| ())
+}
+
+pub(crate) fn run_skill_case_matrix_recorded(
+  runtime: &Runtime,
+  manifest: &SkillManifest,
+  matrix: &SkillCaseMatrix,
+  options: SkillCaseRunOptions,
+) -> AuvResult<RunId> {
   validate_case_matrix_against_skill_with_commands(manifest, matrix, runtime.list_commands())?;
   let cases = select_cases(matrix, &options)?;
   let selected_case_count = cases.len();
+
+  let mut attributes = crate::recording::Attributes::new();
+  attributes.insert(
+    "auv.case_matrix.skill_id".to_string(),
+    string_attr(matrix.skill_id.clone()),
+  );
+  let mut run = runtime.start_run(
+    crate::recording::RunSpec::new(crate::trace::RunType::Validate, "auv.validate")
+      .with_attributes(attributes),
+  )?;
 
   println!("case-matrix: {}", matrix.skill_id);
   println!("version: {}", matrix.version);
@@ -881,20 +1002,73 @@ pub(crate) fn run_skill_case_matrix_inline(
   let mut failures = Vec::new();
   for case in cases {
     println!("case: {} [{}]", case.case_id, case.status);
-    match run_skill_manifest(
+    let case_span = run.start_span(
+      &run.root_span(),
+      span_record(
+        "auv.case",
+        BTreeMap::from([("auv.case.id".to_string(), string_attr(&case.case_id))]),
+      ),
+    )?;
+    let execute_span = run.start_span(
+      &case_span,
+      span_record(
+        "auv.execute",
+        BTreeMap::from([(
+          "auv.recipe.id".to_string(),
+          string_attr(manifest.recipe_id.clone()),
+        )]),
+      ),
+    )?;
+
+    let case_result = run_skill_manifest_into_run(
       runtime,
+      &mut run,
+      &execute_span,
       manifest,
       SkillRunOptions {
         dry_run: options.dry_run,
         max_disturbance: options.max_disturbance,
         overrides: case.inputs.clone(),
       },
-    ) {
-      Ok(()) => println!("case-result: ok"),
+    );
+
+    match case_result {
+      Ok(()) => {
+        run.finish_span(
+          &execute_span,
+          crate::recording::SpanFinish {
+            status_code: TraceStatusCode::Ok,
+            summary: Some(format!("Executed skill {}", manifest.recipe_id)),
+            failure: None,
+          },
+        )?;
+        run.finish_span(
+          &case_span,
+          crate::recording::SpanFinish {
+            status_code: TraceStatusCode::Ok,
+            summary: Some(format!("Case {} passed", case.case_id)),
+            failure: None,
+          },
+        )?;
+        println!("case-result: ok");
+      }
       Err(error) => {
+        let finish_error = finish_case_spans_after_error(
+          &mut run,
+          &execute_span,
+          &case_span,
+          manifest,
+          case,
+          &error,
+        );
         println!("case-result: failed");
         println!("case-error: {error}");
-        failures.push((case.case_id.clone(), error));
+        failures.push((
+          case.case_id.clone(),
+          finish_error
+            .map(|_| error.clone())
+            .unwrap_or_else(|finish_error| format!("{error}; {finish_error}")),
+        ));
       }
     }
   }
@@ -905,15 +1079,30 @@ pub(crate) fn run_skill_case_matrix_inline(
       .map(|(case_id, error)| format!("- {case_id}: {error}"))
       .collect::<Vec<_>>()
       .join("\n");
-    return Err(format!(
-      "{} of {} selected case(s) failed:\n{}",
-      failures.len(),
-      selected_case_count,
-      summary
-    ));
+    return finish_failed_recorded_run(
+      runtime,
+      run,
+      format!(
+        "{} of {} selected case(s) failed:\n{}",
+        failures.len(),
+        selected_case_count,
+        summary
+      ),
+      format!("Case matrix {} failed", matrix.skill_id),
+    );
   }
 
-  Ok(())
+  runtime.finish_run(
+    run,
+    crate::recording::RunFinish {
+      status_code: TraceStatusCode::Ok,
+      summary: Some(format!(
+        "Validated {} selected case(s) for {}",
+        selected_case_count, matrix.skill_id
+      )),
+      failure: None,
+    },
+  )
 }
 
 pub fn render_skill_case_matrix_report(
@@ -1041,6 +1230,72 @@ pub fn render_skill_case_matrix_report(
   }
 
   Ok(output)
+}
+
+fn finish_failed_recorded_run(
+  runtime: &Runtime,
+  run: crate::recording::RecordingRun,
+  error: String,
+  summary: String,
+) -> AuvResult<RunId> {
+  if let Err(finish_error) = runtime.finish_run(
+    run,
+    crate::recording::RunFinish {
+      status_code: TraceStatusCode::Error,
+      summary: Some(summary),
+      failure: Some(error.clone()),
+    },
+  ) {
+    return Err(format!(
+      "{error}; additionally failed to persist failed run: {finish_error}"
+    ));
+  }
+  Err(error)
+}
+
+fn finish_case_spans_after_error(
+  run: &mut crate::recording::RecordingRun,
+  execute_span: &crate::recording::SpanRef,
+  case_span: &crate::recording::SpanRef,
+  manifest: &SkillManifest,
+  case: &SkillCase,
+  error: &str,
+) -> AuvResult<()> {
+  run.finish_span(
+    execute_span,
+    crate::recording::SpanFinish {
+      status_code: TraceStatusCode::Error,
+      summary: Some(format!("Skill {} failed", manifest.recipe_id)),
+      failure: Some(error.to_string()),
+    },
+  )?;
+  run.finish_span(
+    case_span,
+    crate::recording::SpanFinish {
+      status_code: TraceStatusCode::Error,
+      summary: Some(format!("Case {} failed", case.case_id)),
+      failure: Some(error.to_string()),
+    },
+  )
+}
+
+fn span_record(
+  name: impl Into<String>,
+  attributes: crate::recording::Attributes,
+) -> crate::trace::SpanRecordV1Alpha1 {
+  crate::trace::SpanRecordV1Alpha1 {
+    api_version: crate::trace::SPAN_API_VERSION.to_string(),
+    span_id: new_span_id(),
+    parent_span_id: None,
+    name: name.into(),
+    state: crate::trace::TraceState::Running,
+    status_code: TraceStatusCode::Unset,
+    started_at_millis: now_millis(),
+    finished_at_millis: None,
+    attributes,
+    summary: None,
+    failure: None,
+  }
 }
 
 fn collect_skill_entries(root: &Path, entries: &mut Vec<SkillCatalogEntry>) -> AuvResult<()> {
@@ -1699,13 +1954,41 @@ mod tests {
   use serde_json::json;
 
   use super::{
-    SkillCaseMatrix, SkillCaseMatrixCatalog, SkillCatalog, SkillManifest, default_inputs,
-    export_step_variables, is_image_artifact, render_template, render_value,
-    sanitize_lock_component, validate_case_matrix_against_skill, validate_case_matrix_manifest,
-    validate_skill_manifest, validate_skill_manifest_with_commands,
+    SkillCaseMatrix, SkillCaseMatrixCatalog, SkillCatalog, SkillManifest, SkillRunOptions,
+    default_inputs, export_step_variables, is_image_artifact, render_template, render_value,
+    run_skill_case_matrix_recorded, run_skill_manifest_recorded, sanitize_lock_component,
+    validate_case_matrix_against_skill, validate_case_matrix_manifest, validate_skill_manifest,
+    validate_skill_manifest_with_commands,
   };
-  use crate::catalog::default_command_catalog;
-  use crate::model::{InvokeResult, RunStatus, now_millis};
+  use crate::catalog::{CommandCatalog, default_command_catalog};
+  use crate::driver::{Driver, DriverRegistry};
+  use crate::model::{
+    AuvResult, CommandSpec, DriverCall, DriverDescriptor, DriverResponse, InvokeResult, RunStatus,
+    now_millis,
+  };
+  use crate::store::LocalStore;
+
+  struct SkillSuccessDriver;
+
+  impl Driver for SkillSuccessDriver {
+    fn descriptor(&self) -> DriverDescriptor {
+      DriverDescriptor {
+        id: "test.skill.driver",
+        summary: "Test skill driver",
+        capabilities: &["test.skill"],
+        donor_boundary: "test-only",
+      }
+    }
+
+    fn invoke(&self, call: &DriverCall) -> AuvResult<DriverResponse> {
+      Ok(DriverResponse {
+        summary: format!("ok {}", call.operation),
+        backend: Some("test.backend".to_string()),
+        notes: vec![],
+        artifacts: vec![],
+      })
+    }
+  }
 
   #[test]
   fn default_inputs_extract_scalar_defaults() {
@@ -1773,6 +2056,88 @@ mod tests {
         .expect("image artifact should export"),
       "/tmp/evidence.png"
     );
+  }
+
+  #[test]
+  fn run_skill_manifest_records_one_execute_run() {
+    let project_root = temp_dir("recorded-skill-project");
+    let store_root = temp_dir("recorded-skill-store");
+    let runtime = skill_test_runtime(project_root.clone(), store_root.clone());
+    let manifest = two_step_manifest();
+
+    let run_id = run_skill_manifest_recorded(
+      &runtime,
+      &manifest,
+      SkillRunOptions {
+        dry_run: false,
+        max_disturbance: None,
+        overrides: BTreeMap::new(),
+      },
+    )
+    .expect("recorded skill should run");
+
+    let canonical = runtime.read_run(run_id.as_str()).expect("run should read");
+    assert_eq!(canonical.run.run_type, crate::trace::RunType::Execute);
+    assert_eq!(canonical.spans[0].name, "auv.execute");
+    assert_eq!(
+      canonical
+        .spans
+        .iter()
+        .filter(|span| span.name == "auv.recipe.step")
+        .count(),
+      2
+    );
+
+    let _ = fs::remove_dir_all(project_root);
+    let _ = fs::remove_dir_all(store_root);
+  }
+
+  #[test]
+  fn run_skill_case_matrix_records_validate_run_with_nested_execute() {
+    let project_root = temp_dir("recorded-case-project");
+    let store_root = temp_dir("recorded-case-store");
+    let runtime = skill_test_runtime(project_root.clone(), store_root.clone());
+    let manifest = two_step_manifest();
+    let matrix: SkillCaseMatrix = serde_json::from_value(json!({
+      "skill_id": "test.recorded.skill",
+      "version": "0.1.0",
+      "status": "active-case-matrix",
+      "cases": [{
+        "case_id": "baseline",
+        "status": "validated",
+        "inputs": {},
+        "disturbance": "none"
+      }]
+    }))
+    .expect("matrix should deserialize");
+
+    let run_id = run_skill_case_matrix_recorded(
+      &runtime,
+      &manifest,
+      &matrix,
+      super::SkillCaseRunOptions::default(),
+    )
+    .expect("recorded matrix should run");
+
+    let canonical = runtime.read_run(run_id.as_str()).expect("run should read");
+    assert_eq!(canonical.run.run_type, crate::trace::RunType::Validate);
+    assert_eq!(canonical.spans[0].name, "auv.validate");
+    assert!(canonical.spans.iter().any(|span| span.name == "auv.case"));
+    let execute_span = canonical
+      .spans
+      .iter()
+      .find(|span| span.name == "auv.execute")
+      .expect("execute span should exist");
+    assert!(
+      canonical
+        .spans
+        .iter()
+        .filter(|span| span.name == "auv.recipe.step")
+        .all(|span| span.parent_span_id.as_ref() == Some(&execute_span.span_id))
+    );
+
+    let _ = fs::remove_dir_all(project_root);
+    let _ = fs::remove_dir_all(store_root);
   }
 
   #[test]
@@ -2270,5 +2635,75 @@ mod tests {
     let error = validate_case_matrix_against_skill(&manifest, &matrix)
       .expect_err("mismatched skill id should fail");
     assert!(error.contains("does not match skill"));
+  }
+
+  fn two_step_manifest() -> SkillManifest {
+    serde_json::from_value(json!({
+      "recipe_id": "test.recorded.skill",
+      "version": "0.1.0",
+      "status": "experimental-recipe",
+      "platform": "macOS",
+      "target_app": { "bundle_id": "fixture.app", "display_mode": "fixture" },
+      "strategy": {
+        "family": "native-text",
+        "grounding": "ax-text",
+        "activation": "pointer-focus-clipboard-paste",
+        "verificationContract": "verifyAxText"
+      },
+      "objective": "test recorded skill execution",
+      "disturbance_policy": {
+        "max_disturbance": "none",
+        "declared_classes": ["none"]
+      },
+      "steps": [{
+        "id": "first",
+        "command_id": "test.skill.invoke",
+        "disturbance": {
+          "classes": ["none"],
+          "max": "none"
+        },
+        "expect": {
+          "output_must_contain": ["ok"]
+        }
+      }, {
+        "id": "second",
+        "command_id": "test.skill.invoke",
+        "disturbance": {
+          "classes": ["none"],
+          "max": "none"
+        },
+        "expect": {
+          "output_must_contain": ["ok"]
+        }
+      }],
+      "verification": {
+        "expected_signals": ["signal"],
+        "success_criteria": ["criteria"]
+      }
+    }))
+    .expect("manifest should deserialize")
+  }
+
+  fn skill_test_runtime(project_root: PathBuf, store_root: PathBuf) -> crate::runtime::Runtime {
+    crate::runtime::Runtime::new(
+      project_root,
+      CommandCatalog::new(vec![CommandSpec {
+        id: "test.skill.invoke",
+        summary: "Test skill invoke",
+        driver_id: "test.skill.driver",
+        operation: "test_operation",
+        disturbance_classes: &[crate::model::DisturbanceClass::None],
+        max_disturbance: crate::model::DisturbanceClass::None,
+      }]),
+      DriverRegistry::new(vec![Box::new(SkillSuccessDriver)]),
+      LocalStore::new(store_root).expect("store should initialize"),
+    )
+  }
+
+  fn temp_dir(label: &str) -> PathBuf {
+    let path = env::temp_dir().join(format!("auv-{}-{}", label, now_millis()));
+    let _ = fs::remove_dir_all(&path);
+    fs::create_dir_all(&path).expect("temp dir should be creatable");
+    path
   }
 }

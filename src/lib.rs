@@ -6,6 +6,7 @@ pub mod model;
 pub mod runtime;
 pub mod skill;
 pub mod store;
+pub mod trace;
 
 use std::path::PathBuf;
 

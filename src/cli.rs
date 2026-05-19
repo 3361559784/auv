@@ -25,6 +25,10 @@ pub enum CliCommand {
   Inspect {
     run_id: String,
   },
+  InspectServe {
+    host: String,
+    port: u16,
+  },
   SkillList,
   SkillShow {
     query: String,
@@ -101,6 +105,7 @@ USAGE
   auv-cli app validate <distill-dir-or-distillation-json>
   auv-cli invoke <command-id> [--target <application-id>] [--label <text>]
   auv-cli inspect <run-id>
+  auv-cli inspect serve [--host <host>] [--port <port>]
   auv-cli skill list
   auv-cli skill show <skill-id-or-path>
   auv-cli skill bundle list
@@ -227,6 +232,16 @@ fn parse_app_distill(arguments: &[String]) -> AuvResult<CliCommand> {
 }
 
 fn parse_inspect(arguments: &[String]) -> AuvResult<CliCommand> {
+  if arguments.len() < 2 {
+    return Err(
+      "usage: auv-cli inspect <run-id>|serve [--host <host>] [--port <port>]".to_string(),
+    );
+  }
+
+  if arguments[1] == "serve" {
+    return parse_inspect_serve(arguments);
+  }
+
   if arguments.len() != 2 {
     return Err("usage: auv-cli inspect <run-id>".to_string());
   }
@@ -234,6 +249,37 @@ fn parse_inspect(arguments: &[String]) -> AuvResult<CliCommand> {
   Ok(CliCommand::Inspect {
     run_id: arguments[1].clone(),
   })
+}
+
+fn parse_inspect_serve(arguments: &[String]) -> AuvResult<CliCommand> {
+  let mut host = auv_cli::inspect_server::DEFAULT_INSPECT_HOST.to_string();
+  let mut port = auv_cli::inspect_server::DEFAULT_INSPECT_PORT;
+  let mut index = 2;
+  while index < arguments.len() {
+    match arguments[index].as_str() {
+      "--host" => {
+        if index + 1 >= arguments.len() {
+          return Err("--host requires a value".to_string());
+        }
+        host = arguments[index + 1].clone();
+        index += 2;
+      }
+      "--port" => {
+        if index + 1 >= arguments.len() {
+          return Err("--port requires a value".to_string());
+        }
+        port = arguments[index + 1]
+          .parse::<u16>()
+          .map_err(|error| format!("invalid --port value: {error}"))?;
+        index += 2;
+      }
+      other => {
+        return Err(format!("unexpected inspect-serve argument {other}"));
+      }
+    }
+  }
+
+  Ok(CliCommand::InspectServe { host, port })
 }
 
 fn parse_invoke(arguments: &[String]) -> AuvResult<CliCommand> {
@@ -589,6 +635,27 @@ mod tests {
     match command {
       CliCommand::AppValidate { query } => {
         assert_eq!(query, "/tmp/distill");
+      }
+      other => panic!("unexpected command: {other:?}"),
+    }
+  }
+
+  #[test]
+  fn parse_inspect_serve_command() {
+    let command = parse_cli(&[
+      "inspect".to_string(),
+      "serve".to_string(),
+      "--host".to_string(),
+      "0.0.0.0".to_string(),
+      "--port".to_string(),
+      "0".to_string(),
+    ])
+    .expect("inspect serve command should parse");
+
+    match command {
+      CliCommand::InspectServe { host, port } => {
+        assert_eq!(host, "0.0.0.0");
+        assert_eq!(port, 0);
       }
       other => panic!("unexpected command: {other:?}"),
     }

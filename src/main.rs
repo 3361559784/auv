@@ -3,9 +3,9 @@ mod cli;
 use std::env;
 use std::path::PathBuf;
 use std::process;
+use std::sync::Arc;
 
 use auv_cli::app::{analyze_app_probe, distill_app_analysis, probe_app, validate_app_distillation};
-use auv_cli::build_default_runtime;
 use auv_cli::bundle::{
   SkillBundleCatalog, export_bundle, render_bundle_package_coverage, verify_bundle,
   verify_exported_bundle_package_standalone,
@@ -15,20 +15,34 @@ use auv_cli::skill::{
   SkillCaseMatrixCatalog, SkillCatalog, render_skill_case_matrix_report, run_skill,
   run_skill_case_matrix,
 };
+use auv_cli::{build_default_runtime, build_default_store};
 use cli::{CliCommand, help_text, parse_cli};
 
-fn main() {
-  if let Err(error) = run() {
+#[tokio::main]
+async fn main() {
+  if let Err(error) = run().await {
     eprintln!("error: {error}");
     process::exit(1);
   }
 }
 
-fn run() -> Result<(), String> {
+async fn run() -> Result<(), String> {
   let arguments = env::args().skip(1).collect::<Vec<_>>();
   let command = parse_cli(&arguments)?;
   let project_root =
     env::current_dir().map_err(|error| format!("failed to resolve current directory: {error}"))?;
+  if let CliCommand::InspectServe { host, port } = &command {
+    let store = build_default_store(project_root)?;
+    let event_sink = Arc::new(auv_cli::recording::BroadcastRunEventSink::new(1024));
+    let config = auv_cli::inspect_server::InspectServeConfig {
+      host: host.clone(),
+      port: *port,
+    };
+    println!("inspect server: http://{}:{}", config.host, config.port);
+    auv_cli::inspect_server::serve(store, event_sink, config).await?;
+    return Ok(());
+  }
+
   let runtime = build_default_runtime(project_root.clone())?;
   let runtime_version = env!("CARGO_PKG_VERSION").to_string();
   let skill_catalog = SkillCatalog::discover(&project_root)?;
@@ -130,6 +144,9 @@ fn run() -> Result<(), String> {
     }
     CliCommand::Inspect { run_id } => {
       print!("{}", runtime.inspect(&run_id)?);
+    }
+    CliCommand::InspectServe { .. } => {
+      unreachable!("inspect serve is handled before runtime setup")
     }
     CliCommand::SkillList => {
       for entry in skill_catalog.entries() {

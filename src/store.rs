@@ -10,6 +10,7 @@ use crate::trace::{
   SpanRecordV1Alpha1,
 };
 
+#[derive(Clone, Debug, serde::Serialize)]
 pub struct CanonicalRun {
   pub run: RunRecordV1Alpha1,
   pub spans: Vec<SpanRecordV1Alpha1>,
@@ -236,6 +237,32 @@ impl LocalStore {
     }
     runs.sort_by_key(|run| run.started_at_millis);
     Ok(runs)
+  }
+
+  pub fn artifact_file(
+    &self,
+    run_id: &str,
+    artifact_id: &str,
+  ) -> AuvResult<(ArtifactRecordV1Alpha1, PathBuf)> {
+    let canonical = self.read_run(run_id)?;
+    let artifact = canonical
+      .artifacts
+      .into_iter()
+      .find(|artifact| artifact.artifact_id.as_str() == artifact_id)
+      .ok_or_else(|| format!("artifact {artifact_id} not found in run {run_id}"))?;
+    let artifact_path = artifact.path.clone();
+    let relative_path = Path::new(&artifact_path);
+    if relative_path.is_absolute()
+      || relative_path
+        .components()
+        .any(|component| !matches!(component, std::path::Component::Normal(_)))
+    {
+      return Err(format!(
+        "invalid artifact path {:?} in run {run_id}",
+        artifact.path
+      ));
+    }
+    Ok((artifact, self.run_dir(run_id)?.join(relative_path)))
   }
 }
 

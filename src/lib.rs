@@ -3,6 +3,7 @@ pub mod bundle;
 pub mod catalog;
 pub mod driver;
 pub mod inspect;
+pub mod inspect_server;
 pub mod model;
 pub mod recording;
 pub mod runtime;
@@ -19,8 +20,12 @@ use runtime::Runtime;
 use store::LocalStore;
 
 pub fn build_default_runtime(project_root: PathBuf) -> AuvResult<Runtime> {
-  let store = LocalStore::new(project_root.join(".auv"))?;
+  let store = build_default_store(project_root.clone())?;
   let commands = default_command_catalog();
   let drivers = default_driver_registry();
   Ok(Runtime::new(project_root, commands, drivers, store))
+}
+
+pub fn build_default_store(project_root: PathBuf) -> AuvResult<LocalStore> {
+  LocalStore::new(project_root.join(".auv"))
 }

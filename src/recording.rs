@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
+use tokio::sync::broadcast;
+
 use crate::model::{AuvResult, now_millis};
 use crate::store::CanonicalRun;
 use crate::trace::{
@@ -21,11 +23,11 @@ mod tests {
   use std::sync::Arc;
 
   use crate::trace::{
-    RUN_API_VERSION, RunId, RunRecordV1Alpha1, RunType, SPAN_API_VERSION, SpanId,
-    SpanRecordV1Alpha1, TraceId, TraceState, TraceStatusCode,
+    EVENT_API_VERSION, EventRecordV1Alpha1, RUN_API_VERSION, RunId, RunRecordV1Alpha1, RunType,
+    SPAN_API_VERSION, SpanId, SpanRecordV1Alpha1, TraceId, TraceState, TraceStatusCode,
   };
 
-  use super::{MemoryRunEventSink, RecordingRun, SpanFinish, SpanRef};
+  use super::{BroadcastRunEventSink, MemoryRunEventSink, RecordingRun, SpanFinish, SpanRef};
 
   #[test]
   fn start_span_rejects_parent_from_another_run() {
@@ -37,6 +39,63 @@ mod tests {
       .expect_err("foreign parent span should be rejected");
 
     assert!(error.contains("does not belong to run"));
+  }
+
+  #[test]
+  fn broadcast_sink_replays_events_to_subscribers() {
+    let sink = BroadcastRunEventSink::new(16);
+    let mut receiver = sink.subscribe();
+    let mut run = RecordingRun::new(
+      RunRecordV1Alpha1 {
+        api_version: RUN_API_VERSION.to_string(),
+        run_id: RunId::new("run_broadcast_test"),
+        trace_id: TraceId::new("00000000000000000000000000000001"),
+        run_type: RunType::Command,
+        state: TraceState::Running,
+        status_code: TraceStatusCode::Unset,
+        started_at_millis: 100,
+        finished_at_millis: None,
+        root_span_id: SpanId::new("0000000000000001"),
+        attributes: Default::default(),
+        summary: None,
+        failure: None,
+      },
+      SpanRecordV1Alpha1 {
+        api_version: SPAN_API_VERSION.to_string(),
+        span_id: SpanId::new("0000000000000001"),
+        parent_span_id: None,
+        name: "auv.command".to_string(),
+        state: TraceState::Running,
+        status_code: TraceStatusCode::Unset,
+        started_at_millis: 100,
+        finished_at_millis: None,
+        attributes: Default::default(),
+        summary: None,
+        failure: None,
+      },
+      Arc::new(sink),
+    );
+
+    run.record_event(EventRecordV1Alpha1 {
+      api_version: EVENT_API_VERSION.to_string(),
+      event_id: crate::trace::EventId::new("event_broadcast_test"),
+      span_id: SpanId::new("0000000000000001"),
+      name: "broadcast.event".to_string(),
+      timestamp_millis: 101,
+      attributes: Default::default(),
+      message: None,
+      artifact_ids: Vec::new(),
+    });
+
+    let first = receiver.try_recv().expect("root span should broadcast");
+    assert!(matches!(first, super::RunStreamEvent::SpanStarted { .. }));
+    let second = receiver
+      .try_recv()
+      .expect("recorded event should broadcast");
+    assert!(matches!(
+      second,
+      super::RunStreamEvent::EventAppended { event, .. } if event.name == "broadcast.event"
+    ));
   }
 
   #[test]
@@ -224,6 +283,28 @@ impl RunEventSink for MemoryRunEventSink {
     if let Ok(mut events) = self.events.lock() {
       events.push(event);
     }
+  }
+}
+
+#[derive(Clone)]
+pub struct BroadcastRunEventSink {
+  sender: broadcast::Sender<RunStreamEvent>,
+}
+
+impl BroadcastRunEventSink {
+  pub fn new(capacity: usize) -> Self {
+    let (sender, _) = broadcast::channel(capacity);
+    Self { sender }
+  }
+
+  pub fn subscribe(&self) -> broadcast::Receiver<RunStreamEvent> {
+    self.sender.subscribe()
+  }
+}
+
+impl RunEventSink for BroadcastRunEventSink {
+  fn on_event(&self, event: RunStreamEvent) {
+    let _ = self.sender.send(event);
   }
 }
 

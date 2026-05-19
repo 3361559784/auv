@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
-use crate::model::now_millis;
+use crate::model::{AuvResult, now_millis};
 use crate::store::CanonicalRun;
 use crate::trace::{
   ArtifactId, ArtifactRecordV1Alpha1, EventId, EventRecordV1Alpha1, RunId, RunRecordV1Alpha1,
@@ -14,6 +14,99 @@ pub struct RunSpec {
   pub run_type: RunType,
   pub root_span_name: String,
   pub attributes: Attributes,
+}
+
+#[cfg(test)]
+mod tests {
+  use std::sync::Arc;
+
+  use crate::trace::{
+    RUN_API_VERSION, RunId, RunRecordV1Alpha1, RunType, SPAN_API_VERSION, SpanId,
+    SpanRecordV1Alpha1, TraceId, TraceState, TraceStatusCode,
+  };
+
+  use super::{MemoryRunEventSink, RecordingRun, SpanFinish, SpanRef};
+
+  #[test]
+  fn start_span_rejects_parent_from_another_run() {
+    let mut run = recording_run("run_invalid_parent");
+    let foreign_parent = SpanRef::new(SpanId::new("0000000000009999"));
+
+    let error = run
+      .start_span(&foreign_parent, span_record("auv.invalid.child"))
+      .expect_err("foreign parent span should be rejected");
+
+    assert!(error.contains("does not belong to run"));
+  }
+
+  #[test]
+  fn finish_span_rejects_span_from_another_run() {
+    let mut run = recording_run("run_invalid_finish");
+    let foreign_span = SpanRef::new(SpanId::new("0000000000009998"));
+
+    let error = run
+      .finish_span(
+        &foreign_span,
+        SpanFinish {
+          status_code: TraceStatusCode::Ok,
+          summary: None,
+          failure: None,
+        },
+      )
+      .expect_err("foreign span should be rejected");
+
+    assert!(error.contains("does not belong to run"));
+  }
+
+  fn recording_run(run_id: &str) -> RecordingRun {
+    let root_span_id = SpanId::new("0000000000000001");
+    RecordingRun::new(
+      RunRecordV1Alpha1 {
+        api_version: RUN_API_VERSION.to_string(),
+        run_id: RunId::new(run_id),
+        trace_id: TraceId::new("00000000000000000000000000000001"),
+        run_type: RunType::Command,
+        state: TraceState::Running,
+        status_code: TraceStatusCode::Unset,
+        started_at_millis: 100,
+        finished_at_millis: None,
+        root_span_id: root_span_id.clone(),
+        attributes: Default::default(),
+        summary: None,
+        failure: None,
+      },
+      SpanRecordV1Alpha1 {
+        api_version: SPAN_API_VERSION.to_string(),
+        span_id: root_span_id,
+        parent_span_id: None,
+        name: "auv.command".to_string(),
+        state: TraceState::Running,
+        status_code: TraceStatusCode::Unset,
+        started_at_millis: 100,
+        finished_at_millis: None,
+        attributes: Default::default(),
+        summary: None,
+        failure: None,
+      },
+      Arc::new(MemoryRunEventSink::new()),
+    )
+  }
+
+  fn span_record(name: &str) -> SpanRecordV1Alpha1 {
+    SpanRecordV1Alpha1 {
+      api_version: SPAN_API_VERSION.to_string(),
+      span_id: SpanId::new("0000000000000002"),
+      parent_span_id: None,
+      name: name.to_string(),
+      state: TraceState::Running,
+      status_code: TraceStatusCode::Unset,
+      started_at_millis: 101,
+      finished_at_millis: None,
+      attributes: Default::default(),
+      summary: None,
+      failure: None,
+    }
+  }
 }
 
 impl RunSpec {
@@ -37,7 +130,7 @@ pub struct SpanRef {
 }
 
 impl SpanRef {
-  pub fn new(span_id: SpanId) -> Self {
+  pub(crate) fn new(span_id: SpanId) -> Self {
     Self { span_id }
   }
 
@@ -173,7 +266,24 @@ impl RecordingRun {
     SpanRef::new(self.run.root_span_id.clone())
   }
 
-  pub fn start_span(&mut self, parent: &SpanRef, mut span: SpanRecordV1Alpha1) -> SpanRef {
+  pub fn start_span(
+    &mut self,
+    parent: &SpanRef,
+    mut span: SpanRecordV1Alpha1,
+  ) -> AuvResult<SpanRef> {
+    if !self.has_span(parent.id()) {
+      return Err(format!(
+        "parent span {} does not belong to run {}",
+        parent.id(),
+        self.run.run_id
+      ));
+    }
+    if self.has_span(&span.span_id) {
+      return Err(format!(
+        "span {} already belongs to run {}",
+        span.span_id, self.run.run_id
+      ));
+    }
     span.parent_span_id = Some(parent.id().clone());
     let span_ref = SpanRef::new(span.span_id.clone());
     self.event_sink.on_event(RunStreamEvent::SpanStarted {
@@ -181,17 +291,17 @@ impl RecordingRun {
       span: span.clone(),
     });
     self.spans.push(span);
-    span_ref
+    Ok(span_ref)
   }
 
-  pub fn finish_span(&mut self, span: &SpanRef, finish: SpanFinish) {
+  pub fn finish_span(&mut self, span: &SpanRef, finish: SpanFinish) -> AuvResult<()> {
     if let Some(record) = self
       .spans
       .iter_mut()
       .find(|record| record.span_id == *span.id())
     {
       if record.state == TraceState::Ended {
-        return;
+        return Ok(());
       }
       record.state = TraceState::Ended;
       record.status_code = finish.status_code;
@@ -202,7 +312,13 @@ impl RecordingRun {
         run_id: self.run.run_id.clone(),
         span: record.clone(),
       });
+      return Ok(());
     }
+    Err(format!(
+      "span {} does not belong to run {}",
+      span.id(),
+      self.run.run_id
+    ))
   }
 
   pub fn record_event(&mut self, event: EventRecordV1Alpha1) -> EventId {
@@ -256,5 +372,9 @@ impl RecordingRun {
         artifacts: self.artifacts,
       },
     }
+  }
+
+  fn has_span(&self, span_id: &SpanId) -> bool {
+    self.spans.iter().any(|span| span.span_id == *span_id)
   }
 }

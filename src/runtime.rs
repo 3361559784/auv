@@ -129,7 +129,26 @@ impl Runtime {
       "auv.command",
     ))?;
     let root = run.root_span();
-    let result = self.invoke_in_span(&mut run, &root, request)?;
+    let result = match self.invoke_in_span(&mut run, &root, request) {
+      Ok(result) => result,
+      Err(error) => {
+        if let Err(finish_error) = self.finish_run(
+          run,
+          crate::recording::RunFinish {
+            status_code: TraceStatusCode::Error,
+            summary: Some(format!(
+              "Invocation failed. Inspect the run for details: {error}"
+            )),
+            failure: Some(error.clone()),
+          },
+        ) {
+          return Err(format!(
+            "{error}; additionally failed to persist failed run: {finish_error}"
+          ));
+        }
+        return Err(error);
+      }
+    };
     let status_code = if result.status == RunStatus::Completed {
       TraceStatusCode::Ok
     } else {
@@ -176,7 +195,7 @@ impl Runtime {
           request.target.application_id.as_deref(),
         ),
       ),
-    );
+    )?;
     record_event(
       run,
       command_span.id(),
@@ -205,7 +224,7 @@ impl Runtime {
           call.target.application_id.as_deref(),
         ),
       ),
-    );
+    )?;
     record_event(
       run,
       driver_span.id(),
@@ -235,16 +254,22 @@ impl Runtime {
 
         let mut artifact_failure = None;
         for (index, artifact) in response.artifacts.into_iter().enumerate() {
-          match self
-            .store
-            .stage_artifact(run.id(), index, artifact, driver_span.id(), None)
-          {
+          let event_id = new_event_id();
+          match self.store.stage_artifact(
+            run.id(),
+            index,
+            artifact,
+            driver_span.id(),
+            Some(event_id.clone()),
+          ) {
             Ok(stored_artifact) => {
-              record_event(
+              record_event_with_id(
                 run,
                 driver_span.id(),
+                event_id,
                 "artifact.captured",
                 Some(render_artifact_event(&stored_artifact)),
+                vec![stored_artifact.artifact_id.clone()],
               );
               artifact_paths.push(PathBuf::from(&stored_artifact.path));
               run.record_artifact(stored_artifact);
@@ -310,7 +335,7 @@ impl Runtime {
         summary: Some(output_summary.clone()),
         failure: span_failure.clone(),
       },
-    );
+    )?;
     run.finish_span(
       &command_span,
       crate::recording::SpanFinish {
@@ -318,7 +343,7 @@ impl Runtime {
         summary: Some(output_summary.clone()),
         failure: span_failure,
       },
-    );
+    )?;
 
     Ok(InvokeResult {
       run_id: run.id().to_string(),
@@ -374,15 +399,26 @@ fn record_event(
   name: &str,
   message: Option<String>,
 ) {
+  record_event_with_id(run, span_id, new_event_id(), name, message, Vec::new());
+}
+
+fn record_event_with_id(
+  run: &mut crate::recording::RecordingRun,
+  span_id: &crate::trace::SpanId,
+  event_id: crate::trace::EventId,
+  name: &str,
+  message: Option<String>,
+  artifact_ids: Vec<crate::trace::ArtifactId>,
+) {
   run.record_event(EventRecordV1Alpha1 {
     api_version: EVENT_API_VERSION.to_string(),
-    event_id: new_event_id(),
+    event_id,
     span_id: span_id.clone(),
     name: name.to_string(),
     timestamp_millis: now_millis(),
     attributes: Default::default(),
     message,
-    artifact_ids: Vec::new(),
+    artifact_ids,
   });
 }
 
@@ -453,6 +489,7 @@ mod tests {
   use std::env;
   use std::fs;
   use std::path::PathBuf;
+  use std::sync::Arc;
 
   use super::Runtime;
   use crate::catalog::CommandCatalog;
@@ -461,9 +498,11 @@ mod tests {
     AuvResult, CommandSpec, DriverCall, DriverDescriptor, DriverResponse, ExecutionTarget,
     InvokeRequest, ProducedArtifact, RunStatus, now_millis,
   };
+  use crate::recording::{MemoryRunEventSink, RunStreamEvent};
   use crate::store::LocalStore;
 
   struct ArtifactFailureDriver;
+  struct ArtifactSuccessDriver;
   struct SuccessDriver;
 
   impl Driver for ArtifactFailureDriver {
@@ -486,6 +525,35 @@ mod tests {
           source_path: PathBuf::from("/definitely/missing/artifact.txt"),
           preferred_name: "artifact.txt".to_string(),
           note: Some("missing".to_string()),
+        }],
+      })
+    }
+  }
+
+  impl Driver for ArtifactSuccessDriver {
+    fn descriptor(&self) -> DriverDescriptor {
+      DriverDescriptor {
+        id: "test.driver",
+        summary: "Test driver",
+        capabilities: &["test.artifact-success"],
+        donor_boundary: "test-only",
+      }
+    }
+
+    fn invoke(&self, call: &DriverCall) -> AuvResult<DriverResponse> {
+      let artifact_path = call
+        .working_directory
+        .join(format!("auv-artifact-{}.txt", now_millis()));
+      fs::write(&artifact_path, "artifact body").expect("artifact source should be writable");
+      Ok(DriverResponse {
+        summary: "driver captured artifact".to_string(),
+        backend: Some("test.backend".to_string()),
+        notes: vec![],
+        artifacts: vec![ProducedArtifact {
+          kind: "text".to_string(),
+          source_path: artifact_path,
+          preferred_name: "artifact.txt".to_string(),
+          note: Some("captured".to_string()),
         }],
       })
     }
@@ -561,6 +629,102 @@ mod tests {
         .iter()
         .any(|span| span.parent_span_id.as_ref() == Some(parent.id()))
     );
+
+    let _ = fs::remove_dir_all(project_root);
+    let _ = fs::remove_dir_all(store_root);
+  }
+
+  #[test]
+  fn invoke_unknown_command_finishes_failed_implicit_run() {
+    let project_root = temp_dir("runtime-unknown-command-project");
+    let store_root = temp_dir("runtime-unknown-command-store");
+    let event_sink = Arc::new(MemoryRunEventSink::new());
+    let runtime = runtime_with_success_driver(project_root.clone(), store_root.clone())
+      .with_event_sink(event_sink.clone());
+
+    let error = runtime
+      .invoke(InvokeRequest {
+        command_id: "test.missing".to_string(),
+        target: ExecutionTarget::default(),
+        inputs: BTreeMap::new(),
+      })
+      .expect_err("unknown command should fail");
+
+    assert!(error.contains("unknown command"));
+    let run_id = event_sink
+      .drain_for_test()
+      .into_iter()
+      .find_map(|event| match event {
+        RunStreamEvent::RunFinished { run, .. } => Some(run.run_id),
+        _ => None,
+      })
+      .expect("failed implicit run should finish");
+    let canonical = runtime.read_run(run_id.as_str()).expect("run should read");
+    assert_eq!(
+      canonical.run.status_code,
+      crate::trace::TraceStatusCode::Error
+    );
+    assert!(
+      canonical
+        .run
+        .failure
+        .expect("failure")
+        .message
+        .contains("unknown command")
+    );
+    assert!(
+      canonical
+        .spans
+        .iter()
+        .all(|span| span.state == crate::trace::TraceState::Ended)
+    );
+
+    let _ = fs::remove_dir_all(project_root);
+    let _ = fs::remove_dir_all(store_root);
+  }
+
+  #[test]
+  fn invoke_links_artifact_capture_event_to_artifact_record() {
+    let project_root = temp_dir("runtime-artifact-link-project");
+    let store_root = temp_dir("runtime-artifact-link-store");
+    let runtime = Runtime::new(
+      project_root.clone(),
+      CommandCatalog::new(vec![CommandSpec {
+        id: "test.invoke",
+        summary: "Test invoke",
+        driver_id: "test.driver",
+        operation: "test_operation",
+        disturbance_classes: &[crate::model::DisturbanceClass::None],
+        max_disturbance: crate::model::DisturbanceClass::None,
+      }]),
+      DriverRegistry::new(vec![Box::new(ArtifactSuccessDriver)]),
+      LocalStore::new(store_root.clone()).expect("store should initialize"),
+    );
+
+    let result = runtime
+      .invoke(InvokeRequest {
+        command_id: "test.invoke".to_string(),
+        target: ExecutionTarget::default(),
+        inputs: BTreeMap::new(),
+      })
+      .expect("artifact capture should succeed");
+
+    let canonical = runtime.read_run(&result.run_id).expect("run should read");
+    let artifact = canonical
+      .artifacts
+      .first()
+      .expect("artifact should be recorded");
+    let event_id = artifact
+      .event_id
+      .as_ref()
+      .expect("artifact should point to event");
+    let event = canonical
+      .events
+      .iter()
+      .find(|event| event.event_id == *event_id)
+      .expect("artifact event should be recorded");
+    assert_eq!(event.name, "artifact.captured");
+    assert_eq!(event.artifact_ids, vec![artifact.artifact_id.clone()]);
 
     let _ = fs::remove_dir_all(project_root);
     let _ = fs::remove_dir_all(store_root);

@@ -1892,21 +1892,22 @@ fn enforce_step_expectations(
   result: &InvokeResult,
   variables: &BTreeMap<String, String>,
 ) -> AuvResult<()> {
+  let available_markers = render_signal_markers(&result.signals);
   for needle in &step.expect.output_must_contain {
     let rendered = render_template(needle, variables);
-    if !result.output_summary.contains(&rendered) {
+    if !available_markers.contains(&rendered) {
       return Err(format!(
-        "step {step_id:?} output did not contain required marker {rendered:?}: {}",
-        result.output_summary,
+        "step {step_id:?} signals did not contain required marker {rendered:?}: {}",
+        render_signal_marker_summary(&available_markers),
       ));
     }
   }
   for needle in &step.expect.output_must_not_contain {
     let rendered = render_template(needle, variables);
-    if result.output_summary.contains(&rendered) {
+    if available_markers.contains(&rendered) {
       return Err(format!(
-        "step {step_id:?} output contained forbidden marker {rendered:?}: {}",
-        result.output_summary,
+        "step {step_id:?} signals contained forbidden marker {rendered:?}: {}",
+        render_signal_marker_summary(&available_markers),
       ));
     }
   }
@@ -1920,6 +1921,21 @@ fn enforce_step_expectations(
     ));
   }
   Ok(())
+}
+
+fn render_signal_markers(signals: &BTreeMap<String, String>) -> Vec<String> {
+  signals
+    .iter()
+    .map(|(key, value)| format!("{key}={value}"))
+    .collect()
+}
+
+fn render_signal_marker_summary(markers: &[String]) -> String {
+  if markers.is_empty() {
+    "no structured signals".to_string()
+  } else {
+    markers.join(", ")
+  }
 }
 
 fn sanitize_step_component(raw: &str) -> String {
@@ -1982,10 +1998,10 @@ mod tests {
 
   use super::{
     SkillCaseMatrix, SkillCaseMatrixCatalog, SkillCatalog, SkillManifest, SkillRunOptions,
-    default_inputs, export_step_variables, is_image_artifact, render_template, render_value,
-    run_skill_case_matrix_recorded, run_skill_manifest_recorded, sanitize_lock_component,
-    validate_case_matrix_against_skill, validate_case_matrix_manifest, validate_skill_manifest,
-    validate_skill_manifest_with_commands,
+    SkillStep, default_inputs, enforce_step_expectations, export_step_variables, is_image_artifact,
+    render_template, render_value, run_skill_case_matrix_recorded, run_skill_manifest_recorded,
+    sanitize_lock_component, validate_case_matrix_against_skill, validate_case_matrix_manifest,
+    validate_skill_manifest, validate_skill_manifest_with_commands,
   };
   use crate::catalog::{CommandCatalog, default_command_catalog};
   use crate::driver::{Driver, DriverRegistry};
@@ -2011,7 +2027,8 @@ mod tests {
       Ok(DriverResponse {
         summary: format!("ok {}", call.operation),
         backend: Some("test.backend".to_string()),
-        notes: vec![],
+        signals: BTreeMap::from([("outcome".to_string(), "ok".to_string())]),
+        notes: vec!["outcome=ok".to_string()],
         artifacts: vec![],
       })
     }
@@ -2068,6 +2085,7 @@ mod tests {
         run_id: "run_1".to_string(),
         status: RunStatus::Completed,
         output_summary: "ok".to_string(),
+        signals: BTreeMap::new(),
         artifact_paths: vec![
           PathBuf::from("/tmp/report.txt"),
           PathBuf::from("/tmp/evidence.png"),
@@ -2083,6 +2101,81 @@ mod tests {
         .expect("image artifact should export"),
       "/tmp/evidence.png"
     );
+  }
+
+  #[test]
+  fn enforce_step_expectations_reads_structured_signals() {
+    let step: SkillStep = serde_json::from_value(json!({
+      "id": "verify-text",
+      "command_id": "test.skill.invoke",
+      "disturbance": {
+        "classes": ["none"],
+        "max": "none"
+      },
+      "expect": {
+        "output_must_contain": [
+          "targetText=${target_text}",
+          "matchedRole=AXTextArea"
+        ],
+        "output_must_not_contain": [
+          "timedOut=true"
+        ],
+        "artifact_count_at_least": 1
+      }
+    }))
+    .expect("step should deserialize");
+    let result = InvokeResult {
+      run_id: "run_2".to_string(),
+      status: RunStatus::Completed,
+      output_summary: "human summary only".to_string(),
+      signals: BTreeMap::from([
+        ("targetText".to_string(), "hello".to_string()),
+        ("matchedRole".to_string(), "AXTextArea".to_string()),
+        ("timedOut".to_string(), "false".to_string()),
+      ]),
+      artifact_paths: vec![PathBuf::from("/tmp/evidence.txt")],
+      failure_message: None,
+    };
+
+    enforce_step_expectations(
+      "verify-text",
+      &step,
+      &result,
+      &BTreeMap::from([("target_text".to_string(), "hello".to_string())]),
+    )
+    .expect("signals should satisfy expectation");
+  }
+
+  #[test]
+  fn enforce_step_expectations_no_longer_falls_back_to_output_summary() {
+    let step: SkillStep = serde_json::from_value(json!({
+      "id": "verify-text",
+      "command_id": "test.skill.invoke",
+      "disturbance": {
+        "classes": ["none"],
+        "max": "none"
+      },
+      "expect": {
+        "output_must_contain": ["targetText=hello"]
+      }
+    }))
+    .expect("step should deserialize");
+    let error = enforce_step_expectations(
+      "verify-text",
+      &step,
+      &InvokeResult {
+        run_id: "run_3".to_string(),
+        status: RunStatus::Completed,
+        output_summary: "targetText=hello".to_string(),
+        signals: BTreeMap::new(),
+        artifact_paths: vec![],
+        failure_message: None,
+      },
+      &BTreeMap::new(),
+    )
+    .expect_err("summary-only markers should no longer pass");
+
+    assert!(error.contains("no structured signals"));
   }
 
   #[test]
@@ -2690,7 +2783,7 @@ mod tests {
           "max": "none"
         },
         "expect": {
-          "output_must_contain": ["ok"]
+          "output_must_contain": ["outcome=ok"]
         }
       }, {
         "id": "second",
@@ -2700,7 +2793,7 @@ mod tests {
           "max": "none"
         },
         "expect": {
-          "output_must_contain": ["ok"]
+          "output_must_contain": ["outcome=ok"]
         }
       }],
       "verification": {

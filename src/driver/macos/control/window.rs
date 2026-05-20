@@ -94,6 +94,7 @@ pub(crate) fn click_window_point(call: &DriverCall) -> AuvResult<DriverResponse>
       button_label, app
     ),
     backend: Some("macos.observe.window-relative-click".to_string()),
+    signals: std::collections::BTreeMap::new(),
     notes,
     artifacts: vec![artifact],
   })

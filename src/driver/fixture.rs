@@ -38,6 +38,7 @@ impl Driver for FixtureObserveDriver {
         target, label
       ),
       backend: Some("fixture.static".to_string()),
+      signals: std::collections::BTreeMap::new(),
       notes: vec![
         "This command does not touch the real desktop.".to_string(),
         "Use it to verify that implicit run creation and inspect output stay stable.".to_string(),

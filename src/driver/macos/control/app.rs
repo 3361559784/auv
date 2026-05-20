@@ -27,6 +27,7 @@ pub(crate) fn activate_app(call: &DriverCall) -> AuvResult<DriverResponse> {
       app, settle_ms
     ),
     backend: Some("macos.osascript.activate-app".to_string()),
+    signals: std::collections::BTreeMap::new(),
     notes: vec![format!("app={app}"), format!("settleMs={settle_ms}")],
     artifacts: vec![artifact],
   })

@@ -213,10 +213,10 @@
       },
       "expect": {
         "output_must_contain": [
-          "${result_title}"
+          "bestMatchText=${result_title}"
         ],
         "output_must_not_contain": [
-          "Found 0 OCR text matches"
+          "filteredMatchCount=0"
         ]
       }
     },
@@ -237,10 +237,10 @@
       },
       "expect": {
         "output_must_contain": [
-          "${result_artist}"
+          "bestMatchText=${result_artist}"
         ],
         "output_must_not_contain": [
-          "Found 0 OCR text matches"
+          "filteredMatchCount=0"
         ]
       }
     },
@@ -302,10 +302,10 @@
       },
       "expect": {
         "output_must_contain": [
-          "${result_title}"
+          "bestMatchText=${result_title}"
         ],
         "output_must_not_contain": [
-          "Found 0 OCR text matches"
+          "filteredMatchCount=0"
         ]
       }
     },
@@ -330,10 +330,10 @@
       },
       "expect": {
         "output_must_contain": [
-          "${result_artist}"
+          "bestMatchText=${result_artist}"
         ],
         "output_must_not_contain": [
-          "Found 0 OCR text matches"
+          "filteredMatchCount=0"
         ]
       }
     }

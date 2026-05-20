@@ -211,10 +211,11 @@
       },
       "expect": {
         "output_must_contain": [
-          "${anchor_text}"
+          "timedOut=false",
+          "bestMatchText=${anchor_text}"
         ],
         "output_must_not_contain": [
-          "Timed out while polling"
+          "filteredMatchCount=0"
         ]
       }
     },
@@ -239,10 +240,10 @@
       },
       "expect": {
         "output_must_contain": [
-          "${anchor_text}"
+          "bestMatchText=${anchor_text}"
         ],
         "output_must_not_contain": [
-          "Found 0 OCR text matches"
+          "filteredMatchCount=0"
         ]
       }
     },
@@ -269,10 +270,10 @@
       },
       "expect": {
         "output_must_contain": [
-          "${anchor_text}"
+          "matchText=${anchor_text}"
         ],
         "output_must_not_contain": [
-          "Found 0 OCR text matches"
+          "filteredMatchCount=0"
         ]
       }
     },
@@ -314,10 +315,10 @@
       },
       "expect": {
         "output_must_contain": [
-          "${playback_title}"
+          "bestMatchText=${playback_title}"
         ],
         "output_must_not_contain": [
-          "Found 0 OCR text matches"
+          "filteredMatchCount=0"
         ]
       }
     }

@@ -127,6 +127,7 @@ pub(crate) fn capture_display(call: &DriverCall) -> AuvResult<DriverResponse> {
       descriptor.display_ref, screenshot_pixel_size.width, screenshot_pixel_size.height
     ),
     backend: Some("xcap.macos".to_string()),
+    signals: std::collections::BTreeMap::new(),
     notes,
     artifacts: vec![screenshot_artifact, contract_json, contract_text],
   })
@@ -264,6 +265,7 @@ pub(crate) fn capture_region(call: &DriverCall) -> AuvResult<DriverResponse> {
       descriptor.display_ref, screenshot_pixel_size.width, screenshot_pixel_size.height
     ),
     backend: Some("xcap.macos".to_string()),
+    signals: std::collections::BTreeMap::new(),
     notes,
     artifacts: vec![screenshot_artifact, contract_json, contract_text],
   })
@@ -403,6 +405,7 @@ pub(crate) fn capture_window(call: &DriverCall) -> AuvResult<DriverResponse> {
       selected.window_ref, display_ref, screenshot_pixel_size.width, screenshot_pixel_size.height
     ),
     backend: Some("xcap.macos".to_string()),
+    signals: std::collections::BTreeMap::new(),
     notes,
     artifacts: vec![screenshot_artifact, contract_json, contract_text],
   })
@@ -453,6 +456,7 @@ pub(crate) fn list_displays(_call: &DriverCall) -> AuvResult<DriverResponse> {
       main_display.physical_pixel_size.height
     ),
     backend: Some("xcap.macos".to_string()),
+    signals: std::collections::BTreeMap::new(),
     notes,
     artifacts: vec![artifact],
   })

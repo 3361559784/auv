@@ -126,6 +126,7 @@ pub(crate) fn click_screen_text(call: &DriverCall) -> AuvResult<DriverResponse> 
       matched.text, query
     ),
     backend: Some("macos.vision.click-screen-text".to_string()),
+    signals: std::collections::BTreeMap::new(),
     notes,
     artifacts: vec![screenshot_artifact, report_artifact],
   })
@@ -294,6 +295,7 @@ pub(crate) fn click_screen_row(call: &DriverCall) -> AuvResult<DriverResponse> {
       "macos.vision.click-screen-row.{}",
       detection.strategy
     )),
+    signals: std::collections::BTreeMap::new(),
     notes,
     artifacts: vec![screenshot_artifact, report_artifact],
   })

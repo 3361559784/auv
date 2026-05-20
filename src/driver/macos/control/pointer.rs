@@ -62,6 +62,7 @@ pub(crate) fn click_point(call: &DriverCall) -> AuvResult<DriverResponse> {
       button_name, resolution.display.display_id
     ),
     backend: Some("macos.swift.quartz-click".to_string()),
+    signals: std::collections::BTreeMap::new(),
     notes: vec![
       "coordinateSpace=global-logical".to_string(),
       format!("button={button_name}"),
@@ -124,6 +125,7 @@ pub(crate) fn scroll_point(call: &DriverCall) -> AuvResult<DriverResponse> {
       resolution.display.display_id, normalized_scroll
     ),
     backend: Some("macos.swift.quartz-scroll".to_string()),
+    signals: std::collections::BTreeMap::new(),
     notes: vec![
       "coordinateSpace=global-logical".to_string(),
       format!("deltaX={delta_x:.0}"),

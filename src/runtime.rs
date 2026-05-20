@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -236,9 +237,11 @@ impl Runtime {
     );
 
     let mut artifact_paths = Vec::new();
+    let mut response_signals = BTreeMap::new();
 
     let (status, output_summary, failure_message) = match driver.invoke(&call) {
       Ok(response) => {
+        response_signals = collect_driver_response_signals(&response);
         if let Some(backend) = &response.backend {
           record_event(
             run,
@@ -349,6 +352,7 @@ impl Runtime {
       run_id: run.id().to_string(),
       status,
       output_summary,
+      signals: response_signals,
       artifact_paths,
       failure_message,
     })
@@ -388,6 +392,26 @@ impl Runtime {
     run.record_artifact(artifact);
     Ok(staged_path)
   }
+}
+
+fn collect_driver_response_signals(
+  response: &crate::model::DriverResponse,
+) -> BTreeMap<String, String> {
+  let mut signals = BTreeMap::new();
+  for note in &response.notes {
+    let Some((key, value)) = note.split_once('=') else {
+      continue;
+    };
+    let key = key.trim();
+    if key.is_empty() {
+      continue;
+    }
+    signals.insert(key.to_string(), value.trim().to_string());
+  }
+  for (key, value) in &response.signals {
+    signals.insert(key.clone(), value.clone());
+  }
+  signals
 }
 
 fn span_record(
@@ -504,6 +528,7 @@ mod tests {
       Ok(DriverResponse {
         summary: "driver succeeded before artifact staging".to_string(),
         backend: Some("test.backend".to_string()),
+        signals: BTreeMap::new(),
         notes: vec!["note".to_string()],
         artifacts: vec![ProducedArtifact {
           kind: "text".to_string(),
@@ -533,6 +558,7 @@ mod tests {
       Ok(DriverResponse {
         summary: "driver captured artifact".to_string(),
         backend: Some("test.backend".to_string()),
+        signals: BTreeMap::new(),
         notes: vec![],
         artifacts: vec![ProducedArtifact {
           kind: "text".to_string(),
@@ -558,7 +584,12 @@ mod tests {
       Ok(DriverResponse {
         summary: "driver ok".to_string(),
         backend: Some("test.backend".to_string()),
-        notes: vec![],
+        signals: BTreeMap::from([("explicitSignal".to_string(), "driver".to_string())]),
+        notes: vec![
+          "bestMatchText=driver ok".to_string(),
+          "explicitSignal=stale-note".to_string(),
+          "plain note".to_string(),
+        ],
         artifacts: vec![],
       })
     }
@@ -589,6 +620,14 @@ mod tests {
       )
       .expect("recorded invoke should succeed");
     assert_eq!(result.status, RunStatus::Completed);
+    assert_eq!(
+      result.signals.get("bestMatchText"),
+      Some(&"driver ok".to_string())
+    );
+    assert_eq!(
+      result.signals.get("explicitSignal"),
+      Some(&"driver".to_string())
+    );
     let run_id = runtime
       .finish_run(
         run,

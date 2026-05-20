@@ -3487,7 +3487,7 @@ fn render_native_text_candidate_recipe(analysis: &AppAnalysis) -> Value {
         "command_id": "debug.verifyAxText",
         "disturbance": { "classes": ["none"], "max": "none" },
         "args": { "target": "${app_id}", "target_text": "${target_text}", "max_depth": 6, "max_children": 48 },
-        "expect": { "output_must_contain": ["${target_text}"], "artifact_count_at_least": 1 },
+        "expect": { "output_must_contain": ["targetText=${target_text}"], "artifact_count_at_least": 1 },
         "purpose": "Verify the marker through the AX tree."
       }
     ],
@@ -3855,6 +3855,7 @@ mod tests {
         summary: format!("{} ok", call.operation),
         artifacts: Vec::new(),
         notes: Vec::new(),
+        signals: BTreeMap::from([("outcome".to_string(), "ok".to_string())]),
         backend: None,
       })
     }
@@ -5066,7 +5067,7 @@ mod tests {
           "max": "none"
         },
         "expect": {
-          "output_must_contain": ["ok"]
+          "output_must_contain": ["outcome=ok"]
         }
       }],
       "verification": {
@@ -5120,7 +5121,7 @@ mod tests {
           "max": "none"
         },
         "expect": {
-          "output_must_contain": ["ok"]
+          "output_must_contain": ["outcome=ok"]
         }
       }],
       "verification": {

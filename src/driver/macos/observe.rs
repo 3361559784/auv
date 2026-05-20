@@ -79,6 +79,7 @@ pub(super) fn probe_coordinate_readiness(call: &DriverCall) -> AuvResult<DriverR
   Ok(DriverResponse {
     summary,
     backend: Some("macos.observe.coordinate-readiness".to_string()),
+    signals: std::collections::BTreeMap::new(),
     notes,
     artifacts: vec![screenshot_artifact, report_artifact],
   })
@@ -137,6 +138,7 @@ pub(super) fn observe_windows(call: &DriverCall) -> AuvResult<DriverResponse> {
   Ok(DriverResponse {
     summary,
     backend: Some("macos.swift.cgwindowlist".to_string()),
+    signals: std::collections::BTreeMap::new(),
     notes,
     artifacts: vec![artifact],
   })
@@ -245,6 +247,7 @@ pub(super) fn observe_window_tree(call: &DriverCall) -> AuvResult<DriverResponse
   Ok(DriverResponse {
     summary,
     backend: Some("macos.swift.ax-tree".to_string()),
+    signals: std::collections::BTreeMap::new(),
     notes,
     artifacts: vec![artifact],
   })
@@ -335,6 +338,7 @@ pub(super) fn verify_now_playing_title(call: &DriverCall) -> AuvResult<DriverRes
       }
     ),
     backend: Some("macos.observe.verify-now-playing-title".to_string()),
+    signals: std::collections::BTreeMap::new(),
     notes,
     artifacts: vec![artifact],
   })
@@ -478,6 +482,7 @@ pub(super) fn verify_ax_text(call: &DriverCall) -> AuvResult<DriverResponse> {
       summary_suffix
     ),
     backend: Some("macos.observe.verify-ax-text".to_string()),
+    signals: std::collections::BTreeMap::new(),
     notes,
     artifacts: vec![artifact],
   })
@@ -526,6 +531,7 @@ pub(super) fn project_screenshot_point(call: &DriverCall) -> AuvResult<DriverRes
       resolution.display.display_id
     ),
     backend: Some("macos.observe.screenshot-point".to_string()),
+    signals: std::collections::BTreeMap::new(),
     notes: vec![
       format!("capturedAt={}", snapshot.captured_at),
       "coordinateSpace=main-display-physical-screenshot-pixels".to_string(),
@@ -631,6 +637,7 @@ pub(super) fn find_screen_text(call: &DriverCall) -> AuvResult<DriverResponse> {
   Ok(DriverResponse {
     summary,
     backend: Some("macos.vision.screen-text".to_string()),
+    signals: std::collections::BTreeMap::new(),
     notes,
     artifacts: vec![screenshot_artifact, report_artifact],
   })
@@ -756,6 +763,7 @@ pub(super) fn wait_for_screen_text(call: &DriverCall) -> AuvResult<DriverRespons
       return Ok(DriverResponse {
         summary,
         backend: Some("macos.vision.wait-screen-text".to_string()),
+        signals: std::collections::BTreeMap::new(),
         notes,
         artifacts: vec![screenshot_artifact, report_artifact],
       });
@@ -854,6 +862,7 @@ pub(super) fn find_screen_rows(call: &DriverCall) -> AuvResult<DriverResponse> {
   Ok(DriverResponse {
     summary,
     backend: Some(format!("macos.vision.screen-rows.{}", detection.strategy)),
+    signals: std::collections::BTreeMap::new(),
     notes,
     artifacts: vec![screenshot_artifact, report_artifact],
   })
@@ -969,6 +978,7 @@ pub(super) fn wait_for_screen_rows(call: &DriverCall) -> AuvResult<DriverRespons
           "macos.vision.wait-screen-rows.{}",
           detection.strategy
         )),
+        signals: std::collections::BTreeMap::new(),
         notes,
         artifacts: vec![screenshot_artifact, report_artifact],
       });
@@ -1060,6 +1070,7 @@ pub(super) fn find_image_text(call: &DriverCall) -> AuvResult<DriverResponse> {
   Ok(DriverResponse {
     summary,
     backend: Some("macos.vision.image-text".to_string()),
+    signals: std::collections::BTreeMap::new(),
     notes,
     artifacts: vec![report_artifact],
   })
@@ -1121,6 +1132,7 @@ pub(super) fn identify_point(call: &DriverCall) -> AuvResult<DriverResponse> {
   Ok(DriverResponse {
     summary,
     backend: Some("macos.observe.display-point".to_string()),
+    signals: std::collections::BTreeMap::new(),
     notes,
     artifacts: vec![artifact],
   })
@@ -1159,6 +1171,7 @@ pub(super) fn probe_permissions(_call: &DriverCall) -> AuvResult<DriverResponse>
       screen_recording, accessibility, automation
     ),
     backend: Some("macos.swift-and-osascript".to_string()),
+    signals: std::collections::BTreeMap::new(),
     notes: report.lines().map(str::to_string).collect(),
     artifacts: vec![artifact],
   })

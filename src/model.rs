@@ -87,6 +87,7 @@ pub struct InvokeResult {
   pub run_id: String,
   pub status: RunStatus,
   pub output_summary: String,
+  pub signals: BTreeMap<String, String>,
   pub artifact_paths: Vec<PathBuf>,
   pub failure_message: Option<String>,
 }
@@ -119,6 +120,7 @@ pub struct ProducedArtifact {
 pub struct DriverResponse {
   pub summary: String,
   pub backend: Option<String>,
+  pub signals: BTreeMap<String, String>,
   pub notes: Vec<String>,
   pub artifacts: Vec<ProducedArtifact>,
 }

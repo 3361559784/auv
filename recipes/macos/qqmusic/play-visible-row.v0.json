@@ -279,8 +279,8 @@
         "activate_target_before_capture": true
       },
       "expect": {
-        "output_must_not_contain": [
-          "Timed out while polling"
+        "output_must_contain": [
+          "timedOut=false"
         ]
       }
     },
@@ -310,8 +310,8 @@
         "activate_target_before_capture": true
       },
       "expect": {
-        "output_must_not_contain": [
-          "no visible row at index"
+        "output_must_contain": [
+          "rowIndex=${row_index}"
         ]
       }
     },
@@ -337,8 +337,8 @@
         "region_bottom_ratio": "${play_button_region_bottom_ratio}"
       },
       "expect": {
-        "output_must_not_contain": [
-          "no filtered OCR text match"
+        "output_must_contain": [
+          "matchText=${play_button_query}"
         ]
       }
     },
@@ -361,7 +361,7 @@
       },
       "expect": {
         "output_must_contain": [
-          "${target_title}"
+          "matchedTitle=${target_title}"
         ]
       }
     }

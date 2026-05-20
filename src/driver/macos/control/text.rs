@@ -63,6 +63,7 @@ pub(crate) fn type_text(call: &DriverCall) -> AuvResult<DriverResponse> {
       ),
     },
     backend: Some("macos.system-events.type-text".to_string()),
+    signals: std::collections::BTreeMap::new(),
     notes,
     artifacts: vec![artifact],
   })
@@ -143,6 +144,7 @@ pub(crate) fn paste_text_preserve_clipboard(call: &DriverCall) -> AuvResult<Driv
       ),
     },
     backend: Some("macos.system-events.paste-text-preserve-clipboard".to_string()),
+    signals: std::collections::BTreeMap::new(),
     notes,
     artifacts: vec![artifact],
   })
@@ -180,6 +182,7 @@ pub(crate) fn press_key(call: &DriverCall) -> AuvResult<DriverResponse> {
       }
     ),
     backend: Some("macos.system-events.press-key".to_string()),
+    signals: std::collections::BTreeMap::new(),
     notes: vec![
       format!("key={key}"),
       format!("settleMs={settle_ms}"),

@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -459,6 +459,12 @@ pub struct SkillRunOptions {
 }
 
 #[derive(Clone, Debug, Default)]
+pub(crate) struct SkillRunSummary {
+  #[allow(dead_code)]
+  pub exported_variables: BTreeMap<String, String>,
+}
+
+#[derive(Clone, Debug, Default)]
 pub struct SkillCaseRunOptions {
   pub dry_run: bool,
   pub max_disturbance: Option<DisturbanceClass>,
@@ -647,7 +653,7 @@ pub(crate) fn run_skill_manifest_recorded(
   let root = run.root_span();
 
   match run_skill_manifest_into_run(runtime, &mut run, &root, manifest, options) {
-    Ok(()) => runtime.finish_run(
+    Ok(_summary) => runtime.finish_run(
       run,
       crate::recording::RunFinish {
         status_code: TraceStatusCode::Ok,
@@ -670,12 +676,13 @@ pub(crate) fn run_skill_manifest_into_run(
   parent: &crate::recording::SpanRef,
   manifest: &SkillManifest,
   options: SkillRunOptions,
-) -> AuvResult<()> {
+) -> AuvResult<SkillRunSummary> {
   validate_skill_manifest_with_commands(manifest, runtime.list_commands())?;
   let mut variables = default_inputs(manifest)?;
   for (key, value) in options.overrides {
     variables.insert(key, value);
   }
+  let mut top_level_signal_exports = BTreeSet::new();
 
   let active_max = validate_disturbance_policy(manifest, options.max_disturbance)?;
   let _lock = maybe_acquire_live_app_lock(manifest, &variables, options.dry_run)?;
@@ -716,6 +723,7 @@ pub(crate) fn run_skill_manifest_into_run(
         manifest,
         dry_run: options.dry_run,
         variables: &mut variables,
+        top_level_signal_exports: &mut top_level_signal_exports,
       };
       run_skill_step_into_span(&mut step_context, step, index, &step_id)
     };
@@ -747,7 +755,9 @@ pub(crate) fn run_skill_manifest_into_run(
     }
   }
 
-  Ok(())
+  Ok(SkillRunSummary {
+    exported_variables: variables,
+  })
 }
 
 struct SkillStepRuntime<'a> {
@@ -757,6 +767,7 @@ struct SkillStepRuntime<'a> {
   manifest: &'a SkillManifest,
   dry_run: bool,
   variables: &'a mut BTreeMap<String, String>,
+  top_level_signal_exports: &'a mut BTreeSet<String>,
 }
 
 fn run_skill_step_into_span(
@@ -790,7 +801,12 @@ fn run_skill_step_into_span(
     .invoke_in_span(context.run, context.step_span, request)?;
   print_invoke_result(&result);
   enforce_step_expectations(step_id, step, &result, context.variables)?;
-  export_step_variables(step_id, &result, context.variables);
+  export_step_variables(
+    step_id,
+    &result,
+    context.variables,
+    context.top_level_signal_exports,
+  );
   enforce_invoke_success(&result)?;
   Ok(())
 }
@@ -1373,7 +1389,7 @@ pub(crate) fn run_skill_case_matrix_into_run(
     );
 
     match case_result {
-      Ok(()) => {
+      Ok(_summary) => {
         run.finish_span(
           &execute_span,
           crate::recording::SpanFinish {
@@ -2121,6 +2137,7 @@ fn export_step_variables(
   step_id: &str,
   result: &InvokeResult,
   variables: &mut BTreeMap<String, String>,
+  top_level_signal_exports: &mut BTreeSet<String>,
 ) {
   let prefix = format!("step_{}", sanitize_step_component(step_id));
   variables.insert(format!("{prefix}_run_id"), result.run_id.clone());
@@ -2156,6 +2173,21 @@ fn export_step_variables(
   if let Some(last_image) = image_paths.last() {
     variables.insert(format!("{prefix}_artifact_image_last"), last_image.clone());
   }
+
+  for (key, value) in &result.signals {
+    let signal_key = format!("{prefix}_signal_{}", sanitize_step_component(key));
+    variables.entry(signal_key).or_insert_with(|| value.clone());
+    if is_top_level_hook_signal(key)
+      && (!variables.contains_key(key) || top_level_signal_exports.contains(key))
+    {
+      variables.insert(key.clone(), value.clone());
+      top_level_signal_exports.insert(key.clone());
+    }
+  }
+}
+
+fn is_top_level_hook_signal(key: &str) -> bool {
+  matches!(key, "last.scan.hook.action" | "last.scan.hook.reason")
 }
 
 fn enforce_invoke_success(result: &InvokeResult) -> AuvResult<()> {
@@ -2304,7 +2336,7 @@ fn step_id(step: &SkillStep, fallback_index: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-  use std::collections::BTreeMap;
+  use std::collections::{BTreeMap, BTreeSet};
   use std::env;
   use std::fs;
   use std::path::PathBuf;
@@ -2313,10 +2345,11 @@ mod tests {
 
   use super::{
     SkillCaseMatrix, SkillCaseMatrixCatalog, SkillCatalog, SkillManifest, SkillRunOptions,
-    SkillStep, default_inputs, enforce_step_expectations, export_step_variables, is_image_artifact,
-    render_template, render_value, run_skill_case_matrix_recorded, run_skill_manifest_recorded,
-    sanitize_lock_component, validate_case_matrix_against_skill, validate_case_matrix_manifest,
-    validate_skill_manifest, validate_skill_manifest_with_commands,
+    SkillRunSummary, SkillStep, default_inputs, enforce_step_expectations, export_step_variables,
+    is_image_artifact, render_template, render_value, run_skill_case_matrix_recorded,
+    run_skill_manifest_into_run, run_skill_manifest_recorded, sanitize_lock_component,
+    validate_case_matrix_against_skill, validate_case_matrix_manifest, validate_skill_manifest,
+    validate_skill_manifest_with_commands,
   };
   use crate::catalog::{CommandCatalog, default_command_catalog};
   use crate::driver::{Driver, DriverRegistry};
@@ -2342,7 +2375,19 @@ mod tests {
       Ok(DriverResponse {
         summary: format!("ok {}", call.operation),
         backend: Some("test.backend".to_string()),
-        signals: BTreeMap::from([("outcome".to_string(), "ok".to_string())]),
+        signals: BTreeMap::from([
+          ("outcome".to_string(), "ok".to_string()),
+          ("query".to_string(), "driver query".to_string()),
+          (
+            "step_first_run_id".to_string(),
+            "driver overwritten run id".to_string(),
+          ),
+          ("last.scan.hook.action".to_string(), "continue".to_string()),
+          (
+            "last.scan.hook.reason".to_string(),
+            "test driver signal".to_string(),
+          ),
+        ]),
         notes: vec!["outcome=ok".to_string()],
         artifacts: vec![],
       })
@@ -2394,6 +2439,7 @@ mod tests {
   #[test]
   fn export_step_variables_captures_image_artifacts() {
     let mut variables = BTreeMap::new();
+    let mut top_level_signal_exports = BTreeSet::new();
     export_step_variables(
       "capture-evidence",
       &InvokeResult {
@@ -2408,6 +2454,7 @@ mod tests {
         failure_message: None,
       },
       &mut variables,
+      &mut top_level_signal_exports,
     );
 
     assert_eq!(
@@ -2416,6 +2463,87 @@ mod tests {
         .expect("image artifact should export"),
       "/tmp/evidence.png"
     );
+  }
+
+  #[test]
+  fn skill_run_summary_exposes_exported_variables() {
+    let summary = SkillRunSummary {
+      exported_variables: BTreeMap::from([(
+        "last.scan.hook.action".to_string(),
+        "continue".to_string(),
+      )]),
+    };
+
+    assert_eq!(
+      summary.exported_variables.get("last.scan.hook.action"),
+      Some(&"continue".to_string())
+    );
+  }
+
+  #[test]
+  fn run_skill_manifest_summary_includes_signal_exported_variables() {
+    let project_root = temp_dir("summary-signal-project");
+    let store_root = temp_dir("summary-signal-store");
+    let runtime = skill_test_runtime(project_root.clone(), store_root.clone());
+    let manifest = two_step_manifest();
+    let mut run = runtime
+      .start_run(crate::recording::RunSpec::new(
+        crate::trace::RunType::Execute,
+        "auv.execute",
+      ))
+      .expect("run should start");
+    let root = run.root_span();
+
+    let summary = run_skill_manifest_into_run(
+      &runtime,
+      &mut run,
+      &root,
+      &manifest,
+      SkillRunOptions {
+        dry_run: false,
+        max_disturbance: None,
+        overrides: BTreeMap::new(),
+      },
+    )
+    .expect("skill should run");
+
+    assert_eq!(
+      summary.exported_variables.get("last.scan.hook.action"),
+      Some(&"continue".to_string())
+    );
+    assert_eq!(
+      summary.exported_variables.get("last.scan.hook.reason"),
+      Some(&"test driver signal".to_string())
+    );
+    assert_eq!(
+      summary.exported_variables.get("query"),
+      Some(&"default query".to_string())
+    );
+    assert_ne!(
+      summary.exported_variables.get("step_first_run_id"),
+      Some(&"driver overwritten run id".to_string())
+    );
+    assert_eq!(
+      summary.exported_variables.get("step_first_signal_query"),
+      Some(&"driver query".to_string())
+    );
+    assert_eq!(
+      summary
+        .exported_variables
+        .get("step_first_signal_step_first_run_id"),
+      Some(&"driver overwritten run id".to_string())
+    );
+
+    let _ = runtime.finish_run(
+      run,
+      crate::recording::RunFinish {
+        status_code: crate::trace::TraceStatusCode::Ok,
+        summary: Some("test finished".to_string()),
+        failure: None,
+      },
+    );
+    let _ = fs::remove_dir_all(project_root);
+    let _ = fs::remove_dir_all(store_root);
   }
 
   #[test]
@@ -3648,6 +3776,9 @@ mod tests {
         "verificationContract": "verifyAxText"
       },
       "objective": "test recorded skill execution",
+      "inputs": {
+        "query": { "type": "string", "default": "default query" }
+      },
       "disturbance_policy": {
         "max_disturbance": "none",
         "declared_classes": ["none"]

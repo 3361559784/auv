@@ -3,6 +3,8 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::model::AuvResult;
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ScanRegion {
   pub left_ratio: f64,
@@ -280,6 +282,41 @@ fn stop_decision(
   }
 }
 
+pub fn hook_decision_from_variables(
+  hook_name: &str,
+  page_index: usize,
+  variables: &BTreeMap<String, String>,
+) -> AuvResult<Option<HookDecisionRecord>> {
+  let Some(action) = variables.get("last.scan.hook.action") else {
+    return Ok(None);
+  };
+  let action = parse_hook_action(action)?;
+  let reason = variables
+    .get("last.scan.hook.reason")
+    .cloned()
+    .unwrap_or_else(|| "hook did not provide a reason".to_string());
+  Ok(Some(HookDecisionRecord {
+    hook_name: hook_name.to_string(),
+    page_index,
+    action,
+    reason,
+  }))
+}
+
+fn parse_hook_action(raw: &str) -> AuvResult<HookAction> {
+  match raw.trim() {
+    "continue" => Ok(HookAction::Continue),
+    "stop" => Ok(HookAction::Stop),
+    "retry_observe" => Ok(HookAction::RetryObserve),
+    "adjust_region" => Ok(HookAction::AdjustRegion),
+    "adjust_scroll" => Ok(HookAction::AdjustScroll),
+    "annotate" => Ok(HookAction::Annotate),
+    other => Err(format!(
+      "invalid scan hook action {other:?}; expected continue, stop, retry_observe, adjust_region, adjust_scroll, or annotate"
+    )),
+  }
+}
+
 pub fn normalize_observation_text(raw: &str) -> String {
   raw
     .split_whitespace()
@@ -498,6 +535,25 @@ mod tests {
       decision.completeness_claim,
       CompletenessClaim::CompleteByNoVisualProgress
     );
+  }
+
+  #[test]
+  fn hook_decision_parses_exported_recipe_variables() {
+    let variables = BTreeMap::from([
+      ("last.scan.hook.action".to_string(), "stop".to_string()),
+      (
+        "last.scan.hook.reason".to_string(),
+        "next section".to_string(),
+      ),
+    ]);
+
+    let decision = hook_decision_from_variables("per_page_after_observe", 3, &variables)
+      .expect("decision should parse")
+      .expect("decision should exist");
+
+    assert_eq!(decision.action, HookAction::Stop);
+    assert_eq!(decision.reason, "next section");
+    assert_eq!(decision.page_index, 3);
   }
 
   fn observation(id: &str, page_index: usize, text: &str, y: i64) -> CollectionObservation {

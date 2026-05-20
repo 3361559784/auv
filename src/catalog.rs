@@ -524,9 +524,11 @@ mod tests {
   fn default_catalog_uses_macos_desktop_driver_id() {
     let catalog = default_command_catalog();
 
-    for command in catalog.all().iter().filter(|command| {
-      command.id.starts_with("debug.") && command.driver_id != "fixture.observe"
-    }) {
+    for command in catalog
+      .all()
+      .iter()
+      .filter(|command| command.id.starts_with("debug.") && command.driver_id != "fixture.observe")
+    {
       assert_eq!(
         command.driver_id, "macos.desktop",
         "command {} should route through macos.desktop",

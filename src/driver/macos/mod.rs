@@ -3,8 +3,8 @@ use crate::model::{
   AuvResult, DriverCall, DriverDescriptor, DriverResponse, ProducedArtifact, now_millis,
 };
 
-pub(crate) mod capture;
 mod ax_tree;
+pub(crate) mod capture;
 mod constants;
 mod control;
 mod descriptor;

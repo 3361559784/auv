@@ -155,6 +155,74 @@ pub struct ScrollScanArtifact {
   pub warnings: Vec<String>,
 }
 
+pub fn normalize_observation_text(raw: &str) -> String {
+  raw
+    .split_whitespace()
+    .collect::<Vec<_>>()
+    .join(" ")
+    .trim()
+    .to_lowercase()
+}
+
+pub fn conservative_merge_observations(
+  observations: &[CollectionObservation],
+) -> Vec<ObservationCluster> {
+  let mut clusters: Vec<ObservationCluster> = Vec::new();
+  let mut assigned = vec![false; observations.len()];
+
+  for (index, observation) in observations.iter().enumerate() {
+    if assigned[index] {
+      continue;
+    }
+
+    let mut ids = vec![observation.observation_id.clone()];
+    assigned[index] = true;
+    let mut merge_reason = "single_observation".to_string();
+    let mut confidence = 1.0;
+
+    for (candidate_index, candidate) in observations.iter().enumerate().skip(index + 1) {
+      if assigned[candidate_index] {
+        continue;
+      }
+      if should_merge_adjacent_observations(observation, candidate) {
+        ids.push(candidate.observation_id.clone());
+        assigned[candidate_index] = true;
+        merge_reason = "same_text_adjacent_page_near_y".to_string();
+        confidence = 0.72;
+      }
+    }
+
+    clusters.push(ObservationCluster {
+      cluster_id: format!("cluster_{:04}", clusters.len() + 1),
+      observation_ids: ids,
+      representative_text: observation.raw_text.clone(),
+      merge_reason,
+      confidence,
+    });
+  }
+
+  clusters
+}
+
+// REVIEW: This first merge rule is intentionally conservative and only merges
+// adjacent-page overlap with nearly identical y positions. Revisit after
+// real scan artifacts show whether OCR y jitter needs a wider threshold.
+fn should_merge_adjacent_observations(
+  left: &CollectionObservation,
+  right: &CollectionObservation,
+) -> bool {
+  if left.normalized_text_key.is_empty() || left.normalized_text_key != right.normalized_text_key {
+    return false;
+  }
+  if left.section_context != right.section_context {
+    return false;
+  }
+  if left.page_index.abs_diff(right.page_index) != 1 {
+    return false;
+  }
+  (left.bounds.y - right.bounds.y).abs() <= 8
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -223,5 +291,54 @@ mod tests {
     assert!(rendered.contains("\"completeness_claim\": \"partial_max_pages\""));
     assert!(rendered.contains("\"normalized_text_key\": \"alpha\""));
     assert!(rendered.contains("\"merge_reason\": \"single_observation\""));
+  }
+
+  #[test]
+  fn conservative_merge_keeps_same_text_on_same_page_separate() {
+    let observations = vec![
+      observation("obs_0001", 0, "Repeat", 10),
+      observation("obs_0002", 0, "Repeat", 80),
+    ];
+
+    let clusters = conservative_merge_observations(&observations);
+
+    assert_eq!(clusters.len(), 2);
+    assert_eq!(clusters[0].merge_reason, "single_observation");
+    assert_eq!(clusters[1].merge_reason, "single_observation");
+  }
+
+  #[test]
+  fn conservative_merge_groups_same_text_on_adjacent_overlap_pages() {
+    let observations = vec![
+      observation("obs_0001", 0, "Repeat", 120),
+      observation("obs_0002", 1, "Repeat", 118),
+    ];
+
+    let clusters = conservative_merge_observations(&observations);
+
+    assert_eq!(clusters.len(), 1);
+    assert_eq!(
+      clusters[0].observation_ids,
+      vec!["obs_0001".to_string(), "obs_0002".to_string()]
+    );
+    assert_eq!(clusters[0].merge_reason, "same_text_adjacent_page_near_y");
+  }
+
+  fn observation(id: &str, page_index: usize, text: &str, y: i64) -> CollectionObservation {
+    CollectionObservation {
+      observation_id: id.to_string(),
+      page_index,
+      raw_text: text.to_string(),
+      normalized_text_key: normalize_observation_text(text),
+      bounds: ScanRect {
+        x: 10,
+        y,
+        width: 100,
+        height: 24,
+      },
+      section_context: None,
+      source_artifacts: Vec::new(),
+      attributes: BTreeMap::new(),
+    }
   }
 }

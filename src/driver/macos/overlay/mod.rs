@@ -154,14 +154,14 @@ pub(crate) fn overlay_click_point(call: &DriverCall) -> AuvResult<DriverResponse
     thread::sleep(Duration::from_millis(preview_ms));
   }
 
-  // 3. Click. Swift script handles warp-to-target + CGEvent + warp-restore internally.
-  let click_result = run_swift_script(&build_click_point_script(
+  // 3. Click. Native pointer bridge handles warp-to-target + CGEvent + warp-restore internally.
+  let click_result = crate::driver::macos::native::pointer::click_point(
     x,
     y,
     button_code,
     click_count,
     click_interval_ms,
-  ));
+  );
 
   if settle_ms > 0 {
     thread::sleep(Duration::from_millis(settle_ms));

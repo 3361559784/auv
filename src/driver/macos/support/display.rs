@@ -3,14 +3,14 @@ use std::io::Read;
 use std::path::Path;
 
 use super::super::*;
+use super::{activate_target_app, app_identifier, optional_bool, render_rect_compact};
+#[cfg(test)]
 use super::{
-  activate_target_app, app_identifier, compute_combined_bounds, optional_bool, parse_bool_flag,
-  parse_f64, parse_i64, parse_u32, render_rect_compact, report_value, run_swift_script,
+  compute_combined_bounds, parse_bool_flag, parse_f64, parse_i64, parse_u32, report_value,
 };
 
 pub(crate) fn enumerate_displays() -> AuvResult<ObservedDisplaySnapshot> {
-  let report = run_swift_script(ENUMERATE_DISPLAYS_SCRIPT)?;
-  parse_display_snapshot(&report)
+  crate::driver::macos::native::window::enumerate_displays()
 }
 
 pub(crate) fn maybe_activate_target_app_for_observation(
@@ -27,6 +27,7 @@ pub(crate) fn maybe_activate_target_app_for_observation(
   Ok(Some(app))
 }
 
+#[cfg(test)]
 pub(crate) fn parse_display_snapshot(report: &str) -> AuvResult<ObservedDisplaySnapshot> {
   let captured_at = report_value(report, "capturedAt=")
     .unwrap_or("")
@@ -61,6 +62,7 @@ pub(crate) fn parse_display_snapshot(report: &str) -> AuvResult<ObservedDisplayS
   })
 }
 
+#[cfg(test)]
 pub(crate) fn parse_display_line(line: &str) -> AuvResult<ObservedDisplay> {
   let columns = line.split('\t').collect::<Vec<_>>();
   if columns.len() != 15 {

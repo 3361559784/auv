@@ -93,6 +93,13 @@ such as `screen`, `window`, `ax_tree`, `keyboard`, `clipboard`, `app`, and
 `native`, `binding`, or `ffi`; do not make dependency names such as
 `swift_bridge` or broad terms such as `bridge` into durable public namespaces.
 
+For macOS Swift native code, prefer `swift-bridge` for typed Rust/Swift
+interop unless a design explicitly chooses a different boundary. When adding a
+new Swift package or restructuring Swift sources, use Swift tooling such as
+`swift package init` to create the package skeleton instead of hand-writing the
+project structure from scratch; then adapt the generated manifest and sources
+to the repository layout.
+
 ## Documentation Workflow
 
 During active design or implementation, write specs, plans, and working notes in

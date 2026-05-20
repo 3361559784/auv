@@ -48,15 +48,15 @@ pub(crate) fn click_screen_text(call: &DriverCall) -> AuvResult<DriverResponse> 
     ));
   }
   let region = parse_ocr_region_constraint(call, dimensions.width, dimensions.height)?;
-  let ocr_report = run_swift_script(&build_ocr_find_text_script(
+  let ocr_capture = crate::driver::macos::native::ocr::find_text(
     screenshot_path.as_path(),
     &query,
     exact,
     case_sensitive,
     max_observations,
     region.as_ref(),
-  ))?;
-  let ocr_snapshot = parse_ocr_text_snapshot(&ocr_report)?;
+  )?;
+  let ocr_snapshot = ocr_capture.snapshot;
   let filtered_matches = filter_ocr_matches(&ocr_snapshot.matches, min_confidence, region.as_ref());
   let matched = filtered_matches.get(match_index).copied().ok_or_else(|| {
     format!(

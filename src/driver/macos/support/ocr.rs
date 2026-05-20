@@ -2,8 +2,8 @@ use std::path::{Path, PathBuf};
 
 use super::super::*;
 use super::{
-  build_find_visual_rows_script, build_ocr_find_text_script, ocr_match_center, optional_f64,
-  parse_bool_flag, parse_f64, parse_i64, render_rect_compact, report_value, run_swift_script,
+  ocr_match_center, optional_f64, parse_bool_flag, parse_f64, parse_i64, render_rect_compact,
+  report_value,
 };
 
 pub(crate) fn parse_ocr_text_snapshot(report: &str) -> AuvResult<OcrTextSnapshot> {
@@ -70,6 +70,7 @@ pub(crate) fn parse_ocr_text_line(line: &str) -> AuvResult<OcrTextMatch> {
   })
 }
 
+#[cfg(test)]
 pub(crate) fn parse_visual_rows_snapshot(report: &str) -> AuvResult<DetectedScreenRows> {
   let rows = report
     .lines()
@@ -87,6 +88,7 @@ pub(crate) fn parse_visual_rows_snapshot(report: &str) -> AuvResult<DetectedScre
   })
 }
 
+#[cfg(test)]
 fn parse_visual_row_line(line: &str) -> AuvResult<ObservedOcrRow> {
   let columns = line.split('\t').collect::<Vec<_>>();
   if columns.len() != 7 {
@@ -191,15 +193,16 @@ pub(crate) fn detect_screen_rows(
   max_observations: i64,
   region: Option<&ObservedRect>,
 ) -> AuvResult<DetectedScreenRows> {
-  let ocr_report = run_swift_script(&build_ocr_find_text_script(
+  let ocr_capture = crate::driver::macos::native::ocr::find_text(
     image_path,
     "",
     false,
     false,
     max_observations,
     region,
-  ))?;
-  let ocr_snapshot = parse_ocr_text_snapshot(&ocr_report)?;
+  )?;
+  let ocr_report = crate::driver::macos::native::ocr::render_ocr_text_report(&ocr_capture);
+  let ocr_snapshot = ocr_capture.snapshot;
   let filtered_matches = filter_ocr_matches(&ocr_snapshot.matches, min_confidence, region);
   let rows = group_ocr_matches_into_rows(&filtered_matches);
   if !rows.is_empty() {
@@ -212,8 +215,7 @@ pub(crate) fn detect_screen_rows(
     });
   }
 
-  let visual_report = run_swift_script(&build_find_visual_rows_script(image_path, region))?;
-  parse_visual_rows_snapshot(&visual_report)
+  crate::driver::macos::native::ocr::find_rows(image_path, region).map(|capture| capture.rows)
 }
 
 pub(crate) fn group_ocr_matches_into_rows(matches: &[&OcrTextMatch]) -> Vec<ObservedOcrRow> {

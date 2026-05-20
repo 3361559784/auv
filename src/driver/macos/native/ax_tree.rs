@@ -1,0 +1,349 @@
+#[cfg(target_os = "macos")]
+use super::ffi::ffi::{
+  NativeAxActionRequest, NativeAxActionResponse, NativeAxTreeRequest, NativeAxTreeResponse,
+  capture_ax_tree, perform_ax_action,
+};
+use crate::driver::macos::{ObservedAxNode, ObservedAxTreeSnapshot, ObservedRect};
+use crate::model::AuvResult;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct NativeAxTreeCapture {
+  pub(crate) snapshot: ObservedAxTreeSnapshot,
+  pub(crate) pid: i64,
+  pub(crate) root_role: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct NativeAxAction {
+  pub(crate) performed_action: String,
+  pub(crate) available_actions: String,
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn capture_ax_tree_snapshot(
+  app: &str,
+  max_depth: i64,
+  max_children: i64,
+) -> AuvResult<NativeAxTreeCapture> {
+  decode_ax_tree_response(DecodedAxTreeResponse::from(capture_ax_tree(
+    NativeAxTreeRequest {
+      app: app.to_string(),
+      max_depth,
+      max_children,
+    },
+  )))
+}
+
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn capture_ax_tree_snapshot(
+  _app: &str,
+  _max_depth: i64,
+  _max_children: i64,
+) -> AuvResult<NativeAxTreeCapture> {
+  Err("macOS native AX tree capture is unsupported on this target".to_string())
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn perform_ax_path_action(
+  pid: i32,
+  path: &str,
+  expected_role: &str,
+  action_name: &str,
+) -> AuvResult<NativeAxAction> {
+  decode_ax_action_response(DecodedAxActionResponse::from(perform_ax_action(
+    NativeAxActionRequest {
+      pid: i64::from(pid),
+      path: path.to_string(),
+      expected_role: expected_role.to_string(),
+      action_name: action_name.to_string(),
+    },
+  )))
+}
+
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn perform_ax_path_action(
+  _pid: i32,
+  _path: &str,
+  _expected_role: &str,
+  _action_name: &str,
+) -> AuvResult<NativeAxAction> {
+  Err("macOS native AX action dispatch is unsupported on this target".to_string())
+}
+
+pub(crate) fn decode_ax_tree_response(
+  response: DecodedAxTreeResponse,
+) -> AuvResult<NativeAxTreeCapture> {
+  if response.error_message.is_some() {
+    return super::error::native_result(
+      "capture_ax_tree",
+      None,
+      response.error_message,
+      response.recovery_hint,
+    );
+  }
+
+  let count = response.depths.len();
+  let lengths = [
+    response.paths.len(),
+    response.roles.len(),
+    response.subroles.len(),
+    response.titles.len(),
+    response.descriptions.len(),
+    response.helps.len(),
+    response.identifiers.len(),
+    response.placeholders.len(),
+    response.values.len(),
+    response.x_values.len(),
+    response.y_values.len(),
+    response.width_values.len(),
+    response.height_values.len(),
+  ];
+  if lengths.iter().any(|length| *length != count) {
+    return Err("native AX tree response had mismatched AX node vector lengths".to_string());
+  }
+
+  let nodes = (0..count)
+    .map(|index| {
+      let depth = usize::try_from(response.depths[index]).map_err(|error| {
+        format!(
+          "native AX tree response had invalid depth {}: {error}",
+          response.depths[index]
+        )
+      })?;
+      Ok(ObservedAxNode {
+        depth,
+        path: response.paths[index].clone(),
+        role: response.roles[index].clone(),
+        subrole: response.subroles[index].clone(),
+        title: response.titles[index].clone(),
+        description: response.descriptions[index].clone(),
+        help: response.helps[index].clone(),
+        identifier: response.identifiers[index].clone(),
+        placeholder: response.placeholders[index].clone(),
+        value: response.values[index].clone(),
+        bounds: ObservedRect {
+          x: response.x_values[index],
+          y: response.y_values[index],
+          width: response.width_values[index],
+          height: response.height_values[index],
+        },
+      })
+    })
+    .collect::<AuvResult<Vec<_>>>()?;
+
+  if nodes.is_empty() {
+    return Err("AX tree report contained no nodes".to_string());
+  }
+
+  let pid = i32::try_from(response.pid).map_err(|error| {
+    format!(
+      "native AX tree response had invalid pid {}: {error}",
+      response.pid
+    )
+  })?;
+
+  Ok(NativeAxTreeCapture {
+    snapshot: ObservedAxTreeSnapshot {
+      observed_at: response.observed_at,
+      app_name: response.app_name,
+      bundle_id: response.bundle_id,
+      pid,
+      window_title: response.window_title,
+      nodes,
+    },
+    pid: response.pid,
+    root_role: response.root_role,
+  })
+}
+
+pub(crate) fn decode_ax_action_response(
+  response: DecodedAxActionResponse,
+) -> AuvResult<NativeAxAction> {
+  if response.error_message.is_some() {
+    return super::error::native_result(
+      "perform_ax_action",
+      None,
+      response.error_message,
+      response.recovery_hint,
+    );
+  }
+
+  Ok(NativeAxAction {
+    performed_action: response.performed_action,
+    available_actions: response.available_actions,
+  })
+}
+
+pub(crate) fn render_ax_tree_report(capture: &NativeAxTreeCapture) -> String {
+  let snapshot = &capture.snapshot;
+  let mut lines = vec![
+    format!("observedAt={}", snapshot.observed_at),
+    format!("appName={}", snapshot.app_name),
+    format!("bundleId={}", snapshot.bundle_id),
+    format!("pid={}", capture.pid),
+    format!("windowTitle={}", snapshot.window_title),
+    format!("rootRole={}", capture.root_role),
+  ];
+  for node in &snapshot.nodes {
+    lines.push(format!(
+      "node\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+      node.depth,
+      node.path,
+      node.role,
+      node.subrole,
+      node.title,
+      node.description,
+      node.help,
+      node.identifier,
+      node.placeholder,
+      node.value,
+      node.bounds.x,
+      node.bounds.y,
+      node.bounds.width,
+      node.bounds.height
+    ));
+  }
+  lines.push(format!("nodeCount={}", snapshot.nodes.len()));
+  lines.join("\n") + "\n"
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct DecodedAxTreeResponse {
+  pub(crate) observed_at: String,
+  pub(crate) app_name: String,
+  pub(crate) bundle_id: String,
+  pub(crate) pid: i64,
+  pub(crate) window_title: String,
+  pub(crate) root_role: String,
+  pub(crate) depths: Vec<i64>,
+  pub(crate) paths: Vec<String>,
+  pub(crate) roles: Vec<String>,
+  pub(crate) subroles: Vec<String>,
+  pub(crate) titles: Vec<String>,
+  pub(crate) descriptions: Vec<String>,
+  pub(crate) helps: Vec<String>,
+  pub(crate) identifiers: Vec<String>,
+  pub(crate) placeholders: Vec<String>,
+  pub(crate) values: Vec<String>,
+  pub(crate) x_values: Vec<i64>,
+  pub(crate) y_values: Vec<i64>,
+  pub(crate) width_values: Vec<i64>,
+  pub(crate) height_values: Vec<i64>,
+  pub(crate) error_message: Option<String>,
+  pub(crate) recovery_hint: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct DecodedAxActionResponse {
+  pub(crate) performed_action: String,
+  pub(crate) available_actions: String,
+  pub(crate) error_message: Option<String>,
+  pub(crate) recovery_hint: Option<String>,
+}
+
+#[cfg(target_os = "macos")]
+impl From<NativeAxTreeResponse> for DecodedAxTreeResponse {
+  fn from(value: NativeAxTreeResponse) -> Self {
+    Self {
+      observed_at: value.observed_at,
+      app_name: value.app_name,
+      bundle_id: value.bundle_id,
+      pid: value.pid,
+      window_title: value.window_title,
+      root_role: value.root_role,
+      depths: value.depths,
+      paths: value.paths,
+      roles: value.roles,
+      subroles: value.subroles,
+      titles: value.titles,
+      descriptions: value.descriptions,
+      helps: value.helps,
+      identifiers: value.identifiers,
+      placeholders: value.placeholders,
+      values: value.values,
+      x_values: value.x_values,
+      y_values: value.y_values,
+      width_values: value.width_values,
+      height_values: value.height_values,
+      error_message: value.error_message,
+      recovery_hint: value.recovery_hint,
+    }
+  }
+}
+
+#[cfg(target_os = "macos")]
+impl From<NativeAxActionResponse> for DecodedAxActionResponse {
+  fn from(value: NativeAxActionResponse) -> Self {
+    Self {
+      performed_action: value.performed_action,
+      available_actions: value.available_actions,
+      error_message: value.error_message,
+      recovery_hint: value.recovery_hint,
+    }
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  fn base_response() -> DecodedAxTreeResponse {
+    DecodedAxTreeResponse {
+      observed_at: "2026-05-20T00:00:00Z".to_string(),
+      app_name: "Notes".to_string(),
+      bundle_id: "com.apple.Notes".to_string(),
+      pid: 123,
+      window_title: "Todo".to_string(),
+      root_role: "AXWindow".to_string(),
+      depths: vec![0],
+      paths: vec!["0".to_string()],
+      roles: vec!["AXStaticText".to_string()],
+      subroles: vec!["".to_string()],
+      titles: vec!["Title".to_string()],
+      descriptions: vec!["Description".to_string()],
+      helps: vec!["".to_string()],
+      identifiers: vec!["".to_string()],
+      placeholders: vec!["".to_string()],
+      values: vec!["Value".to_string()],
+      x_values: vec![10],
+      y_values: vec![20],
+      width_values: vec![100],
+      height_values: vec![30],
+      error_message: None,
+      recovery_hint: None,
+    }
+  }
+
+  #[test]
+  fn decode_ax_tree_rejects_mismatched_node_vectors() {
+    let mut response = base_response();
+    response.paths.clear();
+
+    let error = decode_ax_tree_response(response).unwrap_err();
+
+    assert!(error.contains("mismatched AX node vector lengths"));
+  }
+
+  #[test]
+  fn decode_ax_tree_preserves_text_priority_fields() {
+    let capture = decode_ax_tree_response(base_response()).unwrap();
+
+    assert_eq!(capture.snapshot.nodes[0].value, "Value");
+    assert_eq!(capture.snapshot.nodes[0].title, "Title");
+    assert_eq!(capture.snapshot.pid, 123);
+  }
+
+  #[test]
+  fn decode_ax_action_rejects_native_error() {
+    let error = decode_ax_action_response(DecodedAxActionResponse {
+      performed_action: "".to_string(),
+      available_actions: "".to_string(),
+      error_message: Some("missing action".to_string()),
+      recovery_hint: Some("try another node".to_string()),
+    })
+    .unwrap_err();
+
+    assert!(error.contains("perform_ax_action failed"));
+    assert!(error.contains("missing action"));
+  }
+}

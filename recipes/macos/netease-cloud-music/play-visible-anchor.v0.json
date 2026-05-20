@@ -243,11 +243,17 @@
         "image_path": "${step_capture_after_search_artifact_image_0}",
         "query": "${result_artist}",
         "min_confidence": "${result_min_confidence}",
-        "max_observations": "${max_observations}"
+        "max_observations": "${max_observations}",
+        "region_left_ratio": "${result_region_left_ratio}",
+        "region_top_ratio": "${result_region_top_ratio}",
+        "region_right_ratio": "${result_region_right_ratio}",
+        "region_bottom_ratio": "${result_region_bottom_ratio}"
       },
       "expect": {
         "signal_equals": {
-          "ocr.match_found": "true",
+          "ocr.match_found": "true"
+        },
+        "signal_contains": {
           "ocr.best_match_text": "${result_artist}"
         }
       }
@@ -341,7 +347,9 @@
       },
       "expect": {
         "signal_equals": {
-          "ocr.match_found": "true",
+          "ocr.match_found": "true"
+        },
+        "signal_contains": {
           "ocr.best_match_text": "${result_artist}"
         }
       }

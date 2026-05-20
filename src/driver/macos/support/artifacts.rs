@@ -1,38 +1,12 @@
 use std::env;
 use std::fs;
 use std::io::ErrorKind;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::super::*;
 
 static TEMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
-
-pub(crate) fn run_swift_script(source: &str) -> AuvResult<String> {
-  let script_path = temp_file_path("swift-script", "swift");
-  fs::write(&script_path, source).map_err(|error| {
-    format!(
-      "failed to write Swift script {}: {error}",
-      script_path.display()
-    )
-  })?;
-
-  let result = run_swift_script_with_fallback(&script_path);
-  let _ = fs::remove_file(&script_path);
-  result
-}
-
-pub(crate) fn run_swift_script_with_fallback(script_path: &Path) -> AuvResult<String> {
-  let xcrun_args = vec!["swift".to_string(), script_path.display().to_string()];
-  match run_command(XCRUN_BINARY, &xcrun_args) {
-    Ok(output) => Ok(output.stdout),
-    Err(error) if error.contains("failed to spawn xcrun") => {
-      let swift_args = vec![script_path.display().to_string()];
-      Ok(run_command("swift", &swift_args)?.stdout)
-    }
-    Err(error) => Err(error),
-  }
-}
 
 pub(crate) fn run_command(binary: &str, args: &[String]) -> AuvResult<CommandOutput> {
   let output = std::process::Command::new(binary)
@@ -43,7 +17,6 @@ pub(crate) fn run_command(binary: &str, args: &[String]) -> AuvResult<CommandOut
       _ => format!("failed to spawn {}: {}", binary, error),
     })?;
 
-  let stdout = String::from_utf8_lossy(&output.stdout).to_string();
   let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
   if !output.status.success() {
@@ -60,7 +33,7 @@ pub(crate) fn run_command(binary: &str, args: &[String]) -> AuvResult<CommandOut
     ));
   }
 
-  Ok(CommandOutput { stdout })
+  Ok(CommandOutput {})
 }
 
 pub(crate) fn temp_file_path(label: &str, extension: &str) -> PathBuf {
@@ -161,6 +134,7 @@ pub(crate) fn launch_host_process() -> String {
     .to_string()
 }
 
+#[cfg(test)]
 pub(crate) fn swift_string_literal(raw: &str) -> String {
   let mut escaped = String::from("\"");
   for character in raw.chars() {
@@ -220,6 +194,4 @@ pub(crate) fn sanitized_artifact_name(raw: &str) -> String {
   sanitize_file_component(raw)
 }
 
-pub(crate) struct CommandOutput {
-  pub(crate) stdout: String,
-}
+pub(crate) struct CommandOutput {}

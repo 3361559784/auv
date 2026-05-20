@@ -21,6 +21,7 @@ pub(crate) fn parse_i64(raw: &str, label: &str) -> AuvResult<i64> {
     .map_err(|error| format!("invalid {} value {}: {}", label, raw, error))
 }
 
+#[cfg(test)]
 pub(crate) fn parse_u32(raw: &str, label: &str) -> AuvResult<u32> {
   raw
     .parse::<u32>()

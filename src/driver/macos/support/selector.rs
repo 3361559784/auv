@@ -287,6 +287,7 @@ fn first_non_empty_bundle_id(windows: &[&ObservedWindow]) -> Option<String> {
   })
 }
 
+#[cfg(test)]
 pub(crate) fn filter_windows_for_app<'a>(
   windows: &'a [ObservedWindow],
   resolved_app: &ResolvedAppRef,

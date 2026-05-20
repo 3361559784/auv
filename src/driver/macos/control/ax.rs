@@ -1,7 +1,7 @@
 use std::thread;
 use std::time::Duration;
 
-use super::super::overlay::{OverlayWrapperOutcome, with_overlay_cursor};
+use super::super::overlay::with_overlay_cursor;
 use super::super::*;
 use super::common::{
   DEFAULT_CLICK_INTERVAL_MS, activate_app_if_needed, build_ax_click_notes,
@@ -21,22 +21,19 @@ pub(crate) fn focus_text_input(call: &DriverCall) -> AuvResult<DriverResponse> {
   activate_app_if_needed(&app)?;
   send_reveal_shortcut_if_needed(reveal_shortcut.as_deref(), reveal_settle_ms)?;
 
-  let tree_report = run_swift_script(&build_observe_window_tree_script(
-    &app,
-    max_depth,
-    max_children,
-  ))?;
-  let snapshot = parse_observed_ax_tree(&tree_report)?;
+  let snapshot =
+    crate::driver::macos::native::ax_tree::capture_ax_tree_snapshot(&app, max_depth, max_children)?
+      .snapshot;
   let matched = find_best_ax_node(&snapshot, &query)
     .ok_or_else(|| no_matching_ax_node_error(&snapshot, &query, "text input-like"))?;
   let (center_x, center_y) = ax_node_center(matched);
-  run_swift_script(&build_click_point_script(
+  crate::driver::macos::native::pointer::click_point(
     center_x,
     center_y,
     0,
     1,
     DEFAULT_CLICK_INTERVAL_MS,
-  ))?;
+  )?;
 
   let report = render_ax_interaction_report("focus-text-input", &snapshot, matched, &query);
   let artifact = build_text_artifact(
@@ -113,15 +110,12 @@ pub(crate) fn ax_press_button(call: &DriverCall) -> AuvResult<DriverResponse> {
   }
   send_reveal_shortcut_if_needed(reveal_shortcut.as_deref(), reveal_settle_ms)?;
 
-  let tree_report = run_swift_script(&build_observe_window_tree_script(
-    &app,
-    max_depth,
-    max_children,
-  ))?;
-  let snapshot = parse_observed_ax_tree(&tree_report)?;
+  let snapshot =
+    crate::driver::macos::native::ax_tree::capture_ax_tree_snapshot(&app, max_depth, max_children)?
+      .snapshot;
   if snapshot.pid <= 0 {
     return Err(format!(
-      "observe_window_tree did not return a valid pid for app {:?} (got {}); cannot dispatch AX action",
+      "native AX tree capture did not return a valid pid for app {:?} (got {}); cannot dispatch AX action",
       snapshot.app_name, snapshot.pid
     ));
   }
@@ -129,29 +123,36 @@ pub(crate) fn ax_press_button(call: &DriverCall) -> AuvResult<DriverResponse> {
     .ok_or_else(|| no_matching_ax_node_error(&snapshot, &query, "AX-pressable"))?;
   let (center_x, center_y) = ax_node_center(matched);
 
-  let press_script =
-    build_ax_press_path_script(snapshot.pid, &matched.path, &matched.role, &action_name);
-  let (press_report, overlay_outcome): (String, Option<OverlayWrapperOutcome>) = if overlay {
-    let (report, outcome) = with_overlay_cursor(center_x, center_y, &overlay_label, || {
+  let (press_action, overlay_outcome) = if overlay {
+    let (action, outcome) = with_overlay_cursor(center_x, center_y, &overlay_label, || {
       if preview_ms > 0 {
         thread::sleep(Duration::from_millis(preview_ms));
       }
-      let report = run_swift_script(&press_script)?;
+      let action = crate::driver::macos::native::ax_tree::perform_ax_path_action(
+        snapshot.pid,
+        &matched.path,
+        &matched.role,
+        &action_name,
+      )?;
       if settle_ms > 0 {
         thread::sleep(Duration::from_millis(settle_ms));
       }
-      Ok(report)
+      Ok(action)
     })?;
-    (report, Some(outcome))
+    (action, Some(outcome))
   } else {
-    (run_swift_script(&press_script)?, None)
+    (
+      crate::driver::macos::native::ax_tree::perform_ax_path_action(
+        snapshot.pid,
+        &matched.path,
+        &matched.role,
+        &action_name,
+      )?,
+      None,
+    )
   };
-  let performed_action = report_value(&press_report, "performedAction=")
-    .unwrap_or("")
-    .to_string();
-  let available_actions = report_value(&press_report, "availableActions=")
-    .unwrap_or("")
-    .to_string();
+  let performed_action = press_action.performed_action;
+  let available_actions = press_action.available_actions;
 
   let report = render_ax_interaction_report("ax-press-button", &snapshot, matched, &query);
   let mut report = format!(
@@ -268,22 +269,19 @@ pub(crate) fn press_button(call: &DriverCall) -> AuvResult<DriverResponse> {
   activate_app_if_needed(&app)?;
   send_reveal_shortcut_if_needed(reveal_shortcut.as_deref(), reveal_settle_ms)?;
 
-  let tree_report = run_swift_script(&build_observe_window_tree_script(
-    &app,
-    max_depth,
-    max_children,
-  ))?;
-  let snapshot = parse_observed_ax_tree(&tree_report)?;
+  let snapshot =
+    crate::driver::macos::native::ax_tree::capture_ax_tree_snapshot(&app, max_depth, max_children)?
+      .snapshot;
   let matched = find_best_ax_node(&snapshot, &query)
     .ok_or_else(|| no_matching_ax_node_error(&snapshot, &query, "button-like"))?;
   let (center_x, center_y) = ax_node_center(matched);
-  run_swift_script(&build_click_point_script(
+  crate::driver::macos::native::pointer::click_point(
     center_x,
     center_y,
     0,
     1,
     DEFAULT_CLICK_INTERVAL_MS,
-  ))?;
+  )?;
 
   let report = render_ax_interaction_report("press-button", &snapshot, matched, &query);
   let artifact = build_text_artifact(

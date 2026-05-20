@@ -42,3 +42,9 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+swift-bridge = "0.1.59"
+
+[target.'cfg(target_os = "macos")'.build-dependencies]
+swift-bridge-build = "0.1.59"

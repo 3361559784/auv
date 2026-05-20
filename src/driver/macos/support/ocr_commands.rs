@@ -58,15 +58,16 @@ pub(crate) fn run_text_match_on_capture(
   }
   let region =
     parse_ocr_region_constraint(call, capture.dimensions.width, capture.dimensions.height)?;
-  let ocr_report = run_swift_script(&build_ocr_find_text_script(
+  let ocr_capture = crate::driver::macos::native::ocr::find_text(
     capture.screenshot_path.as_path(),
     query,
     exact,
     case_sensitive,
     max_observations,
     region.as_ref(),
-  ))?;
-  let snapshot = parse_ocr_text_snapshot(&ocr_report)?;
+  )?;
+  let ocr_report = crate::driver::macos::native::ocr::render_ocr_text_report(&ocr_capture);
+  let snapshot = ocr_capture.snapshot;
   let filtered = filter_ocr_matches(&snapshot.matches, min_confidence, region.as_ref())
     .into_iter()
     .cloned()

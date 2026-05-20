@@ -16,13 +16,13 @@ pub(crate) fn click_point(call: &DriverCall) -> AuvResult<DriverResponse> {
     .ok_or_else(|| format!("logical point ({x:.3}, {y:.3}) is outside all connected displays"))?;
 
   activate_app_if_needed(&app_identifier(call).unwrap_or_default())?;
-  run_swift_script(&build_click_point_script(
+  crate::driver::macos::native::pointer::click_point(
     x,
     y,
     button_code,
     click_count,
     click_interval_ms,
-  ))?;
+  )?;
   if settle_ms > 0 {
     thread::sleep(Duration::from_millis(settle_ms));
   }
@@ -89,7 +89,7 @@ pub(crate) fn scroll_point(call: &DriverCall) -> AuvResult<DriverResponse> {
     .ok_or_else(|| format!("logical point ({x:.3}, {y:.3}) is outside all connected displays"))?;
 
   activate_app_if_needed(&app_identifier(call).unwrap_or_default())?;
-  run_swift_script(&build_scroll_point_script(x, y, delta_x, delta_y))?;
+  crate::driver::macos::native::pointer::scroll_point(x, y, delta_x, delta_y)?;
 
   let report = [
     format!("capturedAt={}", snapshot.captured_at),

@@ -163,19 +163,15 @@ pub(crate) fn process_is_alive(pid: u32) -> bool {
 }
 
 pub(crate) fn capture_clipboard_snapshot() -> AuvResult<String> {
-  Ok(
-    run_swift_script(CAPTURE_CLIPBOARD_SCRIPT)?
-      .trim()
-      .to_string(),
-  )
+  crate::driver::macos::native::clipboard::capture_clipboard_snapshot()
 }
 
 pub(crate) fn restore_clipboard_snapshot(snapshot_payload: &str) -> AuvResult<()> {
-  run_swift_script(&build_restore_clipboard_script(snapshot_payload)).map(|_| ())
+  crate::driver::macos::native::clipboard::restore_clipboard_snapshot(snapshot_payload)
 }
 
 pub(crate) fn set_clipboard_text(text: &str) -> AuvResult<()> {
-  run_swift_script(&build_set_clipboard_text_script(text)).map(|_| ())
+  crate::driver::macos::native::clipboard::set_clipboard_text(text)
 }
 
 pub(crate) fn type_text_via_system_events(

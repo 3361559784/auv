@@ -186,41 +186,8 @@ pub(super) fn probe_coordinate_readiness(call: &DriverCall) -> AuvResult<DriverR
 pub(super) fn list_windows(call: &DriverCall) -> AuvResult<DriverResponse> {
   let limit = optional_i64(call, "limit")?.unwrap_or(12).max(1);
   let app_filter = app_identifier(call).unwrap_or_default();
-  let mut selector_notes = Vec::new();
-  let (snapshot, report, backend) = if !app_filter.is_empty() {
-    // Selector mode: collect unfiltered with a higher limit, filter in Rust.
-    let collect_limit = limit.max(128);
-    let raw_report = run_swift_script(&build_observe_windows_script(collect_limit, ""))?;
-    let raw_snapshot = parse_window_snapshot_from_report(&raw_report)?;
-    let selector = parse_app_selector(&app_filter)?;
-    let resolved_app = resolve_app_ref(&raw_snapshot, &selector)?;
-    let filtered_windows = filter_windows_for_app(&raw_snapshot.windows, &resolved_app);
-    let display_windows: Vec<&ObservedWindow> =
-      filtered_windows.into_iter().take(limit as usize).collect();
-    let report = build_selector_filtered_report(&raw_report, &display_windows, &resolved_app);
-    selector_notes.push(format!("appSelector={}", resolved_app.selector.raw));
-    selector_notes.push(format!("matchStrategy={}", resolved_app.match_strategy));
-    selector_notes.push(format!(
-      "resolvedAppBundleId={}",
-      resolved_app.resolved_bundle_id.as_deref().unwrap_or("")
-    ));
-    selector_notes.push(format!(
-      "resolvedAppName={}",
-      resolved_app.resolved_app_name
-    ));
-    (
-      ObservedWindowSnapshot {
-        windows: display_windows.into_iter().cloned().collect(),
-        ..raw_snapshot
-      },
-      report,
-      "macos.swift.cgwindowlist+rust-selector",
-    )
-  } else {
-    let snapshot = observe_windows_snapshot(limit, "")?;
-    let report = render_window_snapshot_report(&snapshot);
-    (snapshot, report, "macos.swift.cgwindowlist")
-  };
+  let snapshot = observe_windows_snapshot(limit, &app_filter)?;
+  let report = render_window_snapshot_report(&snapshot);
   let window_count = snapshot.windows.len();
   let frontmost_app = snapshot.frontmost_app_name.clone();
   let frontmost_window = snapshot.frontmost_window_title.clone();
@@ -262,7 +229,6 @@ pub(super) fn list_windows(call: &DriverCall) -> AuvResult<DriverResponse> {
     "Human-readable macOS window candidate report.",
   )?;
   let mut notes = vec![format!("observedAt={observed_at}")];
-  notes.extend(selector_notes);
   if let Some(candidate_note) = candidate_note {
     notes.push(candidate_note);
   }
@@ -288,7 +254,7 @@ pub(super) fn list_windows(call: &DriverCall) -> AuvResult<DriverResponse> {
   };
   Ok(DriverResponse {
     summary,
-    backend: Some(backend.to_string()),
+    backend: Some("macos.swift.cgwindowlist".to_string()),
     signals: std::collections::BTreeMap::new(),
     notes,
     artifacts: vec![json_artifact, text_artifact],
@@ -323,52 +289,7 @@ pub(super) fn observe_windows_snapshot(
   limit: i64,
   app_filter: &str,
 ) -> AuvResult<ObservedWindowSnapshot> {
-  if !app_filter.is_empty() {
-    // Selector mode: collect unfiltered with a higher cap, then filter in Rust.
-    let collect_limit = limit.max(128);
-    let report = run_swift_script(&build_observe_windows_script(collect_limit, ""))?;
-    let raw_snapshot = parse_window_snapshot_from_report(&report)?;
-    let selector = parse_app_selector(app_filter)?;
-    let resolved_app = resolve_app_ref(&raw_snapshot, &selector)?;
-    let filtered_windows = filter_windows_for_app(&raw_snapshot.windows, &resolved_app)
-      .into_iter()
-      .take(limit as usize)
-      .cloned()
-      .collect();
-    return Ok(ObservedWindowSnapshot {
-      windows: filtered_windows,
-      ..raw_snapshot
-    });
-  }
-
-  // No selector: existing unfiltered path.
-  let report = run_swift_script(&build_observe_windows_script(limit, ""))?;
-  parse_window_snapshot_from_report(&report)
-}
-
-/// Parse a raw Swift observe-windows report into an `ObservedWindowSnapshot`.
-/// This is shared by both `observe_windows` and `observe_windows_snapshot`.
-fn parse_window_snapshot_from_report(report: &str) -> AuvResult<ObservedWindowSnapshot> {
-  let windows = report
-    .lines()
-    .filter(|line| line.starts_with("window\t"))
-    .map(parse_window_line)
-    .collect::<AuvResult<Vec<_>>>()?;
-  Ok(ObservedWindowSnapshot {
-    frontmost_app_name: report_value(report, "frontmostAppName=")
-      .unwrap_or("")
-      .to_string(),
-    frontmost_app_bundle_id: report_value(report, "frontmostAppBundleId=")
-      .unwrap_or("")
-      .to_string(),
-    frontmost_window_title: report_value(report, "frontmostWindowTitle=")
-      .unwrap_or("")
-      .to_string(),
-    observed_at: report_value(report, "observedAt=")
-      .unwrap_or("")
-      .to_string(),
-    windows,
-  })
+  crate::driver::macos::native::window::observe_windows_snapshot(limit, app_filter)
 }
 
 fn render_window_snapshot_report(snapshot: &ObservedWindowSnapshot) -> String {
@@ -397,17 +318,6 @@ fn render_window_snapshot_report(snapshot: &ObservedWindowSnapshot) -> String {
   lines.join("\n") + "\n"
 }
 
-/// Build a report string from selector-filtered windows, inserting metadata lines
-/// and the correct `windowCount`.  The `window\t…` line format is unchanged so
-/// that `parse_window_snapshot` can still read the result.
-fn build_selector_filtered_report(
-  raw_report: &str,
-  filtered_windows: &[&ObservedWindow],
-  resolved_app: &ResolvedAppRef,
-) -> String {
-  build_selector_filtered_report_impl(raw_report, filtered_windows, resolved_app)
-}
-
 /// Exposed for unit-tests only — wraps the private impl so tests can call it
 /// without going through the full driver call machinery.
 #[cfg(test)]
@@ -419,6 +329,7 @@ pub(super) fn build_selector_filtered_report_for_test(
   build_selector_filtered_report_impl(raw_report, filtered_windows, resolved_app)
 }
 
+#[cfg(test)]
 fn build_selector_filtered_report_impl(
   raw_report: &str,
   filtered_windows: &[&ObservedWindow],
@@ -473,23 +384,15 @@ pub(super) fn observe_ax_tree(call: &DriverCall) -> AuvResult<DriverResponse> {
     send_shortcut(shortcut)?;
     thread::sleep(Duration::from_millis(reveal_settle_ms));
   }
-  let report = run_swift_script(&build_observe_window_tree_script(
-    &app,
-    max_depth,
-    max_children,
-  ))?;
-  let app_name = report_value(&report, "appName=").unwrap_or("").to_string();
-  let bundle_id = report_value(&report, "bundleId=").unwrap_or("").to_string();
-  let window_title = report_value(&report, "windowTitle=")
-    .unwrap_or("")
-    .to_string();
-  let observed_at = report_value(&report, "observedAt=")
-    .unwrap_or("")
-    .to_string();
-  let node_count = report_value(&report, "nodeCount=")
-    .unwrap_or("0")
-    .parse::<usize>()
-    .unwrap_or(0);
+  let capture =
+    crate::driver::macos::native::ax_tree::capture_ax_tree_snapshot(&app, max_depth, max_children)?;
+  let snapshot = &capture.snapshot;
+  let report = crate::driver::macos::native::ax_tree::render_ax_tree_report(&capture);
+  let app_name = snapshot.app_name.clone();
+  let bundle_id = snapshot.bundle_id.clone();
+  let window_title = snapshot.window_title.clone();
+  let observed_at = snapshot.observed_at.clone();
+  let node_count = snapshot.nodes.len();
   let artifact = build_text_artifact(
     "ax-tree",
     "txt",
@@ -553,12 +456,9 @@ pub(super) fn verify_now_playing_title(call: &DriverCall) -> AuvResult<DriverRes
     activate_target_app(&app)?;
   }
 
-  let tree_report = run_swift_script(&build_observe_window_tree_script(
-    &app,
-    max_depth,
-    max_children,
-  ))?;
-  let snapshot = parse_observed_ax_tree(&tree_report)?;
+  let snapshot =
+    crate::driver::macos::native::ax_tree::capture_ax_tree_snapshot(&app, max_depth, max_children)?
+      .snapshot;
   let matched = find_now_playing_ax_node(
     &snapshot,
     &expected_title,
@@ -645,12 +545,9 @@ pub(super) fn verify_ax_text(call: &DriverCall) -> AuvResult<DriverResponse> {
     activate_target_app(&app)?;
   }
 
-  let tree_report = run_swift_script(&build_observe_window_tree_script(
-    &app,
-    max_depth,
-    max_children,
-  ))?;
-  let snapshot = parse_observed_ax_tree(&tree_report)?;
+  let snapshot =
+    crate::driver::macos::native::ax_tree::capture_ax_tree_snapshot(&app, max_depth, max_children)?
+      .snapshot;
   let expected_text_lc = expected_text.trim().to_lowercase();
   let expected_role_lc = expected_role
     .as_deref()
@@ -988,15 +885,16 @@ pub(super) fn wait_for_screen_text(call: &DriverCall) -> AuvResult<DriverRespons
       )?;
     let dimensions = read_png_dimensions(&screenshot_path)?;
     let region = parse_ocr_region_constraint(call, dimensions.width, dimensions.height)?;
-    let ocr_report = run_swift_script(&build_ocr_find_text_script(
+    let ocr_capture = crate::driver::macos::native::ocr::find_text(
       screenshot_path.as_path(),
       &query,
       exact,
       case_sensitive,
       max_observations,
       region.as_ref(),
-    ))?;
-    let ocr_snapshot = parse_ocr_text_snapshot(&ocr_report)?;
+    )?;
+    let ocr_report = crate::driver::macos::native::ocr::render_ocr_text_report(&ocr_capture);
+    let ocr_snapshot = ocr_capture.snapshot;
     let filtered_matches =
       filter_ocr_matches(&ocr_snapshot.matches, min_confidence, region.as_ref())
         .into_iter()
@@ -1362,15 +1260,16 @@ pub(super) fn find_image_text(call: &DriverCall) -> AuvResult<DriverResponse> {
     ));
   }
   let region = parse_ocr_region_constraint(call, dimensions.width, dimensions.height)?;
-  let ocr_report = run_swift_script(&build_ocr_find_text_script(
+  let ocr_capture = crate::driver::macos::native::ocr::find_text(
     image_path.as_path(),
     &query,
     exact,
     case_sensitive,
     max_observations,
     region.as_ref(),
-  ))?;
-  let ocr_snapshot = parse_ocr_text_snapshot(&ocr_report)?;
+  )?;
+  let ocr_report = crate::driver::macos::native::ocr::render_ocr_text_report(&ocr_capture);
+  let ocr_snapshot = ocr_capture.snapshot;
   let filtered_matches = filter_ocr_matches(&ocr_snapshot.matches, min_confidence, region.as_ref());
   let report_artifact = build_text_artifact(
     "image-text-report",
@@ -1491,23 +1390,14 @@ pub(super) fn identify_point(call: &DriverCall) -> AuvResult<DriverResponse> {
 }
 
 pub(super) fn probe_permissions(_call: &DriverCall) -> AuvResult<DriverResponse> {
-  let screen_recording = run_swift_script(PROBE_SCREEN_RECORDING_SCRIPT)?
-    .trim()
-    .to_string();
-  let accessibility = run_swift_script(PROBE_ACCESSIBILITY_SCRIPT)?
-    .trim()
-    .to_string();
+  let native_permissions = crate::driver::macos::native::permission::probe_native_permissions()?;
+  let screen_recording = native_permissions.screen_recording.to_string();
+  let accessibility = native_permissions.accessibility.to_string();
   let automation = probe_automation_to_system_events();
   let launch_host = launch_host_process();
 
-  let report = [
-    format!("screenRecording={screen_recording}"),
-    format!("accessibility={accessibility}"),
-    format!("automationToSystemEvents={automation}"),
-    format!("launchHostProcess={launch_host}"),
-  ]
-  .join("\n")
-    + "\n";
+  let report =
+    permission_probe_report(&screen_recording, &accessibility, &automation, &launch_host);
 
   let artifact = build_text_artifact(
     "probe-permissions",
@@ -1529,12 +1419,28 @@ pub(super) fn probe_permissions(_call: &DriverCall) -> AuvResult<DriverResponse>
   })
 }
 
+fn permission_probe_report(
+  screen_recording: &str,
+  accessibility: &str,
+  automation: &str,
+  launch_host: &str,
+) -> String {
+  [
+    format!("screenRecording={screen_recording}"),
+    format!("accessibility={accessibility}"),
+    format!("automationToSystemEvents={automation}"),
+    format!("launchHostProcess={launch_host}"),
+  ]
+  .join("\n")
+    + "\n"
+}
+
 #[cfg(test)]
 mod tests {
   use super::{
-    ObservedAxNode, ObservedRect, ocr_detection_signals, preferred_ax_signal_text,
-    row_detection_signals, verify_ax_text_signals, verify_now_playing_title_signals,
-    wait_ocr_detection_signals, wait_row_detection_signals,
+    ObservedAxNode, ObservedRect, ocr_detection_signals, permission_probe_report,
+    preferred_ax_signal_text, row_detection_signals, verify_ax_text_signals,
+    verify_now_playing_title_signals, wait_ocr_detection_signals, wait_row_detection_signals,
   };
 
   #[test]
@@ -1560,6 +1466,16 @@ mod tests {
     assert_eq!(
       signals.get("ax.matched_role"),
       Some(&"AXTextArea".to_string())
+    );
+  }
+
+  #[test]
+  fn permission_probe_report_preserves_contract_fields() {
+    let report = permission_probe_report("granted", "missing", "granted", "current-process");
+
+    assert_eq!(
+      report,
+      "screenRecording=granted\naccessibility=missing\nautomationToSystemEvents=granted\nlaunchHostProcess=current-process\n"
     );
   }
 

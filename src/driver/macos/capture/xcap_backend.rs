@@ -6,7 +6,7 @@ use super::types::{
   CaptureBackend, CaptureContract, CaptureSource, CoordinateSpace, DisplayDescriptor, Rect,
   Scale2D, Size, WindowDescriptor, capture_error,
 };
-use crate::driver::macos::{run_swift_script, screenshot_temp_path};
+use crate::driver::macos::screenshot_temp_path;
 use crate::model::{AuvResult, now_millis};
 
 fn backend_failed(error: impl std::fmt::Display) -> String {
@@ -246,47 +246,7 @@ pub(crate) fn capture_window_native_id_to_path(
 }
 
 pub(crate) fn bundle_ids_by_pid(pids: &HashSet<u32>) -> AuvResult<HashMap<u32, String>> {
-  if pids.is_empty() {
-    return Ok(HashMap::new());
-  }
-
-  let mut sorted_pids = pids.iter().copied().collect::<Vec<_>>();
-  sorted_pids.sort_unstable();
-  let pid_list = sorted_pids
-    .iter()
-    .map(|pid| pid.to_string())
-    .collect::<Vec<_>>()
-    .join(", ");
-  let script = format!(
-    r#"
-import AppKit
-import Foundation
-
-let requestedPids: [pid_t] = [{pid_list}]
-for pid in requestedPids {{
-  if let app = NSRunningApplication(processIdentifier: pid),
-     let bundleId = app.bundleIdentifier,
-     !bundleId.isEmpty {{
-    print("\(pid)\t\(bundleId)")
-  }}
-}}
-"#
-  );
-  let report = run_swift_script(&script).map_err(backend_failed)?;
-  let mut bundle_ids = HashMap::new();
-  for line in report.lines() {
-    let Some((pid, bundle_id)) = line.split_once('\t') else {
-      continue;
-    };
-    let Ok(pid) = pid.trim().parse::<u32>() else {
-      continue;
-    };
-    let bundle_id = bundle_id.trim();
-    if !bundle_id.is_empty() {
-      bundle_ids.insert(pid, bundle_id.to_string());
-    }
-  }
-  Ok(bundle_ids)
+  crate::driver::macos::native::window::bundle_ids_by_pid(pids).map_err(backend_failed)
 }
 
 pub(crate) fn descriptors_from_monitors(

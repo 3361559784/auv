@@ -7,7 +7,7 @@ use super::{
   control::common::{ClickPointCallOptions, build_click_point_call},
   support::{
     TextMatchCommandReport, app_contains_window, assess_coordinate_readiness,
-    build_window_candidates, filter_ocr_matches, find_now_playing_ax_node,
+    build_window_candidates, filter_ocr_matches, filter_windows_for_app, find_now_playing_ax_node,
     group_ocr_matches_into_rows, optional_bool, optional_f64, parse_app_selector,
     parse_display_selection, parse_display_snapshot, parse_mouse_button, parse_observed_ax_tree,
     parse_ocr_region_constraint, parse_ocr_text_snapshot, parse_shortcut,
@@ -719,6 +719,219 @@ fn render_text_match_json_records_scope_and_point() {
   assert!(json.contains("\"scope\": \"window\""));
   assert!(json.contains("\"capture_source\": \"window_42\""));
   assert!(json.contains("\"logical_point\""));
+}
+
+/// Bundle-id selector must match windows whose owner name is the localized
+/// (non-ASCII) app name.  This is the core NetEaseMusic regression: the selector
+/// is `com.netease.163music` but the CGWindowList owner name is `网易云音乐`.
+#[test]
+fn filter_windows_for_app_bundle_id_matches_localized_owner_name() {
+  let selector =
+    parse_app_selector("com.netease.163music").expect("bundle id selector should parse");
+  let snapshot = super::ObservedWindowSnapshot {
+    frontmost_app_name: "网易云音乐".to_string(),
+    frontmost_app_bundle_id: "com.netease.163music".to_string(),
+    frontmost_window_title: "网易云音乐".to_string(),
+    observed_at: "2026-05-20T00:00:00Z".to_string(),
+    windows: vec![
+      super::ObservedWindow {
+        window_number: 1,
+        app_name: "Dock".to_string(),
+        owner_pid: 100,
+        owner_bundle_id: "com.apple.dock".to_string(),
+        layer: 0,
+        title: "".to_string(),
+        bounds: super::ObservedRect {
+          x: 0,
+          y: 1340,
+          width: 1470,
+          height: 80,
+        },
+      },
+      // Localized owner name — bundle id is what we should match on.
+      super::ObservedWindow {
+        window_number: 42,
+        app_name: "网易云音乐".to_string(),
+        owner_pid: 9999,
+        owner_bundle_id: "com.netease.163music".to_string(),
+        layer: 0,
+        title: "网易云音乐".to_string(),
+        bounds: super::ObservedRect {
+          x: 200,
+          y: 100,
+          width: 1200,
+          height: 900,
+        },
+      },
+    ],
+  };
+
+  let resolved = resolve_app_ref(&snapshot, &selector).expect("app ref should resolve");
+  assert_eq!(resolved.match_strategy, "bundle-id-exact");
+  let windows = filter_windows_for_app(&snapshot.windows, &resolved);
+  assert_eq!(
+    windows.len(),
+    1,
+    "exactly one window should survive the filter"
+  );
+  assert_eq!(windows[0].window_number, 42);
+  assert_eq!(windows[0].app_name, "网易云音乐");
+}
+
+/// `observe_windows` selector-filtered report must have:
+///   • `windowCount` equal to the number of matching windows (not total)
+///   • metadata lines `appSelector`, `matchStrategy`, `resolvedAppBundleId`, `resolvedAppName`
+///   • only `window\t…` lines for matched windows
+///
+/// We test the report-building helper directly to avoid needing a live desktop.
+#[test]
+fn selector_filtered_report_window_count_equals_matched_windows() {
+  let selector =
+    parse_app_selector("com.netease.163music").expect("bundle id selector should parse");
+  let snapshot = super::ObservedWindowSnapshot {
+    frontmost_app_name: "网易云音乐".to_string(),
+    frontmost_app_bundle_id: "com.netease.163music".to_string(),
+    frontmost_window_title: "网易云音乐".to_string(),
+    observed_at: "2026-05-20T00:00:00Z".to_string(),
+    windows: vec![
+      super::ObservedWindow {
+        window_number: 1,
+        app_name: "Dock".to_string(),
+        owner_pid: 100,
+        owner_bundle_id: "com.apple.dock".to_string(),
+        layer: 0,
+        title: "".to_string(),
+        bounds: super::ObservedRect {
+          x: 0,
+          y: 1340,
+          width: 1470,
+          height: 80,
+        },
+      },
+      super::ObservedWindow {
+        window_number: 42,
+        app_name: "网易云音乐".to_string(),
+        owner_pid: 9999,
+        owner_bundle_id: "com.netease.163music".to_string(),
+        layer: 0,
+        title: "网易云音乐".to_string(),
+        bounds: super::ObservedRect {
+          x: 200,
+          y: 100,
+          width: 1200,
+          height: 900,
+        },
+      },
+    ],
+  };
+
+  let resolved = resolve_app_ref(&snapshot, &selector).expect("app ref should resolve");
+  let filtered = filter_windows_for_app(&snapshot.windows, &resolved);
+
+  // Simulate the raw Swift report header.
+  let raw_report = format!(
+    "frontmostAppName={}\nfrontmostAppBundleId={}\nfrontmostWindowTitle={}\nobservedAt={}\nwindowCount=2\nwindow\tDock\t100\tcom.apple.dock\t1\t0\t\t0\t1340\t1470\t80\nwindow\t网易云音乐\t9999\tcom.netease.163music\t42\t0\t网易云音乐\t200\t100\t1200\t900",
+    snapshot.frontmost_app_name,
+    snapshot.frontmost_app_bundle_id,
+    snapshot.frontmost_window_title,
+    snapshot.observed_at,
+  );
+
+  let report =
+    super::observe::build_selector_filtered_report_for_test(&raw_report, &filtered, &resolved);
+
+  // windowCount must reflect only the matched windows.
+  let window_count_line = report
+    .lines()
+    .find(|line| line.starts_with("windowCount="))
+    .expect("report must contain windowCount");
+  assert_eq!(window_count_line, "windowCount=1");
+
+  // Required metadata lines must be present.
+  assert!(
+    report.contains("matchStrategy=bundle-id-exact"),
+    "report must contain matchStrategy"
+  );
+  assert!(
+    report.contains("resolvedAppBundleId=com.netease.163music"),
+    "report must contain resolvedAppBundleId"
+  );
+  assert!(
+    report.contains("appSelector=com.netease.163music"),
+    "report must contain appSelector"
+  );
+
+  // Only the NetEaseMusic window should survive — not the Dock window.
+  let window_lines: Vec<&str> = report
+    .lines()
+    .filter(|line| line.starts_with("window\t"))
+    .collect();
+  assert_eq!(window_lines.len(), 1);
+  assert!(window_lines[0].contains("网易云音乐"));
+  assert!(!window_lines[0].contains("Dock"));
+}
+
+/// The filtering helper should keep only the windows belonging to the resolved
+/// app; the unfiltered observe path is covered by preserving the no-selector
+/// branch in `observe_windows`.
+#[test]
+fn filter_windows_for_app_keeps_resolved_app_subset() {
+  let all_windows = vec![
+    super::ObservedWindow {
+      window_number: 1,
+      app_name: "TextEdit".to_string(),
+      owner_pid: 10,
+      owner_bundle_id: "com.apple.TextEdit".to_string(),
+      layer: 0,
+      title: "Untitled".to_string(),
+      bounds: super::ObservedRect {
+        x: 0,
+        y: 0,
+        width: 800,
+        height: 600,
+      },
+    },
+    super::ObservedWindow {
+      window_number: 2,
+      app_name: "Notes".to_string(),
+      owner_pid: 20,
+      owner_bundle_id: "com.apple.Notes".to_string(),
+      layer: 0,
+      title: "Quick Note".to_string(),
+      bounds: super::ObservedRect {
+        x: 100,
+        y: 100,
+        width: 700,
+        height: 500,
+      },
+    },
+  ];
+  let snapshot = super::ObservedWindowSnapshot {
+    frontmost_app_name: "TextEdit".to_string(),
+    frontmost_app_bundle_id: "com.apple.TextEdit".to_string(),
+    frontmost_window_title: "Untitled".to_string(),
+    observed_at: "2026-05-20T00:00:00Z".to_string(),
+    windows: all_windows.clone(),
+  };
+
+  // Narrow selector — should match only TextEdit.
+  let selector = parse_app_selector("com.apple.TextEdit").expect("selector should parse");
+  let resolved = resolve_app_ref(&snapshot, &selector).expect("should resolve");
+  let filtered = filter_windows_for_app(&snapshot.windows, &resolved);
+  assert_eq!(filtered.len(), 1);
+  assert_eq!(filtered[0].window_number, 1);
+
+  // A selector for Notes should not return the TextEdit window.
+  let notes_selector = parse_app_selector("com.apple.Notes").expect("notes selector should parse");
+  let notes_resolved = resolve_app_ref(&snapshot, &notes_selector);
+  // Notes is not the frontmost app, but it does have windows in the snapshot.
+  if let Ok(ref r) = notes_resolved {
+    let notes_filtered = filter_windows_for_app(&snapshot.windows, r);
+    assert!(
+      notes_filtered.iter().all(|w| w.app_name == "Notes"),
+      "only Notes windows should be returned"
+    );
+  }
 }
 
 #[test]

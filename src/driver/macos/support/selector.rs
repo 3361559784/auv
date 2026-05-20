@@ -287,6 +287,16 @@ fn first_non_empty_bundle_id(windows: &[&ObservedWindow]) -> Option<String> {
   })
 }
 
+pub(crate) fn filter_windows_for_app<'a>(
+  windows: &'a [ObservedWindow],
+  resolved_app: &ResolvedAppRef,
+) -> Vec<&'a ObservedWindow> {
+  windows
+    .iter()
+    .filter(|window| window_matches_resolved_app(window, resolved_app))
+    .collect()
+}
+
 fn window_matches_resolved_app(window: &ObservedWindow, resolved_app: &ResolvedAppRef) -> bool {
   if let Some(bundle_id) = resolved_app.resolved_bundle_id.as_deref()
     && !window.owner_bundle_id.trim().is_empty()

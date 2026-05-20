@@ -186,7 +186,75 @@ pub(super) fn probe_coordinate_readiness(call: &DriverCall) -> AuvResult<DriverR
 pub(super) fn observe_windows(call: &DriverCall) -> AuvResult<DriverResponse> {
   let limit = optional_i64(call, "limit")?.unwrap_or(12).max(1);
   let app_filter = app_identifier(call).unwrap_or_default();
-  let report = run_swift_script(&build_observe_windows_script(limit, &app_filter))?;
+
+  if !app_filter.is_empty() {
+    // Selector mode: collect unfiltered with a higher limit, filter in Rust.
+    let collect_limit = limit.max(128);
+    let raw_report = run_swift_script(&build_observe_windows_script(collect_limit, ""))?;
+    let raw_snapshot = parse_window_snapshot_from_report(&raw_report)?;
+    let selector = parse_app_selector(&app_filter)?;
+    let resolved_app = resolve_app_ref(&raw_snapshot, &selector)?;
+    let filtered_windows = filter_windows_for_app(&raw_snapshot.windows, &resolved_app);
+    let display_windows: Vec<&ObservedWindow> =
+      filtered_windows.into_iter().take(limit as usize).collect();
+    let window_count = display_windows.len();
+
+    let frontmost_app = raw_snapshot.frontmost_app_name.clone();
+    let observed_at = raw_snapshot.observed_at.clone();
+
+    let report = build_selector_filtered_report(&raw_report, &display_windows, &resolved_app);
+    let artifact = build_text_artifact(
+      "observe-windows",
+      "txt",
+      &format!(
+        "observe-windows-{}",
+        sanitize_file_component(&resolved_app.resolved_app_name)
+      ),
+      report.clone(),
+      "Captured selector-filtered window observation report from the macOS desktop driver.",
+    )?;
+    let mut notes = vec![
+      format!("observedAt={observed_at}"),
+      format!("appSelector={}", resolved_app.selector.raw),
+      format!("matchStrategy={}", resolved_app.match_strategy),
+      format!(
+        "resolvedAppBundleId={}",
+        resolved_app.resolved_bundle_id.as_deref().unwrap_or("")
+      ),
+      format!("resolvedAppName={}", resolved_app.resolved_app_name),
+    ];
+    for line in report
+      .lines()
+      .filter(|line| line.starts_with("window\t"))
+      .take(5)
+    {
+      notes.push(line.to_string());
+    }
+    let target_window_title = display_windows
+      .iter()
+      .find_map(|window| (!window.title.trim().is_empty()).then_some(window.title.as_str()));
+    let summary = if let Some(target_window_title) = target_window_title {
+      format!(
+        "Observed {} window(s) for {} (target window: {}); frontmost app is {}.",
+        window_count, resolved_app.resolved_app_name, target_window_title, frontmost_app
+      )
+    } else {
+      format!(
+        "Observed {} window(s) for {}; frontmost app is {}.",
+        window_count, resolved_app.resolved_app_name, frontmost_app
+      )
+    };
+    return Ok(DriverResponse {
+      summary,
+      backend: Some("macos.swift.cgwindowlist+rust-selector".to_string()),
+      signals: std::collections::BTreeMap::new(),
+      notes,
+      artifacts: vec![artifact],
+    });
+  }
+
+  // No selector: unfiltered path (existing behaviour).
+  let report = run_swift_script(&build_observe_windows_script(limit, ""))?;
   let window_count = report_value(&report, "windowCount=")
     .unwrap_or("0")
     .parse::<usize>()
@@ -218,7 +286,6 @@ pub(super) fn observe_windows(call: &DriverCall) -> AuvResult<DriverResponse> {
   {
     notes.push(line.to_string());
   }
-
   let summary = if frontmost_app.is_empty() {
     format!("Observed {} visible macOS window(s).", window_count)
   } else if frontmost_window.is_empty() {
@@ -232,7 +299,6 @@ pub(super) fn observe_windows(call: &DriverCall) -> AuvResult<DriverResponse> {
       window_count, frontmost_app, frontmost_window
     )
   };
-
   Ok(DriverResponse {
     summary,
     backend: Some("macos.swift.cgwindowlist".to_string()),
@@ -246,27 +312,113 @@ pub(super) fn observe_windows_snapshot(
   limit: i64,
   app_filter: &str,
 ) -> AuvResult<ObservedWindowSnapshot> {
-  let report = run_swift_script(&build_observe_windows_script(limit, app_filter))?;
+  if !app_filter.is_empty() {
+    // Selector mode: collect unfiltered with a higher cap, then filter in Rust.
+    let collect_limit = limit.max(128);
+    let report = run_swift_script(&build_observe_windows_script(collect_limit, ""))?;
+    let raw_snapshot = parse_window_snapshot_from_report(&report)?;
+    let selector = parse_app_selector(app_filter)?;
+    let resolved_app = resolve_app_ref(&raw_snapshot, &selector)?;
+    let filtered_windows = filter_windows_for_app(&raw_snapshot.windows, &resolved_app)
+      .into_iter()
+      .take(limit as usize)
+      .cloned()
+      .collect();
+    return Ok(ObservedWindowSnapshot {
+      windows: filtered_windows,
+      ..raw_snapshot
+    });
+  }
+
+  // No selector: existing unfiltered path.
+  let report = run_swift_script(&build_observe_windows_script(limit, ""))?;
+  parse_window_snapshot_from_report(&report)
+}
+
+/// Parse a raw Swift observe-windows report into an `ObservedWindowSnapshot`.
+/// This is shared by both `observe_windows` and `observe_windows_snapshot`.
+fn parse_window_snapshot_from_report(report: &str) -> AuvResult<ObservedWindowSnapshot> {
   let windows = report
     .lines()
     .filter(|line| line.starts_with("window\t"))
     .map(parse_window_line)
     .collect::<AuvResult<Vec<_>>>()?;
   Ok(ObservedWindowSnapshot {
-    frontmost_app_name: report_value(&report, "frontmostAppName=")
+    frontmost_app_name: report_value(report, "frontmostAppName=")
       .unwrap_or("")
       .to_string(),
-    frontmost_app_bundle_id: report_value(&report, "frontmostAppBundleId=")
+    frontmost_app_bundle_id: report_value(report, "frontmostAppBundleId=")
       .unwrap_or("")
       .to_string(),
-    frontmost_window_title: report_value(&report, "frontmostWindowTitle=")
+    frontmost_window_title: report_value(report, "frontmostWindowTitle=")
       .unwrap_or("")
       .to_string(),
-    observed_at: report_value(&report, "observedAt=")
+    observed_at: report_value(report, "observedAt=")
       .unwrap_or("")
       .to_string(),
     windows,
   })
+}
+
+/// Build a report string from selector-filtered windows, inserting metadata lines
+/// and the correct `windowCount`.  The `window\t…` line format is unchanged so
+/// that `parse_window_snapshot` can still read the result.
+fn build_selector_filtered_report(
+  raw_report: &str,
+  filtered_windows: &[&ObservedWindow],
+  resolved_app: &ResolvedAppRef,
+) -> String {
+  build_selector_filtered_report_impl(raw_report, filtered_windows, resolved_app)
+}
+
+/// Exposed for unit-tests only — wraps the private impl so tests can call it
+/// without going through the full driver call machinery.
+#[cfg(test)]
+pub(super) fn build_selector_filtered_report_for_test(
+  raw_report: &str,
+  filtered_windows: &[&ObservedWindow],
+  resolved_app: &ResolvedAppRef,
+) -> String {
+  build_selector_filtered_report_impl(raw_report, filtered_windows, resolved_app)
+}
+
+fn build_selector_filtered_report_impl(
+  raw_report: &str,
+  filtered_windows: &[&ObservedWindow],
+  resolved_app: &ResolvedAppRef,
+) -> String {
+  let mut lines: Vec<String> = raw_report
+    .lines()
+    .filter(|line| !line.starts_with("windowCount=") && !line.starts_with("window\t"))
+    .map(|line| line.to_string())
+    .collect();
+  lines.push(format!("appSelector={}", resolved_app.selector.raw));
+  lines.push(format!("matchStrategy={}", resolved_app.match_strategy));
+  lines.push(format!(
+    "resolvedAppBundleId={}",
+    resolved_app.resolved_bundle_id.as_deref().unwrap_or("")
+  ));
+  lines.push(format!(
+    "resolvedAppName={}",
+    resolved_app.resolved_app_name
+  ));
+  lines.push(format!("windowCount={}", filtered_windows.len()));
+  for window in filtered_windows {
+    lines.push(format!(
+      "window\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+      window.app_name,
+      window.owner_pid,
+      window.owner_bundle_id,
+      window.window_number,
+      window.layer,
+      window.title,
+      window.bounds.x,
+      window.bounds.y,
+      window.bounds.width,
+      window.bounds.height,
+    ));
+  }
+  lines.join("\n")
 }
 
 pub(super) fn observe_window_tree(call: &DriverCall) -> AuvResult<DriverResponse> {

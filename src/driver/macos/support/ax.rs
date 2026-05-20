@@ -7,6 +7,10 @@ pub(crate) fn parse_observed_ax_tree(report: &str) -> AuvResult<ObservedAxTreeSn
     .to_string();
   let app_name = report_value(report, "appName=").unwrap_or("").to_string();
   let bundle_id = report_value(report, "bundleId=").unwrap_or("").to_string();
+  let pid = report_value(report, "pid=")
+    .unwrap_or("0")
+    .parse::<i32>()
+    .unwrap_or(0);
   let window_title = report_value(report, "windowTitle=")
     .unwrap_or("")
     .to_string();
@@ -24,6 +28,7 @@ pub(crate) fn parse_observed_ax_tree(report: &str) -> AuvResult<ObservedAxTreeSn
     observed_at,
     app_name,
     bundle_id,
+    pid,
     window_title,
     nodes,
   })

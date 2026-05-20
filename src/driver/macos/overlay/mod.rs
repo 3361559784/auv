@@ -202,7 +202,8 @@ pub(crate) fn overlay_click_point(call: &DriverCall) -> AuvResult<DriverResponse
     ),
     "coordinateSpace=global-logical".to_string(),
     "cursorAfter=restored-to-original".to_string(),
-    "visualOnly=overlay".to_string(),
+    "cursorDisturbance=warp-visible".to_string(),
+    "overlayPresentation=visual-only".to_string(),
     "experimental=true".to_string(),
   ]
   .join("\n")
@@ -232,6 +233,7 @@ pub(crate) fn overlay_click_point(call: &DriverCall) -> AuvResult<DriverResponse
         format!("{show_event}+{hide_event}"),
       ),
       ("daemonPid".to_string(), daemon_pid.to_string()),
+      ("cursorDisturbance".to_string(), "warp-visible".to_string()),
       ("experimental".to_string(), "true".to_string()),
     ]),
     notes: vec![
@@ -245,6 +247,8 @@ pub(crate) fn overlay_click_point(call: &DriverCall) -> AuvResult<DriverResponse
       format!("daemonPid={daemon_pid}"),
       render_display_note(&resolution.display),
       "cursorAfter=restored-to-original".to_string(),
+      "cursorDisturbance=warp-visible".to_string(),
+      "overlayPresentation=visual-only".to_string(),
     ],
     artifacts: vec![artifact],
   })

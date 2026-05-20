@@ -242,6 +242,14 @@ pub fn default_command_catalog() -> CommandCatalog {
       max_disturbance: DisturbanceClass::Pointer,
     },
     CommandSpec {
+      id: "debug.axPressButton",
+      summary: "Press a control by query via AXUIElementPerformAction; does not warp the real cursor (cursorDisturbance=none). Falls back with an error when the AX target has no matching action — use debug.pressButton for non-AX-pressable targets.",
+      driver_id: "macos.observe",
+      operation: "ax_press_button",
+      disturbance_classes: OBSERVE_WINDOW_TREE_DISTURBANCE,
+      max_disturbance: DisturbanceClass::Keyboard,
+    },
+    CommandSpec {
       id: "debug.typeText",
       summary: "Type text into the active macOS control through System Events.",
       driver_id: "macos.observe",
@@ -323,7 +331,7 @@ pub fn default_command_catalog() -> CommandCatalog {
     },
     CommandSpec {
       id: "debug.overlayClickPoint",
-      summary: "Show overlay cursor, click the target point, then hide overlay. Experimental debug-only path; flicker acceptability must be confirmed by manual observation.",
+      summary: "Show overlay cursor, click the target point, then hide overlay. Experimental debug-only path; the real cursor visibly warps to the click target and back (cursorDisturbance=warp-visible).",
       driver_id: "macos.observe",
       operation: "overlay_click_point",
       disturbance_classes: POINTER_WITH_FOREGROUND,
@@ -441,6 +449,7 @@ mod tests {
     assert!(catalog.resolve("debug.probePermissions").is_some());
     assert!(catalog.resolve("debug.focusTextInput").is_some());
     assert!(catalog.resolve("debug.pressButton").is_some());
+    assert!(catalog.resolve("debug.axPressButton").is_some());
     assert!(catalog.resolve("debug.typeText").is_some());
     assert!(
       catalog

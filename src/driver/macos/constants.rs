@@ -7,6 +7,7 @@ pub(crate) const OBSERVE_WINDOWS_SCRIPT_TEMPLATE: &str =
   include_str!("scripts/observe_windows.swift");
 pub(crate) const OBSERVE_WINDOW_TREE_SCRIPT_TEMPLATE: &str =
   include_str!("scripts/observe_window_tree.swift");
+pub(crate) const AX_PRESS_PATH_SCRIPT_TEMPLATE: &str = include_str!("scripts/ax_press_path.swift");
 pub(crate) const OCR_FIND_TEXT_SCRIPT_TEMPLATE: &str = include_str!("scripts/ocr_find_text.swift");
 pub(crate) const FIND_VISUAL_ROWS_SCRIPT_TEMPLATE: &str =
   include_str!("scripts/find_visual_rows.swift");

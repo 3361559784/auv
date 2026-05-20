@@ -2661,6 +2661,7 @@ fn default_ax_snapshot(app: &AppIdentity) -> ObservedAxTreeSnapshot {
     observed_at: String::new(),
     app_name: app.app_name.clone(),
     bundle_id: app.bundle_id.clone(),
+    pid: 0,
     window_title: String::new(),
     nodes: Vec::new(),
   }

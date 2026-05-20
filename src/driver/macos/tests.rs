@@ -273,6 +273,15 @@ fn find_now_playing_ax_node_matches_title_and_artist() {
 }
 
 #[test]
+fn parse_observed_ax_tree_extracts_pid_for_action_dispatch() {
+  let snapshot = parse_observed_ax_tree(sample_ax_report()).expect("AX report should parse");
+  assert_eq!(
+    snapshot.pid, 1495,
+    "pid must be parsed so ax_press_path can re-resolve the AX element by PID + path"
+  );
+}
+
+#[test]
 fn parse_visual_rows_snapshot_parses_visual_band_rows() {
   let snapshot =
     parse_visual_rows_snapshot(sample_visual_row_report()).expect("visual row report should parse");

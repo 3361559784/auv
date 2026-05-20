@@ -19,6 +19,19 @@ pub(crate) fn build_observe_window_tree_script(
     .replace("__MAX_CHILDREN__", &max_children.to_string())
 }
 
+pub(crate) fn build_ax_press_path_script(
+  pid: i32,
+  path: &str,
+  expected_role: &str,
+  action_name: &str,
+) -> String {
+  AX_PRESS_PATH_SCRIPT_TEMPLATE
+    .replace("__PID__", &pid.to_string())
+    .replace("__PATH__", &swift_string_literal(path))
+    .replace("__EXPECTED_ROLE__", &swift_string_literal(expected_role))
+    .replace("__ACTION_NAME__", &swift_string_literal(action_name))
+}
+
 pub(crate) fn build_ocr_find_text_script(
   image_path: &Path,
   query: &str,

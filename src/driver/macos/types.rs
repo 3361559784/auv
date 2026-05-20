@@ -188,6 +188,7 @@ pub(crate) struct ObservedAxTreeSnapshot {
   pub(crate) observed_at: String,
   pub(crate) app_name: String,
   pub(crate) bundle_id: String,
+  pub(crate) pid: i32,
   pub(crate) window_title: String,
   pub(crate) nodes: Vec<ObservedAxNode>,
 }

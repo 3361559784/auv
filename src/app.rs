@@ -4004,7 +4004,8 @@ mod tests {
   use crate::catalog::CommandCatalog;
   use crate::driver::{Driver, DriverRegistry};
   use crate::model::{CommandSpec, DisturbanceClass, DriverCall, DriverDescriptor, DriverResponse};
-  use crate::recording::{MemoryRunEventSink, RunSpec, RunStreamEvent};
+  use crate::recording::RunSpec;
+  use crate::run_recording::{MemoryRunRecorder, RunUpdate};
   use crate::store::LocalStore;
   use crate::trace::RunType;
   use std::sync::Arc;
@@ -4526,8 +4527,8 @@ mod tests {
   #[test]
   fn validate_app_distillation_nests_case_runs_in_app_validate_run() {
     let root = temp_dir("app-validate-nested-cases");
-    let sink = Arc::new(MemoryRunEventSink::new());
-    let runtime = test_runtime(root.clone()).with_event_sink(sink.clone());
+    let recorder = Arc::new(MemoryRunRecorder::new());
+    let runtime = test_runtime(root.clone()).with_recorder(recorder.clone());
     let analysis_path = root.join("analysis.json");
     let distillation_path = root.join("distillation.json");
     let recipe_path = root.join("candidate.recipe.json");
@@ -4564,11 +4565,11 @@ mod tests {
 
     validate_app_distillation(&runtime, &distillation_path).expect("validation should complete");
 
-    let finished_runs = sink
+    let finished_runs = recorder
       .drain_for_test()
       .into_iter()
-      .filter_map(|event| match event {
-        RunStreamEvent::RunFinished { run, .. } => Some(run),
+      .filter_map(|update| match update {
+        RunUpdate::RunFinished { run, .. } => Some(run),
         _ => None,
       })
       .collect::<Vec<_>>();
@@ -4596,8 +4597,8 @@ mod tests {
   #[test]
   fn validate_app_distillation_keeps_failed_case_inside_app_validate_run() {
     let root = temp_dir("app-validate-failed-nested-case");
-    let sink = Arc::new(MemoryRunEventSink::new());
-    let runtime = test_runtime(root.clone()).with_event_sink(sink.clone());
+    let recorder = Arc::new(MemoryRunRecorder::new());
+    let runtime = test_runtime(root.clone()).with_recorder(recorder.clone());
     let analysis_path = root.join("analysis.json");
     let distillation_path = root.join("distillation.json");
     let recipe_path = root.join("candidate.recipe.json");
@@ -4641,11 +4642,11 @@ mod tests {
       AppValidationStatus::Rejected
     );
 
-    let finished_runs = sink
+    let finished_runs = recorder
       .drain_for_test()
       .into_iter()
-      .filter_map(|event| match event {
-        RunStreamEvent::RunFinished { run, .. } => Some(run),
+      .filter_map(|update| match update {
+        RunUpdate::RunFinished { run, .. } => Some(run),
         _ => None,
       })
       .collect::<Vec<_>>();
@@ -4674,8 +4675,8 @@ mod tests {
   #[test]
   fn validate_app_distillation_validates_window_action_after_auto_grounding() {
     let root = temp_dir("app-validate-window-action");
-    let sink = Arc::new(MemoryRunEventSink::new());
-    let runtime = test_runtime(root.clone()).with_event_sink(sink.clone());
+    let recorder = Arc::new(MemoryRunRecorder::new());
+    let runtime = test_runtime(root.clone()).with_recorder(recorder.clone());
     let analysis_path = root.join("analysis.json");
     let distillation_path = root.join("distillation.json");
     let recipe_path = root.join("window-action.recipe.json");
@@ -4780,11 +4781,11 @@ mod tests {
     assert!(report.contains("verification mode: `evidence-only`"));
     assert!(report.contains("manual review required: `yes`"));
 
-    let finished_runs = sink
+    let finished_runs = recorder
       .drain_for_test()
       .into_iter()
-      .filter_map(|event| match event {
-        RunStreamEvent::RunFinished { run, .. } => Some(run),
+      .filter_map(|update| match update {
+        RunUpdate::RunFinished { run, .. } => Some(run),
         _ => None,
       })
       .collect::<Vec<_>>();

@@ -110,12 +110,12 @@ impl TraceStatusCode {
   }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TraceFailure {
   pub message: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RunRecordV1Alpha1 {
   pub api_version: String,
   pub run_id: RunId,
@@ -131,7 +131,7 @@ pub struct RunRecordV1Alpha1 {
   pub failure: Option<TraceFailure>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SpanRecordV1Alpha1 {
   pub api_version: String,
   pub span_id: SpanId,
@@ -146,7 +146,7 @@ pub struct SpanRecordV1Alpha1 {
   pub failure: Option<TraceFailure>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct EventRecordV1Alpha1 {
   pub api_version: String,
   pub event_id: EventId,
@@ -158,7 +158,7 @@ pub struct EventRecordV1Alpha1 {
   pub artifact_ids: Vec<ArtifactId>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ArtifactRecordV1Alpha1 {
   pub api_version: String,
   pub artifact_id: ArtifactId,

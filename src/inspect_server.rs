@@ -13,7 +13,7 @@ use tokio::net::TcpListener;
 use tokio::sync::broadcast;
 
 use crate::model::AuvResult;
-use crate::recording::BroadcastRunEventSink;
+use crate::run_recording::{ApiRunUpdate, BroadcastRunRecorder, RunUpdate};
 use crate::store::LocalStore;
 
 pub const DEFAULT_INSPECT_HOST: &str = "127.0.0.1";
@@ -22,7 +22,7 @@ pub const DEFAULT_INSPECT_PORT: u16 = 8765;
 #[derive(Clone)]
 struct InspectServerState {
   store: Arc<LocalStore>,
-  event_sink: Arc<BroadcastRunEventSink>,
+  recorder: Arc<BroadcastRunRecorder>,
 }
 
 #[derive(Clone, Debug)]
@@ -104,10 +104,10 @@ const DESIGN_ASSETS: &[(&str, &[u8], &str)] = &[
   ),
 ];
 
-pub fn router(store: LocalStore, event_sink: Arc<BroadcastRunEventSink>) -> Router {
+pub fn router(store: LocalStore, recorder: Arc<BroadcastRunRecorder>) -> Router {
   let state = InspectServerState {
     store: Arc::new(store),
-    event_sink,
+    recorder,
   };
   Router::new()
     .route("/", get(serve_viewer))
@@ -175,7 +175,7 @@ async fn serve_design_asset(Path(asset_name): Path<String>) -> Response {
 
 pub async fn serve(
   store: LocalStore,
-  event_sink: Arc<BroadcastRunEventSink>,
+  recorder: Arc<BroadcastRunRecorder>,
   config: InspectServeConfig,
 ) -> AuvResult<SocketAddr> {
   let address = format!("{}:{}", config.host, config.port)
@@ -188,7 +188,7 @@ pub async fn serve(
     .local_addr()
     .map_err(|error| format!("failed to read inspect server address: {error}"))?;
   println!("inspect server: http://{local_address}");
-  axum::serve(listener, router(store, event_sink))
+  axum::serve(listener, router(store, recorder))
     .await
     .map_err(|error| format!("inspect server failed: {error}"))?;
   Ok(local_address)
@@ -272,7 +272,7 @@ async fn stream_run(
   ensure_stream_run_exists(&state.store, &run_id)?;
   Ok(
     websocket
-      .on_upgrade(move |socket| stream_run_events(socket, state.event_sink, run_id))
+      .on_upgrade(move |socket| stream_run_events(socket, state.recorder, run_id))
       .into_response(),
   )
 }
@@ -286,10 +286,10 @@ fn ensure_stream_run_exists(store: &LocalStore, run_id: &str) -> Result<(), Insp
 
 async fn stream_run_events(
   mut socket: WebSocket,
-  event_sink: Arc<BroadcastRunEventSink>,
+  recorder: Arc<BroadcastRunRecorder>,
   run_id: String,
 ) {
-  let mut receiver = event_sink.subscribe();
+  let mut receiver = recorder.subscribe();
   while let Some(payload) = next_stream_payload(&mut receiver, &run_id).await {
     if socket.send(Message::Text(payload.into())).await.is_err() {
       break;
@@ -298,15 +298,17 @@ async fn stream_run_events(
 }
 
 async fn next_stream_payload(
-  receiver: &mut broadcast::Receiver<crate::recording::RunStreamEvent>,
+  receiver: &mut broadcast::Receiver<RunUpdate>,
   run_id: &str,
 ) -> Option<String> {
   loop {
     match receiver.recv().await {
-      Ok(event) if event.run_id().as_str() == run_id => match serde_json::to_string(&event) {
-        Ok(payload) => return Some(payload),
-        Err(_) => continue,
-      },
+      Ok(update) if update.run_id().as_str() == run_id => {
+        match serde_json::to_string(&ApiRunUpdate::from(update)) {
+          Ok(payload) => return Some(payload),
+          Err(_) => continue,
+        }
+      }
       Ok(_) => {}
       Err(broadcast::error::RecvError::Lagged(_)) => {}
       Err(broadcast::error::RecvError::Closed) => return None,
@@ -369,7 +371,7 @@ mod tests {
 
   use super::{ensure_stream_run_exists, next_stream_payload, router};
   use crate::model::now_millis;
-  use crate::recording::{BroadcastRunEventSink, RunEventSink, RunStreamEvent};
+  use crate::run_recording::{BroadcastRunRecorder, RunRecorder, RunUpdate};
   use crate::store::{CanonicalRun, LocalStore};
   use crate::trace::{
     ARTIFACT_API_VERSION, ArtifactId, ArtifactRecordV1Alpha1, EVENT_API_VERSION, EventId,
@@ -390,7 +392,7 @@ mod tests {
       .join("artifact_server_test.txt");
     fs::write(&artifact_path, "artifact body").expect("artifact should write");
 
-    let app = router(store, Arc::new(BroadcastRunEventSink::new(16)));
+    let app = router(store, Arc::new(BroadcastRunRecorder::new(16)));
     let run_response = app
       .clone()
       .oneshot(
@@ -459,7 +461,7 @@ mod tests {
   async fn root_serves_inline_viewer_html() {
     let root = temp_dir("inspect-server-viewer");
     let store = LocalStore::new(root.clone()).expect("store should initialize");
-    let app = router(store, Arc::new(BroadcastRunEventSink::new(16)));
+    let app = router(store, Arc::new(BroadcastRunRecorder::new(16)));
 
     let response = app
       .oneshot(
@@ -506,7 +508,7 @@ mod tests {
   async fn root_payload_includes_span_tree_markers() {
     let root = temp_dir("inspect-server-viewer-span-tree");
     let store = LocalStore::new(root.clone()).expect("store should initialize");
-    let app = router(store, Arc::new(BroadcastRunEventSink::new(16)));
+    let app = router(store, Arc::new(BroadcastRunRecorder::new(16)));
 
     let response = app
       .oneshot(
@@ -544,7 +546,7 @@ mod tests {
   async fn root_payload_includes_events_rail_markers() {
     let root = temp_dir("inspect-server-viewer-events-rail");
     let store = LocalStore::new(root.clone()).expect("store should initialize");
-    let app = router(store, Arc::new(BroadcastRunEventSink::new(16)));
+    let app = router(store, Arc::new(BroadcastRunRecorder::new(16)));
 
     let response = app
       .oneshot(
@@ -596,7 +598,7 @@ mod tests {
   async fn root_payload_includes_websocket_stream_markers() {
     let root = temp_dir("inspect-server-viewer-stream");
     let store = LocalStore::new(root.clone()).expect("store should initialize");
-    let app = router(store, Arc::new(BroadcastRunEventSink::new(16)));
+    let app = router(store, Arc::new(BroadcastRunRecorder::new(16)));
 
     let response = app
       .oneshot(
@@ -647,7 +649,7 @@ mod tests {
   async fn root_payload_includes_artifact_panel_markers() {
     let root = temp_dir("inspect-server-viewer-artifact-panel");
     let store = LocalStore::new(root.clone()).expect("store should initialize");
-    let app = router(store, Arc::new(BroadcastRunEventSink::new(16)));
+    let app = router(store, Arc::new(BroadcastRunRecorder::new(16)));
 
     let response = app
       .oneshot(
@@ -702,7 +704,7 @@ mod tests {
   async fn assets_route_serves_known_design_svgs_with_svg_mime() {
     let root = temp_dir("inspect-server-assets-route");
     let store = LocalStore::new(root.clone()).expect("store should initialize");
-    let app = router(store, Arc::new(BroadcastRunEventSink::new(16)));
+    let app = router(store, Arc::new(BroadcastRunRecorder::new(16)));
 
     for name in [
       "logo-mark.svg",
@@ -751,7 +753,7 @@ mod tests {
   async fn assets_route_rejects_unknown_and_traversal_names() {
     let root = temp_dir("inspect-server-assets-route-deny");
     let store = LocalStore::new(root.clone()).expect("store should initialize");
-    let app = router(store, Arc::new(BroadcastRunEventSink::new(16)));
+    let app = router(store, Arc::new(BroadcastRunRecorder::new(16)));
 
     for bad in [
       "/assets/does-not-exist.svg",
@@ -782,16 +784,20 @@ mod tests {
   async fn stream_payload_filters_events_by_run_id() {
     let run_a = RunId::new("run_stream_a");
     let run_b = RunId::new("run_stream_b");
-    let sink = BroadcastRunEventSink::new(16);
-    let mut receiver = sink.subscribe();
-    sink.on_event(RunStreamEvent::EventAppended {
-      run_id: run_b.clone(),
-      event: test_event("event_stream_b"),
-    });
-    sink.on_event(RunStreamEvent::EventAppended {
-      run_id: run_a.clone(),
-      event: test_event("event_stream_a"),
-    });
+    let recorder = BroadcastRunRecorder::new(16);
+    let mut receiver = recorder.subscribe();
+    recorder
+      .record(RunUpdate::EventAppended {
+        run_id: run_b.clone(),
+        event: test_event("event_stream_b"),
+      })
+      .expect("record should publish");
+    recorder
+      .record(RunUpdate::EventAppended {
+        run_id: run_a.clone(),
+        event: test_event("event_stream_a"),
+      })
+      .expect("record should publish");
 
     let payload = tokio::time::timeout(
       std::time::Duration::from_secs(2),
@@ -832,7 +838,7 @@ mod tests {
     let _ = fs::remove_file(&link);
     std::os::unix::fs::symlink(&outside, &link).expect("symlink should write");
 
-    let app = router(store, Arc::new(BroadcastRunEventSink::new(16)));
+    let app = router(store, Arc::new(BroadcastRunRecorder::new(16)));
     let response = app
       .oneshot(
         Request::builder()

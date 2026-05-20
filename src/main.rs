@@ -41,12 +41,12 @@ async fn run() -> Result<(), String> {
 
   if let CliCommand::InspectServe { host, port } = &command {
     let store = build_default_store(project_root)?;
-    let event_sink = Arc::new(auv_cli::recording::BroadcastRunEventSink::new(1024));
+    let recorder = Arc::new(auv_cli::run_recording::BroadcastRunRecorder::new(1024));
     let config = auv_cli::inspect_server::InspectServeConfig {
       host: host.clone(),
       port: *port,
     };
-    auv_cli::inspect_server::serve(store, event_sink, config).await?;
+    auv_cli::inspect_server::serve(store, recorder, config).await?;
     return Ok(());
   }
 

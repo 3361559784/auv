@@ -63,8 +63,15 @@ but still only a fixed-layout local slice.
 It is not yet a promoted bundle member because the current V2 workflow only
 re-expresses part of this slice so far:
 
+- `app probe` no longer uses the English metadata name `NeteaseMusic` as the
+  OCR sample query when the live surface exposes the localized foreground name
+  `网易云音乐`
+- that change upgrades the sample OCR pass from a false-zero to weak visible
+  title-level anchors
 - `app analyze` can now emit one `window-primary-region` annotation from the
   AX root window fallback
+- `app analyze` can also carry title-level `ocr-visible-text` anchors such as
+  `网易云音乐` and `© 网易云音乐`
 - that annotation now carries `window_bounds`, `relative_x`, and `relative_y`
   bindings for one conservative window-relative target
 - `app distill` can now emit one

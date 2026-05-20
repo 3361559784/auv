@@ -496,19 +496,13 @@ fn probe_app_into_run(
   steps.push(capture_step);
 
   if let Some(screenshot_artifact_path) = screenshot_artifact_path {
+    let ocr_sample_query = resolve_probe_ocr_sample_query(app, &steps);
     let mut ocr_inputs = BTreeMap::new();
     ocr_inputs.insert(
       "image_path".to_string(),
       screenshot_artifact_path.display().to_string(),
     );
-    ocr_inputs.insert(
-      "query".to_string(),
-      if app.app_name.trim().is_empty() {
-        app.bundle_id.clone()
-      } else {
-        app.app_name.clone()
-      },
-    );
+    ocr_inputs.insert("query".to_string(), ocr_sample_query);
     ocr_inputs.insert("min_confidence".to_string(), "0.55".to_string());
     steps.push(invoke_probe_step(
       runtime,
@@ -2337,6 +2331,53 @@ fn default_ocr_snapshot(app: &AppIdentity) -> OcrTextSnapshot {
   }
 }
 
+fn resolve_probe_ocr_sample_query(app: &AppIdentity, steps: &[AppProbeStep]) -> String {
+  let window_report = read_probe_step_artifact_text(steps, "observe-windows", None);
+  let ax_report = read_probe_step_artifact_text(steps, "observe-window-tree", None);
+  first_non_empty_string(&[
+    window_report
+      .as_deref()
+      .and_then(|report| report_value(report, "frontmostWindowTitle="))
+      .map(str::to_string),
+    window_report
+      .as_deref()
+      .and_then(|report| report_value(report, "frontmostAppName="))
+      .map(str::to_string),
+    ax_report
+      .as_deref()
+      .and_then(|report| report_value(report, "windowTitle="))
+      .map(str::to_string),
+    ax_report
+      .as_deref()
+      .and_then(|report| report_value(report, "appName="))
+      .map(str::to_string),
+    non_empty_trimmed(&app.app_name),
+    non_empty_trimmed(&app.bundle_id),
+  ])
+  .unwrap_or_else(|| app.bundle_id.clone())
+}
+
+fn read_probe_step_artifact_text(
+  steps: &[AppProbeStep],
+  step_id: &str,
+  file_name_hint: Option<&str>,
+) -> Option<String> {
+  let step = steps.iter().find(|step| step.id == step_id)?;
+  let artifact_path = step.artifact_paths.iter().find(|path| {
+    path
+      .extension()
+      .and_then(|value| value.to_str())
+      .is_some_and(|value| value.eq_ignore_ascii_case("txt"))
+      && file_name_hint.is_none_or(|hint| {
+        path
+          .file_name()
+          .and_then(|value| value.to_str())
+          .is_some_and(|name| name.contains(hint))
+      })
+  })?;
+  fs::read_to_string(artifact_path).ok()
+}
+
 fn read_named_text_artifact(
   probe: &AppProbe,
   step_id: &str,
@@ -3673,6 +3714,72 @@ mod tests {
     assert_eq!(second.run_id, run.id().as_str());
     assert_eq!(first.run_id, second.run_id);
     let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn resolve_probe_ocr_sample_query_prefers_frontmost_window_or_app_name() {
+    let root = temp_dir("probe-ocr-query");
+    let windows_path = root.join("observe-windows.txt");
+    let ax_path = root.join("observe-window-tree.txt");
+    fs::write(
+      &windows_path,
+      "frontmostAppName=网易云音乐\nfrontmostWindowTitle=\nobservedAt=2026-05-20T00:00:00Z\nwindowCount=0\n",
+    )
+    .expect("window report should write");
+    fs::write(
+      &ax_path,
+      "observedAt=2026-05-20T00:00:00Z\nappName=网易云音乐\nbundleId=com.netease.163music\nwindowTitle=\nrootRole=AXWindow\nnodeCount=0\n",
+    )
+    .expect("ax report should write");
+
+    let steps = vec![
+      probe_step_fixture(
+        "observe-windows",
+        "debug.observeWindows",
+        vec![windows_path],
+      ),
+      probe_step_fixture(
+        "observe-window-tree",
+        "debug.observeWindowTree",
+        vec![ax_path],
+      ),
+    ];
+    let app = AppIdentity {
+      bundle_id: "com.netease.163music".to_string(),
+      app_name: "NeteaseMusic".to_string(),
+      app_path: None,
+      main_executable_path: None,
+      version: "1.0".to_string(),
+      build_version: "1".to_string(),
+      url_schemes: Vec::new(),
+      apple_script_addressable: true,
+      launch_services_resolved: true,
+      resolution_notes: Vec::new(),
+    };
+
+    assert_eq!(
+      resolve_probe_ocr_sample_query(&app, &steps),
+      "网易云音乐".to_string()
+    );
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn resolve_probe_ocr_sample_query_falls_back_to_app_metadata() {
+    let app = AppIdentity {
+      bundle_id: "com.example.App".to_string(),
+      app_name: "Example".to_string(),
+      app_path: None,
+      main_executable_path: None,
+      version: "1.0".to_string(),
+      build_version: "1".to_string(),
+      url_schemes: Vec::new(),
+      apple_script_addressable: true,
+      launch_services_resolved: true,
+      resolution_notes: Vec::new(),
+    };
+
+    assert_eq!(resolve_probe_ocr_sample_query(&app, &[]), "Example");
   }
 
   #[test]

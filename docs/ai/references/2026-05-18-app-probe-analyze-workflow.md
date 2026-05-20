@@ -234,6 +234,17 @@ resolution, failed AX capture, or failed app-targeted screenshot should survive
 as recorded probe truth. They are boundaries, not excuses to abort the entire
 workflow before analysis can describe the problem.
 
+The OCR sample inside `app probe` also now prefers observable window/app labels
+over metadata-only names when those labels are available from the live surface.
+This matters for localized desktop apps where:
+
+- `app.app_name` may come back as an English bundle-facing name
+- the visible UI may expose a different localized app name
+- blindly probing OCR with metadata can create a false-zero sample
+
+That change improves probe honesty because the sample query is now closer to
+the text a human would actually expect to find on the captured window.
+
 ## Second Smoke Result
 
 The current `TextEdit` smoke now covers the full phase-2 chain:
@@ -265,7 +276,9 @@ This is the current honesty bar for `app validate`:
 
 The current NetEaseMusic V2 pass now covers a different kind of truth:
 
-- `app probe` still records weak semantic signals
+- `app probe` now recovers one localized OCR sample query (`网易云音乐`) instead
+  of blindly reusing the English metadata name (`NeteaseMusic`)
+- that sample now yields visible OCR anchors, but only at the app-title layer
 - `app analyze` can recover one `window-primary-region` candidate from the AX
   root window even when `observe-windows` reports zero visible windows
 - `app distill` can emit one generic
@@ -285,6 +298,8 @@ That is the current honesty bar for fixed-layout baselines:
 - keep the window-relative pointer slice machine-readable
 - allow activation-level pointer slices to validate when the analysis really
   carries enough grounding data
+- keep weak OCR-title anchors as weak OCR-title anchors instead of inflating
+  them into result-selection truth
 - do not pretend that this is already a semantic search, result-selection, or
   playback skill
 

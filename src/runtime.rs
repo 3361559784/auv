@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -237,11 +236,11 @@ impl Runtime {
     );
 
     let mut artifact_paths = Vec::new();
-    let mut response_signals = BTreeMap::new();
+    let mut response_signals = Default::default();
 
     let (status, output_summary, failure_message) = match driver.invoke(&call) {
       Ok(response) => {
-        response_signals = collect_driver_response_signals(&response);
+        response_signals = response.signals.clone();
         if let Some(backend) = &response.backend {
           record_event(
             run,
@@ -392,26 +391,6 @@ impl Runtime {
     run.record_artifact(artifact);
     Ok(staged_path)
   }
-}
-
-fn collect_driver_response_signals(
-  response: &crate::model::DriverResponse,
-) -> BTreeMap<String, String> {
-  let mut signals = BTreeMap::new();
-  for note in &response.notes {
-    let Some((key, value)) = note.split_once('=') else {
-      continue;
-    };
-    let key = key.trim();
-    if key.is_empty() {
-      continue;
-    }
-    signals.insert(key.to_string(), value.trim().to_string());
-  }
-  for (key, value) in &response.signals {
-    signals.insert(key.clone(), value.clone());
-  }
-  signals
 }
 
 fn span_record(
@@ -621,13 +600,10 @@ mod tests {
       .expect("recorded invoke should succeed");
     assert_eq!(result.status, RunStatus::Completed);
     assert_eq!(
-      result.signals.get("bestMatchText"),
-      Some(&"driver ok".to_string())
-    );
-    assert_eq!(
       result.signals.get("explicitSignal"),
       Some(&"driver".to_string())
     );
+    assert!(!result.signals.contains_key("bestMatchText"));
     let run_id = runtime
       .finish_run(
         run,

@@ -6,6 +6,51 @@ use std::time::Instant;
 
 use super::*;
 
+pub(super) fn verify_now_playing_title_signals(
+  matched_title: &str,
+) -> std::collections::BTreeMap<String, String> {
+  std::collections::BTreeMap::from([
+    ("ax.node_found".to_string(), "true".to_string()),
+    (
+      "ax.now_playing_title".to_string(),
+      matched_title.to_string(),
+    ),
+  ])
+}
+
+pub(super) fn verify_ax_text_signals(
+  matched_text: &str,
+) -> std::collections::BTreeMap<String, String> {
+  std::collections::BTreeMap::from([
+    ("ax.node_found".to_string(), "true".to_string()),
+    ("ax.matched_text".to_string(), matched_text.to_string()),
+  ])
+}
+
+pub(super) fn row_detection_signals(
+  row_count: usize,
+) -> std::collections::BTreeMap<String, String> {
+  std::collections::BTreeMap::from([
+    ("rows.count".to_string(), row_count.to_string()),
+    ("rows.visible".to_string(), (!row_count.eq(&0)).to_string()),
+  ])
+}
+
+fn preferred_ax_signal_text(node: &ObservedAxNode) -> String {
+  for value in [
+    &node.value,
+    &node.title,
+    &node.description,
+    &node.help,
+    &node.placeholder,
+  ] {
+    if !value.trim().is_empty() {
+      return value.clone();
+    }
+  }
+  String::new()
+}
+
 pub(super) fn probe_coordinate_readiness(call: &DriverCall) -> AuvResult<DriverResponse> {
   let label = optional_string(call, "label").unwrap_or_else(|| "coordinate-readiness".to_string());
   let (screenshot_path, _capture_contract) =
@@ -338,7 +383,7 @@ pub(super) fn verify_now_playing_title(call: &DriverCall) -> AuvResult<DriverRes
       }
     ),
     backend: Some("macos.observe.verify-now-playing-title".to_string()),
-    signals: std::collections::BTreeMap::new(),
+    signals: verify_now_playing_title_signals(&matched.title),
     notes,
     artifacts: vec![artifact],
   })
@@ -482,7 +527,7 @@ pub(super) fn verify_ax_text(call: &DriverCall) -> AuvResult<DriverResponse> {
       summary_suffix
     ),
     backend: Some("macos.observe.verify-ax-text".to_string()),
-    signals: std::collections::BTreeMap::new(),
+    signals: verify_ax_text_signals(&preferred_ax_signal_text(matched)),
     notes,
     artifacts: vec![artifact],
   })
@@ -862,7 +907,7 @@ pub(super) fn find_screen_rows(call: &DriverCall) -> AuvResult<DriverResponse> {
   Ok(DriverResponse {
     summary,
     backend: Some(format!("macos.vision.screen-rows.{}", detection.strategy)),
-    signals: std::collections::BTreeMap::new(),
+    signals: row_detection_signals(rows.len()),
     notes,
     artifacts: vec![screenshot_artifact, report_artifact],
   })
@@ -978,7 +1023,7 @@ pub(super) fn wait_for_screen_rows(call: &DriverCall) -> AuvResult<DriverRespons
           "macos.vision.wait-screen-rows.{}",
           detection.strategy
         )),
-        signals: std::collections::BTreeMap::new(),
+        signals: row_detection_signals(rows.len()),
         notes,
         artifacts: vec![screenshot_artifact, report_artifact],
       });
@@ -1175,4 +1220,78 @@ pub(super) fn probe_permissions(_call: &DriverCall) -> AuvResult<DriverResponse>
     notes: report.lines().map(str::to_string).collect(),
     artifacts: vec![artifact],
   })
+}
+
+#[cfg(test)]
+mod tests {
+  use super::{
+    ObservedAxNode, ObservedRect, preferred_ax_signal_text, row_detection_signals,
+    verify_ax_text_signals, verify_now_playing_title_signals,
+  };
+
+  #[test]
+  fn verify_now_playing_title_signals_include_title_and_presence() {
+    let signals = verify_now_playing_title_signals("晴天");
+
+    assert_eq!(signals.get("ax.node_found"), Some(&"true".to_string()));
+    assert_eq!(
+      signals.get("ax.now_playing_title"),
+      Some(&"晴天".to_string())
+    );
+  }
+
+  #[test]
+  fn verify_ax_text_signals_include_presence_and_match_text() {
+    let signals = verify_ax_text_signals("已粘贴完成");
+
+    assert_eq!(signals.get("ax.node_found"), Some(&"true".to_string()));
+    assert_eq!(
+      signals.get("ax.matched_text"),
+      Some(&"已粘贴完成".to_string())
+    );
+  }
+
+  #[test]
+  fn row_detection_signals_report_count_and_visibility() {
+    let empty = row_detection_signals(0);
+    let visible = row_detection_signals(3);
+
+    assert_eq!(empty.get("rows.count"), Some(&"0".to_string()));
+    assert_eq!(empty.get("rows.visible"), Some(&"false".to_string()));
+    assert_eq!(visible.get("rows.count"), Some(&"3".to_string()));
+    assert_eq!(visible.get("rows.visible"), Some(&"true".to_string()));
+  }
+
+  #[test]
+  fn preferred_ax_signal_text_prefers_value_then_fallback_fields() {
+    let node = ObservedAxNode {
+      depth: 1,
+      path: "0.1".to_string(),
+      role: "AXStaticText".to_string(),
+      subrole: String::new(),
+      title: "Title".to_string(),
+      description: "Description".to_string(),
+      help: "Help".to_string(),
+      identifier: String::new(),
+      placeholder: "Placeholder".to_string(),
+      value: "Value".to_string(),
+      bounds: ObservedRect {
+        x: 0,
+        y: 0,
+        width: 100,
+        height: 20,
+      },
+    };
+    assert_eq!(preferred_ax_signal_text(&node), "Value");
+
+    let fallback = ObservedAxNode {
+      value: "   ".to_string(),
+      title: String::new(),
+      description: "Description".to_string(),
+      help: String::new(),
+      placeholder: String::new(),
+      ..node
+    };
+    assert_eq!(preferred_ax_signal_text(&fallback), "Description");
+  }
 }

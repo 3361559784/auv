@@ -2,6 +2,10 @@ use super::super::*;
 use super::common::{ClickPointCallOptions, build_click_point_call, resolve_click_interval_ms};
 use super::pointer::click_point;
 
+pub(super) fn click_screen_text_signals(text: &str) -> std::collections::BTreeMap<String, String> {
+  std::collections::BTreeMap::from([("click.resolved_text".to_string(), text.to_string())])
+}
+
 pub(crate) fn click_screen_text(call: &DriverCall) -> AuvResult<DriverResponse> {
   let query = required_non_empty_string(call, "query")?;
   let label = format!("screen-text-click-{}", sanitize_file_component(&query));
@@ -126,7 +130,7 @@ pub(crate) fn click_screen_text(call: &DriverCall) -> AuvResult<DriverResponse> 
       matched.text, query
     ),
     backend: Some("macos.vision.click-screen-text".to_string()),
-    signals: std::collections::BTreeMap::new(),
+    signals: click_screen_text_signals(&matched.text),
     notes,
     artifacts: vec![screenshot_artifact, report_artifact],
   })
@@ -299,4 +303,19 @@ pub(crate) fn click_screen_row(call: &DriverCall) -> AuvResult<DriverResponse> {
     notes,
     artifacts: vec![screenshot_artifact, report_artifact],
   })
+}
+
+#[cfg(test)]
+mod tests {
+  use super::click_screen_text_signals;
+
+  #[test]
+  fn click_screen_text_signals_exposes_resolved_text() {
+    let signals = click_screen_text_signals("Play Now");
+
+    assert_eq!(
+      signals.get("click.resolved_text"),
+      Some(&"Play Now".to_string())
+    );
+  }
 }

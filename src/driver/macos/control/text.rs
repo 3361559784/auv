@@ -1,6 +1,12 @@
 use super::super::*;
 use super::common::activate_app_if_needed;
 
+pub(super) fn clipboard_restore_signals(
+  restored: bool,
+) -> std::collections::BTreeMap<String, String> {
+  std::collections::BTreeMap::from([("clipboard.restored".to_string(), restored.to_string())])
+}
+
 pub(crate) fn type_text(call: &DriverCall) -> AuvResult<DriverResponse> {
   let app = app_identifier(call).unwrap_or_default();
   let text = required_non_empty_string(call, "text")?;
@@ -144,7 +150,7 @@ pub(crate) fn paste_text_preserve_clipboard(call: &DriverCall) -> AuvResult<Driv
       ),
     },
     backend: Some("macos.system-events.paste-text-preserve-clipboard".to_string()),
-    signals: std::collections::BTreeMap::new(),
+    signals: clipboard_restore_signals(true),
     notes,
     artifacts: vec![artifact],
   })
@@ -190,4 +196,16 @@ pub(crate) fn press_key(call: &DriverCall) -> AuvResult<DriverResponse> {
     ],
     artifacts: vec![artifact],
   })
+}
+
+#[cfg(test)]
+mod tests {
+  use super::clipboard_restore_signals;
+
+  #[test]
+  fn clipboard_restore_signals_uses_structured_namespace() {
+    let signals = clipboard_restore_signals(true);
+
+    assert_eq!(signals.get("clipboard.restored"), Some(&"true".to_string()));
+  }
 }

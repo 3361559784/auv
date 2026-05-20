@@ -345,6 +345,10 @@ pub struct SkillStepExpect {
   #[serde(default)]
   pub output_must_not_contain: Vec<String>,
   #[serde(default)]
+  pub signal_equals: BTreeMap<String, String>,
+  #[serde(default)]
+  pub signal_contains: BTreeMap<String, String>,
+  #[serde(default)]
   pub artifact_count_at_least: Option<usize>,
 }
 
@@ -1920,6 +1924,36 @@ fn enforce_step_expectations(
       minimum
     ));
   }
+  for (signal_key, expected_value) in &step.expect.signal_equals {
+    let rendered_key = render_template(signal_key, variables);
+    let rendered_value = render_template(expected_value, variables);
+    let actual_value = result.signals.get(&rendered_key).ok_or_else(|| {
+      format!(
+        "step {step_id:?} signals did not include required key {rendered_key:?}: {}",
+        render_signal_marker_summary(&available_markers),
+      )
+    })?;
+    if actual_value != &rendered_value {
+      return Err(format!(
+        "step {step_id:?} signal {rendered_key:?} expected exact value {rendered_value:?}, got {actual_value:?}",
+      ));
+    }
+  }
+  for (signal_key, expected_fragment) in &step.expect.signal_contains {
+    let rendered_key = render_template(signal_key, variables);
+    let rendered_fragment = render_template(expected_fragment, variables);
+    let actual_value = result.signals.get(&rendered_key).ok_or_else(|| {
+      format!(
+        "step {step_id:?} signals did not include required key {rendered_key:?}: {}",
+        render_signal_marker_summary(&available_markers),
+      )
+    })?;
+    if !actual_value.contains(&rendered_fragment) {
+      return Err(format!(
+        "step {step_id:?} signal {rendered_key:?} did not contain required fragment {rendered_fragment:?}: {actual_value:?}",
+      ));
+    }
+  }
   Ok(())
 }
 
@@ -2176,6 +2210,83 @@ mod tests {
     .expect_err("summary-only markers should no longer pass");
 
     assert!(error.contains("no structured signals"));
+  }
+
+  #[test]
+  fn enforce_step_expectations_supports_signal_equals_and_contains() {
+    let step: SkillStep = serde_json::from_value(json!({
+      "id": "verify-text",
+      "command_id": "test.skill.invoke",
+      "disturbance": {
+        "classes": ["none"],
+        "max": "none"
+      },
+      "expect": {
+        "signal_equals": {
+          "clipboard.restored": "true"
+        },
+        "signal_contains": {
+          "ax.matched_text": "${target_text}"
+        }
+      }
+    }))
+    .expect("step should deserialize");
+    let result = InvokeResult {
+      run_id: "run_4".to_string(),
+      status: RunStatus::Completed,
+      output_summary: "human summary only".to_string(),
+      signals: BTreeMap::from([
+        ("clipboard.restored".to_string(), "true".to_string()),
+        (
+          "ax.matched_text".to_string(),
+          "prefix hello suffix".to_string(),
+        ),
+      ]),
+      artifact_paths: vec![],
+      failure_message: None,
+    };
+
+    enforce_step_expectations(
+      "verify-text",
+      &step,
+      &result,
+      &BTreeMap::from([("target_text".to_string(), "hello".to_string())]),
+    )
+    .expect("signal checks should pass");
+  }
+
+  #[test]
+  fn enforce_step_expectations_reports_missing_signal_key() {
+    let step: SkillStep = serde_json::from_value(json!({
+      "id": "verify-text",
+      "command_id": "test.skill.invoke",
+      "disturbance": {
+        "classes": ["none"],
+        "max": "none"
+      },
+      "expect": {
+        "signal_equals": {
+          "ax.node_found": "true"
+        }
+      }
+    }))
+    .expect("step should deserialize");
+    let error = enforce_step_expectations(
+      "verify-text",
+      &step,
+      &InvokeResult {
+        run_id: "run_5".to_string(),
+        status: RunStatus::Completed,
+        output_summary: String::new(),
+        signals: BTreeMap::from([("clipboard.restored".to_string(), "true".to_string())]),
+        artifact_paths: vec![],
+        failure_message: None,
+      },
+      &BTreeMap::new(),
+    )
+    .expect_err("missing signal should fail");
+
+    assert!(error.contains("ax.node_found"));
   }
 
   #[test]

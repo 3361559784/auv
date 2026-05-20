@@ -70,6 +70,7 @@ pub enum CliCommand {
     max_disturbance: Option<DisturbanceClass>,
     overrides: BTreeMap<String, String>,
   },
+  XtaskGenerateSwiftBridge,
 }
 
 pub fn parse_cli(arguments: &[String]) -> AuvResult<CliCommand> {
@@ -79,6 +80,7 @@ pub fn parse_cli(arguments: &[String]) -> AuvResult<CliCommand> {
 
   match arguments[0].as_str() {
     "help" | "--help" | "-h" => Ok(CliCommand::Help),
+    "--xtask" => parse_xtask(arguments),
     "list-commands" => Ok(CliCommand::ListCommands),
     "list-drivers" => Ok(CliCommand::ListDrivers),
     "app" => parse_app(arguments),
@@ -87,6 +89,19 @@ pub fn parse_cli(arguments: &[String]) -> AuvResult<CliCommand> {
     "skill" => parse_skill(arguments),
     other => Err(format!(
       "unknown subcommand {other}; use `help` to see supported commands"
+    )),
+  }
+}
+
+fn parse_xtask(arguments: &[String]) -> AuvResult<CliCommand> {
+  if arguments.len() != 2 {
+    return Err("usage: auv-cli --xtask generate-swift-bridge".to_string());
+  }
+
+  match arguments[1].as_str() {
+    "generate-swift-bridge" => Ok(CliCommand::XtaskGenerateSwiftBridge),
+    other => Err(format!(
+      "unknown xtask {other}; supported xtasks: generate-swift-bridge"
     )),
   }
 }
@@ -658,6 +673,17 @@ mod tests {
         assert_eq!(host, "0.0.0.0");
         assert_eq!(port, 0);
       }
+      other => panic!("unexpected command: {other:?}"),
+    }
+  }
+
+  #[test]
+  fn parse_xtask_generate_swift_bridge_command() {
+    let command = parse_cli(&["--xtask".to_string(), "generate-swift-bridge".to_string()])
+      .expect("xtask command should parse");
+
+    match command {
+      CliCommand::XtaskGenerateSwiftBridge => {}
       other => panic!("unexpected command: {other:?}"),
     }
   }

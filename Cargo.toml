@@ -44,6 +44,7 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 objc2-core-graphics = { version = "0.3", features = ["CGWindow", "CGImage", "CGDataProvider", "CGGeometry"] }
 objc2-core-foundation = "0.3"
 swift-bridge = "0.1.59"
+swift-bridge-build = "0.1.59"
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }

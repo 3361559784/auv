@@ -5,6 +5,9 @@ import PackageDescription
 
 let package = Package(
     name: "AuvMacosNative",
+    platforms: [
+        .macOS(.v10_15)
+    ],
     products: [
         .library(
             name: "AuvMacosNative",
@@ -14,7 +17,13 @@ let package = Package(
     ],
     targets: [
         .target(
-            name: "AuvMacosNative"
+            name: "AuvMacosNative",
+            swiftSettings: [
+                .unsafeFlags([
+                    "-import-objc-header",
+                    "Sources/AuvMacosNative/Generated/native-bridging-header.h"
+                ])
+            ]
         ),
     ]
 )

@@ -1,4 +1,5 @@
 mod cli;
+mod xtask;
 
 use std::env;
 use std::path::PathBuf;
@@ -31,6 +32,13 @@ async fn run() -> Result<(), String> {
   let command = parse_cli(&arguments)?;
   let project_root =
     env::current_dir().map_err(|error| format!("failed to resolve current directory: {error}"))?;
+  if let CliCommand::XtaskGenerateSwiftBridge = &command {
+    let output = xtask::generate_swift_bridge_for_ide(&project_root)?;
+    println!("generated Swift bridge files for IDE indexing");
+    println!("output: {}", output.display());
+    return Ok(());
+  }
+
   if let CliCommand::InspectServe { host, port } = &command {
     let store = build_default_store(project_root)?;
     let event_sink = Arc::new(auv_cli::recording::BroadcastRunEventSink::new(1024));
@@ -52,6 +60,7 @@ async fn run() -> Result<(), String> {
     CliCommand::Help => {
       print!("{}", help_text());
     }
+    CliCommand::XtaskGenerateSwiftBridge => unreachable!("xtask is handled before runtime setup"),
     CliCommand::ListCommands => {
       for command in runtime.list_commands() {
         println!(

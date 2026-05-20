@@ -100,6 +100,15 @@ new Swift package or restructuring Swift sources, use Swift tooling such as
 project structure from scratch; then adapt the generated manifest and sources
 to the repository layout.
 
+The macOS Swift package uses generated `swift-bridge` types that are produced by
+Cargo during the real build. For SourceKit or IDE indexing, run
+`hack/generate-swift-bridge` to generate ignored files under
+`src/driver/macos/native/swift/Sources/AuvMacosNative/Generated/`. After
+generating those files, `cd src/driver/macos/native/swift && swift build` is the
+preferred SwiftPM-side check that the package and generated bridge types are
+visible to the IDE. Do not commit the generated directory; regenerate it after
+changing `src/driver/macos/native/ffi.rs`.
+
 ## Documentation Workflow
 
 During active design or implementation, write specs, plans, and working notes in

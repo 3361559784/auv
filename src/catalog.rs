@@ -243,7 +243,7 @@ pub fn default_command_catalog() -> CommandCatalog {
     },
     CommandSpec {
       id: "debug.axPressButton",
-      summary: "Press a control by query via AXUIElementPerformAction; does not warp the real cursor (cursorDisturbance=none). Falls back with an error when the AX target has no matching action — use debug.pressButton for non-AX-pressable targets.",
+      summary: "Press a control by query via AXUIElementPerformAction; does not warp the real cursor (cursorDisturbance=none). Pass --overlay true to draw a visual AUV cursor over the target during the press for the dual-cursor effect. Falls back with an error when the AX target has no matching action — use debug.pressButton for non-AX-pressable targets.",
       driver_id: "macos.observe",
       operation: "ax_press_button",
       disturbance_classes: OBSERVE_WINDOW_TREE_DISTURBANCE,

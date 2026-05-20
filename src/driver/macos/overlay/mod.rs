@@ -277,6 +277,61 @@ pub(crate) fn overlay_shutdown(_call: &DriverCall) -> AuvResult<DriverResponse> 
   })
 }
 
+/// Outcome of an `[with_overlay_cursor]` invocation — surfaces the overlay
+/// lifecycle so callers can include it in signals/notes/reports.
+pub(crate) struct OverlayWrapperOutcome {
+  pub(crate) show_event: String,
+  pub(crate) hide_event: String,
+  pub(crate) daemon_pid: u32,
+}
+
+/// Show the overlay cursor at `(x, y)`, run `body`, then hide the overlay —
+/// guaranteed even on body failure. Used to wrap a non-cursor-touching action
+/// (e.g. AX press) in a visible overlay marker so the user can see where the
+/// driver is acting without the real cursor being warped.
+pub(crate) fn with_overlay_cursor<R, F>(
+  x: f64,
+  y: f64,
+  label: &str,
+  body: F,
+) -> AuvResult<(R, OverlayWrapperOutcome)>
+where
+  F: FnOnce() -> AuvResult<R>,
+{
+  let (show_event, daemon_pid) = {
+    let mut guard = lock_overlay_daemon()?;
+    let daemon = ensure_overlay_daemon(&mut guard)?;
+    let ack = daemon.send(ShowCursor {
+      x,
+      y,
+      label: label.to_string(),
+    })?;
+    (ack.event, daemon.pid())
+  };
+
+  let body_result = body();
+
+  let hide_event = {
+    let mut guard = lock_overlay_daemon()?;
+    if let Some(daemon) = guard.as_mut() {
+      daemon
+        .send(HideCursor)
+        .map(|ack| ack.event)
+        .unwrap_or_else(|_| "hide_failed".to_string())
+    } else {
+      "no_active_daemon".to_string()
+    }
+  };
+
+  let outcome = OverlayWrapperOutcome {
+    show_event,
+    hide_event,
+    daemon_pid,
+  };
+
+  body_result.map(|value| (value, outcome))
+}
+
 fn lock_overlay_daemon() -> AuvResult<std::sync::MutexGuard<'static, Option<OverlayDaemon>>> {
   OVERLAY_DAEMON
     .lock()

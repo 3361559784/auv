@@ -1,3 +1,7 @@
+use std::thread;
+use std::time::Duration;
+
+use super::super::overlay::{OverlayWrapperOutcome, with_overlay_cursor};
 use super::super::*;
 use super::common::{
   DEFAULT_CLICK_INTERVAL_MS, activate_app_if_needed, build_ax_click_notes,
@@ -98,6 +102,11 @@ pub(crate) fn ax_press_button(call: &DriverCall) -> AuvResult<DriverResponse> {
   let activate = optional_bool(call, "activate")?.unwrap_or(true);
   let action_name =
     optional_non_empty_string(call, "action").unwrap_or_else(|| "AXPress".to_string());
+  let overlay = optional_bool(call, "overlay")?.unwrap_or(false);
+  let overlay_label = optional_non_empty_string(call, "label").unwrap_or_else(|| "AUV".to_string());
+  let preview_ms =
+    optional_positive_u64(call, "preview_ms")?.unwrap_or(if overlay { 250 } else { 0 });
+  let settle_ms = optional_positive_u64(call, "settle_ms")?.unwrap_or(0);
 
   if activate {
     activate_app_if_needed(&app)?;
@@ -118,13 +127,25 @@ pub(crate) fn ax_press_button(call: &DriverCall) -> AuvResult<DriverResponse> {
   }
   let matched = find_best_ax_node(&snapshot, &query)
     .ok_or_else(|| no_matching_ax_node_error(&snapshot, &query, "AX-pressable"))?;
+  let (center_x, center_y) = ax_node_center(matched);
 
-  let press_report = run_swift_script(&build_ax_press_path_script(
-    snapshot.pid,
-    &matched.path,
-    &matched.role,
-    &action_name,
-  ))?;
+  let press_script =
+    build_ax_press_path_script(snapshot.pid, &matched.path, &matched.role, &action_name);
+  let (press_report, overlay_outcome): (String, Option<OverlayWrapperOutcome>) = if overlay {
+    let (report, outcome) = with_overlay_cursor(center_x, center_y, &overlay_label, || {
+      if preview_ms > 0 {
+        thread::sleep(Duration::from_millis(preview_ms));
+      }
+      let report = run_swift_script(&press_script)?;
+      if settle_ms > 0 {
+        thread::sleep(Duration::from_millis(settle_ms));
+      }
+      Ok(report)
+    })?;
+    (report, Some(outcome))
+  } else {
+    (run_swift_script(&press_script)?, None)
+  };
   let performed_action = report_value(&press_report, "performedAction=")
     .unwrap_or("")
     .to_string();
@@ -132,11 +153,19 @@ pub(crate) fn ax_press_button(call: &DriverCall) -> AuvResult<DriverResponse> {
     .unwrap_or("")
     .to_string();
 
-  let (center_x, center_y) = ax_node_center(matched);
   let report = render_ax_interaction_report("ax-press-button", &snapshot, matched, &query);
-  let report = format!(
-    "{report}performedAction={performed_action}\navailableActions={available_actions}\npressMechanism=ax-action\ncursorDisturbance=none\nactivatedApp={activate}\n"
+  let mut report = format!(
+    "{report}performedAction={performed_action}\navailableActions={available_actions}\npressMechanism=ax-action\ncursorDisturbance=none\nactivatedApp={activate}\noverlayPresentation={}\n",
+    if overlay { "visual-only" } else { "off" },
   );
+  if let Some(outcome) = &overlay_outcome {
+    report.push_str(&format!("overlayShowEvent={}\n", outcome.show_event));
+    report.push_str(&format!("overlayHideEvent={}\n", outcome.hide_event));
+    report.push_str(&format!("daemonPid={}\n", outcome.daemon_pid));
+    report.push_str(&format!("previewMs={preview_ms}\n"));
+    report.push_str(&format!("settleMs={settle_ms}\n"));
+    report.push_str(&format!("overlayLabel={overlay_label}\n"));
+  }
   let artifact = build_text_artifact(
     "ax-press-button",
     "txt",
@@ -153,6 +182,15 @@ pub(crate) fn ax_press_button(call: &DriverCall) -> AuvResult<DriverResponse> {
     notes.push(format!("availableActions={available_actions}"));
   }
   notes.push(format!("activatedApp={activate}"));
+  if let Some(outcome) = &overlay_outcome {
+    notes.push("overlayPresentation=visual-only".to_string());
+    notes.push(format!("overlayShowEvent={}", outcome.show_event));
+    notes.push(format!("overlayHideEvent={}", outcome.hide_event));
+    notes.push(format!("daemonPid={}", outcome.daemon_pid));
+    notes.push(format!("previewMs={preview_ms}"));
+    notes.push(format!("settleMs={settle_ms}"));
+    notes.push(format!("overlayLabel={overlay_label}"));
+  }
   if let Some(shortcut) = reveal_shortcut.as_deref() {
     notes.push(format!("revealShortcut={shortcut}"));
     notes.push(format!("revealSettleMs={reveal_settle_ms}"));
@@ -168,6 +206,19 @@ pub(crate) fn ax_press_button(call: &DriverCall) -> AuvResult<DriverResponse> {
   if !available_actions.is_empty() {
     signals.insert("availableActions".to_string(), available_actions);
   }
+  if let Some(outcome) = &overlay_outcome {
+    signals.insert(
+      "overlayEvent".to_string(),
+      format!("{}+{}", outcome.show_event, outcome.hide_event),
+    );
+    signals.insert("daemonPid".to_string(), outcome.daemon_pid.to_string());
+  }
+
+  let backend = if overlay {
+    "macos.ax.perform-action+overlay-daemon"
+  } else {
+    "macos.ax.perform-action"
+  };
 
   Ok(DriverResponse {
     summary: if matched.title.is_empty() && matched.description.is_empty() {
@@ -197,7 +248,7 @@ pub(crate) fn ax_press_button(call: &DriverCall) -> AuvResult<DriverResponse> {
         query
       )
     },
-    backend: Some("macos.ax.perform-action".to_string()),
+    backend: Some(backend.to_string()),
     signals,
     notes,
     artifacts: vec![artifact],

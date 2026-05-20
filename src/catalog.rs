@@ -178,6 +178,24 @@ pub fn default_command_catalog() -> CommandCatalog {
       disturbance_classes: NONE,
       max_disturbance: DisturbanceClass::None,
     },
+    // REVIEW: Public names are explicit window-scoped variants for the first
+    // implementation. Revisit before introducing screen or generic region scans.
+    CommandSpec {
+      id: "debug.observeWindowRegion",
+      summary: "Observe OCR row-like content inside a resolved macOS window region without scrolling.",
+      driver_id: "macos.desktop",
+      operation: "observe_window_region",
+      disturbance_classes: NONE,
+      max_disturbance: DisturbanceClass::None,
+    },
+    CommandSpec {
+      id: "debug.scrollWindowRegion",
+      summary: "Scroll at the center of a resolved macOS window region and record scroll evidence.",
+      driver_id: "macos.desktop",
+      operation: "scroll_window_region",
+      disturbance_classes: POINTER_WITH_FOREGROUND,
+      max_disturbance: DisturbanceClass::Pointer,
+    },
     CommandSpec {
       id: "debug.verifyNowPlayingTitle",
       summary: "Verify the current now-playing title from the observed AX tree without relying on screenshot OCR.",
@@ -591,6 +609,14 @@ mod tests {
         "missing {command_id}"
       );
     }
+  }
+
+  #[test]
+  fn default_catalog_resolves_window_region_scan_primitives() {
+    let catalog = default_command_catalog();
+    assert!(catalog.resolve("debug.observeWindowRegion").is_some());
+    assert!(catalog.resolve("debug.scrollWindowRegion").is_some());
+    assert!(catalog.resolve("debug.scanWindowRegion").is_none());
   }
 
   #[test]

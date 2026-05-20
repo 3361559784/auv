@@ -189,6 +189,10 @@ fn router_with_config(
     .route("/runs/{run_id}/artifacts/{artifact_id}", get(get_artifact))
     .route("/runs/{run_id}/stream", get(stream_run))
     .route("/write/runs/{run_id}/updates", post(write_updates))
+    .route(
+      "/write/runs/{run_id}/artifacts/{artifact_id}",
+      post(write_artifact),
+    )
     .with_state(state)
 }
 
@@ -428,6 +432,29 @@ async fn write_updates(
       .map_err(InspectHttpError::from_store)?;
   }
   Ok(Json(WriteUpdatesResponse { accepted }).into_response())
+}
+
+async fn write_artifact(
+  State(state): State<InspectServerState>,
+  Path((run_id, artifact_id)): Path<(String, String)>,
+  headers: HeaderMap,
+) -> Result<Response, InspectHttpError> {
+  authorize_write(&headers, &state.write)?;
+  Ok(
+    (
+      StatusCode::NOT_IMPLEMENTED,
+      Json(serde_json::json!({
+        "error": {
+          "code": "artifactUploadNotImplemented",
+          "message": "inspect server artifact byte upload is reserved but not implemented",
+          "runId": run_id,
+          "artifactId": artifact_id,
+          "retryable": false
+        }
+      })),
+    )
+      .into_response(),
+  )
 }
 
 fn authorize_write(
@@ -873,6 +900,31 @@ mod tests {
     let _ = fs::remove_dir_all(root);
   }
 
+  #[tokio::test]
+  async fn write_artifact_rejects_when_write_disabled() {
+    let root = temp_dir("inspect-write-artifact-disabled");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let app = router_with_config(
+      store,
+      Arc::new(BroadcastRunRecorder::new(16)),
+      super::InspectWriteConfig::default(),
+    );
+
+    let response = app
+      .oneshot(
+        Request::builder()
+          .method("POST")
+          .uri("/write/runs/run_write_test/artifacts/artifact_write_test")
+          .body(Body::from("artifact body"))
+          .expect("request should build"),
+      )
+      .await
+      .expect("route should respond");
+
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    let _ = fs::remove_dir_all(root);
+  }
+
   #[test]
   fn write_updates_payload_deserializes_camel_case_records() {
     let body = serde_json::json!({
@@ -947,6 +999,73 @@ mod tests {
       .expect("route should respond");
 
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
+  async fn write_artifact_requires_configured_token() {
+    let root = temp_dir("inspect-write-artifact-token-required");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let app = router_with_config(
+      store,
+      Arc::new(BroadcastRunRecorder::new(16)),
+      super::InspectWriteConfig {
+        enabled: true,
+        token: Some("secret".to_string()),
+        no_token: false,
+      },
+    );
+
+    let response = app
+      .oneshot(
+        Request::builder()
+          .method("POST")
+          .uri("/write/runs/run_write_test/artifacts/artifact_write_test")
+          .body(Body::from("artifact body"))
+          .expect("request should build"),
+      )
+      .await
+      .expect("route should respond");
+
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
+  async fn write_artifact_returns_not_implemented_when_authorized() {
+    let root = temp_dir("inspect-write-artifact-not-implemented");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let app = router_with_config(
+      store,
+      Arc::new(BroadcastRunRecorder::new(16)),
+      super::InspectWriteConfig {
+        enabled: true,
+        token: Some("secret".to_string()),
+        no_token: false,
+      },
+    );
+
+    let response = app
+      .oneshot(
+        Request::builder()
+          .method("POST")
+          .uri("/write/runs/run_write_test/artifacts/artifact_write_test")
+          .header("authorization", "Bearer secret")
+          .body(Body::from("artifact body"))
+          .expect("request should build"),
+      )
+      .await
+      .expect("route should respond");
+
+    assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
+    let body = to_bytes(response.into_body(), usize::MAX)
+      .await
+      .expect("body should read");
+    let value: serde_json::Value = serde_json::from_slice(&body).expect("json error");
+    assert_eq!(value["error"]["code"], "artifactUploadNotImplemented");
+    assert_eq!(value["error"]["runId"], "run_write_test");
+    assert_eq!(value["error"]["artifactId"], "artifact_write_test");
+    assert_eq!(value["error"]["retryable"], false);
     let _ = fs::remove_dir_all(root);
   }
 

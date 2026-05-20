@@ -429,9 +429,16 @@ fn command_attributes(
   attributes.insert("command_id".to_string(), string_attr(command_id));
   attributes.insert("driver_id".to_string(), string_attr(driver_id));
   attributes.insert("operation".to_string(), string_attr(operation));
+  attributes.insert("auv.command.id".to_string(), string_attr(command_id));
+  attributes.insert("auv.driver.id".to_string(), string_attr(driver_id));
+  attributes.insert("auv.driver.operation".to_string(), string_attr(operation));
   if let Some(target_application_id) = target_application_id {
     attributes.insert(
       "target_application_id".to_string(),
+      string_attr(target_application_id),
+    );
+    attributes.insert(
+      "auv.target.application_id".to_string(),
       string_attr(target_application_id),
     );
   }
@@ -485,6 +492,8 @@ mod tests {
   use std::fs;
   use std::path::PathBuf;
   use std::sync::Arc;
+
+  use serde_json::json;
 
   use super::Runtime;
   use crate::catalog::CommandCatalog;
@@ -639,6 +648,23 @@ mod tests {
         .spans
         .iter()
         .any(|span| span.name == "auv.command.invoke")
+    );
+    let command_span = canonical
+      .spans
+      .iter()
+      .find(|span| span.name == "auv.command.invoke")
+      .expect("command span should be recorded");
+    assert_eq!(
+      command_span.attributes.get("auv.command.id"),
+      Some(&json!("test.invoke"))
+    );
+    assert_eq!(
+      command_span.attributes.get("auv.driver.id"),
+      Some(&json!("test.driver"))
+    );
+    assert_eq!(
+      command_span.attributes.get("auv.driver.operation"),
+      Some(&json!("test_operation"))
     );
     assert!(
       canonical

@@ -663,7 +663,16 @@ pub(crate) fn run_skill_manifest_into_run(
       parent,
       span_record(
         "auv.recipe.step",
-        BTreeMap::from([("auv.recipe.step_id".to_string(), string_attr(&step_id))]),
+        BTreeMap::from([
+          ("auv.recipe.step_id".to_string(), string_attr(&step_id)),
+          ("auv.step.id".to_string(), string_attr(&step_id)),
+          ("auv.step.index".to_string(), serde_json::json!(index)),
+          ("auv.step.kind".to_string(), string_attr("recipe")),
+          (
+            "auv.recipe.id".to_string(),
+            string_attr(manifest.recipe_id.clone()),
+          ),
+        ]),
       ),
     )?;
 
@@ -2407,6 +2416,27 @@ mod tests {
         .filter(|span| span.name == "auv.recipe.step")
         .count(),
       2
+    );
+    let first_step_span = canonical
+      .spans
+      .iter()
+      .find(|span| span.name == "auv.recipe.step")
+      .expect("first recipe step span should be recorded");
+    assert_eq!(
+      first_step_span.attributes.get("auv.step.id"),
+      Some(&json!("first"))
+    );
+    assert_eq!(
+      first_step_span.attributes.get("auv.step.index"),
+      Some(&json!(0))
+    );
+    assert_eq!(
+      first_step_span.attributes.get("auv.step.kind"),
+      Some(&json!("recipe"))
+    );
+    assert_eq!(
+      first_step_span.attributes.get("auv.recipe.id"),
+      Some(&json!(manifest.recipe_id))
     );
 
     let _ = fs::remove_dir_all(project_root);

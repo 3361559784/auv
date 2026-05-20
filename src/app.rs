@@ -3155,7 +3155,11 @@ fn invoke_probe_step(
     parent,
     app_span_record(
       "auv.probe.step",
-      BTreeMap::from([("auv.probe.step_id".to_string(), string_attr(step_id))]),
+      BTreeMap::from([
+        ("auv.probe.step_id".to_string(), string_attr(step_id)),
+        ("auv.step.id".to_string(), string_attr(step_id)),
+        ("auv.step.kind".to_string(), string_attr("probe")),
+      ]),
     ),
   )?;
   let request = InvokeRequest {
@@ -4103,6 +4107,37 @@ mod tests {
     assert_eq!(first.run_id, run.id().as_str());
     assert_eq!(second.run_id, run.id().as_str());
     assert_eq!(first.run_id, second.run_id);
+
+    let run_id = runtime
+      .finish_run(
+        run,
+        RunFinish {
+          status_code: TraceStatusCode::Ok,
+          summary: Some("probe complete".to_string()),
+          failure: None,
+        },
+      )
+      .expect("probe run should finish");
+    let canonical = runtime.read_run(run_id.as_str()).expect("run should read");
+    let first_probe_span = canonical
+      .spans
+      .iter()
+      .find(|span| span.name == "auv.probe.step")
+      .expect("first probe step span should be recorded");
+    assert_eq!(
+      first_probe_span.attributes.get("auv.probe.step_id"),
+      Some(&serde_json::json!("first"))
+    );
+    assert_eq!(
+      first_probe_span.attributes.get("auv.step.id"),
+      Some(&serde_json::json!("first"))
+    );
+    assert_eq!(
+      first_probe_span.attributes.get("auv.step.kind"),
+      Some(&serde_json::json!("probe"))
+    );
+    assert!(first_probe_span.attributes.get("auv.step.index").is_none());
+
     let _ = fs::remove_dir_all(root);
   }
 

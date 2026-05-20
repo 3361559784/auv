@@ -11,6 +11,8 @@ mod protocol;
 use daemon::OverlayDaemon;
 use protocol::OverlayDaemonCommand::{HideCursor, ShowCursor};
 
+const DEFAULT_PREVIEW_MS: u64 = 250;
+
 static OVERLAY_DAEMON: LazyLock<Mutex<Option<OverlayDaemon>>> = LazyLock::new(|| Mutex::new(None));
 
 pub(crate) fn overlay_show_cursor(call: &DriverCall) -> AuvResult<DriverResponse> {
@@ -105,6 +107,144 @@ pub(crate) fn overlay_hide_cursor(_call: &DriverCall) -> AuvResult<DriverRespons
       "lifecycle=stdin-eof".to_string(),
       "crossProcessPersistence=false".to_string(),
       format!("daemonPid={daemon_pid}"),
+    ],
+    artifacts: vec![artifact],
+  })
+}
+
+/// Debug-only wrapped click: shows overlay cursor, clicks, then hides overlay.
+///
+/// Does NOT modify `debug.clickPoint` behavior.  Flicker acceptability must be
+/// confirmed by manual observation before this is considered for any non-debug path.
+pub(crate) fn overlay_click_point(call: &DriverCall) -> AuvResult<DriverResponse> {
+  let x = required_f64(call, "x")?;
+  let y = required_f64(call, "y")?;
+  let label = optional_non_empty_string(call, "label").unwrap_or_else(|| "AUV".to_string());
+  let preview_ms = optional_positive_u64(call, "preview_ms")?.unwrap_or(DEFAULT_PREVIEW_MS);
+  let click_count = optional_i64(call, "click_count")?.unwrap_or(1).clamp(1, 4);
+  let click_interval_ms = optional_positive_u64(call, "click_interval_ms")?
+    .unwrap_or(80)
+    .min(1000);
+  let settle_ms = optional_positive_u64(call, "settle_ms")?.unwrap_or(0);
+  let (button_name, button_code) = parse_mouse_button(call)?;
+
+  let snapshot = enumerate_displays()?;
+  let resolution = resolve_display_point(&snapshot, x, y)
+    .ok_or_else(|| format!("logical point ({x:.3}, {y:.3}) is outside all connected displays"))?;
+
+  let app = app_identifier(call).unwrap_or_default();
+  if !app.is_empty() {
+    activate_target_app(&app)?;
+  }
+
+  // 1. Show overlay cursor.
+  let (show_event, daemon_pid) = {
+    let mut guard = lock_overlay_daemon()?;
+    let daemon = ensure_overlay_daemon(&mut guard)?;
+    let ack = daemon.send(ShowCursor {
+      x,
+      y,
+      label: label.clone(),
+    })?;
+    (ack.event, daemon.pid())
+  };
+
+  // 2. Hold overlay for preview visibility before the click.
+  if preview_ms > 0 {
+    thread::sleep(Duration::from_millis(preview_ms));
+  }
+
+  // 3. Click. Swift script handles warp-to-target + CGEvent + warp-restore internally.
+  let click_result = run_swift_script(&build_click_point_script(
+    x,
+    y,
+    button_code,
+    click_count,
+    click_interval_ms,
+  ));
+
+  if settle_ms > 0 {
+    thread::sleep(Duration::from_millis(settle_ms));
+  }
+
+  // 4. Hide overlay cursor regardless of click success.
+  let hide_event = {
+    let mut guard = lock_overlay_daemon()?;
+    if let Some(daemon) = guard.as_mut() {
+      daemon
+        .send(HideCursor)
+        .map(|ack| ack.event)
+        .unwrap_or_else(|_| "hide_failed".to_string())
+    } else {
+      "no_active_daemon".to_string()
+    }
+  };
+
+  // Propagate click errors after overlay cleanup.
+  click_result?;
+
+  let report = [
+    "operation=overlay_click_point".to_string(),
+    format!("globalLogicalPoint={x:.3},{y:.3}"),
+    format!("label={label}"),
+    format!("previewMs={preview_ms}"),
+    format!("button={button_name}"),
+    format!("clickCount={click_count}"),
+    format!("clickIntervalMs={click_interval_ms}"),
+    format!("settleMs={settle_ms}"),
+    format!("daemonPid={daemon_pid}"),
+    format!("showEvent={show_event}"),
+    format!("hideEvent={hide_event}"),
+    format!("displayId={}", resolution.display.display_id),
+    format!(
+      "backingPixelPoint={},{}",
+      resolution.backing_pixel_x, resolution.backing_pixel_y
+    ),
+    "coordinateSpace=global-logical".to_string(),
+    "cursorAfter=restored-to-original".to_string(),
+    "visualOnly=overlay".to_string(),
+    "experimental=true".to_string(),
+  ]
+  .join("\n")
+    + "\n";
+
+  let artifact = build_text_artifact(
+    "overlay-click-point",
+    "txt",
+    &format!(
+      "overlay-click-point-{}-{}",
+      sanitize_file_component(&format!("{x:.3}")),
+      sanitize_file_component(&format!("{y:.3}")),
+    ),
+    report,
+    "Clicked a macOS logical point with an experimental visual overlay cursor.",
+  )?;
+
+  Ok(DriverResponse {
+    summary: format!(
+      "Overlay-clicked {button_name} at global logical point ({x:.3}, {y:.3}) on display #{} with label \"{label}\".",
+      resolution.display.display_id
+    ),
+    backend: Some("macos.swift.quartz-click+overlay-daemon".to_string()),
+    signals: BTreeMap::from([
+      (
+        "overlayEvent".to_string(),
+        format!("{show_event}+{hide_event}"),
+      ),
+      ("daemonPid".to_string(), daemon_pid.to_string()),
+      ("experimental".to_string(), "true".to_string()),
+    ]),
+    notes: vec![
+      "experimental=true".to_string(),
+      format!("label={label}"),
+      format!("previewMs={preview_ms}"),
+      format!("button={button_name}"),
+      format!("clickCount={click_count}"),
+      format!("clickIntervalMs={click_interval_ms}"),
+      format!("settleMs={settle_ms}"),
+      format!("daemonPid={daemon_pid}"),
+      render_display_note(&resolution.display),
+      "cursorAfter=restored-to-original".to_string(),
     ],
     artifacts: vec![artifact],
   })

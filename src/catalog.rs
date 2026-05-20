@@ -322,6 +322,14 @@ pub fn default_command_catalog() -> CommandCatalog {
       max_disturbance: DisturbanceClass::Pointer,
     },
     CommandSpec {
+      id: "debug.overlayClickPoint",
+      summary: "Show overlay cursor, click the target point, then hide overlay. Experimental debug-only path; flicker acceptability must be confirmed by manual observation.",
+      driver_id: "macos.observe",
+      operation: "overlay_click_point",
+      disturbance_classes: POINTER_WITH_FOREGROUND,
+      max_disturbance: DisturbanceClass::Pointer,
+    },
+    CommandSpec {
       id: "debug.overlayShowCursor",
       summary: "Show an experimental visual-only AUV cursor label overlay inside the current process.",
       driver_id: "macos.observe",
@@ -444,6 +452,7 @@ mod tests {
     assert!(catalog.resolve("debug.clickWindowPoint").is_some());
     assert!(catalog.resolve("debug.clickScreenText").is_some());
     assert!(catalog.resolve("debug.scrollPoint").is_some());
+    assert!(catalog.resolve("debug.overlayClickPoint").is_some());
     assert!(catalog.resolve("debug.overlayShowCursor").is_some());
     assert!(catalog.resolve("debug.overlayHideCursor").is_some());
     assert!(catalog.resolve("debug.overlayShutdown").is_some());

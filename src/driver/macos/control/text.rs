@@ -13,8 +13,11 @@ pub(crate) fn type_text(call: &DriverCall) -> AuvResult<DriverResponse> {
   let replace_existing = optional_bool(call, "replace_existing")?.unwrap_or(false);
   let submit_key = optional_non_empty_string(call, "submit_key");
   let submit_settle_ms = optional_positive_u64(call, "submit_settle_ms")?.unwrap_or(0);
+  let activate = should_activate_text_input(call)?;
 
-  activate_app_if_needed(&app)?;
+  if activate {
+    activate_app_if_needed(&app)?;
+  }
   type_text_via_system_events(
     &text,
     replace_existing,
@@ -35,6 +38,7 @@ pub(crate) fn type_text(call: &DriverCall) -> AuvResult<DriverResponse> {
     format!("text={text}"),
     format!("textLength={}", text.chars().count()),
     format!("replaceExisting={replace_existing}"),
+    format!("activatedApp={activate}"),
   ];
   if !app.is_empty() {
     notes.push(format!("app={app}"));
@@ -81,8 +85,11 @@ pub(crate) fn paste_text_preserve_clipboard(call: &DriverCall) -> AuvResult<Driv
   let replace_existing = optional_bool(call, "replace_existing")?.unwrap_or(false);
   let submit_key = optional_non_empty_string(call, "submit_key");
   let submit_settle_ms = optional_positive_u64(call, "submit_settle_ms")?.unwrap_or(0);
+  let activate = should_activate_text_input(call)?;
 
-  activate_app_if_needed(&app)?;
+  if activate {
+    activate_app_if_needed(&app)?;
+  }
   paste_text_preserving_clipboard(
     &text,
     replace_existing,
@@ -105,6 +112,7 @@ pub(crate) fn paste_text_preserve_clipboard(call: &DriverCall) -> AuvResult<Driv
       format!("replaceExisting={replace_existing}"),
       format!("submitKey={}", submit_key.as_deref().unwrap_or("n/a")),
       format!("submitSettleMs={submit_settle_ms}"),
+      format!("activatedApp={activate}"),
       "clipboardRestored=true".to_string(),
     ]
     .join("\n"),
@@ -115,6 +123,7 @@ pub(crate) fn paste_text_preserve_clipboard(call: &DriverCall) -> AuvResult<Driv
     format!("text={text}"),
     format!("textLength={}", text.chars().count()),
     format!("replaceExisting={replace_existing}"),
+    format!("activatedApp={activate}"),
     "clipboardRestored=true".to_string(),
   ];
   if !app.is_empty() {
@@ -160,8 +169,11 @@ pub(crate) fn press_key(call: &DriverCall) -> AuvResult<DriverResponse> {
   let app = app_identifier(call).unwrap_or_default();
   let key = required_non_empty_string(call, "key")?;
   let settle_ms = optional_positive_u64(call, "settle_ms")?.unwrap_or(0);
+  let activate = should_activate_text_input(call)?;
 
-  activate_app_if_needed(&app)?;
+  if activate {
+    activate_app_if_needed(&app)?;
+  }
   send_key_input(&key, settle_ms)?;
 
   let artifact = build_text_artifact(
@@ -173,6 +185,7 @@ pub(crate) fn press_key(call: &DriverCall) -> AuvResult<DriverResponse> {
       format!("app={app}"),
       format!("key={key}"),
       format!("settleMs={settle_ms}"),
+      format!("activatedApp={activate}"),
     ]
     .join("\n"),
     "Pressed a keyboard key or shortcut through System Events.",
@@ -193,19 +206,55 @@ pub(crate) fn press_key(call: &DriverCall) -> AuvResult<DriverResponse> {
       format!("key={key}"),
       format!("settleMs={settle_ms}"),
       format!("app={app}"),
+      format!("activatedApp={activate}"),
     ],
     artifacts: vec![artifact],
   })
 }
 
+pub(super) fn should_activate_text_input(call: &DriverCall) -> AuvResult<bool> {
+  Ok(optional_bool(call, "activate")?.unwrap_or(true))
+}
+
 #[cfg(test)]
 mod tests {
-  use super::clipboard_restore_signals;
+  use super::{clipboard_restore_signals, should_activate_text_input};
+  use crate::model::{DriverCall, ExecutionTarget};
+  use std::collections::BTreeMap;
+  use std::path::PathBuf;
 
   #[test]
   fn clipboard_restore_signals_uses_structured_namespace() {
     let signals = clipboard_restore_signals(true);
 
     assert_eq!(signals.get("clipboard.restored"), Some(&"true".to_string()));
+  }
+
+  #[test]
+  fn text_input_activation_defaults_to_true() {
+    let call = build_call([]);
+
+    assert!(should_activate_text_input(&call).unwrap());
+  }
+
+  #[test]
+  fn text_input_activation_can_be_disabled() {
+    let call = build_call([("activate", "false")]);
+
+    assert!(!should_activate_text_input(&call).unwrap());
+  }
+
+  fn build_call<const N: usize>(entries: [(&str, &str); N]) -> DriverCall {
+    DriverCall {
+      operation: "paste_text_preserve_clipboard".to_string(),
+      target: ExecutionTarget {
+        application_id: Some("com.netease.163music".to_string()),
+      },
+      inputs: entries
+        .into_iter()
+        .map(|(key, value)| (key.to_string(), value.to_string()))
+        .collect::<BTreeMap<_, _>>(),
+      working_directory: PathBuf::from("."),
+    }
   }
 }

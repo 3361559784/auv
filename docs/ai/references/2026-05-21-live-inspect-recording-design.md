@@ -2,7 +2,7 @@
 
 Date: 2026-05-21
 
-Status: draft for review
+Status: implemented for phase 1
 
 ## Purpose
 
@@ -293,7 +293,9 @@ The server session descriptor is separate from the store root. It is used only
 for client discovery.
 
 When write is enabled, `auv inspect serve` writes a session descriptor in an OS
-user runtime/cache location:
+user runtime/cache location. The descriptor path may be overridden for tests or
+advanced local workflows with `AUV_INSPECT_SESSION`, but default discovery must
+not trust arbitrary world-writable locations.
 
 ```json
 {
@@ -311,6 +313,18 @@ Ordinary CLI execution uses this descriptor when
 
 Explicit `--inspect-server-url`, `--inspect-server-token`, or
 `--inspect-server-token-file` overrides session discovery.
+
+Discovery is intentionally conservative:
+
+- The default session path is user-private.
+- On Unix, descriptors must be owned by the current user and must not grant
+  group or other access.
+- Discovered session URLs must be local or loopback before ordinary CLI runs
+  report trace data.
+- Malformed, stale, unsafe, or non-local descriptors are ignored with a warning
+  for best-effort/default reporting.
+- The same descriptor problems fail command setup when inspect server write is
+  required.
 
 ## Ordinary Run CLI Settings
 
@@ -350,7 +364,7 @@ Phase 1 keeps artifact handling conservative:
 - Local write stages artifacts into the configured local store.
 - Server write sends artifact metadata through `artifactCreated`.
 - `POST /write/runs/{runId}/artifacts/{artifactId}` is reserved for artifact
-  bytes.
+  bytes and currently returns a structured not-implemented response.
 
 This means live viewers can show artifact metadata immediately. Full artifact
 preview for cross-process/release use requires phase 2 artifact byte upload.
@@ -431,6 +445,9 @@ That can be a follow-up after the write API and recording backend are in place.
 - Implement `/write/runs/{runId}/artifacts/{artifactId}`.
 - Add recorder support for uploading artifact bytes.
 - Teach viewer APIs to serve server-side uploaded artifacts.
+
+The phase 1 implementation only reserves the route and keeps byte persistence
+for a later artifact-upload phase.
 
 ## Testing
 

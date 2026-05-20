@@ -153,18 +153,63 @@ They are inspection artifacts, not screenshots.
 
 ## Inspect Server
 
-The inspect server is a read-only HTTP and WebSocket access layer over stored
-and same-process live run data. It is not the runtime execution API.
+The inspect server is an HTTP and WebSocket access layer over stored and live
+run data. It is not the runtime execution API.
 
 The server exists so browser viewers, Android WebViews, IDE integrations, and
 other tools can list runs, fetch run structure, load artifacts, and subscribe to
 live run events.
 
 The default CLI endpoint is `127.0.0.1:8765`. A standalone `inspect serve`
-process can read historical runs from `.auv/runs/`; live streaming requires the
-runtime and server to share the same in-process event sink.
+process can read historical runs from the configured store root and can accept
+cross-process run updates only when write mode is explicitly enabled.
 
-Replay and mutation APIs are out of scope for the first inspect-server design.
+Inspect server write mode is opt-in. In write mode, runtimes can report
+incremental run updates to the server over local HTTP, and the server applies
+accepted updates to its configured store before broadcasting them to live
+viewers. The server rejects conflicting updates instead of silently merging or
+overwriting them.
+
+Local recording and inspect server reporting are multi-write behavior. AUV does
+not define a universal single source of truth when both are enabled; each target
+owns the records it accepted, and callers choose which store or server they
+inspect.
+
+Artifact byte upload is reserved but not implemented in the first write phase.
+Replay and broader mutation APIs remain out of scope for the first
+inspect-server design.
+
+## Run Recording Backend
+
+A run recording backend is the runtime dependency that owns run recording
+effects. It combines one store for canonical snapshots and artifact staging
+with one or more run recorders for incremental updates.
+
+The backend lets CLI, library calls, and future frontends share the same runtime
+execution model while choosing different recording policies. Examples include
+local-only recording, local plus inspect server reporting, server-required
+reporting, and library-supplied recorders.
+
+## Run Recorder
+
+A run recorder receives incremental run updates such as `runStarted`,
+`spanStarted`, `eventAppended`, `artifactCreated`, `spanFinished`, and
+`runFinished`.
+
+Recorder implementations may persist updates locally, broadcast them to
+same-process viewers, report them to an inspect server, fan them out to multiple
+targets, or intentionally discard them.
+
+## Inspect Server Session
+
+An inspect server session is a local discovery descriptor written by
+`inspect serve` when write mode is enabled. It contains the local server URL,
+store root, write-enabled state, optional write token, process id, and start
+time.
+
+Ordinary CLI runs may use this descriptor when inspect server reporting is left
+at its default. Discovery must use a user-private session path and reject unsafe
+or non-local descriptors before sending run data.
 
 ## Viewer
 

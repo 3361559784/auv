@@ -174,3 +174,41 @@ work across desktop, remote, and mobile contexts.
 
 The viewer should render spans, events, and artifacts as an inspectable
 timeline.
+
+## Scroll Scan
+
+A scroll scan is a recorded workflow that repeatedly observes a window or
+region, scrolls it, and accumulates visible observations into an inspectable
+collection artifact.
+
+A scroll scan records what AUV saw, how it moved the viewport, and why it
+stopped. It should not claim a complete collection unless the stop evidence
+supports that claim.
+
+## Observed Collection
+
+An observed collection is the structured result of a scroll scan. It contains
+page records, raw observations, conservative clusters, optional section
+candidates, hook decisions, stop evidence, and a completeness claim.
+
+Observed collections are evidence artifacts. They are not application-specific
+semantic objects such as playlists, search results, inboxes, or tables.
+
+## Completeness Claim
+
+A completeness claim is the scanner's structured statement about whether the
+observed collection appears complete, partial, or unknown.
+
+Completeness claims must distinguish evidence from uncertainty. For example,
+`complete_by_no_visual_progress` means the scanner observed no further visual
+progress under its configured policy; it does not mean the target application
+proved that no additional content exists.
+
+## Scan Hook
+
+A scan hook is an optional recipe executed at a stable point inside a scroll
+scan. Hooks can annotate observations, request stop, request retry, or adjust
+future scan behavior.
+
+Hooks are observation-only by default. Hooks that mutate UI must declare their
+disturbance explicitly.

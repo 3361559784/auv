@@ -8,6 +8,7 @@ pub mod model;
 pub mod recording;
 pub mod run_recording;
 pub mod runtime;
+pub mod scan;
 pub mod skill;
 pub mod store;
 pub mod trace;

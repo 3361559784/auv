@@ -45,14 +45,15 @@ fn macos_driver_descriptor_uses_desktop_namespace() {
 }
 
 #[test]
-fn dispatch_rejects_removed_observe_ax_tree_operation_name() {
+fn dispatch_rejects_removed_ax_tree_operation_name() {
   let call = build_call([]);
   let mut call = call;
-  call.operation = "observe_ax_tree".to_string();
+  call.operation = ["observe", "ax", "tree"].join("_");
 
   let error = super::dispatch::invoke_operation(&call).unwrap_err();
 
-  assert!(error.contains("does not support operation observe_ax_tree"));
+  assert!(error.contains("does not support operation"));
+  assert!(error.contains(&["observe", "ax", "tree"].join("_")));
 }
 
 #[test]

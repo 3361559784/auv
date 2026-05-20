@@ -1,5 +1,10 @@
 # macOS Driver Namespace Refactor Design
 
+> Implementation scope chosen on 2026-05-21: first migrate public command and
+> driver naming (`macos.desktop`, `debug.captureAxTree`) and split AX tree
+> capture into its own module. Full screen/window directory reshaping remains
+> deferred until more non-macOS backend work exists.
+
 ## Context
 
 The current macOS driver grew from PoC command paths. Public command names,

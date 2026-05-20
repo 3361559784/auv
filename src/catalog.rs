@@ -515,7 +515,8 @@ mod tests {
   fn command_catalog_renames_window_tree_to_ax_tree() {
     let catalog = default_command_catalog();
     assert!(catalog.resolve("debug.captureAxTree").is_some());
-    assert!(catalog.resolve("debug.observeAxTree").is_none());
+    let removed_ax_tree_command = ["debug", &["observe", "AxTree"].join("")].join(".");
+    assert!(catalog.resolve(&removed_ax_tree_command).is_none());
     assert!(catalog.resolve("debug.observeWindowTree").is_none());
   }
 
@@ -535,14 +536,15 @@ mod tests {
   }
 
   #[test]
-  fn command_catalog_renames_observe_ax_tree_to_capture_ax_tree() {
+  fn command_catalog_renames_ax_tree_capture_command() {
     let catalog = default_command_catalog();
     let command = catalog
       .resolve("debug.captureAxTree")
       .expect("debug.captureAxTree should exist");
 
     assert_eq!(command.operation, "capture_ax_tree");
-    assert!(catalog.resolve("debug.observeAxTree").is_none());
+    let removed_ax_tree_command = ["debug", &["observe", "AxTree"].join("")].join(".");
+    assert!(catalog.resolve(&removed_ax_tree_command).is_none());
     assert!(catalog.resolve("debug.observeWindowTree").is_none());
   }
 

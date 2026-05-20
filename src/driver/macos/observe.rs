@@ -176,7 +176,7 @@ pub(super) fn probe_coordinate_readiness(call: &DriverCall) -> AuvResult<DriverR
 
   Ok(DriverResponse {
     summary,
-    backend: Some("macos.observe.coordinate-readiness".to_string()),
+    backend: Some("macos.desktop.coordinate-readiness".to_string()),
     signals: std::collections::BTreeMap::new(),
     notes,
     artifacts: vec![screenshot_artifact, report_artifact],
@@ -450,7 +450,7 @@ pub(super) fn verify_now_playing_title(call: &DriverCall) -> AuvResult<DriverRes
         &snapshot.app_name
       }
     ),
-    backend: Some("macos.observe.verify-now-playing-title".to_string()),
+    backend: Some("macos.desktop.verify-now-playing-title".to_string()),
     signals: verify_now_playing_title_signals(&matched.title),
     notes,
     artifacts: vec![artifact],
@@ -591,7 +591,7 @@ pub(super) fn verify_ax_text(call: &DriverCall) -> AuvResult<DriverResponse> {
       },
       summary_suffix
     ),
-    backend: Some("macos.observe.verify-ax-text".to_string()),
+    backend: Some("macos.desktop.verify-ax-text".to_string()),
     signals: verify_ax_text_signals(&preferred_ax_signal_text(matched), &matched.role),
     notes,
     artifacts: vec![artifact],
@@ -640,7 +640,7 @@ pub(super) fn project_screenshot_point(call: &DriverCall) -> AuvResult<DriverRes
       "Projected screenshot pixel ({x:.3}, {y:.3}) to global logical point ({logical_x:.3}, {logical_y:.3}) on display #{}.",
       resolution.display.display_id
     ),
-    backend: Some("macos.observe.screenshot-point".to_string()),
+    backend: Some("macos.desktop.screenshot-point".to_string()),
     signals: std::collections::BTreeMap::new(),
     notes: vec![
       format!("capturedAt={}", snapshot.captured_at),
@@ -1308,7 +1308,7 @@ pub(super) fn identify_point(call: &DriverCall) -> AuvResult<DriverResponse> {
 
   Ok(DriverResponse {
     summary,
-    backend: Some("macos.observe.display-point".to_string()),
+    backend: Some("macos.desktop.display-point".to_string()),
     signals: std::collections::BTreeMap::new(),
     notes,
     artifacts: vec![artifact],

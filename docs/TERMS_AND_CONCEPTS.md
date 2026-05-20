@@ -130,6 +130,27 @@ window image, while the same ratio on a display-scoped command is relative to
 the selected display capture. A region should not be used as a substitute for
 the scope itself.
 
+## AX Tree
+
+An AX tree is a snapshot of accessibility elements exposed by a target
+application or window. It is an inspection structure used for text
+verification, candidate discovery, and accessibility actions when a platform
+provides reliable accessibility metadata.
+
+AX tree capture is different from window listing. A window candidate describes
+system window ownership and bounds; an AX tree describes the accessibility
+elements inside an app surface.
+
+## Capture Contract
+
+A capture contract is structured metadata that explains how an image artifact
+maps to an observation scope. It should include enough information to interpret
+pixel bounds, project selected points back to logical coordinates, and diagnose
+why a capture was rejected.
+
+Capture contracts are produced alongside display, region, and window captures.
+They are inspection artifacts, not screenshots.
+
 ## Inspect Server
 
 The inspect server is a read-only HTTP and WebSocket access layer over stored

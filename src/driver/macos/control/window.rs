@@ -108,7 +108,7 @@ pub(crate) fn click_window_point(call: &DriverCall) -> AuvResult<DriverResponse>
       "Clicked {} window-relative point in {} at global logical point ({logical_x:.3}, {logical_y:.3}).",
       button_label, app
     ),
-    backend: Some("macos.observe.window-relative-click".to_string()),
+    backend: Some("macos.desktop.window-relative-click".to_string()),
     signals: std::collections::BTreeMap::new(),
     notes,
     artifacts: vec![artifact],

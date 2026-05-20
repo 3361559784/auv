@@ -547,8 +547,8 @@ fn probe_app_into_run(
     runtime,
     run,
     parent,
-    "observe-ax-tree",
-    "debug.observeAxTree",
+    "capture-ax-tree",
+    "debug.captureAxTree",
     Some(app.bundle_id.clone()),
     tree_inputs,
     true,
@@ -2119,7 +2119,7 @@ fn build_annotation_candidates(
     let evidence_step_id = if primary_window.is_some() {
       "list-windows"
     } else {
-      "observe-ax-tree"
+      "capture-ax-tree"
     };
     let note = if primary_window.is_some() {
       "Primary visible window bounds from the window snapshot."
@@ -2165,7 +2165,7 @@ fn build_annotation_candidates(
       "focus-query",
       node,
       query_value,
-      "observe-ax-tree",
+      "capture-ax-tree",
       candidate_compatibility(
         &["search-entry.ax-text-input.clipboard-submit.capture-evidence"],
         &[],
@@ -2183,7 +2183,7 @@ fn build_annotation_candidates(
       "focus-query",
       node,
       query_value,
-      "observe-ax-tree",
+      "capture-ax-tree",
       candidate_compatibility(
         &["native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text"],
         &[],
@@ -2609,7 +2609,7 @@ fn parse_window_snapshot(probe: &AppProbe) -> AuvResult<WindowSnapshotAnalysis> 
 }
 
 fn parse_ax_snapshot(probe: &AppProbe) -> AuvResult<ObservedAxTreeSnapshot> {
-  let report = read_named_text_artifact(probe, "observe-ax-tree", None)?;
+  let report = read_named_text_artifact(probe, "capture-ax-tree", None)?;
   parse_observed_ax_tree(&report)
 }
 
@@ -4263,7 +4263,7 @@ mod tests {
         }),
         click_point: Some(AppPoint { x: 50, y: 20 }),
         confidence: None,
-        evidence_step_id: "observe-ax-tree".to_string(),
+        evidence_step_id: "capture-ax-tree".to_string(),
         input_bindings: BTreeMap::from([("focus_query".to_string(), "Search".to_string())]),
         compatibility: candidate_compatibility(
           &["search-entry.ax-text-input.clipboard-submit.capture-evidence"],
@@ -4458,7 +4458,7 @@ mod tests {
       }),
       click_point: Some(AppPoint { x: 500, y: 500 }),
       confidence: None,
-      evidence_step_id: "observe-ax-tree".to_string(),
+      evidence_step_id: "capture-ax-tree".to_string(),
       input_bindings: BTreeMap::from([
         ("window_bounds".to_string(), "100,200,800,600".to_string()),
         ("relative_x".to_string(), "0.500000".to_string()),
@@ -4702,7 +4702,7 @@ mod tests {
       }),
       click_point: Some(AppPoint { x: 500, y: 500 }),
       confidence: None,
-      evidence_step_id: "observe-ax-tree".to_string(),
+      evidence_step_id: "capture-ax-tree".to_string(),
       input_bindings: BTreeMap::from([
         ("window_bounds".to_string(), "100,200,800,600".to_string()),
         ("relative_x".to_string(), "0.500000".to_string()),
@@ -5008,8 +5008,8 @@ mod tests {
         ),
         probe_step_fixture("list-windows", "debug.listWindows", vec![windows_path]),
         failed_probe_step_fixture(
-          "observe-ax-tree",
-          "debug.observeAxTree",
+          "capture-ax-tree",
+          "debug.captureAxTree",
           "app not available",
         ),
         failed_probe_step_fixture(
@@ -5033,7 +5033,7 @@ mod tests {
       analysis
         .known_boundaries
         .iter()
-        .any(|entry| entry.contains("observe-ax-tree"))
+        .any(|entry| entry.contains("capture-ax-tree"))
     );
     assert_eq!(
       analysis.available_surfaces.accessibility_tree,
@@ -5119,7 +5119,7 @@ mod tests {
           vec![readiness_path],
         ),
         probe_step_fixture("list-windows", "debug.listWindows", vec![windows_path]),
-        probe_step_fixture("observe-ax-tree", "debug.observeAxTree", vec![ax_path]),
+        probe_step_fixture("capture-ax-tree", "debug.captureAxTree", vec![ax_path]),
       ],
     };
 
@@ -5139,7 +5139,7 @@ mod tests {
       .find(|candidate| candidate.candidate_id == "window-primary-region")
       .expect("window candidate should exist");
     assert_eq!(window_candidate.source, "ax");
-    assert_eq!(window_candidate.evidence_step_id, "observe-ax-tree");
+    assert_eq!(window_candidate.evidence_step_id, "capture-ax-tree");
     assert_eq!(
       window_candidate.input_bindings.get("relative_x"),
       Some(&"0.500000".to_string())

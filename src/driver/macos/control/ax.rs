@@ -83,7 +83,7 @@ pub(crate) fn focus_text_input(call: &DriverCall) -> AuvResult<DriverResponse> {
         query
       )
     },
-    backend: Some("macos.observe.ax-tree-click-focus".to_string()),
+    backend: Some("macos.desktop.ax-tree-click-focus".to_string()),
     signals: std::collections::BTreeMap::new(),
     notes,
     artifacts: vec![artifact],
@@ -331,7 +331,7 @@ pub(crate) fn press_button(call: &DriverCall) -> AuvResult<DriverResponse> {
         query
       )
     },
-    backend: Some("macos.observe.ax-tree-click-press".to_string()),
+    backend: Some("macos.desktop.ax-tree-click-press".to_string()),
     signals: std::collections::BTreeMap::new(),
     notes,
     artifacts: vec![artifact],

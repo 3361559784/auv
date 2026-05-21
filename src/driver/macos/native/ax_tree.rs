@@ -1,7 +1,7 @@
 #[cfg(target_os = "macos")]
 use super::ffi::ffi::{
-  NativeAxActionRequest, NativeAxActionResponse, NativeAxTreeRequest, NativeAxTreeResponse,
-  capture_ax_tree, perform_ax_action,
+  NativeAxActionRequest, NativeAxActionResponse, NativeAxFocusRequest, NativeAxFocusResponse,
+  NativeAxTreeRequest, NativeAxTreeResponse, capture_ax_tree, perform_ax_action, set_ax_focused,
 };
 use crate::driver::macos::{ObservedAxNode, ObservedAxTreeSnapshot, ObservedRect};
 use crate::model::AuvResult;
@@ -17,6 +17,19 @@ pub(crate) struct NativeAxTreeCapture {
 pub(crate) struct NativeAxAction {
   pub(crate) performed_action: String,
   pub(crate) available_actions: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct NativeAxFocus {
+  pub(crate) set_attribute: String,
+  pub(crate) was_already_focused: bool,
+  pub(crate) role: String,
+  pub(crate) subrole: String,
+  pub(crate) title: String,
+  pub(crate) description: String,
+  pub(crate) identifier: String,
+  pub(crate) placeholder: String,
+  pub(crate) bounds: ObservedRect,
 }
 
 #[cfg(target_os = "macos")]
@@ -68,6 +81,30 @@ pub(crate) fn perform_ax_path_action(
   _action_name: &str,
 ) -> AuvResult<NativeAxAction> {
   Err("macOS native AX action dispatch is unsupported on this target".to_string())
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn set_ax_focused_path(
+  pid: i32,
+  path: &str,
+  expected_role: &str,
+) -> AuvResult<NativeAxFocus> {
+  decode_ax_focus_response(DecodedAxFocusResponse::from(set_ax_focused(
+    NativeAxFocusRequest {
+      pid: i64::from(pid),
+      path: path.to_string(),
+      expected_role: expected_role.to_string(),
+    },
+  )))
+}
+
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn set_ax_focused_path(
+  _pid: i32,
+  _path: &str,
+  _expected_role: &str,
+) -> AuvResult<NativeAxFocus> {
+  Err("macOS native AX focus dispatch is unsupported on this target".to_string())
 }
 
 pub(crate) fn decode_ax_tree_response(
@@ -174,6 +211,36 @@ pub(crate) fn decode_ax_action_response(
   })
 }
 
+pub(crate) fn decode_ax_focus_response(
+  response: DecodedAxFocusResponse,
+) -> AuvResult<NativeAxFocus> {
+  if response.error_message.is_some() {
+    return super::error::native_result(
+      "set_ax_focused",
+      None,
+      response.error_message,
+      response.recovery_hint,
+    );
+  }
+
+  Ok(NativeAxFocus {
+    set_attribute: response.set_attribute,
+    was_already_focused: response.was_already_focused,
+    role: response.role,
+    subrole: response.subrole,
+    title: response.title,
+    description: response.description,
+    identifier: response.identifier,
+    placeholder: response.placeholder,
+    bounds: ObservedRect {
+      x: response.x,
+      y: response.y,
+      width: response.width,
+      height: response.height,
+    },
+  })
+}
+
 pub(crate) fn render_ax_tree_report(capture: &NativeAxTreeCapture) -> String {
   let snapshot = &capture.snapshot;
   let mut lines = vec![
@@ -241,6 +308,24 @@ pub(crate) struct DecodedAxActionResponse {
   pub(crate) recovery_hint: Option<String>,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct DecodedAxFocusResponse {
+  pub(crate) set_attribute: String,
+  pub(crate) was_already_focused: bool,
+  pub(crate) role: String,
+  pub(crate) subrole: String,
+  pub(crate) title: String,
+  pub(crate) description: String,
+  pub(crate) identifier: String,
+  pub(crate) placeholder: String,
+  pub(crate) x: i64,
+  pub(crate) y: i64,
+  pub(crate) width: i64,
+  pub(crate) height: i64,
+  pub(crate) error_message: Option<String>,
+  pub(crate) recovery_hint: Option<String>,
+}
+
 #[cfg(target_os = "macos")]
 impl From<NativeAxTreeResponse> for DecodedAxTreeResponse {
   fn from(value: NativeAxTreeResponse) -> Self {
@@ -277,6 +362,28 @@ impl From<NativeAxActionResponse> for DecodedAxActionResponse {
     Self {
       performed_action: value.performed_action,
       available_actions: value.available_actions,
+      error_message: value.error_message,
+      recovery_hint: value.recovery_hint,
+    }
+  }
+}
+
+#[cfg(target_os = "macos")]
+impl From<NativeAxFocusResponse> for DecodedAxFocusResponse {
+  fn from(value: NativeAxFocusResponse) -> Self {
+    Self {
+      set_attribute: value.set_attribute,
+      was_already_focused: value.was_already_focused,
+      role: value.role,
+      subrole: value.subrole,
+      title: value.title,
+      description: value.description,
+      identifier: value.identifier,
+      placeholder: value.placeholder,
+      x: value.x,
+      y: value.y,
+      width: value.width,
+      height: value.height,
       error_message: value.error_message,
       recovery_hint: value.recovery_hint,
     }
@@ -345,5 +452,56 @@ mod tests {
 
     assert!(error.contains("perform_ax_action failed"));
     assert!(error.contains("missing action"));
+  }
+
+  fn base_focus_response() -> DecodedAxFocusResponse {
+    DecodedAxFocusResponse {
+      set_attribute: "AXFocused".to_string(),
+      was_already_focused: false,
+      role: "AXTextArea".to_string(),
+      subrole: "".to_string(),
+      title: "".to_string(),
+      description: "Note Body Text View".to_string(),
+      identifier: "".to_string(),
+      placeholder: "".to_string(),
+      x: 10,
+      y: 20,
+      width: 300,
+      height: 200,
+      error_message: None,
+      recovery_hint: None,
+    }
+  }
+
+  #[test]
+  fn decode_ax_focus_passes_through_successful_set() {
+    let focus = decode_ax_focus_response(base_focus_response()).unwrap();
+
+    assert_eq!(focus.set_attribute, "AXFocused");
+    assert!(!focus.was_already_focused);
+    assert_eq!(focus.role, "AXTextArea");
+    assert_eq!(focus.bounds.width, 300);
+  }
+
+  #[test]
+  fn decode_ax_focus_preserves_already_focused_signal() {
+    let mut response = base_focus_response();
+    response.was_already_focused = true;
+    let focus = decode_ax_focus_response(response).unwrap();
+
+    assert!(focus.was_already_focused);
+    assert_eq!(focus.set_attribute, "AXFocused");
+  }
+
+  #[test]
+  fn decode_ax_focus_rejects_native_error() {
+    let mut response = base_focus_response();
+    response.error_message = Some("AXUIElementSetAttributeValue returned -25204".to_string());
+    response.recovery_hint = Some("element may not accept programmatic focus".to_string());
+
+    let error = decode_ax_focus_response(response).unwrap_err();
+
+    assert!(error.contains("set_ax_focused failed"));
+    assert!(error.contains("AXUIElementSetAttributeValue returned -25204"));
   }
 }

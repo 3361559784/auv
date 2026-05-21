@@ -323,3 +323,111 @@ func perform_ax_action(request: NativeAxActionRequest) -> NativeAxActionResponse
     recovery_hint: nil
   )
 }
+
+func set_ax_focused(request: NativeAxFocusRequest) -> NativeAxFocusResponse {
+  let pid = pid_t(request.pid)
+  let pathRaw = request.path.toString()
+  let expectedRole = request.expected_role.toString()
+
+  func focusError(_ message: String, _ recovery: String) -> NativeAxFocusResponse {
+    NativeAxFocusResponse(
+      set_attribute: "".intoRustString(),
+      was_already_focused: false,
+      role: "".intoRustString(),
+      subrole: "".intoRustString(),
+      title: "".intoRustString(),
+      description: "".intoRustString(),
+      identifier: "".intoRustString(),
+      placeholder: "".intoRustString(),
+      x: 0,
+      y: 0,
+      width: 0,
+      height: 0,
+      error_message: message.intoRustString(),
+      recovery_hint: recovery.intoRustString()
+    )
+  }
+
+  let segments = pathRaw.split(separator: ".").map { String($0) }
+  guard let firstSegment = segments.first, firstSegment == "0" else {
+    return focusError(
+      "AX focus path must begin with 0; got \(pathRaw)",
+      "capture a fresh AX tree and retry the focus request"
+    )
+  }
+
+  let appElement = AXUIElementCreateApplication(pid)
+  let rootElement = axFirstWindow(appElement) ?? appElement
+
+  var current = rootElement
+  for (offset, segment) in segments.dropFirst().enumerated() {
+    guard let index = Int(segment) else {
+      return focusError(
+        "AX focus path segment \(segment) at offset \(offset) is not an integer",
+        "capture a fresh AX tree and retry the focus request"
+      )
+    }
+    let children = axChildren(current)
+    if index < 0 || index >= children.count {
+      return focusError(
+        "AX focus path index \(index) is out of range at offset \(offset); element has \(children.count) child(ren)",
+        "the AX tree likely shifted since observation; capture a fresh tree and retry"
+      )
+    }
+    current = children[index]
+  }
+
+  let actualRole = axStringAttribute(current, kAXRoleAttribute as String)
+  let actualSubrole = axStringAttribute(current, kAXSubroleAttribute as String)
+  let actualTitle = axStringAttribute(current, kAXTitleAttribute as String)
+  let actualDescription = axStringAttribute(current, kAXDescriptionAttribute as String)
+  let actualIdentifier = axStringAttribute(current, kAXIdentifierAttribute as String)
+  let actualPlaceholder = axStringAttribute(current, kAXPlaceholderValueAttribute as String)
+  let bounds = axBounds(current)
+
+  if !expectedRole.isEmpty && actualRole != expectedRole {
+    return focusError(
+      "AX focus expected role \(expectedRole) at path \(pathRaw), got \(actualRole)",
+      "the AX tree likely shifted since observation; capture a fresh tree and retry"
+    )
+  }
+
+  // Check whether the element is currently focused; treat that as a no-op success.
+  var alreadyFocused = false
+  if let focusedValue = axAttributeValue(current, kAXFocusedAttribute as String) {
+    if CFGetTypeID(focusedValue) == CFBooleanGetTypeID() {
+      alreadyFocused = CFBooleanGetValue((focusedValue as! CFBoolean))
+    }
+  }
+
+  if !alreadyFocused {
+    let setResult = AXUIElementSetAttributeValue(
+      current,
+      kAXFocusedAttribute as CFString,
+      kCFBooleanTrue
+    )
+    guard setResult == .success else {
+      return focusError(
+        "AXUIElementSetAttributeValue(kAXFocusedAttribute) returned \(setResult.rawValue) on role \(actualRole) at path \(pathRaw)",
+        "the element may not accept programmatic focus; verify the AX subtree exposes AXFocused as settable, or fall back to debug.focusTextInput"
+      )
+    }
+  }
+
+  return NativeAxFocusResponse(
+    set_attribute: "AXFocused".intoRustString(),
+    was_already_focused: alreadyFocused,
+    role: actualRole.intoRustString(),
+    subrole: actualSubrole.intoRustString(),
+    title: actualTitle.intoRustString(),
+    description: actualDescription.intoRustString(),
+    identifier: actualIdentifier.intoRustString(),
+    placeholder: actualPlaceholder.intoRustString(),
+    x: bounds.0,
+    y: bounds.1,
+    width: bounds.2,
+    height: bounds.3,
+    error_message: nil,
+    recovery_hint: nil
+  )
+}

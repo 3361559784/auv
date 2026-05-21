@@ -130,6 +130,31 @@ pub(crate) mod ffi {
   }
 
   #[swift_bridge(swift_repr = "struct")]
+  struct NativeAxFocusRequest {
+    pid: i64,
+    path: String,
+    expected_role: String,
+  }
+
+  #[swift_bridge(swift_repr = "struct")]
+  struct NativeAxFocusResponse {
+    set_attribute: String,
+    was_already_focused: bool,
+    role: String,
+    subrole: String,
+    title: String,
+    description: String,
+    identifier: String,
+    placeholder: String,
+    x: i64,
+    y: i64,
+    width: i64,
+    height: i64,
+    error_message: Option<String>,
+    recovery_hint: Option<String>,
+  }
+
+  #[swift_bridge(swift_repr = "struct")]
   struct NativeOcrTextRequest {
     image_path: String,
     query: String,
@@ -228,6 +253,7 @@ pub(crate) mod ffi {
     fn bundle_ids_by_pid(request: NativeBundleIdsByPidRequest) -> NativeBundleIdsByPidResponse;
     fn capture_ax_tree(request: NativeAxTreeRequest) -> NativeAxTreeResponse;
     fn perform_ax_action(request: NativeAxActionRequest) -> NativeAxActionResponse;
+    fn set_ax_focused(request: NativeAxFocusRequest) -> NativeAxFocusResponse;
     fn find_ocr_text(request: NativeOcrTextRequest) -> NativeOcrTextResponse;
     fn find_visual_rows(request: NativeVisualRowsRequest) -> NativeVisualRowsResponse;
     fn click_point(

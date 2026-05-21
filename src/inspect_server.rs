@@ -590,6 +590,61 @@ mod tests {
   }
 
   #[tokio::test]
+  async fn root_payload_includes_artifact_panel_markers() {
+    let root = temp_dir("inspect-server-viewer-artifact-panel");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let app = router(store, Arc::new(BroadcastRunEventSink::new(16)));
+
+    let response = app
+      .oneshot(
+        Request::builder()
+          .uri("/")
+          .body(Body::empty())
+          .expect("request should build"),
+      )
+      .await
+      .expect("route should respond");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX)
+      .await
+      .expect("body should read");
+    let html = std::str::from_utf8(&body).expect("viewer payload should be utf-8");
+
+    assert!(
+      html.contains("Artifacts · /artifacts"),
+      "viewer payload should include the C.3b artifact panel header"
+    );
+    assert!(
+      html.contains("id=\"artifact-panel\""),
+      "viewer payload should mount the artifact panel container"
+    );
+    assert!(
+      html.contains("id=\"artifact-list\""),
+      "viewer payload should mount the artifact list"
+    );
+    assert!(
+      html.contains("id=\"artifact-preview\""),
+      "viewer payload should mount the artifact preview surface"
+    );
+    assert!(
+      html.contains("/artifacts\")"),
+      "viewer payload should fetch /runs/:id/artifacts on selection"
+    );
+    assert!(
+      html.contains("/runs/\" + encodeURIComponent(runId)\n      + \"/artifacts/\" + encodeURIComponent(artifact.artifact_id)")
+        || html.contains("/artifacts/\" + encodeURIComponent(artifact.artifact_id)"),
+      "viewer payload should reference the per-artifact bytes endpoint"
+    );
+    assert!(
+      html.contains("sprite-inspector.svg"),
+      "viewer payload should use the inspector sprite for the empty preview state"
+    );
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
   async fn assets_route_serves_known_design_svgs_with_svg_mime() {
     let root = temp_dir("inspect-server-assets-route");
     let store = LocalStore::new(root.clone()).expect("store should initialize");

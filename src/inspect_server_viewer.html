@@ -380,6 +380,132 @@
     color: var(--fg-3);
     font-family: var(--font-mono); font-size: 12px;
   }
+
+  /* Artifact panel (C.3b) */
+  .artifact-panel {
+    width: 340px; flex: none;
+    background: var(--shell-2);
+    border-left: 1px solid var(--shell-line);
+    display: flex; flex-direction: column;
+    overflow: hidden;
+  }
+  .artifact-list {
+    flex: 0 0 auto; max-height: 50%;
+    overflow: auto;
+    border-bottom: 1px solid var(--shell-line);
+  }
+  .artifact-row {
+    width: 100%; text-align: left;
+    background: transparent; border: 0;
+    border-left: 2px solid transparent;
+    color: var(--fg); cursor: pointer;
+    padding: 10px 12px;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .artifact-row:hover { background: var(--shell-3); }
+  .artifact-row.active {
+    background: var(--shell-3);
+    border-left-color: var(--brand);
+  }
+  .artifact-row .mime-icon {
+    width: 28px; height: 28px; flex: none;
+    image-rendering: pixelated; display: block;
+  }
+  .artifact-row .meta {
+    display: flex; flex-direction: column; gap: 2px;
+    min-width: 0; flex: 1;
+  }
+  .artifact-row .role {
+    font-family: var(--font-mono); font-size: 11.5px;
+    color: var(--fg);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .artifact-row .file {
+    font-family: var(--font-mono); font-size: 10.5px;
+    color: var(--fg-3);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .artifact-empty {
+    padding: 20px;
+    color: var(--fg-3);
+    font-family: var(--font-mono); font-size: 12px;
+  }
+
+  .artifact-preview {
+    flex: 1; min-height: 0;
+    overflow: auto;
+  }
+  .artifact-preview.empty {
+    padding: 30px 16px 24px;
+    display: flex; flex-direction: column; align-items: center;
+    gap: 12px; text-align: center;
+    color: var(--fg-3);
+    font-family: var(--font-sans); font-size: 12px;
+  }
+  .artifact-preview .inspector {
+    width: 96px; height: 112px; image-rendering: pixelated;
+  }
+  .artifact-preview .empty-line {
+    color: var(--fg-2);
+  }
+  .artifact-preview .count {
+    color: var(--fg-4); font-family: var(--font-mono); font-size: 10.5px;
+  }
+  .artifact-preview.detail {
+    padding: 14px 16px;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .artifact-preview .attrs {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 4px 14px;
+    font-family: var(--font-mono); font-size: 11.5px;
+  }
+  .artifact-preview .attrs .k { color: var(--fg-3); }
+  .artifact-preview .attrs .v {
+    color: var(--fg); word-break: break-all;
+  }
+  .artifact-preview .surface {
+    margin-top: 6px;
+    min-height: 220px;
+    border-radius: 4px;
+    border: 1px solid var(--shell-line);
+    background: var(--shell-3);
+    position: relative; overflow: auto;
+  }
+  .artifact-preview .surface.image {
+    display: flex; align-items: center; justify-content: center;
+    padding: 8px;
+  }
+  .artifact-preview .surface.image img {
+    max-width: 100%; max-height: 320px;
+    display: block;
+    image-rendering: auto;
+  }
+  .artifact-preview .surface pre {
+    margin: 0; padding: 14px;
+    color: var(--fg-2);
+    font-family: var(--font-mono); font-size: 11.5px;
+    line-height: 1.5; white-space: pre-wrap; word-break: break-word;
+  }
+  .artifact-preview .surface.binary {
+    background:
+      repeating-linear-gradient(
+        45deg,
+        var(--shell-2) 0 12px,
+        var(--shell-3) 12px 24px
+      );
+    display: flex; align-items: center; justify-content: center;
+    color: var(--fg-2);
+    font-family: var(--font-ui); font-size: 11px; letter-spacing: 0.4px;
+    min-height: 220px;
+  }
+  .artifact-preview .surface.error {
+    background: var(--shell-3);
+    color: var(--failed);
+    font-family: var(--font-mono); font-size: 12px;
+    padding: 14px;
+  }
 </style>
 </head>
 <body>
@@ -435,6 +561,15 @@
         <div class="event-list" id="event-list"></div>
       </div>
     </main>
+    <aside class="artifact-panel" id="artifact-panel" hidden>
+      <div class="pane-header">
+        <span class="label">Artifacts · /artifacts</span>
+        <span class="spacer"></span>
+        <span class="right" id="artifact-count">—</span>
+      </div>
+      <div class="artifact-list" id="artifact-list"></div>
+      <div class="artifact-preview empty" id="artifact-preview"></div>
+    </aside>
   </div>
 </div>
 
@@ -569,7 +704,9 @@
     activeRun: null,
     spans: [],
     events: [],
+    artifacts: [],
     activeSpanId: null,
+    activeArtifactId: null,
     fetchedAt: null,
   };
 
@@ -610,40 +747,54 @@
     state.activeRun = state.runs.find(function (r) { return r.run_id === runId; }) || null;
     state.spans = [];
     state.events = [];
+    state.artifacts = [];
     state.activeSpanId = null;
+    state.activeArtifactId = null;
     const active = state.runs.find(function (r) { return r.run_id === runId; });
     setMainHeader(active, true);
     if (active) {
-      renderPlaceholder(["loading " + active.run_id + "…", "fetching /runs/:id, /runs/:id/spans, /runs/:id/events."]);
+      renderPlaceholder([
+        "loading " + active.run_id + "…",
+        "fetching /runs/:id, /runs/:id/spans, /runs/:id/events, /runs/:id/artifacts.",
+      ]);
     }
     showEventsRail(!!active);
+    showArtifactPanel(!!active);
     renderSpanDetail(null);
     renderEventList([], null);
+    renderArtifactList([]);
+    renderArtifactPreview(null, []);
     renderRunList();
     await loadRunDetail(runId);
   }
 
   async function loadRunDetail(runId) {
     try {
-      const [runResponse, spansResponse, eventsResponse] = await Promise.all([
+      const [runResponse, spansResponse, eventsResponse, artifactsResponse] = await Promise.all([
         fetch("/runs/" + encodeURIComponent(runId)),
         fetch("/runs/" + encodeURIComponent(runId) + "/spans"),
         fetch("/runs/" + encodeURIComponent(runId) + "/events"),
+        fetch("/runs/" + encodeURIComponent(runId) + "/artifacts"),
       ]);
       if (!runResponse.ok) throw new Error("/runs/" + runId + " HTTP " + runResponse.status);
       if (!spansResponse.ok) throw new Error("/runs/" + runId + "/spans HTTP " + spansResponse.status);
       if (!eventsResponse.ok) throw new Error("/runs/" + runId + "/events HTTP " + eventsResponse.status);
+      if (!artifactsResponse.ok) throw new Error("/runs/" + runId + "/artifacts HTTP " + artifactsResponse.status);
       const run = await runResponse.json();
       const spans = await spansResponse.json();
       const events = await eventsResponse.json();
+      const artifacts = await artifactsResponse.json();
       if (state.activeRunId !== runId) return;
       state.activeRun = run;
       state.spans = Array.isArray(spans) ? spans : [];
       state.events = Array.isArray(events) ? events : [];
+      state.artifacts = Array.isArray(artifacts) ? artifacts : [];
       setMainHeader(run, false);
       renderSpanTree(run, state.spans);
       renderSpanDetail(state.activeSpanId ? findSpan(state.activeSpanId) : null);
       renderEventList(state.events, run);
+      renderArtifactList(state.artifacts);
+      renderArtifactPreview(null, state.artifacts);
     } catch (err) {
       if (state.activeRunId !== runId) return;
       setConnection(false, "/runs/:id (" + err.message + ")");
@@ -652,6 +803,7 @@
         err.message,
       ]);
       showEventsRail(false);
+      showArtifactPanel(false);
     }
   }
 
@@ -750,6 +902,162 @@
       ]);
       list.appendChild(row);
     }
+  }
+
+  // -- Artifact panel (C.3b) -------------------------------------------------
+
+  function showArtifactPanel(visible) {
+    const panel = document.getElementById("artifact-panel");
+    if (visible) panel.removeAttribute("hidden");
+    else panel.setAttribute("hidden", "");
+  }
+
+  function mimeIconAssetName(mime) {
+    if (!mime) return "icon-bin.svg";
+    if (mime.indexOf("image/") === 0) return "icon-png.svg";
+    if (mime === "application/json" || mime.indexOf("text/") === 0) return "icon-json.svg";
+    return "icon-bin.svg";
+  }
+
+  function isTextLikeMime(mime) {
+    if (!mime) return false;
+    if (mime === "application/json") return true;
+    if (mime.indexOf("text/") === 0) return true;
+    if (mime.indexOf("+json") > 0 || mime.indexOf("+xml") > 0) return true;
+    return false;
+  }
+
+  function isImageMime(mime) {
+    return !!mime && mime.indexOf("image/") === 0;
+  }
+
+  function pathBasename(path) {
+    if (!path) return "";
+    const idx = path.lastIndexOf("/");
+    return idx >= 0 ? path.slice(idx + 1) : path;
+  }
+
+  function findArtifact(artifactId) {
+    return state.artifacts.find(function (a) { return a.artifact_id === artifactId; }) || null;
+  }
+
+  function renderArtifactList(artifacts) {
+    const list = document.getElementById("artifact-list");
+    const counter = document.getElementById("artifact-count");
+    list.innerHTML = "";
+    counter.textContent = artifacts.length.toString();
+    if (!artifacts.length) {
+      list.appendChild(el("div", { className: "artifact-empty" }, ["no artifacts recorded for this run."]));
+      return;
+    }
+    for (const artifact of artifacts) {
+      const icon = el("img", {
+        className: "mime-icon",
+        src: "/assets/" + mimeIconAssetName(artifact.mime_type),
+        alt: "",
+      });
+      const meta = el("div", { className: "meta" }, [
+        el("span", { className: "role" }, [artifact.role || artifact.artifact_id]),
+        el("span", { className: "file" }, [pathBasename(artifact.path)]),
+      ]);
+      const active = artifact.artifact_id === state.activeArtifactId;
+      const row = el(
+        "button",
+        {
+          className: "artifact-row" + (active ? " active" : ""),
+          dataset: { artifactId: artifact.artifact_id },
+          onClick: function () {
+            state.activeArtifactId = artifact.artifact_id;
+            renderArtifactList(state.artifacts);
+            renderArtifactPreview(findArtifact(state.activeArtifactId), state.artifacts);
+          },
+        },
+        [icon, meta]
+      );
+      list.appendChild(row);
+    }
+  }
+
+  function renderArtifactPreviewEmpty(count) {
+    const preview = document.getElementById("artifact-preview");
+    preview.className = "artifact-preview empty";
+    preview.innerHTML = "";
+    preview.appendChild(el("img", {
+      className: "inspector",
+      src: "/assets/sprite-inspector.svg",
+      alt: "",
+    }));
+    preview.appendChild(el("div", { className: "empty-line" }, [
+      "Select an artifact to preview.",
+    ]));
+    preview.appendChild(el("div", { className: "count" }, [
+      count + (count === 1 ? " artifact on this run" : " artifacts on this run"),
+    ]));
+  }
+
+  function renderArtifactMeta(artifact) {
+    const entries = [
+      ["role", artifact.role || ""],
+      ["mime", artifact.mime_type || ""],
+      ["path", artifact.path || ""],
+      ["span_id", artifact.span_id || ""],
+    ];
+    if (artifact.event_id) entries.push(["event_id", artifact.event_id]);
+    if (artifact.sha256) entries.push(["sha256", artifact.sha256]);
+    if (artifact.summary) entries.push(["summary", artifact.summary]);
+    const grid = el("div", { className: "attrs" }, []);
+    for (const [k, v] of entries) {
+      grid.appendChild(el("span", { className: "k" }, [k]));
+      grid.appendChild(el("span", { className: "v" }, [String(v)]));
+    }
+    return grid;
+  }
+
+  function renderArtifactPreview(artifact, artifacts) {
+    const preview = document.getElementById("artifact-preview");
+    if (!artifact) {
+      renderArtifactPreviewEmpty(artifacts ? artifacts.length : 0);
+      return;
+    }
+    preview.className = "artifact-preview detail";
+    preview.innerHTML = "";
+    preview.appendChild(renderArtifactMeta(artifact));
+
+    const runId = state.activeRunId;
+    const artifactUrl = "/runs/" + encodeURIComponent(runId)
+      + "/artifacts/" + encodeURIComponent(artifact.artifact_id);
+    const surface = el("div", { className: "surface" }, []);
+    preview.appendChild(surface);
+
+    if (isImageMime(artifact.mime_type)) {
+      surface.className = "surface image";
+      surface.appendChild(el("img", { src: artifactUrl, alt: artifact.role || "" }));
+      return;
+    }
+
+    if (isTextLikeMime(artifact.mime_type)) {
+      surface.appendChild(el("pre", null, ["loading…"]));
+      const expectedArtifactId = artifact.artifact_id;
+      fetch(artifactUrl)
+        .then(function (response) {
+          if (!response.ok) throw new Error("HTTP " + response.status);
+          return response.text();
+        })
+        .then(function (text) {
+          if (state.activeArtifactId !== expectedArtifactId) return;
+          surface.innerHTML = "";
+          surface.appendChild(el("pre", null, [text]));
+        })
+        .catch(function (err) {
+          if (state.activeArtifactId !== expectedArtifactId) return;
+          surface.className = "surface error";
+          surface.textContent = "failed to load artifact bytes: " + err.message;
+        });
+      return;
+    }
+
+    surface.className = "surface binary";
+    surface.textContent = "binary · " + (artifact.mime_type || "unknown mime");
   }
 
   function orderedSpans(run, spans) {

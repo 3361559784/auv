@@ -403,6 +403,44 @@ mod tests {
   }
 
   #[tokio::test]
+  async fn root_payload_includes_span_tree_markers() {
+    let root = temp_dir("inspect-server-viewer-span-tree");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let app = router(store, Arc::new(BroadcastRunEventSink::new(16)));
+
+    let response = app
+      .oneshot(
+        Request::builder()
+          .uri("/")
+          .body(Body::empty())
+          .expect("request should build"),
+      )
+      .await
+      .expect("route should respond");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX)
+      .await
+      .expect("body should read");
+    let html = std::str::from_utf8(&body).expect("viewer payload should be utf-8");
+
+    assert!(
+      html.contains("span · name / step_id"),
+      "viewer payload should include the C.2 span-tree header"
+    );
+    assert!(
+      html.contains("loadRunDetail(runId)"),
+      "viewer payload should fetch /runs/:id and /runs/:id/spans on selection"
+    );
+    assert!(
+      html.contains("@keyframes auv-pulse"),
+      "viewer payload should include running-span pulse animation"
+    );
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
   async fn stream_payload_filters_events_by_run_id() {
     let run_a = RunId::new("run_stream_a");
     let run_b = RunId::new("run_stream_b");

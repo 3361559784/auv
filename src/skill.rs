@@ -781,7 +781,12 @@ pub(crate) fn validate_skill_manifest_with_commands(
 /// load-time constraint so `skill list`, `skill cases run --dry-run`,
 /// and bundle verify all catch violations before any driver call.
 pub(crate) fn validate_skill_disturbance_budget(manifest: &SkillManifest) -> AuvResult<()> {
-  let recipe_max = if manifest.disturbance_policy.max_disturbance.trim().is_empty() {
+  let recipe_max = if manifest
+    .disturbance_policy
+    .max_disturbance
+    .trim()
+    .is_empty()
+  {
     return Err(format!(
       "skill {} must declare disturbance_policy.max_disturbance",
       manifest.recipe_id
@@ -2770,8 +2775,7 @@ mod tests {
     }))
     .expect("manifest should deserialize");
 
-    let error =
-      validate_skill_manifest(&manifest).expect_err("class above step max should fail");
+    let error = validate_skill_manifest(&manifest).expect_err("class above step max should fail");
     assert!(
       error.contains("above its own max"),
       "unexpected error: {error}"
@@ -2815,8 +2819,8 @@ mod tests {
     }))
     .expect("manifest should deserialize");
 
-    let error = validate_skill_manifest(&manifest)
-      .expect_err("class not in declared_classes should fail");
+    let error =
+      validate_skill_manifest(&manifest).expect_err("class not in declared_classes should fail");
     assert!(
       error.contains("not declared in disturbance_policy.declared_classes"),
       "unexpected error: {error}"

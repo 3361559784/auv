@@ -233,6 +233,67 @@
     border: 1px solid var(--shell-line);
     padding: 2px 6px; border-radius: 2px;
   }
+
+  /* Span tree */
+  .span-tree {
+    flex: 1; min-height: 0;
+    overflow: auto;
+    background: var(--shell);
+  }
+  .span-head,
+  .span-row {
+    display: flex; align-items: center; gap: 12px;
+    padding: 0 16px;
+  }
+  .span-head {
+    height: 28px;
+    position: sticky; top: 0; z-index: 2;
+    background: var(--shell-2);
+    border-bottom: 1px solid var(--shell-line);
+    font-family: var(--font-ui); font-size: 10px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.8px; color: var(--fg-3);
+  }
+  .span-row {
+    width: 100%;
+    text-align: left;
+    background: transparent;
+    border: 0;
+    border-left: 2px solid transparent;
+    border-bottom: 1px solid var(--shell-line);
+    color: var(--fg);
+    cursor: pointer;
+    padding-top: 7px; padding-bottom: 7px;
+    font-family: var(--font-mono); font-size: 12.5px;
+  }
+  .span-row:hover,
+  .span-row.active {
+    background: var(--shell-3);
+    border-left-color: var(--brand);
+  }
+  .span-sigil { flex: 0 0 14px; display: inline-block; }
+  .span-name { flex: 0 0 300px; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .span-name .primary { color: var(--brand-soft); }
+  .span-name .meta { color: var(--fg-3); }
+  .span-status { flex: 0 0 70px; font-size: 11px; }
+  .span-dur { flex: 0 0 70px; color: var(--fg-2); }
+  .span-timing {
+    flex: 1; height: 8px; position: relative;
+    background: var(--shell-2);
+    border-radius: 1px;
+    overflow: hidden;
+  }
+  .span-timing-head { flex: 1; }
+  .span-timing-fill {
+    position: absolute; top: 0; bottom: 0;
+    border-radius: 1px;
+    opacity: 0.85;
+  }
+  .span-empty {
+    padding: 20px 16px;
+    color: var(--fg-3);
+    font-family: var(--font-mono);
+    font-size: 12px;
+  }
 </style>
 </head>
 <body>
@@ -300,8 +361,10 @@
       <div class="pane-header">
         <span class="label" id="main-label">Run · —</span>
         <span class="spacer"></span>
+        <span class="right" id="main-crumb"></span>
+        <span id="main-status"></span>
       </div>
-      <div class="placeholder" id="placeholder">
+      <div class="placeholder" id="main-body">
         <div>select a run from the sidebar.</div>
         <div>this viewer reads <code>/runs</code> and renders the AUV trace contract.</div>
       </div>
@@ -365,6 +428,47 @@
     return el("span", { className: "run-type-chip" }, [runType || "—"]);
   }
 
+  function fmtSeconds(ms) {
+    if (ms == null) return "—";
+    return (Math.max(0, ms) / 1000).toFixed(2) + "s";
+  }
+
+  function statusLabel(statusCode, state) {
+    if (state === "running") return "running";
+    if (statusCode === "ok") return "ok";
+    if (statusCode === "error") return "error";
+    return statusCode || "unset";
+  }
+
+  function statusColor(statusCode, state) {
+    if (state === "running") return "var(--running)";
+    if (statusCode === "ok") return "var(--validated)";
+    if (statusCode === "error") return "var(--failed)";
+    if (statusCode === "unset") return "var(--fg-3)";
+    return "var(--fg-3)";
+  }
+
+  function spanGlyph(span) {
+    if (span.state === "running") {
+      return { glyph: "●", color: "var(--running)", pulse: true };
+    }
+    if (span.status_code === "ok") {
+      return { glyph: "●", color: "var(--validated)", pulse: false };
+    }
+    if (span.status_code === "error") {
+      return { glyph: "×", color: "var(--failed)", pulse: false };
+    }
+    if (span.status_code === "unset") {
+      return { glyph: "○", color: "var(--fg-3)", pulse: false };
+    }
+    return { glyph: "·", color: "var(--fg-3)", pulse: false };
+  }
+
+  function traceCrumb(run) {
+    const trace = run && run.trace_id ? String(run.trace_id).slice(0, 12) + "…" : "—";
+    return (run && run.run_type ? run.run_type : "—") + " · trace_id=" + trace;
+  }
+
   function renderRun(run, isActive, onSelect) {
     const headerRow = el("div", { className: "row-head" }, [
       makeStatusPill(run.status_code, run.state),
@@ -391,6 +495,9 @@
   const state = {
     runs: [],
     activeRunId: null,
+    activeRun: null,
+    spans: [],
+    activeSpanId: null,
     fetchedAt: null,
   };
 
@@ -407,24 +514,181 @@
     document.getElementById("run-count").textContent = state.runs.length;
   }
 
-  function selectRun(runId) {
-    state.activeRunId = runId;
-    const active = state.runs.find(function (r) { return r.run_id === runId; });
+  function setMainHeader(run, loading) {
     document.getElementById("main-label").textContent =
-      active ? "Run · " + active.run_id : "Run · —";
-    // Span tree / events / artifacts come in C.2+. For C.1, the main pane
-    // just confirms selection routed through.
-    const placeholder = document.getElementById("placeholder");
+      run ? "Run · " + run.run_id : "Run · —";
+    document.getElementById("main-crumb").textContent = run ? traceCrumb(run) : "";
+    const status = document.getElementById("main-status");
+    status.innerHTML = "";
+    if (run) status.appendChild(makeStatusPill(run.status_code, run.state));
+    if (loading) document.getElementById("main-crumb").textContent = "loading…";
+  }
+
+  function renderPlaceholder(lines) {
+    const body = document.getElementById("main-body");
+    body.className = "placeholder";
+    body.innerHTML = "";
+    for (const line of lines) {
+      body.appendChild(el("div", null, [line]));
+    }
+  }
+
+  async function selectRun(runId) {
+    state.activeRunId = runId;
+    state.activeRun = state.runs.find(function (r) { return r.run_id === runId; }) || null;
+    state.spans = [];
+    state.activeSpanId = null;
+    const active = state.runs.find(function (r) { return r.run_id === runId; });
+    setMainHeader(active, true);
     if (active) {
-      placeholder.innerHTML = "";
-      placeholder.appendChild(el("div", null, [
-        "selected " + active.run_id + ".",
-      ]));
-      placeholder.appendChild(el("div", null, [
-        "span tree, events, and artifact panel land in a follow-on commit.",
-      ]));
+      renderPlaceholder(["loading " + active.run_id + "…", "fetching /runs/:id and /runs/:id/spans."]);
     }
     renderRunList();
+    await loadRunDetail(runId);
+  }
+
+  async function loadRunDetail(runId) {
+    try {
+      const runResponse = await fetch("/runs/" + encodeURIComponent(runId));
+      if (!runResponse.ok) throw new Error("/runs/" + runId + " HTTP " + runResponse.status);
+      const spansResponse = await fetch("/runs/" + encodeURIComponent(runId) + "/spans");
+      if (!spansResponse.ok) throw new Error("/runs/" + runId + "/spans HTTP " + spansResponse.status);
+      const run = await runResponse.json();
+      const spans = await spansResponse.json();
+      if (state.activeRunId !== runId) return;
+      state.activeRun = run;
+      state.spans = Array.isArray(spans) ? spans : [];
+      setMainHeader(run, false);
+      renderSpanTree(run, state.spans);
+    } catch (err) {
+      if (state.activeRunId !== runId) return;
+      setConnection(false, "/runs/:id (" + err.message + ")");
+      renderPlaceholder([
+        "failed to load run detail.",
+        err.message,
+      ]);
+    }
+  }
+
+  function orderedSpans(run, spans) {
+    const byParent = new Map();
+    for (const span of spans) {
+      const parent = span.parent_span_id || "";
+      if (!byParent.has(parent)) byParent.set(parent, []);
+      byParent.get(parent).push(span);
+    }
+    for (const list of byParent.values()) {
+      list.sort(function (a, b) {
+        return (a.started_at_millis || 0) - (b.started_at_millis || 0);
+      });
+    }
+    const seen = new Set();
+    const out = [];
+    function visit(span) {
+      if (!span || seen.has(span.span_id)) return;
+      seen.add(span.span_id);
+      out.push(span);
+      const children = byParent.get(span.span_id) || [];
+      for (const child of children) visit(child);
+    }
+    const root = spans.find(function (span) { return span.span_id === run.root_span_id; });
+    if (root) visit(root);
+    const roots = (byParent.get("") || []).filter(function (span) { return span.span_id !== run.root_span_id; });
+    for (const span of roots) visit(span);
+    for (const span of spans) visit(span);
+    return out;
+  }
+
+  function depthMapFor(spans) {
+    const byId = new Map(spans.map(function (span) { return [span.span_id, span]; }));
+    const cache = new Map();
+    function depthOf(span) {
+      if (!span) return 0;
+      if (cache.has(span.span_id)) return cache.get(span.span_id);
+      if (!span.parent_span_id || !byId.has(span.parent_span_id)) {
+        cache.set(span.span_id, 0);
+        return 0;
+      }
+      const depth = depthOf(byId.get(span.parent_span_id)) + 1;
+      cache.set(span.span_id, depth);
+      return depth;
+    }
+    for (const span of spans) depthOf(span);
+    return cache;
+  }
+
+  function renderSpanTree(run, spans) {
+    const body = document.getElementById("main-body");
+    body.className = "span-tree";
+    body.innerHTML = "";
+    body.appendChild(el("div", { className: "span-head" }, [
+      el("span", { className: "span-sigil" }),
+      el("span", { className: "span-name" }, ["span · name / step_id"]),
+      el("span", { className: "span-status" }, ["status"]),
+      el("span", { className: "span-dur" }, ["dur"]),
+      el("span", { className: "span-timing-head" }, ["timing"]),
+    ]));
+
+    if (!spans.length) {
+      body.appendChild(el("div", { className: "span-empty" }, ["no spans recorded for this run."]));
+      return;
+    }
+
+    const ordered = orderedSpans(run, spans);
+    const depthById = depthMapFor(spans);
+    const runStarted = run.started_at_millis || 0;
+    const runFinished = run.finished_at_millis;
+    const knownRunDuration = runFinished == null ? null : Math.max(1, runFinished - runStarted);
+    const maxSpanDuration = Math.max(1, ...spans.map(function (span) {
+      return span.finished_at_millis == null ? 0 : Math.max(0, span.finished_at_millis - span.started_at_millis);
+    }));
+
+    ordered.forEach(function (span, index) {
+      const glyph = spanGlyph(span);
+      const duration = span.finished_at_millis == null ? null : Math.max(0, span.finished_at_millis - span.started_at_millis);
+      const widthPct = duration == null ? 0 : Math.max(2, Math.min(100, (duration / maxSpanDuration) * 100));
+      const offsetPct = knownRunDuration == null
+        ? Math.min(60, index * 5)
+        : Math.max(0, Math.min(98, ((span.started_at_millis - runStarted) / knownRunDuration) * 100));
+      const depth = depthById.get(span.span_id) || 0;
+      const attrs = span.attributes || {};
+      const meta = [];
+      if (attrs.step_id) meta.push("step_id=" + attrs.step_id);
+      if (attrs.command_id) meta.push(String(attrs.command_id));
+
+      const row = el("button", {
+        className: "span-row" + (state.activeSpanId === span.span_id ? " active" : ""),
+        dataset: { spanId: span.span_id },
+        onClick: function () {
+          state.activeSpanId = span.span_id;
+          renderSpanTree(run, spans);
+        },
+      }, [
+        el("span", {
+          className: "span-sigil",
+          style: "color: " + glyph.color + ";" + (glyph.pulse ? " animation: auv-pulse 1.2s linear infinite;" : ""),
+        }, [glyph.glyph]),
+        el("span", {
+          className: "span-name",
+          style: "padding-left: " + (depth * 16) + "px",
+        }, [
+          el("span", { className: "primary" }, [span.name || span.span_id]),
+          meta.length ? el("span", { className: "meta" }, ["  " + meta.join("  ")]) : null,
+        ]),
+        el("span", {
+          className: "span-status",
+          style: "color: " + statusColor(span.status_code, span.state),
+        }, [statusLabel(span.status_code, span.state)]),
+        el("span", { className: "span-dur" }, [fmtSeconds(duration)]),
+        el("span", { className: "span-timing" }, [
+          el("span", {
+            className: "span-timing-fill",
+            style: "left:" + offsetPct.toFixed(2) + "%;width:" + widthPct.toFixed(2) + "%;background:" + glyph.color + ";" + (duration == null ? "opacity:0.18;" : ""),
+          }),
+        ]),
+      ]);
+      body.appendChild(row);
+    });
   }
 
   function setConnection(ok, endpoint) {

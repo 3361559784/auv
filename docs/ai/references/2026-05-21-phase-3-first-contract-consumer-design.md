@@ -112,22 +112,30 @@ change and must not be advertised as such.
 
 In rough order:
 
-1. **`debug.axFocusTextInput` driver primitive** — wraps
-   `AXUIElementSetAttribute(focused, true)` so `focus-body` can become
-   keyboard-only.
-2. **Recipe-level disturbance assertion** — today `disturbance_policy.max`
-   is documentation; the runner does not enforce that every step's
-   `disturbance.max` respects the recipe budget. Phase 3 should add a
-   pre-flight check so `max_disturbance: "keyboard"` actually rejects a
-   step declaring `disturbance.max: "pointer"`.
-3. **Cross-app case matrix for smartPress fallback** — drive smartPress
+1. ~~**`debug.axFocusTextInput` driver primitive**~~ — DONE
+   (`feat(macos): add debug.axFocusTextInput command`). Wraps
+   `AXUIElementSetAttributeValue(kAXFocusedAttribute, true)` and ships
+   as `macos.notes.create_and_verify_note.v2`, the first narrow skill
+   with a fully cursor-warp-free activation chain (recipe-level
+   disturbance = clipboard).
+2. **Add `ax-perform-action-clipboard-paste` to `SkillActivation`** —
+   the v2 recipe still labels its activation taxonomy
+   `pointer-focus-clipboard-paste` because the enum is closed. Once the
+   schema migration lands, v2's taxonomy label can become honest at
+   the recipe header level too.
+3. **Recipe-level disturbance assertion** — today
+   `disturbance_policy.max` is documentation; the runner does not
+   enforce that every step's `disturbance.max` respects the recipe
+   budget. Add a pre-flight check so `max_disturbance: "keyboard"`
+   actually rejects a step declaring `disturbance.max: "pointer"`.
+4. **Cross-app case matrix for smartPress fallback** — drive smartPress
    against TextEdit / Notes (AX wins) and a Chromium web view (AX fails →
    pointer fallback) so the fallback path has real data, not just doc
    acknowledgment.
-4. **QQ音乐 row-fallback re-grounding** — once the primitives above exist,
-   try to migrate the QQ音乐 row-fallback recipe to smartPress. If AX
-   genuinely doesn't reach music rows, that becomes documented evidence,
-   not a guess.
+5. **QQ音乐 row-fallback re-grounding** — once the primitives above
+   exist, try to migrate the QQ音乐 row-fallback recipe to smartPress.
+   If AX genuinely doesn't reach music rows, that becomes documented
+   evidence, not a guess.
 
 ## Discovered during dry-run
 

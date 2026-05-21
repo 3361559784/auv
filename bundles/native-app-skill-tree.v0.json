@@ -131,6 +131,36 @@
       ]
     },
     {
+      "recipeId": "macos.notes.create_and_verify_note.v2",
+      "caseMatrixId": "macos.notes.create_and_verify_note.v2",
+      "role": "native-text-sample",
+      "validatedCaseIds": [
+        "notes-marker-ax-press-and-ax-focus"
+      ],
+      "contract": "verifyAxText",
+      "appBundleId": "com.apple.Notes",
+      "targetApplication": ">=4.13.0, <5.0.0",
+      "coverageSummary": {
+        "activationStatus": "validated",
+        "semanticSelectionStatus": "not-applicable",
+        "validatedClaims": [
+          "Notes create-note step is contract-asserted at cursorDisturbance=none, pressMechanism=ax-action, performedAction=AXPress.",
+          "Notes focus-body step is contract-asserted at cursorDisturbance=none, focusMechanism=ax-attribute, setAttribute=AXFocused.",
+          "First narrow skill whose entire activation chain runs without warping the macOS cursor (recipe-level disturbance = clipboard).",
+          "Notes marker insertion and AX text verification remain validated end-to-end."
+        ],
+        "boundaryClaims": [
+          "Recipe-level disturbance is clipboard because paste-note-body still uses the clipboard.",
+          "strategy.activation taxonomy label remains pointer-focus-clipboard-paste because SkillActivation is a closed enum; a schema migration to add an ax-only variant is a follow-on commit.",
+          "This member is a native text sample, not a music-selection skill."
+        ]
+      },
+      "evidenceRefs": [
+        "docs/ai/references/2026-05-21-phase-3-first-contract-consumer-design.md",
+        "docs/ai/references/2026-05-21-phase-2-press-presentation-freeze.md"
+      ]
+    },
+    {
       "recipeId": "macos.textedit.create_and_verify_text.v0",
       "caseMatrixId": "macos.textedit.create_and_verify_text.v0",
       "role": "native-text-sample",

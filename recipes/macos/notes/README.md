@@ -8,21 +8,21 @@ Current baseline:
 - `create-and-verify-note.cases.v0.json`
 - `../../docs/ai/references/2026-05-17-auv-native-app-skill-tree.md`
 
-Phase 2 contract-consuming variant (candidate, not yet validated on live
-desktop):
+Phase 2 contract-consuming variants:
 
-- `create-and-verify-note.v1.json`
-- `create-and-verify-note.cases.v1.json`
+- `create-and-verify-note.v1.json` / `.cases.v1.json` — swaps only
+  `create-note` to `debug.axPressButton`. Recipe-level disturbance is
+  `pointer` because `focus-body` still warps the cursor.
+- `create-and-verify-note.v2.json` / `.cases.v2.json` — also swaps
+  `focus-body` to the new `debug.axFocusTextInput`. **First narrow
+  skill whose entire activation chain is cursor-warp-free**;
+  recipe-level disturbance drops to `clipboard`.
 - `../../docs/ai/references/2026-05-21-phase-3-first-contract-consumer-design.md`
 
-v1 swaps the create-note step from `debug.pressButton` to
-`debug.axPressButton` and asserts the Phase 2 contract via
-`expect.signal_equals` (`cursorDisturbance=none`,
-`pressMechanism=ax-action`, `performedAction=AXPress`). The recipe-level
-disturbance budget remains `pointer` because `focus-body` still uses
-`debug.focusTextInput`; adding a `debug.axFocusTextInput` primitive is
-the next Phase 3 driver-side work item before the chain can become fully
-keyboard-only.
+Both v1 and v2 use `expect.signal_equals` to assert the Phase 2 contract
+fields. v2 additionally asserts the focus contract
+(`cursorDisturbance=none`, `focusMechanism=ax-attribute`,
+`setAttribute=AXFocused`).
 
 What it proves:
 
@@ -41,22 +41,21 @@ Replay:
 ```bash
 cargo run --quiet -- skill run macos.notes.create_and_verify_note.v0
 
-# v1 is candidate-only; run cases with --all-statuses to include it.
 cargo run --quiet -- skill cases run \
-  macos.notes.create_and_verify_note.v1 --dry-run --all-statuses
+  macos.notes.create_and_verify_note.v1
+
 cargo run --quiet -- skill cases run \
-  macos.notes.create_and_verify_note.v1 --all-statuses
+  macos.notes.create_and_verify_note.v2
 ```
 
-Validated case (v0):
+Validated cases:
 
-- `notes-marker-baseline`
+- v0: `notes-marker-baseline`
+- v1: `notes-marker-ax-press`
+- v2: `notes-marker-ax-press-and-ax-focus`
 
-Candidate case (v1):
-
-- `notes-marker-ax-press`
-
-The current marker is:
+Markers:
 
 - v0: `AUV_NOTE_MARKER_2026_05_16`
 - v1: `AUV_NOTE_MARKER_2026_05_21_V1`
+- v2: `AUV_NOTE_MARKER_2026_05_21_V2`

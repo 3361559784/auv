@@ -781,7 +781,7 @@ impl RunRecordingBackend {
     if !self.local_snapshot_write_enabled {
       return Ok(());
     }
-    self.store.write_run_snapshot(snapshot)
+    self.store.replace_run_snapshot(snapshot)
   }
 
   pub fn run_dir(&self, run_id: impl AsRef<str>) -> AuvResult<std::path::PathBuf> {

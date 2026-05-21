@@ -418,7 +418,7 @@ async fn write_updates(
   };
   state
     .store
-    .write_run_snapshot(&snapshot)
+    .replace_run_snapshot(&snapshot)
     .map_err(InspectHttpError::from_store)?;
 
   let accepted = updates.len();
@@ -702,7 +702,7 @@ async fn next_stream_payload(
   loop {
     match receiver.recv().await {
       Ok(update) if update.run_id().as_str() == run_id => {
-        match serde_json::to_string(&ApiRunUpdate::from(update)) {
+        match serde_json::to_string(&RunStreamEvent::from(update)) {
           Ok(payload) => return Some(payload),
           Err(_) => continue,
         }
@@ -710,6 +710,66 @@ async fn next_stream_payload(
       Ok(_) => {}
       Err(broadcast::error::RecvError::Lagged(_)) => {}
       Err(broadcast::error::RecvError::Closed) => return None,
+    }
+  }
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum RunStreamEvent {
+  RunStarted {
+    run_id: RunId,
+    run: crate::run_recording::ApiRunRecord,
+  },
+  SpanStarted {
+    run_id: RunId,
+    span: crate::run_recording::ApiSpanRecord,
+  },
+  EventAppended {
+    run_id: RunId,
+    event: crate::run_recording::ApiEventRecord,
+  },
+  ArtifactCreated {
+    run_id: RunId,
+    artifact: crate::run_recording::ApiArtifactRecord,
+  },
+  SpanFinished {
+    run_id: RunId,
+    span: crate::run_recording::ApiSpanRecord,
+  },
+  RunFinished {
+    run_id: RunId,
+    run: crate::run_recording::ApiRunRecord,
+  },
+}
+
+impl From<RunUpdate> for RunStreamEvent {
+  fn from(update: RunUpdate) -> Self {
+    match update {
+      RunUpdate::RunStarted { run_id, run } => Self::RunStarted {
+        run_id,
+        run: run.into(),
+      },
+      RunUpdate::SpanStarted { run_id, span } => Self::SpanStarted {
+        run_id,
+        span: span.into(),
+      },
+      RunUpdate::EventAppended { run_id, event } => Self::EventAppended {
+        run_id,
+        event: event.into(),
+      },
+      RunUpdate::ArtifactCreated { run_id, artifact } => Self::ArtifactCreated {
+        run_id,
+        artifact: artifact.into(),
+      },
+      RunUpdate::SpanFinished { run_id, span } => Self::SpanFinished {
+        run_id,
+        span: span.into(),
+      },
+      RunUpdate::RunFinished { run_id, run } => Self::RunFinished {
+        run_id,
+        run: run.into(),
+      },
     }
   }
 }
@@ -1105,6 +1165,100 @@ mod tests {
 
     assert_eq!(response.status(), StatusCode::OK);
     assert!(store.read_run("run_write_test").is_ok());
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
+  async fn write_updates_accepts_incremental_updates_for_existing_run() {
+    let root = temp_dir("inspect-write-incremental");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let app = router_with_config(
+      store.clone(),
+      Arc::new(BroadcastRunRecorder::new(16)),
+      write_without_token(),
+    );
+
+    let response = post_write_updates(
+      app.clone(),
+      "run_write_incremental",
+      serde_json::json!({
+        "updates": [{
+          "type": "runStarted",
+          "runId": "run_write_incremental",
+          "run": test_run_json("run_write_incremental")
+        }]
+      }),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let response = post_write_updates(
+      app,
+      "run_write_incremental",
+      serde_json::json!({
+        "updates": [{
+          "type": "spanStarted",
+          "runId": "run_write_incremental",
+          "span": test_span_json("0000000000000002", Some("0000000000000001"), "debug.step", "running")
+        }]
+      }),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let snapshot = store
+      .read_run("run_write_incremental")
+      .expect("incremental run should persist");
+    assert_eq!(snapshot.spans.len(), 1);
+    assert_eq!(snapshot.spans[0].span_id.as_str(), "0000000000000002");
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
+  async fn write_updates_replaces_existing_finished_snapshot_idempotently() {
+    let root = temp_dir("inspect-write-finished-replace");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let mut run = test_run_json("run_finished_replace");
+    run["state"] = serde_json::Value::from("ended");
+    run["statusCode"] = serde_json::Value::from("ok");
+    run["finishedAtMillis"] = serde_json::Value::from(200);
+    store
+      .write_run_snapshot(&CanonicalRun {
+        run: serde_json::from_value::<crate::run_recording::ApiRunRecord>(run.clone())
+          .expect("api run should decode")
+          .into(),
+        spans: Vec::new(),
+        events: Vec::new(),
+        artifacts: Vec::new(),
+      })
+      .expect("finished snapshot should pre-exist");
+    let app = router_with_config(
+      store.clone(),
+      Arc::new(BroadcastRunRecorder::new(16)),
+      write_without_token(),
+    );
+
+    let response = post_write_updates(
+      app,
+      "run_finished_replace",
+      serde_json::json!({
+        "updates": [{
+          "type": "runFinished",
+          "runId": "run_finished_replace",
+          "run": run
+        }]
+      }),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+      store
+        .read_run("run_finished_replace")
+        .expect("run should remain readable")
+        .run
+        .state,
+      TraceState::Ended
+    );
     let _ = fs::remove_dir_all(root);
   }
 
@@ -1862,6 +2016,8 @@ mod tests {
     .await
     .expect("matching run event should arrive")
     .expect("matching run event should serialize");
+    let value: serde_json::Value = serde_json::from_str(&payload).expect("stream payload is json");
+    assert_eq!(value["type"], "event_appended");
     assert!(payload.contains("run_stream_a"));
     assert!(payload.contains("event_stream_a"));
     assert!(!payload.contains("run_stream_b"));

@@ -130,6 +130,16 @@ impl LocalStore {
     Ok(())
   }
 
+  pub fn replace_run_snapshot(&self, snapshot: &CanonicalRun) -> AuvResult<()> {
+    let run_id = validate_run_id(snapshot.run.run_id.as_str())?;
+    let run_directory = self.run_dir(run_id)?;
+    if !run_directory.exists() {
+      return self.write_run_snapshot(snapshot);
+    }
+    validate_replaceable_run_directory(&run_directory)?;
+    write_snapshot_files(&run_directory, snapshot)
+  }
+
   pub fn stage_artifact(
     &self,
     run_id: &RunId,
@@ -370,12 +380,57 @@ fn validate_unpublished_run_directory(run_directory: &Path) -> AuvResult<()> {
   Ok(())
 }
 
+fn validate_replaceable_run_directory(run_directory: &Path) -> AuvResult<()> {
+  if run_directory.join("run.json").exists() {
+    return Ok(());
+  }
+  validate_unpublished_run_directory(run_directory)
+}
+
 fn cleanup_run_record_files(run_directory: &Path) {
   for file_name in ["run.json", "spans.jsonl", "events.jsonl", "artifacts.jsonl"] {
     let path = run_directory.join(file_name);
     let _ = fs::remove_file(&path);
     let _ = fs::remove_file(path.with_extension("tmp"));
   }
+}
+
+fn write_snapshot_files(run_directory: &Path, snapshot: &CanonicalRun) -> AuvResult<()> {
+  fs::create_dir_all(run_directory.join("artifacts")).map_err(|error| {
+    format!(
+      "failed to create canonical run directory {}: {error}",
+      run_directory.display()
+    )
+  })?;
+  let write_result = (|| {
+    write_jsonl_atomic(
+      &run_directory.join("spans.jsonl"),
+      &snapshot.spans,
+      "span records",
+    )?;
+    write_jsonl_atomic(
+      &run_directory.join("events.jsonl"),
+      &snapshot.events,
+      "event records",
+    )?;
+    write_jsonl_atomic(
+      &run_directory.join("artifacts.jsonl"),
+      &snapshot.artifacts,
+      "artifact records",
+    )?;
+    write_json_atomic(
+      &run_directory.join("run.json"),
+      &snapshot.run,
+      "run metadata",
+    )?;
+    Ok(())
+  })();
+
+  if let Err(error) = write_result {
+    cleanup_run_record_files(run_directory);
+    return Err(error);
+  }
+  Ok(())
 }
 
 fn write_json_atomic<T: serde::Serialize>(path: &Path, value: &T, label: &str) -> AuvResult<()> {
@@ -630,6 +685,62 @@ mod tests {
       .read_run("run_staged_artifact")
       .expect("persisted run should read");
     assert_eq!(loaded.artifacts.len(), 1);
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn local_store_replaces_existing_run_snapshot_without_removing_artifacts() {
+    let root = temp_dir("store-replace-run");
+    let store = LocalStore::new(root.clone()).expect("should initialize");
+    let run = dummy_run("run_replace_snapshot");
+    let span = dummy_span(&run.root_span_id);
+    let source_path = root.join("source-output.txt");
+    fs::write(&source_path, "artifact body").expect("source artifact");
+    let artifact = store
+      .stage_artifact_file(
+        &run.run_id,
+        0,
+        &span.span_id,
+        None,
+        ArtifactFileSource {
+          role: "driver.output".to_string(),
+          source_path,
+          preferred_name: "output.txt".to_string(),
+          summary: Some("output".to_string()),
+        },
+      )
+      .expect("artifact should stage");
+
+    store
+      .write_run_snapshot(&CanonicalRun {
+        run: run.clone(),
+        spans: Vec::new(),
+        events: Vec::new(),
+        artifacts: Vec::new(),
+      })
+      .expect("initial run should persist");
+    store
+      .replace_run_snapshot(&CanonicalRun {
+        run,
+        spans: vec![span],
+        events: Vec::new(),
+        artifacts: vec![artifact.clone()],
+      })
+      .expect("existing run should replace");
+
+    let loaded = store
+      .read_run("run_replace_snapshot")
+      .expect("replaced run should read");
+    assert_eq!(loaded.spans.len(), 1);
+    assert_eq!(loaded.artifacts.len(), 1);
+    assert!(
+      root
+        .join("runs")
+        .join("run_replace_snapshot")
+        .join(&artifact.path)
+        .exists()
+    );
 
     let _ = fs::remove_dir_all(root);
   }

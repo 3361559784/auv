@@ -102,6 +102,14 @@ pub enum SkillActivation {
   /// for focus) and only uses the clipboard for marker insertion. No
   /// step warps the macOS cursor.
   AxPerformActionClipboardPaste,
+  /// Phase 3 #5: `debug.smartPress`. Tries the AX path
+  /// (`AXUIElementPerformAction`) first; if that fails and
+  /// `allow_pointer_fallback` is not disabled, falls back to a
+  /// real pointer click. The actual strategy each invocation took
+  /// is recorded in `signals.smartPress.strategy`
+  /// (`ax-action` | `pointer-click`); the taxonomy label only says
+  /// "this recipe is allowed to take either path".
+  SmartPress,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -186,6 +194,12 @@ impl SkillStrategyTaxonomy {
         activation: SkillActivation::PointerClick,
         verification_contract: SkillVerificationContract::CaptureEvidence,
       },
+      SkillStrategyTaxonomy {
+        family: SkillStrategyFamily::WindowAction,
+        grounding: SkillGrounding::WindowPoint,
+        activation: SkillActivation::SmartPress,
+        verification_contract: SkillVerificationContract::CaptureEvidence,
+      },
     ];
     ALLOWED
   }
@@ -264,8 +278,9 @@ impl SkillActivation {
       "pointer-row-activation" => Ok(Self::PointerRowActivation),
       "pointer-focus-clipboard-paste" => Ok(Self::PointerFocusClipboardPaste),
       "ax-perform-action-clipboard-paste" => Ok(Self::AxPerformActionClipboardPaste),
+      "smart-press" => Ok(Self::SmartPress),
       other => Err(format!(
-        "strategy.activation {} is unsupported; allowed values: clipboard-submit, pointer-click, pointer-double-click, pointer-row-activation, pointer-focus-clipboard-paste, ax-perform-action-clipboard-paste",
+        "strategy.activation {} is unsupported; allowed values: clipboard-submit, pointer-click, pointer-double-click, pointer-row-activation, pointer-focus-clipboard-paste, ax-perform-action-clipboard-paste, smart-press",
         other
       )),
     }
@@ -279,6 +294,7 @@ impl SkillActivation {
       Self::PointerRowActivation => "pointer-row-activation",
       Self::PointerFocusClipboardPaste => "pointer-focus-clipboard-paste",
       Self::AxPerformActionClipboardPaste => "ax-perform-action-clipboard-paste",
+      Self::SmartPress => "smart-press",
     }
   }
 }

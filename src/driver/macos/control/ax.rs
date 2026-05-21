@@ -268,7 +268,11 @@ pub(crate) fn ax_press_button(call: &DriverCall) -> AuvResult<DriverResponse> {
   let report = render_ax_interaction_report("ax-press-button", &snapshot, matched, &query);
   let mut report = format!(
     "{report}performedAction={performed_action}\navailableActions={available_actions}\npressMechanism=ax-action\ncursorDisturbance=none\nactivatedApp={activate}\noverlayPresentation={}\n",
-    if overlay { "visual-only" } else { "off" },
+    if overlay {
+      "dual-cursor-visual-only"
+    } else {
+      "off"
+    },
   );
   if let Some(outcome) = &overlay_outcome {
     report.push_str(&format!("overlayShowEvent={}\n", outcome.show_event));
@@ -295,7 +299,8 @@ pub(crate) fn ax_press_button(call: &DriverCall) -> AuvResult<DriverResponse> {
   }
   notes.push(format!("activatedApp={activate}"));
   if let Some(outcome) = &overlay_outcome {
-    notes.push("overlayPresentation=visual-only".to_string());
+    notes.push("overlayPresentation=dual-cursor-visual-only".to_string());
+    notes.push("userCursorSource=current-hardware-cursor".to_string());
     notes.push(format!("overlayShowEvent={}", outcome.show_event));
     notes.push(format!("overlayHideEvent={}", outcome.hide_event));
     notes.push(format!("controllerPid={}", outcome.controller_pid));
@@ -327,6 +332,11 @@ pub(crate) fn ax_press_button(call: &DriverCall) -> AuvResult<DriverResponse> {
       "controllerPid".to_string(),
       outcome.controller_pid.to_string(),
     );
+    signals.insert(
+      "overlayPresentation".to_string(),
+      "dual-cursor-visual-only".to_string(),
+    );
+    signals.insert("dualCursor".to_string(), "true".to_string());
   }
 
   let backend = if overlay {
@@ -571,7 +581,11 @@ pub(crate) fn ax_click_window_text(call: &DriverCall) -> AuvResult<DriverRespons
   report.push_str("cursorDisturbance=none\n");
   report.push_str(&format!(
     "overlayPresentation={}\n",
-    if overlay { "visual-only" } else { "off" }
+    if overlay {
+      "dual-cursor-visual-only"
+    } else {
+      "off"
+    }
   ));
   if let Some(outcome) = &overlay_outcome {
     report.push_str(&format!("overlayShowEvent={}\n", outcome.show_event));
@@ -621,7 +635,8 @@ pub(crate) fn ax_click_window_text(call: &DriverCall) -> AuvResult<DriverRespons
     notes.push(format!("availableActions={available_actions}"));
   }
   if let Some(outcome) = &overlay_outcome {
-    notes.push("overlayPresentation=visual-only".to_string());
+    notes.push("overlayPresentation=dual-cursor-visual-only".to_string());
+    notes.push("userCursorSource=current-hardware-cursor".to_string());
     notes.push(format!("overlayShowEvent={}", outcome.show_event));
     notes.push(format!("overlayHideEvent={}", outcome.hide_event));
     notes.push(format!("controllerPid={}", outcome.controller_pid));
@@ -647,6 +662,11 @@ pub(crate) fn ax_click_window_text(call: &DriverCall) -> AuvResult<DriverRespons
       "controllerPid".to_string(),
       outcome.controller_pid.to_string(),
     );
+    signals.insert(
+      "overlayPresentation".to_string(),
+      "dual-cursor-visual-only".to_string(),
+    );
+    signals.insert("dualCursor".to_string(), "true".to_string());
   }
 
   let backend = if overlay {

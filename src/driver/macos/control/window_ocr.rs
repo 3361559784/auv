@@ -269,7 +269,8 @@ pub(crate) fn click_window_text(call: &DriverCall) -> AuvResult<DriverResponse> 
     "cursorDisturbance=warp-visible".to_string(),
   ]);
   if overlay {
-    notes.push("overlayPresentation=visual-only".to_string());
+    notes.push("overlayPresentation=dual-cursor-visual-only".to_string());
+    notes.push("userCursorSource=current-hardware-cursor".to_string());
     notes.push(format!("overlayLabel={overlay_label}"));
     notes.push(format!("previewMs={preview_ms}"));
   }
@@ -278,7 +279,11 @@ pub(crate) fn click_window_text(call: &DriverCall) -> AuvResult<DriverResponse> 
   signals.insert("pressMechanism".to_string(), "pointer-click".to_string());
   signals.insert("cursorDisturbance".to_string(), "warp-visible".to_string());
   if overlay {
-    signals.insert("overlayPresentation".to_string(), "visual-only".to_string());
+    signals.insert(
+      "overlayPresentation".to_string(),
+      "dual-cursor-visual-only".to_string(),
+    );
+    signals.insert("dualCursor".to_string(), "true".to_string());
   }
 
   Ok(DriverResponse {

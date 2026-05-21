@@ -370,6 +370,14 @@ pub fn default_command_catalog() -> CommandCatalog {
       max_disturbance: DisturbanceClass::None,
     },
     CommandSpec {
+      id: "debug.overlayShowDualCursor",
+      summary: "Show experimental visual-only dual cursor overlays: AUV at a target point and You at the current hardware cursor.",
+      driver_id: "macos.desktop",
+      operation: "overlay_show_dual_cursor",
+      disturbance_classes: NONE,
+      max_disturbance: DisturbanceClass::None,
+    },
+    CommandSpec {
       id: "debug.overlayHideCursor",
       summary: "Hide the experimental visual-only AUV cursor label overlay inside the current process.",
       driver_id: "macos.desktop",
@@ -490,6 +498,7 @@ mod tests {
     assert!(catalog.resolve("debug.scrollPoint").is_some());
     assert!(catalog.resolve("debug.overlayClickPoint").is_some());
     assert!(catalog.resolve("debug.overlayShowCursor").is_some());
+    assert!(catalog.resolve("debug.overlayShowDualCursor").is_some());
     assert!(catalog.resolve("debug.overlayHideCursor").is_some());
     assert!(catalog.resolve("debug.overlayShutdown").is_some());
   }

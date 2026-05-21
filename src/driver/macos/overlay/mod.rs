@@ -59,6 +59,78 @@ pub(crate) fn overlay_show_cursor(call: &DriverCall) -> AuvResult<DriverResponse
   })
 }
 
+pub(crate) fn overlay_show_dual_cursor(call: &DriverCall) -> AuvResult<DriverResponse> {
+  let x = required_f64(call, "x")?;
+  let y = required_f64(call, "y")?;
+  let label =
+    optional_non_empty_string(call, "label").unwrap_or_else(|| "auv · replay".to_string());
+  let user_label =
+    optional_non_empty_string(call, "user_label").unwrap_or_else(|| "you".to_string());
+  let hold_ms = optional_positive_u64(call, "hold_ms")?.unwrap_or(0);
+  crate::driver::macos::native::overlay::show_dual_cursor(x, y, &label, &user_label)?;
+  let controller_pid = std::process::id();
+
+  if hold_ms > 0 {
+    crate::driver::macos::native::overlay::pump_events(hold_ms)?;
+  }
+
+  let report = overlay_report([
+    ("operation", "show_dual_cursor".to_string()),
+    ("event", "shown".to_string()),
+    ("controllerPid", controller_pid.to_string()),
+    ("auvGlobalLogicalPoint", format!("{x:.3},{y:.3}")),
+    ("auvLabel", label.clone()),
+    ("userCursorSource", "current-hardware-cursor".to_string()),
+    ("userLabel", user_label.clone()),
+    ("holdMs", hold_ms.to_string()),
+    ("coordinateSpace", "global-logical".to_string()),
+    ("visualOnly", "true".to_string()),
+    ("windowShape", "two-small-floating-windows".to_string()),
+    ("lifecycle", "in-process".to_string()),
+    ("crossProcessPersistence", "false".to_string()),
+  ]);
+  let artifact = build_text_artifact(
+    "overlay-cursor",
+    "txt",
+    "overlay-show-dual-cursor",
+    report,
+    "Recorded an experimental macOS dual overlay cursor show command.",
+  )?;
+
+  Ok(DriverResponse {
+    summary: format!(
+      "Showed experimental dual overlay cursors: AUV at global logical point ({x:.3}, {y:.3}) and You at the current hardware cursor."
+    ),
+    backend: Some("macos.swift.overlay-ffi-dual-cursor-poc".to_string()),
+    signals: BTreeMap::from([
+      ("overlayEvent".to_string(), "shown".to_string()),
+      ("controllerPid".to_string(), controller_pid.to_string()),
+      ("visualOnly".to_string(), "true".to_string()),
+      ("dualCursor".to_string(), "true".to_string()),
+      (
+        "userCursorSource".to_string(),
+        "current-hardware-cursor".to_string(),
+      ),
+      ("crossProcessPersistence".to_string(), "false".to_string()),
+    ]),
+    notes: vec![
+      "experimental=true".to_string(),
+      "visualOnly=true".to_string(),
+      "dualCursor=true".to_string(),
+      "coordinateSpace=global-logical".to_string(),
+      "windowShape=two-small-floating-windows".to_string(),
+      "lifecycle=in-process".to_string(),
+      "crossProcessPersistence=false".to_string(),
+      "userCursorSource=current-hardware-cursor".to_string(),
+      format!("controllerPid={controller_pid}"),
+      format!("label={label}"),
+      format!("userLabel={user_label}"),
+      format!("holdMs={hold_ms}"),
+    ],
+    artifacts: vec![artifact],
+  })
+}
+
 pub(crate) fn overlay_hide_cursor(_call: &DriverCall) -> AuvResult<DriverResponse> {
   crate::driver::macos::native::overlay::hide_cursor()?;
   let controller_pid = std::process::id();
@@ -119,7 +191,7 @@ pub(crate) fn overlay_click_point(call: &DriverCall) -> AuvResult<DriverResponse
   }
 
   // 1. Show overlay cursor.
-  crate::driver::macos::native::overlay::show_cursor(x, y, &label)?;
+  crate::driver::macos::native::overlay::show_dual_cursor(x, y, &label, "you")?;
   let controller_pid = std::process::id();
   let show_event = "shown".to_string();
 
@@ -171,7 +243,8 @@ pub(crate) fn overlay_click_point(call: &DriverCall) -> AuvResult<DriverResponse
     "coordinateSpace=global-logical".to_string(),
     "cursorAfter=restored-to-original".to_string(),
     "cursorDisturbance=warp-visible".to_string(),
-    "overlayPresentation=visual-only".to_string(),
+    "overlayPresentation=dual-cursor-visual-only".to_string(),
+    "userCursorSource=current-hardware-cursor".to_string(),
     "experimental=true".to_string(),
   ]
   .join("\n")
@@ -202,6 +275,7 @@ pub(crate) fn overlay_click_point(call: &DriverCall) -> AuvResult<DriverResponse
       ),
       ("controllerPid".to_string(), controller_pid.to_string()),
       ("cursorDisturbance".to_string(), "warp-visible".to_string()),
+      ("dualCursor".to_string(), "true".to_string()),
       ("experimental".to_string(), "true".to_string()),
     ]),
     notes: vec![
@@ -216,7 +290,8 @@ pub(crate) fn overlay_click_point(call: &DriverCall) -> AuvResult<DriverResponse
       render_display_note(&resolution.display),
       "cursorAfter=restored-to-original".to_string(),
       "cursorDisturbance=warp-visible".to_string(),
-      "overlayPresentation=visual-only".to_string(),
+      "overlayPresentation=dual-cursor-visual-only".to_string(),
+      "userCursorSource=current-hardware-cursor".to_string(),
     ],
     artifacts: vec![artifact],
   })
@@ -262,7 +337,7 @@ pub(crate) fn with_overlay_cursor<R, F>(
 where
   F: FnOnce() -> AuvResult<R>,
 {
-  crate::driver::macos::native::overlay::show_cursor(x, y, label)?;
+  crate::driver::macos::native::overlay::show_dual_cursor(x, y, label, "you")?;
   let show_event = "shown".to_string();
   let controller_pid = std::process::id();
 

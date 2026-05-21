@@ -23,6 +23,18 @@ pub(crate) fn show_cursor(_x: f64, _y: f64, _label: &str) -> AuvResult<()> {
 }
 
 #[cfg(target_os = "macos")]
+pub(crate) fn show_dual_cursor(x: f64, y: f64, label: &str, user_label: &str) -> AuvResult<()> {
+  with_controller("show_overlay_dual_cursor", |controller| {
+    controller.show_overlay_dual_cursor(x, y, label.to_string(), user_label.to_string())
+  })
+}
+
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn show_dual_cursor(_x: f64, _y: f64, _label: &str, _user_label: &str) -> AuvResult<()> {
+  Err("macOS native overlay is unsupported on this target".to_string())
+}
+
+#[cfg(target_os = "macos")]
 pub(crate) fn hide_cursor() -> AuvResult<()> {
   with_controller("hide_overlay_cursor", |controller| {
     controller.hide_overlay_cursor()

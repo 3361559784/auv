@@ -131,46 +131,61 @@ final class NativeOverlayCursorView: NSView {
 final class NativeOverlayController {
   private var window: NSWindow?
   private var overlayView: NativeOverlayCursorView?
+  private var userWindow: NSWindow?
+  private var userOverlayView: NativeOverlayCursorView?
 
   func show_overlay_cursor(x: Double, y: Double, label: RustString) -> NativeActionResponse {
     runOnMain {
-      let window = self.ensureWindow()
       let resolvedLabel = label.toString()
-      self.overlayView?.label = resolvedLabel
-      self.overlayView?.variant = .auv
-
-      // Resize host window to fit sprite + dynamically-sized label.
-      let intrinsic = self.overlayView?.intrinsicLayoutSize() ?? NSSize(width: 140, height: 24)
-      let viewSize = NSSize(
-        width: ceil(intrinsic.width),
-        height: ceil(intrinsic.height)
+      self.userWindow?.orderOut(nil)
+      let (window, view) = self.ensureAuvWindow()
+      self.placeCursor(
+        window: window,
+        view: view,
+        x: x,
+        y: y,
+        label: resolvedLabel,
+        variant: .auv
       )
-      self.overlayView?.frame = NSRect(origin: .zero, size: viewSize)
-      self.overlayView?.needsDisplay = true
+    }
+  }
 
-      // Position the sprite tip a few px down-right of the requested
-      // target point — matches the hover offset in the design preview.
-      let offsetX = 4.0
-      let offsetY = 4.0
-      let topLeftX = x + offsetX
-      let topLeftY = y + offsetY
-      let appKitY = self.referenceHeight() - topLeftY - Double(viewSize.height)
-      let frame = NSRect(
-        x: topLeftX,
-        y: appKitY,
-        width: Double(viewSize.width),
-        height: Double(viewSize.height)
+  func show_overlay_dual_cursor(
+    x: Double,
+    y: Double,
+    label: RustString,
+    user_label: RustString
+  ) -> NativeActionResponse {
+    runOnMain {
+      let resolvedLabel = label.toString()
+      let resolvedUserLabel = user_label.toString()
+      let (auvWindow, auvView) = self.ensureAuvWindow()
+      let (youWindow, youView) = self.ensureUserWindow()
+      let userPoint = self.currentMouseLogicalPoint()
+
+      self.placeCursor(
+        window: youWindow,
+        view: youView,
+        x: userPoint.x,
+        y: userPoint.y,
+        label: resolvedUserLabel.isEmpty ? "you" : resolvedUserLabel,
+        variant: .you
       )
-
-      window.setFrame(frame, display: true)
-      window.orderFrontRegardless()
-      window.displayIfNeeded()
+      self.placeCursor(
+        window: auvWindow,
+        view: auvView,
+        x: x,
+        y: y,
+        label: resolvedLabel.isEmpty ? "auv · replay" : resolvedLabel,
+        variant: .auv
+      )
     }
   }
 
   func hide_overlay_cursor() -> NativeActionResponse {
     runOnMain {
       self.window?.orderOut(nil)
+      self.userWindow?.orderOut(nil)
     }
   }
 
@@ -178,16 +193,36 @@ final class NativeOverlayController {
     runOnMain {
       self.window?.orderOut(nil)
       self.window?.close()
+      self.userWindow?.orderOut(nil)
+      self.userWindow?.close()
       self.window = nil
       self.overlayView = nil
+      self.userWindow = nil
+      self.userOverlayView = nil
     }
   }
 
-  private func ensureWindow() -> NSWindow {
-    if let window {
-      return window
+  private func ensureAuvWindow() -> (NSWindow, NativeOverlayCursorView) {
+    if let window, let overlayView {
+      return (window, overlayView)
     }
+    let (window, view) = makeCursorWindow()
+    self.window = window
+    self.overlayView = view
+    return (window, view)
+  }
 
+  private func ensureUserWindow() -> (NSWindow, NativeOverlayCursorView) {
+    if let userWindow, let userOverlayView {
+      return (userWindow, userOverlayView)
+    }
+    let (window, view) = makeCursorWindow()
+    self.userWindow = window
+    self.userOverlayView = view
+    return (window, view)
+  }
+
+  private func makeCursorWindow() -> (NSWindow, NativeOverlayCursorView) {
     let app = NSApplication.shared
     app.setActivationPolicy(.accessory)
 
@@ -207,9 +242,57 @@ final class NativeOverlayController {
     window.level = .floating
     window.isReleasedWhenClosed = false
 
-    self.window = window
-    self.overlayView = view
-    return window
+    return (window, view)
+  }
+
+  private func placeCursor(
+    window: NSWindow,
+    view: NativeOverlayCursorView,
+    x: Double,
+    y: Double,
+    label: String,
+    variant: AuvOverlayCursorVariant
+  ) {
+    view.label = label
+    view.variant = variant
+
+    // Resize host window to fit sprite + dynamically-sized label.
+    let intrinsic = view.intrinsicLayoutSize()
+    let viewSize = NSSize(
+      width: ceil(intrinsic.width),
+      height: ceil(intrinsic.height)
+    )
+    view.frame = NSRect(origin: .zero, size: viewSize)
+    view.needsDisplay = true
+
+    // Position the sprite tip a few px down-right of the requested
+    // target point — matches the hover offset in the design preview.
+    let offsetX = 4.0
+    let offsetY = 4.0
+    let topLeftX = x + offsetX
+    let topLeftY = y + offsetY
+    let appKitY = referenceHeight() - topLeftY - Double(viewSize.height)
+    let frame = NSRect(
+      x: topLeftX,
+      y: appKitY,
+      width: Double(viewSize.width),
+      height: Double(viewSize.height)
+    )
+
+    window.setFrame(frame, display: true)
+    window.orderFrontRegardless()
+    window.displayIfNeeded()
+  }
+
+  private func currentMouseLogicalPoint() -> (x: Double, y: Double) {
+    // NSEvent.mouseLocation is in AppKit global coordinates, with a
+    // bottom-left origin on the main display. Convert it to the same
+    // top-left global-logical space accepted by show_overlay_cursor.
+    let location = NSEvent.mouseLocation
+    return (
+      x: Double(location.x),
+      y: referenceHeight() - Double(location.y)
+    )
   }
 
   private func referenceHeight() -> Double {

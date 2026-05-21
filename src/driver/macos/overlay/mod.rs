@@ -1,10 +1,33 @@
 use std::collections::BTreeMap;
 
+use serde::Deserialize;
+
 use super::*;
 
 const DEFAULT_PREVIEW_MS: u64 = 250;
 const DEFAULT_MOVE_MS: u64 = 180;
 const DEFAULT_FLASH_MS: u64 = 160;
+const MAX_BATCH_OPS: usize = 64;
+
+#[derive(Debug, Deserialize)]
+struct OverlayBatchOp {
+  #[serde(default, alias = "type", alias = "operation", alias = "kind")]
+  op: String,
+  #[serde(default)]
+  cursor_id: Option<String>,
+  #[serde(default)]
+  x: Option<f64>,
+  #[serde(default)]
+  y: Option<f64>,
+  #[serde(default)]
+  label: Option<String>,
+  #[serde(default)]
+  variant: Option<String>,
+  #[serde(default)]
+  duration_ms: Option<u64>,
+  #[serde(default)]
+  hold_ms: Option<u64>,
+}
 
 pub(crate) fn overlay_show_cursor(call: &DriverCall) -> AuvResult<DriverResponse> {
   let x = required_f64(call, "x")?;
@@ -128,6 +151,149 @@ pub(crate) fn overlay_show_dual_cursor(call: &DriverCall) -> AuvResult<DriverRes
       format!("label={label}"),
       format!("userLabel={user_label}"),
       format!("holdMs={hold_ms}"),
+    ],
+    artifacts: vec![artifact],
+  })
+}
+
+pub(crate) fn overlay_apply_cursor_batch(call: &DriverCall) -> AuvResult<DriverResponse> {
+  let ops_json = optional_non_empty_string(call, "ops_json")
+    .or_else(|| optional_non_empty_string(call, "operations_json"))
+    .ok_or_else(|| "operation requires --ops_json <json-array>".to_string())?;
+  let ops = parse_overlay_batch_ops(&ops_json)?;
+  let controller_pid = std::process::id();
+  let mut report_lines = vec![
+    "operation=apply_cursor_batch".to_string(),
+    format!("controllerPid={controller_pid}"),
+    format!("opCount={}", ops.len()),
+    "coordinateSpace=global-logical".to_string(),
+    "visualOnly=true".to_string(),
+    "cursorState=id-addressed".to_string(),
+    "lifecycle=in-process".to_string(),
+    "crossProcessPersistence=false".to_string(),
+  ];
+  let mut touched_cursor_ids = Vec::new();
+
+  for (index, op) in ops.iter().enumerate() {
+    let op_kind = normalized_batch_op(op, index)?;
+    match op_kind.as_str() {
+      "set" => {
+        let cursor_id = batch_cursor_id(op);
+        let variant = batch_variant(op, &cursor_id);
+        let label = batch_label(op, &cursor_id, &variant);
+        let x = required_batch_f64(op.x, index, "x")?;
+        let y = required_batch_f64(op.y, index, "y")?;
+        crate::driver::macos::native::overlay::set_cursor(&cursor_id, x, y, &label, &variant)?;
+        pump_batch_hold(op)?;
+        touched_cursor_ids.push(cursor_id.clone());
+        report_lines.push(format!(
+          "op[{index}]=set cursorId={cursor_id} variant={variant} point={x:.3},{y:.3} label={label}"
+        ));
+      }
+      "move" => {
+        let cursor_id = batch_cursor_id(op);
+        let variant = batch_variant(op, &cursor_id);
+        let label = batch_label(op, &cursor_id, &variant);
+        let x = required_batch_f64(op.x, index, "x")?;
+        let y = required_batch_f64(op.y, index, "y")?;
+        let duration_ms = op.duration_ms.unwrap_or(DEFAULT_MOVE_MS);
+        crate::driver::macos::native::overlay::move_cursor(
+          &cursor_id,
+          x,
+          y,
+          &label,
+          &variant,
+          duration_ms,
+        )?;
+        pump_batch_hold(op)?;
+        touched_cursor_ids.push(cursor_id.clone());
+        report_lines.push(format!(
+          "op[{index}]=move cursorId={cursor_id} variant={variant} point={x:.3},{y:.3} label={label} durationMs={duration_ms}"
+        ));
+      }
+      "flash" => {
+        let cursor_id = batch_cursor_id(op);
+        let label = op
+          .label
+          .as_deref()
+          .map(str::trim)
+          .filter(|value| !value.is_empty())
+          .unwrap_or("auv · click")
+          .to_string();
+        let x = required_batch_f64(op.x, index, "x")?;
+        let y = required_batch_f64(op.y, index, "y")?;
+        let duration_ms = op.duration_ms.unwrap_or(DEFAULT_FLASH_MS);
+        crate::driver::macos::native::overlay::flash_cursor_id(
+          &cursor_id,
+          x,
+          y,
+          &label,
+          duration_ms,
+        )?;
+        pump_batch_hold(op)?;
+        touched_cursor_ids.push(cursor_id.clone());
+        report_lines.push(format!(
+          "op[{index}]=flash cursorId={cursor_id} point={x:.3},{y:.3} label={label} durationMs={duration_ms}"
+        ));
+      }
+      "hide" => {
+        let cursor_id = batch_cursor_id(op);
+        crate::driver::macos::native::overlay::hide_cursor_id(&cursor_id)?;
+        pump_batch_hold(op)?;
+        touched_cursor_ids.push(cursor_id.clone());
+        report_lines.push(format!("op[{index}]=hide cursorId={cursor_id}"));
+      }
+      "hide_all" => {
+        crate::driver::macos::native::overlay::hide_cursor()?;
+        pump_batch_hold(op)?;
+        report_lines.push(format!("op[{index}]=hide_all"));
+      }
+      other => {
+        return Err(format!(
+          "unsupported overlay batch op[{index}] {other:?}; expected set, move, flash, hide, or hide_all"
+        ));
+      }
+    }
+  }
+
+  touched_cursor_ids.sort();
+  touched_cursor_ids.dedup();
+  report_lines.push(format!("touchedCursorIds={}", touched_cursor_ids.join(",")));
+  let artifact = build_text_artifact(
+    "overlay-cursor",
+    "txt",
+    "overlay-apply-cursor-batch",
+    report_lines.join("\n") + "\n",
+    "Recorded an experimental macOS id-addressed overlay cursor batch command.",
+  )?;
+
+  Ok(DriverResponse {
+    summary: format!(
+      "Applied {} experimental overlay cursor operation(s) in one process.",
+      ops.len()
+    ),
+    backend: Some("macos.swift.overlay-ffi-cursor-state-batch-poc".to_string()),
+    signals: BTreeMap::from([
+      ("overlayEvent".to_string(), "batch_applied".to_string()),
+      ("controllerPid".to_string(), controller_pid.to_string()),
+      ("visualOnly".to_string(), "true".to_string()),
+      ("cursorState".to_string(), "id-addressed".to_string()),
+      ("batch".to_string(), "true".to_string()),
+      ("opCount".to_string(), ops.len().to_string()),
+      ("touchedCursorIds".to_string(), touched_cursor_ids.join(",")),
+      ("crossProcessPersistence".to_string(), "false".to_string()),
+    ]),
+    notes: vec![
+      "experimental=true".to_string(),
+      "visualOnly=true".to_string(),
+      "cursorState=id-addressed".to_string(),
+      "batch=true".to_string(),
+      "coordinateSpace=global-logical".to_string(),
+      "lifecycle=in-process".to_string(),
+      "crossProcessPersistence=false".to_string(),
+      format!("controllerPid={controller_pid}"),
+      format!("opCount={}", ops.len()),
+      format!("touchedCursorIds={}", touched_cursor_ids.join(",")),
     ],
     artifacts: vec![artifact],
   })
@@ -787,6 +953,84 @@ fn default_cursor_label(cursor_id: &str, variant: &str) -> String {
   }
 }
 
+fn parse_overlay_batch_ops(raw: &str) -> AuvResult<Vec<OverlayBatchOp>> {
+  let ops: Vec<OverlayBatchOp> = serde_json::from_str(raw)
+    .map_err(|error| format!("failed to parse --ops_json as overlay cursor batch: {error}"))?;
+  if ops.is_empty() {
+    return Err("overlay cursor batch requires at least one operation".to_string());
+  }
+  if ops.len() > MAX_BATCH_OPS {
+    return Err(format!(
+      "overlay cursor batch accepts at most {MAX_BATCH_OPS} operations; got {}",
+      ops.len()
+    ));
+  }
+  Ok(ops)
+}
+
+fn normalized_batch_op(op: &OverlayBatchOp, index: usize) -> AuvResult<String> {
+  let kind = op.op.trim().to_ascii_lowercase().replace('-', "_");
+  if kind.is_empty() {
+    return Err(format!(
+      "overlay batch op[{index}] requires an op/type/operation field"
+    ));
+  }
+  Ok(match kind.as_str() {
+    "set_cursor" => "set".to_string(),
+    "move_cursor" | "move_cursor_by_id" => "move".to_string(),
+    "flash_cursor" | "flash_cursor_by_id" => "flash".to_string(),
+    "hide_cursor" | "hide_cursor_id" => "hide".to_string(),
+    "hide_all" | "hide_cursors" | "hide_all_cursors" => "hide_all".to_string(),
+    _ => kind,
+  })
+}
+
+fn batch_cursor_id(op: &OverlayBatchOp) -> String {
+  op.cursor_id
+    .as_deref()
+    .map(str::trim)
+    .filter(|value| !value.is_empty())
+    .unwrap_or("auv")
+    .to_string()
+}
+
+fn batch_variant(op: &OverlayBatchOp, cursor_id: &str) -> String {
+  op.variant
+    .as_deref()
+    .map(str::trim)
+    .filter(|value| !value.is_empty())
+    .unwrap_or(if cursor_id == "you" { "you" } else { "auv" })
+    .to_string()
+}
+
+fn batch_label(op: &OverlayBatchOp, cursor_id: &str, variant: &str) -> String {
+  op.label
+    .as_deref()
+    .map(str::trim)
+    .filter(|value| !value.is_empty())
+    .map(ToString::to_string)
+    .unwrap_or_else(|| default_cursor_label(cursor_id, variant))
+}
+
+fn required_batch_f64(value: Option<f64>, index: usize, field: &str) -> AuvResult<f64> {
+  let value = value.ok_or_else(|| format!("overlay batch op[{index}] requires field {field:?}"))?;
+  if !value.is_finite() {
+    return Err(format!(
+      "overlay batch op[{index}] field {field:?} must be finite"
+    ));
+  }
+  Ok(value)
+}
+
+fn pump_batch_hold(op: &OverlayBatchOp) -> AuvResult<()> {
+  if let Some(hold_ms) = op.hold_ms
+    && hold_ms > 0
+  {
+    crate::driver::macos::native::overlay::pump_events(hold_ms)?;
+  }
+  Ok(())
+}
+
 fn overlay_report<const N: usize>(entries: [(&str, String); N]) -> String {
   entries
     .into_iter()
@@ -794,4 +1038,55 @@ fn overlay_report<const N: usize>(entries: [(&str, String); N]) -> String {
     .collect::<Vec<_>>()
     .join("\n")
     + "\n"
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn parse_overlay_batch_ops_accepts_operation_aliases() {
+    let ops = parse_overlay_batch_ops(
+      r#"[
+        {"type":"set","cursor_id":"you","x":10,"y":20,"variant":"you"},
+        {"operation":"move-cursor","cursor_id":"agent-1","x":30,"y":40,"duration_ms":5},
+        {"kind":"flash_cursor_by_id","cursor_id":"agent-1","x":30,"y":40},
+        {"op":"hide_all"}
+      ]"#,
+    )
+    .expect("batch should parse");
+
+    assert_eq!(ops.len(), 4);
+    assert_eq!(normalized_batch_op(&ops[0], 0).unwrap(), "set");
+    assert_eq!(normalized_batch_op(&ops[1], 1).unwrap(), "move");
+    assert_eq!(normalized_batch_op(&ops[2], 2).unwrap(), "flash");
+    assert_eq!(normalized_batch_op(&ops[3], 3).unwrap(), "hide_all");
+  }
+
+  #[test]
+  fn parse_overlay_batch_ops_rejects_empty_batches() {
+    let error = parse_overlay_batch_ops("[]").expect_err("empty batch should fail");
+    assert!(error.contains("at least one operation"));
+  }
+
+  #[test]
+  fn batch_defaults_use_cursor_id_and_variant() {
+    let op = OverlayBatchOp {
+      op: "set".to_string(),
+      cursor_id: Some("you".to_string()),
+      x: Some(1.0),
+      y: Some(2.0),
+      label: None,
+      variant: None,
+      duration_ms: None,
+      hold_ms: None,
+    };
+    let cursor_id = batch_cursor_id(&op);
+    let variant = batch_variant(&op, &cursor_id);
+    let label = batch_label(&op, &cursor_id, &variant);
+
+    assert_eq!(cursor_id, "you");
+    assert_eq!(variant, "you");
+    assert_eq!(label, "you");
+  }
 }

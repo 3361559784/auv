@@ -378,6 +378,14 @@ pub fn default_command_catalog() -> CommandCatalog {
       max_disturbance: DisturbanceClass::None,
     },
     CommandSpec {
+      id: "debug.overlayApplyCursorBatch",
+      summary: "Apply a JSON batch of experimental visual-only overlay cursor operations in one process.",
+      driver_id: "macos.desktop",
+      operation: "overlay_apply_cursor_batch",
+      disturbance_classes: NONE,
+      max_disturbance: DisturbanceClass::None,
+    },
+    CommandSpec {
       id: "debug.overlaySetCursor",
       summary: "Show or update one experimental visual-only overlay cursor by cursor_id.",
       driver_id: "macos.desktop",
@@ -547,6 +555,7 @@ mod tests {
     assert!(catalog.resolve("debug.overlayClickPoint").is_some());
     assert!(catalog.resolve("debug.overlayShowCursor").is_some());
     assert!(catalog.resolve("debug.overlayShowDualCursor").is_some());
+    assert!(catalog.resolve("debug.overlayApplyCursorBatch").is_some());
     assert!(catalog.resolve("debug.overlaySetCursor").is_some());
     assert!(catalog.resolve("debug.overlayMoveCursor").is_some());
     assert!(catalog.resolve("debug.overlayMoveCursorById").is_some());

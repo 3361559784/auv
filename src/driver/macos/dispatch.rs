@@ -13,9 +13,10 @@ use super::observe::{
   verify_now_playing_title, wait_for_screen_rows, wait_for_screen_text,
 };
 use super::overlay::{
-  overlay_click_point, overlay_flash_cursor, overlay_flash_cursor_by_id, overlay_hide_cursor,
-  overlay_hide_cursor_id, overlay_move_cursor, overlay_move_cursor_by_id, overlay_set_cursor,
-  overlay_show_cursor, overlay_show_dual_cursor, overlay_shutdown,
+  overlay_apply_cursor_batch, overlay_click_point, overlay_flash_cursor,
+  overlay_flash_cursor_by_id, overlay_hide_cursor, overlay_hide_cursor_id, overlay_move_cursor,
+  overlay_move_cursor_by_id, overlay_set_cursor, overlay_show_cursor, overlay_show_dual_cursor,
+  overlay_shutdown,
 };
 use super::{
   Driver, DriverCall, DriverDescriptor, DriverResponse, MacOsDesktopDriver, descriptor,
@@ -77,6 +78,7 @@ pub(crate) fn invoke_operation(call: &DriverCall) -> AuvResult<DriverResponse> {
     "scroll_point" => scroll_point(call),
     "overlay_show_cursor" => overlay_show_cursor(call),
     "overlay_show_dual_cursor" => overlay_show_dual_cursor(call),
+    "overlay_apply_cursor_batch" => overlay_apply_cursor_batch(call),
     "overlay_set_cursor" => overlay_set_cursor(call),
     "overlay_move_cursor" => overlay_move_cursor(call),
     "overlay_move_cursor_by_id" => overlay_move_cursor_by_id(call),

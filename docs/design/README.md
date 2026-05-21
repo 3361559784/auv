@@ -11,9 +11,8 @@ The original handoff bundle's own README files are preserved verbatim:
   README (product context, voice, visual foundations).
 - [`SKILL.md`](./SKILL.md) — agent-skill metadata.
 
-For agents picking up the **still-unfinished** implementation work
-(span tree, events rail, artifact panel, WebSocket live streaming,
-extracted asset routes), read:
+For agents picking up the **already-landed viewer implementation** or
+remaining follow-on design work, read:
 
 - [`IMPLEMENTATION_HANDOFF.md`](./IMPLEMENTATION_HANDOFF.md) — cold-
   start spec: what shipped, what's left, exact visual + data
@@ -54,11 +53,11 @@ from, without re-fetching the original bundle.
 | `assets/logo-mark.svg` (top-bar pixel logo) | inlined in `src/inspect_server_viewer.html` | done (Phase C.1) |
 | `colors_and_type.css` core tokens (shell, brand, status) | inlined `:root` block in `src/inspect_server_viewer.html` | done (Phase C.1) |
 | `ui_kits/viewer/Sidebar.jsx` (run list) | `src/inspect_server_viewer.html` | done (Phase C.1) |
-| `ui_kits/viewer/SpanTree.jsx` | — | pending (Phase C.2 — see `IMPLEMENTATION_HANDOFF.md`) |
-| `ui_kits/viewer/EventsRail.jsx` | — | pending (Phase C.3a) |
-| `ui_kits/viewer/ArtifactPanel.jsx` | — | pending (Phase C.3b) |
-| WebSocket live streaming on `/runs/:id/stream` | — | pending (Phase C.4) |
-| Extract assets to `/assets/:name` route | — | pending (Phase C.5, optional) |
+| `ui_kits/viewer/SpanTree.jsx` | `src/inspect_server_viewer.html` | done (Phase C.2) |
+| `ui_kits/viewer/EventsRail.jsx` | `src/inspect_server_viewer.html` | done (Phase C.3a) |
+| `ui_kits/viewer/ArtifactPanel.jsx` | `src/inspect_server_viewer.html` | done (Phase C.3b) |
+| WebSocket live streaming on `/runs/:id/stream` | `src/inspect_server_viewer.html` + `src/inspect_server.rs` | done (Phase C.4) |
+| Extract assets to `/assets/:name` route | `src/inspect_server.rs` | done (Phase C.5, landed early) |
 | `assets/cursor-auv-click.svg` (4-ray burst) | — | pending (future Overlay click-state) |
 | `ui_kits/cli/*` | — | reference only; the Rust CLI ships plain text today |
 

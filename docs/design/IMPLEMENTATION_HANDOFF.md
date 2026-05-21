@@ -16,7 +16,7 @@ context.
 | **C.3a — viewer events rail** | `132ef3d` | 320px events rail below the span tree, fetching `/runs/:id/events`. Span-detail panel above the rail re-renders on row click. |
 | **C.5 — viewer asset route (early)** | `e7726a4` | `GET /assets/:name` serves design-system SVGs from a compile-time map (path-traversal hardened, immutable cache). Inlined logo + sparkle migrated. |
 | **C.3b — viewer artifact panel** | `a0b924a` | 340px right rail with artifact list + mime-routed preview (text/`<pre>`, image/`<img>`, else diagonal-stripe placeholder). Uses `/assets/icon-*.svg` + `/assets/sprite-inspector.svg`. |
-| **C.4 — viewer WebSocket live stream** | _this commit_ | When a `running` run is selected, the viewer opens `ws://host/runs/:id/stream` and handles `span_started` / `span_finished` / `event_appended` / `artifact_created` / `run_finished` frames; one 2 s reconnect on error, then `disconnected`. Streamed events get the `_live` tint reserved in C.3a. |
+| **C.4 — viewer WebSocket live stream** | `34eb07c` | When a `running` run is selected, the viewer opens `ws://host/runs/:id/stream` and handles `span_started` / `span_finished` / `event_appended` / `artifact_created` / `run_finished` frames; one 2 s reconnect on error, then `disconnected`. Streamed events get the `_live` tint reserved in C.3a. |
 
 ## Architecture decisions (do not relitigate)
 

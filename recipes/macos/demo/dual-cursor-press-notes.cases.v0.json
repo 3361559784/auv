@@ -1,0 +1,21 @@
+{
+  "skill_id": "macos.demo.dual_cursor_press_notes.v0",
+  "version": "0.1.0",
+  "status": "active-case-matrix",
+  "cases": [
+    {
+      "case_id": "notes-dual-cursor-demo",
+      "status": "validated",
+      "inputs": {
+        "note_body": "AUV_DUAL_CURSOR_DEMO_2026_05_21",
+        "body_scope_path_prefix": "0.0.5"
+      },
+      "disturbance": "clipboard",
+      "notes": [
+        "Canonical dual-cursor visual demo case.",
+        "create-note + focus-body each assert cursorDisturbance=none, overlayPresentation=dual-cursor-visual-only, dualCursor=true and all assertions matched on the validating run.",
+        "Promoted to validated on 2026-05-21 after a live Notes run completed all 5 steps (run_1779336571974_54299_0)."
+      ]
+    }
+  ]
+}

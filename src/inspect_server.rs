@@ -1,34 +1,71 @@
+use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::Arc;
 
-use axum::body::Body;
+use axum::body::{Body, to_bytes};
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, State};
-use axum::http::header::CONTENT_TYPE;
-use axum::http::{HeaderValue, StatusCode};
+use axum::http::header::{AUTHORIZATION, CONTENT_TYPE};
+use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use tokio::net::TcpListener;
 use tokio::sync::broadcast;
+use tokio::sync::{Mutex, OwnedMutexGuard};
 
 use crate::model::AuvResult;
-use crate::recording::BroadcastRunEventSink;
-use crate::store::LocalStore;
+use crate::run_recording::{ApiRunUpdate, BroadcastRunRecorder, RunRecorder, RunUpdate};
+use crate::store::{CanonicalRun, LocalStore};
+use crate::trace::{RunId, TraceState};
 
 pub const DEFAULT_INSPECT_HOST: &str = "127.0.0.1";
 pub const DEFAULT_INSPECT_PORT: u16 = 8765;
+const MAX_ARTIFACT_UPLOAD_BYTES: usize = 128 * 1024 * 1024;
 
 #[derive(Clone)]
 struct InspectServerState {
   store: Arc<LocalStore>,
-  event_sink: Arc<BroadcastRunEventSink>,
+  recorder: Arc<BroadcastRunRecorder>,
+  write: InspectWriteConfig,
+  write_locks: RunWriteLocks,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct InspectWriteConfig {
+  pub enabled: bool,
+  pub token: Option<String>,
+  pub no_token: bool,
+}
+
+#[derive(Clone, Default)]
+struct RunWriteLocks {
+  locks: Arc<std::sync::Mutex<HashMap<String, Arc<Mutex<()>>>>>,
+}
+
+impl RunWriteLocks {
+  async fn lock(&self, run_id: &str) -> OwnedMutexGuard<()> {
+    let lock = {
+      let mut locks = self
+        .locks
+        .lock()
+        .expect("run write locks should not poison");
+      locks
+        .entry(run_id.to_string())
+        .or_insert_with(|| Arc::new(Mutex::new(())))
+        .clone()
+    };
+    lock.lock_owned().await
+  }
 }
 
 #[derive(Clone, Debug)]
 pub struct InspectServeConfig {
   pub host: String,
   pub port: u16,
+  pub store_root: Option<PathBuf>,
+  pub write: InspectWriteConfig,
 }
 
 impl Default for InspectServeConfig {
@@ -36,8 +73,32 @@ impl Default for InspectServeConfig {
     Self {
       host: DEFAULT_INSPECT_HOST.to_string(),
       port: DEFAULT_INSPECT_PORT,
+      store_root: None,
+      write: InspectWriteConfig::default(),
     }
   }
+}
+
+impl InspectServeConfig {
+  pub fn validate_write_security(&self) -> AuvResult<()> {
+    if !self.write.enabled {
+      return Ok(());
+    }
+    if self.write.no_token && self.write.token.is_some() {
+      return Err("--no-write-token cannot be combined with a write token".to_string());
+    }
+    if self.write.no_token && !is_loopback_host(&self.host) {
+      return Err("non-loopback inspect server write requires a token".to_string());
+    }
+    if !is_loopback_host(&self.host) && self.write.token.is_none() {
+      return Err("non-loopback inspect server write requires a token".to_string());
+    }
+    Ok(())
+  }
+}
+
+fn is_loopback_host(host: &str) -> bool {
+  matches!(host, "127.0.0.1" | "localhost" | "::1")
 }
 
 /// Single-payload HTML viewer served at `GET /`. Inlines CSS + JS; SVG
@@ -103,11 +164,20 @@ const DESIGN_ASSETS: &[(&str, &[u8], &str)] = &[
     "image/svg+xml",
   ),
 ];
+pub fn router(store: LocalStore, recorder: Arc<BroadcastRunRecorder>) -> Router {
+  router_with_config(store, recorder, InspectWriteConfig::default())
+}
 
-pub fn router(store: LocalStore, event_sink: Arc<BroadcastRunEventSink>) -> Router {
+fn router_with_config(
+  store: LocalStore,
+  recorder: Arc<BroadcastRunRecorder>,
+  write: InspectWriteConfig,
+) -> Router {
   let state = InspectServerState {
     store: Arc::new(store),
-    event_sink,
+    recorder,
+    write,
+    write_locks: RunWriteLocks::default(),
   };
   Router::new()
     .route("/", get(serve_viewer))
@@ -119,6 +189,11 @@ pub fn router(store: LocalStore, event_sink: Arc<BroadcastRunEventSink>) -> Rout
     .route("/runs/{run_id}/artifacts", get(get_artifacts))
     .route("/runs/{run_id}/artifacts/{artifact_id}", get(get_artifact))
     .route("/runs/{run_id}/stream", get(stream_run))
+    .route("/write/runs/{run_id}/updates", post(write_updates))
+    .route(
+      "/write/runs/{run_id}/artifacts/{artifact_id}",
+      post(write_artifact),
+    )
     .with_state(state)
 }
 
@@ -175,20 +250,31 @@ async fn serve_design_asset(Path(asset_name): Path<String>) -> Response {
 
 pub async fn serve(
   store: LocalStore,
-  event_sink: Arc<BroadcastRunEventSink>,
+  recorder: Arc<BroadcastRunRecorder>,
   config: InspectServeConfig,
 ) -> AuvResult<SocketAddr> {
-  let address = format!("{}:{}", config.host, config.port)
-    .parse::<SocketAddr>()
-    .map_err(|error| format!("invalid inspect server address: {error}"))?;
+  config.validate_write_security()?;
+  let address = (config.host.as_str(), config.port);
+  let display_address = format!("{}:{}", config.host, config.port);
   let listener = TcpListener::bind(address)
     .await
-    .map_err(|error| format!("failed to bind inspect server {address}: {error}"))?;
+    .map_err(|error| format!("failed to bind inspect server {display_address}: {error}"))?;
   let local_address = listener
     .local_addr()
     .map_err(|error| format!("failed to read inspect server address: {error}"))?;
   println!("inspect server: http://{local_address}");
-  axum::serve(listener, router(store, event_sink))
+  if config.write.enabled {
+    let session = crate::run_recording::InspectServerSession {
+      url: format!("http://{local_address}"),
+      store_root: store.root().display().to_string(),
+      write_enabled: true,
+      write_token: config.write.token.clone(),
+      pid: std::process::id(),
+      started_at_millis: crate::model::now_millis(),
+    };
+    crate::run_recording::write_inspect_session(&session)?;
+  }
+  axum::serve(listener, router_with_config(store, recorder, config.write))
     .await
     .map_err(|error| format!("inspect server failed: {error}"))?;
   Ok(local_address)
@@ -272,11 +358,320 @@ async fn stream_run(
   ensure_stream_run_exists(&state.store, &run_id)?;
   Ok(
     websocket
-      .on_upgrade(move |socket| stream_run_events(socket, state.event_sink, run_id))
+      .on_upgrade(move |socket| stream_run_events(socket, state.recorder, run_id))
       .into_response(),
   )
 }
 
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WriteUpdatesRequest {
+  updates: Vec<ApiRunUpdate>,
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WriteUpdatesResponse {
+  accepted: usize,
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StructuredErrorBody {
+  error: StructuredError,
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StructuredError {
+  code: String,
+  message: String,
+  run_id: Option<String>,
+  conflict_kind: Option<String>,
+  resolution: Option<String>,
+  retryable: bool,
+}
+
+async fn write_updates(
+  State(state): State<InspectServerState>,
+  Path(run_id): Path<String>,
+  headers: HeaderMap,
+  Json(request): Json<WriteUpdatesRequest>,
+) -> Result<Response, InspectHttpError> {
+  authorize_write(&headers, &state.write)?;
+  let _write_guard = state.write_locks.lock(&run_id).await;
+  let mut snapshot = state.store.read_run(&run_id).ok();
+  let updates = request
+    .updates
+    .into_iter()
+    .map(RunUpdate::from)
+    .collect::<Vec<_>>();
+
+  for update in &updates {
+    validate_update_run_ids(&run_id, update)?;
+    apply_update(&mut snapshot, update).map_err(InspectHttpError::conflict)?;
+  }
+
+  let Some(snapshot) = snapshot else {
+    return Err(InspectHttpError::bad_request(
+      "first update for a run must be runStarted".to_string(),
+    ));
+  };
+  state
+    .store
+    .replace_run_snapshot(&snapshot)
+    .map_err(InspectHttpError::from_store)?;
+
+  let accepted = updates.len();
+  for update in updates {
+    state
+      .recorder
+      .record(update)
+      .map_err(InspectHttpError::from_store)?;
+  }
+  Ok(Json(WriteUpdatesResponse { accepted }).into_response())
+}
+
+async fn write_artifact(
+  State(state): State<InspectServerState>,
+  Path((run_id, artifact_id)): Path<(String, String)>,
+  headers: HeaderMap,
+  body: Body,
+) -> Result<Response, InspectHttpError> {
+  authorize_write(&headers, &state.write)?;
+  let bytes = to_bytes(body, MAX_ARTIFACT_UPLOAD_BYTES)
+    .await
+    .map_err(|error| {
+      InspectHttpError::payload_too_large(format!("artifact upload rejected: {error}"))
+    })?;
+  let artifact = state
+    .store
+    .write_artifact_bytes(&run_id, &artifact_id, &bytes)
+    .map_err(InspectHttpError::from_store)?;
+  Ok(Json(artifact).into_response())
+}
+
+#[allow(clippy::result_large_err)]
+fn authorize_write(
+  headers: &HeaderMap,
+  write: &InspectWriteConfig,
+) -> Result<(), InspectHttpError> {
+  if !write.enabled {
+    return Err(InspectHttpError::forbidden(
+      "inspect server write is disabled".to_string(),
+    ));
+  }
+  if write.no_token {
+    return Ok(());
+  }
+  let Some(expected) = &write.token else {
+    return Err(InspectHttpError::forbidden(
+      "inspect server write token is required".to_string(),
+    ));
+  };
+  let actual = headers
+    .get(AUTHORIZATION)
+    .and_then(|value| value.to_str().ok())
+    .and_then(|value| value.strip_prefix("Bearer "));
+  if actual == Some(expected.as_str()) {
+    Ok(())
+  } else {
+    Err(InspectHttpError::forbidden(
+      "invalid inspect server write token".to_string(),
+    ))
+  }
+}
+
+#[allow(clippy::result_large_err)]
+fn validate_update_run_ids(run_id: &str, update: &RunUpdate) -> Result<(), InspectHttpError> {
+  if update.run_id().as_str() != run_id {
+    return Err(InspectHttpError::bad_request(format!(
+      "update runId {} does not match request runId {run_id}",
+      update.run_id()
+    )));
+  }
+  match update {
+    RunUpdate::RunStarted { run, .. } | RunUpdate::RunFinished { run, .. }
+      if run.run_id.as_str() != run_id =>
+    {
+      Err(InspectHttpError::bad_request(format!(
+        "nested runId {} does not match request runId {run_id}",
+        run.run_id
+      )))
+    }
+    _ => Ok(()),
+  }
+}
+
+fn apply_update(
+  snapshot: &mut Option<CanonicalRun>,
+  update: &RunUpdate,
+) -> Result<(), RunConflict> {
+  match update {
+    RunUpdate::RunStarted { run, .. } => {
+      if let Some(existing) = snapshot {
+        if existing.run != *run {
+          return Err(RunConflict::new(&run.run_id, "runMetadataMismatch"));
+        }
+        return Ok(());
+      }
+      *snapshot = Some(CanonicalRun {
+        run: run.clone(),
+        spans: Vec::new(),
+        events: Vec::new(),
+        artifacts: Vec::new(),
+      });
+      Ok(())
+    }
+    RunUpdate::SpanStarted { run_id, span } => {
+      let snapshot = snapshot
+        .as_mut()
+        .ok_or_else(|| RunConflict::new(run_id, "missingRunStarted"))?;
+      if snapshot.run.state == TraceState::Ended {
+        return Err(RunConflict::new(run_id, "runAlreadyFinished"));
+      }
+      if let Some(parent) = &span.parent_span_id
+        && !snapshot
+          .spans
+          .iter()
+          .any(|existing| existing.span_id == *parent)
+        && snapshot.run.root_span_id != *parent
+      {
+        return Err(RunConflict::new(run_id, "missingParentSpan"));
+      }
+      if let Some(existing) = snapshot
+        .spans
+        .iter()
+        .find(|existing| existing.span_id == span.span_id)
+      {
+        if existing != span {
+          return Err(RunConflict::new(run_id, "duplicateSpanMismatch"));
+        }
+        return Ok(());
+      }
+      snapshot.spans.push(span.clone());
+      Ok(())
+    }
+    RunUpdate::SpanFinished { run_id, span } => {
+      let snapshot = snapshot
+        .as_mut()
+        .ok_or_else(|| RunConflict::new(run_id, "missingRunStarted"))?;
+      if snapshot.run.state == TraceState::Ended {
+        return Err(RunConflict::new(run_id, "runAlreadyFinished"));
+      }
+      let Some(existing) = snapshot
+        .spans
+        .iter_mut()
+        .find(|existing| existing.span_id == span.span_id)
+      else {
+        return Err(RunConflict::new(run_id, "missingParentSpan"));
+      };
+      if span_immutable_metadata_differs(existing, span) {
+        return Err(RunConflict::new(run_id, "duplicateSpanMismatch"));
+      }
+      if existing.state == TraceState::Ended && existing != span {
+        return Err(RunConflict::new(run_id, "duplicateSpanMismatch"));
+      }
+      *existing = span.clone();
+      Ok(())
+    }
+    RunUpdate::EventAppended { run_id, event } => {
+      let snapshot = snapshot
+        .as_mut()
+        .ok_or_else(|| RunConflict::new(run_id, "missingRunStarted"))?;
+      if snapshot.run.state == TraceState::Ended {
+        return Err(RunConflict::new(run_id, "runAlreadyFinished"));
+      }
+      if let Some(existing) = snapshot
+        .events
+        .iter()
+        .find(|existing| existing.event_id == event.event_id)
+      {
+        if existing != event {
+          return Err(RunConflict::new(run_id, "duplicateEventMismatch"));
+        }
+        return Ok(());
+      }
+      snapshot.events.push(event.clone());
+      Ok(())
+    }
+    RunUpdate::ArtifactCreated { run_id, artifact } => {
+      let snapshot = snapshot
+        .as_mut()
+        .ok_or_else(|| RunConflict::new(run_id, "missingRunStarted"))?;
+      if snapshot.run.state == TraceState::Ended {
+        return Err(RunConflict::new(run_id, "runAlreadyFinished"));
+      }
+      if let Some(existing) = snapshot
+        .artifacts
+        .iter()
+        .find(|existing| existing.artifact_id == artifact.artifact_id)
+      {
+        if existing != artifact {
+          return Err(RunConflict::new(run_id, "duplicateArtifactMismatch"));
+        }
+        return Ok(());
+      }
+      snapshot.artifacts.push(artifact.clone());
+      Ok(())
+    }
+    RunUpdate::RunFinished { run_id, run } => {
+      let snapshot = snapshot
+        .as_mut()
+        .ok_or_else(|| RunConflict::new(run_id, "missingRunStarted"))?;
+      if run_immutable_metadata_differs(&snapshot.run, run) {
+        return Err(RunConflict::new(run_id, "runMetadataMismatch"));
+      }
+      if snapshot.run.state == TraceState::Ended && snapshot.run != *run {
+        return Err(RunConflict::new(run_id, "runAlreadyFinished"));
+      }
+      snapshot.run = run.clone();
+      Ok(())
+    }
+  }
+}
+
+fn run_immutable_metadata_differs(
+  existing: &crate::trace::RunRecordV1Alpha1,
+  next: &crate::trace::RunRecordV1Alpha1,
+) -> bool {
+  existing.api_version != next.api_version
+    || existing.run_id != next.run_id
+    || existing.trace_id != next.trace_id
+    || existing.run_type != next.run_type
+    || existing.started_at_millis != next.started_at_millis
+    || existing.root_span_id != next.root_span_id
+    || existing.attributes != next.attributes
+}
+
+fn span_immutable_metadata_differs(
+  existing: &crate::trace::SpanRecordV1Alpha1,
+  next: &crate::trace::SpanRecordV1Alpha1,
+) -> bool {
+  existing.api_version != next.api_version
+    || existing.span_id != next.span_id
+    || existing.parent_span_id != next.parent_span_id
+    || existing.name != next.name
+    || existing.started_at_millis != next.started_at_millis
+    || existing.attributes != next.attributes
+}
+
+#[derive(Debug)]
+struct RunConflict {
+  run_id: String,
+  kind: String,
+}
+
+impl RunConflict {
+  fn new(run_id: &RunId, kind: &str) -> Self {
+    Self {
+      run_id: run_id.to_string(),
+      kind: kind.to_string(),
+    }
+  }
+}
+
+#[allow(clippy::result_large_err)]
 fn ensure_stream_run_exists(store: &LocalStore, run_id: &str) -> Result<(), InspectHttpError> {
   store
     .read_run(run_id)
@@ -286,10 +681,10 @@ fn ensure_stream_run_exists(store: &LocalStore, run_id: &str) -> Result<(), Insp
 
 async fn stream_run_events(
   mut socket: WebSocket,
-  event_sink: Arc<BroadcastRunEventSink>,
+  recorder: Arc<BroadcastRunRecorder>,
   run_id: String,
 ) {
-  let mut receiver = event_sink.subscribe();
+  let mut receiver = recorder.subscribe();
   while let Some(payload) = next_stream_payload(&mut receiver, &run_id).await {
     if socket.send(Message::Text(payload.into())).await.is_err() {
       break;
@@ -298,18 +693,80 @@ async fn stream_run_events(
 }
 
 async fn next_stream_payload(
-  receiver: &mut broadcast::Receiver<crate::recording::RunStreamEvent>,
+  receiver: &mut broadcast::Receiver<RunUpdate>,
   run_id: &str,
 ) -> Option<String> {
   loop {
     match receiver.recv().await {
-      Ok(event) if event.run_id().as_str() == run_id => match serde_json::to_string(&event) {
-        Ok(payload) => return Some(payload),
-        Err(_) => continue,
-      },
+      Ok(update) if update.run_id().as_str() == run_id => {
+        match serde_json::to_string(&RunStreamEvent::from(update)) {
+          Ok(payload) => return Some(payload),
+          Err(_) => continue,
+        }
+      }
       Ok(_) => {}
       Err(broadcast::error::RecvError::Lagged(_)) => {}
       Err(broadcast::error::RecvError::Closed) => return None,
+    }
+  }
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum RunStreamEvent {
+  RunStarted {
+    run_id: RunId,
+    run: crate::run_recording::ApiRunRecord,
+  },
+  SpanStarted {
+    run_id: RunId,
+    span: crate::run_recording::ApiSpanRecord,
+  },
+  EventAppended {
+    run_id: RunId,
+    event: crate::run_recording::ApiEventRecord,
+  },
+  ArtifactCreated {
+    run_id: RunId,
+    artifact: crate::run_recording::ApiArtifactRecord,
+  },
+  SpanFinished {
+    run_id: RunId,
+    span: crate::run_recording::ApiSpanRecord,
+  },
+  RunFinished {
+    run_id: RunId,
+    run: crate::run_recording::ApiRunRecord,
+  },
+}
+
+impl From<RunUpdate> for RunStreamEvent {
+  fn from(update: RunUpdate) -> Self {
+    match update {
+      RunUpdate::RunStarted { run_id, run } => Self::RunStarted {
+        run_id,
+        run: run.into(),
+      },
+      RunUpdate::SpanStarted { run_id, span } => Self::SpanStarted {
+        run_id,
+        span: span.into(),
+      },
+      RunUpdate::EventAppended { run_id, event } => Self::EventAppended {
+        run_id,
+        event: event.into(),
+      },
+      RunUpdate::ArtifactCreated { run_id, artifact } => Self::ArtifactCreated {
+        run_id,
+        artifact: artifact.into(),
+      },
+      RunUpdate::SpanFinished { run_id, span } => Self::SpanFinished {
+        run_id,
+        span: span.into(),
+      },
+      RunUpdate::RunFinished { run_id, run } => Self::RunFinished {
+        run_id,
+        run: run.into(),
+      },
     }
   }
 }
@@ -318,13 +775,14 @@ async fn next_stream_payload(
 struct InspectHttpError {
   status: StatusCode,
   message: String,
+  structured: Option<StructuredErrorBody>,
 }
 
 impl InspectHttpError {
   fn from_store(error: String) -> Self {
     let status = if error.contains("invalid run id") {
       StatusCode::BAD_REQUEST
-    } else if error.contains("escapes run directory") {
+    } else if error.contains("escapes run directory") || error.contains("symlink artifact path") {
       StatusCode::FORBIDDEN
     } else if error.contains("failed to read") || error.contains("not found") {
       StatusCode::NOT_FOUND
@@ -334,6 +792,7 @@ impl InspectHttpError {
     Self {
       status,
       message: error,
+      structured: None,
     }
   }
 
@@ -341,12 +800,61 @@ impl InspectHttpError {
     Self {
       status: StatusCode::NOT_FOUND,
       message,
+      structured: None,
+    }
+  }
+
+  fn bad_request(message: String) -> Self {
+    Self {
+      status: StatusCode::BAD_REQUEST,
+      message,
+      structured: None,
+    }
+  }
+
+  fn forbidden(message: String) -> Self {
+    Self {
+      status: StatusCode::FORBIDDEN,
+      message,
+      structured: None,
+    }
+  }
+
+  fn payload_too_large(message: String) -> Self {
+    Self {
+      status: StatusCode::PAYLOAD_TOO_LARGE,
+      message,
+      structured: None,
+    }
+  }
+
+  fn conflict(conflict: RunConflict) -> Self {
+    let message = format!(
+      "run {} rejected update conflict {}",
+      conflict.run_id, conflict.kind
+    );
+    Self {
+      status: StatusCode::CONFLICT,
+      message: message.clone(),
+      structured: Some(StructuredErrorBody {
+        error: StructuredError {
+          code: "runConflict".to_string(),
+          message,
+          run_id: Some(conflict.run_id),
+          conflict_kind: Some(conflict.kind),
+          resolution: Some("startNewRun".to_string()),
+          retryable: false,
+        },
+      }),
     }
   }
 }
 
 impl IntoResponse for InspectHttpError {
   fn into_response(self) -> Response {
+    if let Some(body) = self.structured {
+      return (self.status, Json(body)).into_response();
+    }
     (
       self.status,
       Json(serde_json::json!({
@@ -362,20 +870,735 @@ mod tests {
   use std::collections::BTreeMap;
   use std::fs;
   use std::sync::Arc;
+  use std::sync::atomic::{AtomicUsize, Ordering};
 
+  use axum::Router;
   use axum::body::{Body, to_bytes};
   use axum::http::{Request, StatusCode};
   use tower::ServiceExt;
 
-  use super::{ensure_stream_run_exists, next_stream_payload, router};
+  use super::{ensure_stream_run_exists, next_stream_payload, router, router_with_config};
   use crate::model::now_millis;
-  use crate::recording::{BroadcastRunEventSink, RunEventSink, RunStreamEvent};
+  use crate::run_recording::{BroadcastRunRecorder, RunRecorder, RunUpdate};
   use crate::store::{CanonicalRun, LocalStore};
   use crate::trace::{
     ARTIFACT_API_VERSION, ArtifactId, ArtifactRecordV1Alpha1, EVENT_API_VERSION, EventId,
     EventRecordV1Alpha1, RUN_API_VERSION, RunId, RunRecordV1Alpha1, RunType, SPAN_API_VERSION,
     SpanId, SpanRecordV1Alpha1, TraceId, TraceState, TraceStatusCode,
   };
+
+  #[test]
+  fn write_config_rejects_no_token_on_non_loopback() {
+    let error = super::InspectServeConfig {
+      host: "0.0.0.0".to_string(),
+      port: 8765,
+      store_root: None,
+      write: super::InspectWriteConfig {
+        enabled: true,
+        token: None,
+        no_token: true,
+      },
+    }
+    .validate_write_security()
+    .expect_err("non-loopback write without token should reject");
+
+    assert!(error.contains("non-loopback"));
+  }
+
+  #[test]
+  fn write_config_allows_no_token_on_loopback() {
+    super::InspectServeConfig {
+      host: "127.0.0.1".to_string(),
+      port: 8765,
+      store_root: None,
+      write: super::InspectWriteConfig {
+        enabled: true,
+        token: None,
+        no_token: true,
+      },
+    }
+    .validate_write_security()
+    .expect("loopback write without token should be allowed");
+  }
+
+  #[test]
+  fn write_config_rejects_token_with_no_token() {
+    let error = super::InspectServeConfig {
+      host: "127.0.0.1".to_string(),
+      port: 8765,
+      store_root: None,
+      write: super::InspectWriteConfig {
+        enabled: true,
+        token: Some("secret".to_string()),
+        no_token: true,
+      },
+    }
+    .validate_write_security()
+    .expect_err("token and no-token should conflict");
+
+    assert!(error.contains("--no-write-token"));
+  }
+
+  #[tokio::test]
+  async fn write_updates_rejects_when_write_disabled() {
+    let root = temp_dir("inspect-write-disabled");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let app = router_with_config(
+      store,
+      Arc::new(BroadcastRunRecorder::new(16)),
+      super::InspectWriteConfig::default(),
+    );
+
+    let response = app
+      .oneshot(
+        Request::builder()
+          .method("POST")
+          .uri("/write/runs/run_write_test/updates")
+          .header("content-type", "application/json")
+          .body(Body::from(r#"{"updates":[]}"#))
+          .expect("request should build"),
+      )
+      .await
+      .expect("route should respond");
+
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
+  async fn write_artifact_rejects_when_write_disabled() {
+    let root = temp_dir("inspect-write-artifact-disabled");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let app = router_with_config(
+      store,
+      Arc::new(BroadcastRunRecorder::new(16)),
+      super::InspectWriteConfig::default(),
+    );
+
+    let response = app
+      .oneshot(
+        Request::builder()
+          .method("POST")
+          .uri("/write/runs/run_write_test/artifacts/artifact_write_test")
+          .body(Body::from("artifact body"))
+          .expect("request should build"),
+      )
+      .await
+      .expect("route should respond");
+
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn write_updates_payload_deserializes_camel_case_records() {
+    let body = serde_json::json!({
+      "updates": [{
+        "type": "runStarted",
+        "runId": "run_write_test",
+        "run": test_run_json("run_write_test")
+      }]
+    });
+
+    let request: super::WriteUpdatesRequest =
+      serde_json::from_value(body).expect("write payload should deserialize");
+
+    assert_eq!(request.updates.len(), 1);
+  }
+
+  #[tokio::test]
+  async fn write_updates_requires_configured_token() {
+    let root = temp_dir("inspect-write-token-required");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let app = router_with_config(
+      store,
+      Arc::new(BroadcastRunRecorder::new(16)),
+      super::InspectWriteConfig {
+        enabled: true,
+        token: Some("secret".to_string()),
+        no_token: false,
+      },
+    );
+
+    let response = app
+      .oneshot(
+        Request::builder()
+          .method("POST")
+          .uri("/write/runs/run_write_test/updates")
+          .header("content-type", "application/json")
+          .body(Body::from(r#"{"updates":[]}"#))
+          .expect("request should build"),
+      )
+      .await
+      .expect("route should respond");
+
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
+  async fn write_updates_rejects_invalid_token() {
+    let root = temp_dir("inspect-write-token-invalid");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let app = router_with_config(
+      store,
+      Arc::new(BroadcastRunRecorder::new(16)),
+      super::InspectWriteConfig {
+        enabled: true,
+        token: Some("secret".to_string()),
+        no_token: false,
+      },
+    );
+
+    let response = app
+      .oneshot(
+        Request::builder()
+          .method("POST")
+          .uri("/write/runs/run_write_test/updates")
+          .header("authorization", "Bearer wrong")
+          .header("content-type", "application/json")
+          .body(Body::from(r#"{"updates":[]}"#))
+          .expect("request should build"),
+      )
+      .await
+      .expect("route should respond");
+
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
+  async fn write_artifact_requires_configured_token() {
+    let root = temp_dir("inspect-write-artifact-token-required");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let app = router_with_config(
+      store,
+      Arc::new(BroadcastRunRecorder::new(16)),
+      super::InspectWriteConfig {
+        enabled: true,
+        token: Some("secret".to_string()),
+        no_token: false,
+      },
+    );
+
+    let response = app
+      .oneshot(
+        Request::builder()
+          .method("POST")
+          .uri("/write/runs/run_write_test/artifacts/artifact_write_test")
+          .body(Body::from("artifact body"))
+          .expect("request should build"),
+      )
+      .await
+      .expect("route should respond");
+
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
+  async fn write_artifact_persists_bytes_when_authorized() {
+    let root = temp_dir("inspect-write-artifact-authorized");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let run_id = RunId::new("run_write_artifact");
+    write_test_run(&store, run_id.clone(), Some("uploaded.txt"));
+    let app = router_with_config(
+      store.clone(),
+      Arc::new(BroadcastRunRecorder::new(16)),
+      super::InspectWriteConfig {
+        enabled: true,
+        token: Some("secret".to_string()),
+        no_token: false,
+      },
+    );
+
+    let response = app
+      .oneshot(
+        Request::builder()
+          .method("POST")
+          .uri("/write/runs/run_write_artifact/artifacts/artifact_server_test")
+          .header("authorization", "Bearer secret")
+          .body(Body::from("artifact body"))
+          .expect("request should build"),
+      )
+      .await
+      .expect("route should respond");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX)
+      .await
+      .expect("body should read");
+    let value: serde_json::Value = serde_json::from_slice(&body).expect("artifact json");
+    assert_eq!(value["artifact_id"], "artifact_server_test");
+    let (_, artifact_path) = store
+      .artifact_file("run_write_artifact", "artifact_server_test")
+      .expect("artifact file should resolve");
+    assert_eq!(
+      fs::read_to_string(artifact_path).expect("artifact should read"),
+      "artifact body"
+    );
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
+  async fn write_updates_accepts_run_started_and_persists_snapshot() {
+    let root = temp_dir("inspect-write-accept");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let app = router_with_config(
+      store.clone(),
+      Arc::new(BroadcastRunRecorder::new(16)),
+      super::InspectWriteConfig {
+        enabled: true,
+        token: Some("secret".to_string()),
+        no_token: false,
+      },
+    );
+    let body = serde_json::json!({
+      "updates": [{
+        "type": "runStarted",
+        "runId": "run_write_test",
+        "run": test_run_json("run_write_test")
+      }]
+    });
+
+    let response = app
+      .oneshot(
+        Request::builder()
+          .method("POST")
+          .uri("/write/runs/run_write_test/updates")
+          .header("authorization", "Bearer secret")
+          .header("content-type", "application/json")
+          .body(Body::from(body.to_string()))
+          .expect("request should build"),
+      )
+      .await
+      .expect("route should respond");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(store.read_run("run_write_test").is_ok());
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
+  async fn write_updates_accepts_incremental_updates_for_existing_run() {
+    let root = temp_dir("inspect-write-incremental");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let app = router_with_config(
+      store.clone(),
+      Arc::new(BroadcastRunRecorder::new(16)),
+      write_without_token(),
+    );
+
+    let response = post_write_updates(
+      app.clone(),
+      "run_write_incremental",
+      serde_json::json!({
+        "updates": [{
+          "type": "runStarted",
+          "runId": "run_write_incremental",
+          "run": test_run_json("run_write_incremental")
+        }]
+      }),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let response = post_write_updates(
+      app,
+      "run_write_incremental",
+      serde_json::json!({
+        "updates": [{
+          "type": "spanStarted",
+          "runId": "run_write_incremental",
+          "span": test_span_json("0000000000000002", Some("0000000000000001"), "debug.step", "running")
+        }]
+      }),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let snapshot = store
+      .read_run("run_write_incremental")
+      .expect("incremental run should persist");
+    assert_eq!(snapshot.spans.len(), 1);
+    assert_eq!(snapshot.spans[0].span_id.as_str(), "0000000000000002");
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
+  async fn write_updates_replaces_existing_finished_snapshot_idempotently() {
+    let root = temp_dir("inspect-write-finished-replace");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let mut run = test_run_json("run_finished_replace");
+    run["state"] = serde_json::Value::from("ended");
+    run["statusCode"] = serde_json::Value::from("ok");
+    run["finishedAtMillis"] = serde_json::Value::from(200);
+    store
+      .write_run_snapshot(&CanonicalRun {
+        run: serde_json::from_value::<crate::run_recording::ApiRunRecord>(run.clone())
+          .expect("api run should decode")
+          .into(),
+        spans: Vec::new(),
+        events: Vec::new(),
+        artifacts: Vec::new(),
+      })
+      .expect("finished snapshot should pre-exist");
+    let app = router_with_config(
+      store.clone(),
+      Arc::new(BroadcastRunRecorder::new(16)),
+      write_without_token(),
+    );
+
+    let response = post_write_updates(
+      app,
+      "run_finished_replace",
+      serde_json::json!({
+        "updates": [{
+          "type": "runFinished",
+          "runId": "run_finished_replace",
+          "run": run
+        }]
+      }),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+      store
+        .read_run("run_finished_replace")
+        .expect("run should remain readable")
+        .run
+        .state,
+      TraceState::Ended
+    );
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
+  async fn write_updates_allows_no_token_when_configured() {
+    let root = temp_dir("inspect-write-no-token");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let app = router_with_config(
+      store.clone(),
+      Arc::new(BroadcastRunRecorder::new(16)),
+      super::InspectWriteConfig {
+        enabled: true,
+        token: None,
+        no_token: true,
+      },
+    );
+    let body = serde_json::json!({
+      "updates": [{
+        "type": "runStarted",
+        "runId": "run_write_no_token",
+        "run": test_run_json("run_write_no_token")
+      }]
+    });
+
+    let response = app
+      .oneshot(
+        Request::builder()
+          .method("POST")
+          .uri("/write/runs/run_write_no_token/updates")
+          .header("content-type", "application/json")
+          .body(Body::from(body.to_string()))
+          .expect("request should build"),
+      )
+      .await
+      .expect("route should respond");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(store.read_run("run_write_no_token").is_ok());
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
+  async fn write_updates_rejects_conflicting_run_metadata() {
+    let root = temp_dir("inspect-write-conflict");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    write_test_run(&store, RunId::new("run_write_conflict"), None);
+    let app = router_with_config(
+      store,
+      Arc::new(BroadcastRunRecorder::new(16)),
+      super::InspectWriteConfig {
+        enabled: true,
+        token: None,
+        no_token: true,
+      },
+    );
+    let body = serde_json::json!({
+      "updates": [{
+        "type": "runStarted",
+        "runId": "run_write_conflict",
+        "run": test_run_json("run_write_conflict")
+      }]
+    });
+
+    let response = app
+      .oneshot(
+        Request::builder()
+          .method("POST")
+          .uri("/write/runs/run_write_conflict/updates")
+          .header("content-type", "application/json")
+          .body(Body::from(body.to_string()))
+          .expect("request should build"),
+      )
+      .await
+      .expect("route should respond");
+
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    let body = to_bytes(response.into_body(), usize::MAX)
+      .await
+      .expect("body should read");
+    let value: serde_json::Value = serde_json::from_slice(&body).expect("json error");
+    assert_eq!(value["error"]["code"], "runConflict");
+    assert_eq!(value["error"]["conflictKind"], "runMetadataMismatch");
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+  async fn write_lock_serializes_same_run_sections() {
+    let locks = super::RunWriteLocks::default();
+    let active = Arc::new(AtomicUsize::new(0));
+    let peak = Arc::new(AtomicUsize::new(0));
+    let first_locks = locks.clone();
+    let first_active = active.clone();
+    let first_peak = peak.clone();
+    let second_locks = locks.clone();
+    let second_active = active.clone();
+    let second_peak = peak.clone();
+
+    let first = tokio::spawn(async move {
+      let _guard = first_locks.lock("run_serialized").await;
+      let current = first_active.fetch_add(1, Ordering::SeqCst) + 1;
+      first_peak.fetch_max(current, Ordering::SeqCst);
+      tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+      first_active.fetch_sub(1, Ordering::SeqCst);
+    });
+    let second = tokio::spawn(async move {
+      let _guard = second_locks.lock("run_serialized").await;
+      let current = second_active.fetch_add(1, Ordering::SeqCst) + 1;
+      second_peak.fetch_max(current, Ordering::SeqCst);
+      tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+      second_active.fetch_sub(1, Ordering::SeqCst);
+    });
+
+    first.await.expect("first section should finish");
+    second.await.expect("second section should finish");
+
+    assert_eq!(peak.load(Ordering::SeqCst), 1);
+  }
+
+  #[tokio::test]
+  async fn write_updates_rejects_nested_run_started_run_id_mismatch() {
+    let root = temp_dir("inspect-write-nested-start-mismatch");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let recorder = Arc::new(BroadcastRunRecorder::new(16));
+    let mut receiver = recorder.subscribe();
+    let app = router_with_config(store.clone(), recorder, write_without_token());
+    let body = serde_json::json!({
+      "updates": [{
+        "type": "runStarted",
+        "runId": "run_outer",
+        "run": test_run_json("run_inner")
+      }]
+    });
+
+    let response = post_write_updates(app, "run_outer", body).await;
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert!(store.read_run("run_outer").is_err());
+    assert!(store.read_run("run_inner").is_err());
+    assert!(receiver.try_recv().is_err());
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
+  async fn write_updates_rejects_nested_run_finished_run_id_mismatch() {
+    let root = temp_dir("inspect-write-nested-finish-mismatch");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    write_running_test_run(&store, RunId::new("run_outer"));
+    let app = router_with_config(
+      store.clone(),
+      Arc::new(BroadcastRunRecorder::new(16)),
+      write_without_token(),
+    );
+    let mut run = test_run_json("run_inner");
+    run["state"] = serde_json::json!("ended");
+    run["statusCode"] = serde_json::json!("ok");
+    run["finishedAtMillis"] = serde_json::json!(101);
+    let body = serde_json::json!({
+      "updates": [{
+        "type": "runFinished",
+        "runId": "run_outer",
+        "run": run
+      }]
+    });
+
+    let response = post_write_updates(app, "run_outer", body).await;
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert!(store.read_run("run_inner").is_err());
+    let outer = store
+      .read_run("run_outer")
+      .expect("outer run should remain");
+    assert_eq!(outer.run.state, TraceState::Running);
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
+  async fn write_updates_rejects_event_after_run_finished() {
+    let root = temp_dir("inspect-write-event-after-finished");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    write_test_run(&store, RunId::new("run_after_finished_event"), None);
+    let recorder = Arc::new(BroadcastRunRecorder::new(16));
+    let mut receiver = recorder.subscribe();
+    let app = router_with_config(store.clone(), recorder, write_without_token());
+    let body = serde_json::json!({
+      "updates": [{
+        "type": "eventAppended",
+        "runId": "run_after_finished_event",
+        "event": test_event_json("event_after_finished")
+      }]
+    });
+
+    let response = post_write_updates(app, "run_after_finished_event", body).await;
+
+    assert_conflict_kind(response, "runAlreadyFinished").await;
+    let snapshot = store
+      .read_run("run_after_finished_event")
+      .expect("run should remain");
+    assert!(
+      snapshot
+        .events
+        .iter()
+        .all(|event| event.event_id.as_str() != "event_after_finished")
+    );
+    assert!(receiver.try_recv().is_err());
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
+  async fn write_updates_rejects_artifact_after_run_finished() {
+    let root = temp_dir("inspect-write-artifact-after-finished");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    write_test_run(&store, RunId::new("run_after_finished_artifact"), None);
+    let app = router_with_config(
+      store.clone(),
+      Arc::new(BroadcastRunRecorder::new(16)),
+      write_without_token(),
+    );
+    let body = serde_json::json!({
+      "updates": [{
+        "type": "artifactCreated",
+        "runId": "run_after_finished_artifact",
+        "artifact": test_artifact_json("artifact_after_finished")
+      }]
+    });
+
+    let response = post_write_updates(app, "run_after_finished_artifact", body).await;
+
+    assert_conflict_kind(response, "runAlreadyFinished").await;
+    let snapshot = store
+      .read_run("run_after_finished_artifact")
+      .expect("run should remain");
+    assert!(
+      snapshot
+        .artifacts
+        .iter()
+        .all(|artifact| artifact.artifact_id.as_str() != "artifact_after_finished")
+    );
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
+  async fn write_updates_rejects_span_finish_after_run_finished() {
+    let root = temp_dir("inspect-write-span-after-finished");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    write_test_run(&store, RunId::new("run_after_finished_span"), None);
+    let app = router_with_config(
+      store,
+      Arc::new(BroadcastRunRecorder::new(16)),
+      write_without_token(),
+    );
+    let body = serde_json::json!({
+      "updates": [{
+        "type": "spanFinished",
+        "runId": "run_after_finished_span",
+        "span": test_span_json("0000000000000001", None, "auv.inspect.server", "ended")
+      }]
+    });
+
+    let response = post_write_updates(app, "run_after_finished_span", body).await;
+
+    assert_conflict_kind(response, "runAlreadyFinished").await;
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
+  async fn write_updates_rejects_run_finished_immutable_metadata_mismatch() {
+    let root = temp_dir("inspect-write-run-finish-metadata");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    write_running_test_run(&store, RunId::new("run_finish_metadata"));
+    let app = router_with_config(
+      store.clone(),
+      Arc::new(BroadcastRunRecorder::new(16)),
+      write_without_token(),
+    );
+    let mut run = test_run_json("run_finish_metadata");
+    run["traceId"] = serde_json::json!("00000000000000000000000000000002");
+    run["state"] = serde_json::json!("ended");
+    run["statusCode"] = serde_json::json!("ok");
+    run["finishedAtMillis"] = serde_json::json!(101);
+    let body = serde_json::json!({
+      "updates": [{
+        "type": "runFinished",
+        "runId": "run_finish_metadata",
+        "run": run
+      }]
+    });
+
+    let response = post_write_updates(app, "run_finish_metadata", body).await;
+
+    assert_conflict_kind(response, "runMetadataMismatch").await;
+    let snapshot = store
+      .read_run("run_finish_metadata")
+      .expect("run should remain");
+    assert_eq!(
+      snapshot.run.trace_id.as_str(),
+      "00000000000000000000000000000001"
+    );
+    assert_eq!(snapshot.run.state, TraceState::Running);
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
+  async fn write_updates_rejects_span_finished_immutable_metadata_mismatch() {
+    let root = temp_dir("inspect-write-span-finish-metadata");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    write_running_test_run(&store, RunId::new("run_span_finish_metadata"));
+    let app = router_with_config(
+      store.clone(),
+      Arc::new(BroadcastRunRecorder::new(16)),
+      write_without_token(),
+    );
+    let body = serde_json::json!({
+      "updates": [{
+        "type": "spanFinished",
+        "runId": "run_span_finish_metadata",
+        "span": test_span_json("0000000000000001", None, "mutated.name", "ended")
+      }]
+    });
+
+    let response = post_write_updates(app, "run_span_finish_metadata", body).await;
+
+    assert_conflict_kind(response, "duplicateSpanMismatch").await;
+    let snapshot = store
+      .read_run("run_span_finish_metadata")
+      .expect("run should remain");
+    assert_eq!(snapshot.spans[0].name, "auv.inspect.server");
+    assert_eq!(snapshot.spans[0].state, TraceState::Running);
+    let _ = fs::remove_dir_all(root);
+  }
 
   #[tokio::test]
   async fn routes_return_canonical_records_and_artifact_bytes() {
@@ -390,7 +1613,7 @@ mod tests {
       .join("artifact_server_test.txt");
     fs::write(&artifact_path, "artifact body").expect("artifact should write");
 
-    let app = router(store, Arc::new(BroadcastRunEventSink::new(16)));
+    let app = router(store, Arc::new(BroadcastRunRecorder::new(16)));
     let run_response = app
       .clone()
       .oneshot(
@@ -459,7 +1682,7 @@ mod tests {
   async fn root_serves_inline_viewer_html() {
     let root = temp_dir("inspect-server-viewer");
     let store = LocalStore::new(root.clone()).expect("store should initialize");
-    let app = router(store, Arc::new(BroadcastRunEventSink::new(16)));
+    let app = router(store, Arc::new(BroadcastRunRecorder::new(16)));
 
     let response = app
       .oneshot(
@@ -506,7 +1729,7 @@ mod tests {
   async fn root_payload_includes_span_tree_markers() {
     let root = temp_dir("inspect-server-viewer-span-tree");
     let store = LocalStore::new(root.clone()).expect("store should initialize");
-    let app = router(store, Arc::new(BroadcastRunEventSink::new(16)));
+    let app = router(store, Arc::new(BroadcastRunRecorder::new(16)));
 
     let response = app
       .oneshot(
@@ -544,7 +1767,7 @@ mod tests {
   async fn root_payload_includes_events_rail_markers() {
     let root = temp_dir("inspect-server-viewer-events-rail");
     let store = LocalStore::new(root.clone()).expect("store should initialize");
-    let app = router(store, Arc::new(BroadcastRunEventSink::new(16)));
+    let app = router(store, Arc::new(BroadcastRunRecorder::new(16)));
 
     let response = app
       .oneshot(
@@ -596,7 +1819,7 @@ mod tests {
   async fn root_payload_includes_websocket_stream_markers() {
     let root = temp_dir("inspect-server-viewer-stream");
     let store = LocalStore::new(root.clone()).expect("store should initialize");
-    let app = router(store, Arc::new(BroadcastRunEventSink::new(16)));
+    let app = router(store, Arc::new(BroadcastRunRecorder::new(16)));
 
     let response = app
       .oneshot(
@@ -647,7 +1870,7 @@ mod tests {
   async fn root_payload_includes_artifact_panel_markers() {
     let root = temp_dir("inspect-server-viewer-artifact-panel");
     let store = LocalStore::new(root.clone()).expect("store should initialize");
-    let app = router(store, Arc::new(BroadcastRunEventSink::new(16)));
+    let app = router(store, Arc::new(BroadcastRunRecorder::new(16)));
 
     let response = app
       .oneshot(
@@ -702,7 +1925,7 @@ mod tests {
   async fn assets_route_serves_known_design_svgs_with_svg_mime() {
     let root = temp_dir("inspect-server-assets-route");
     let store = LocalStore::new(root.clone()).expect("store should initialize");
-    let app = router(store, Arc::new(BroadcastRunEventSink::new(16)));
+    let app = router(store, Arc::new(BroadcastRunRecorder::new(16)));
 
     for name in [
       "logo-mark.svg",
@@ -751,7 +1974,7 @@ mod tests {
   async fn assets_route_rejects_unknown_and_traversal_names() {
     let root = temp_dir("inspect-server-assets-route-deny");
     let store = LocalStore::new(root.clone()).expect("store should initialize");
-    let app = router(store, Arc::new(BroadcastRunEventSink::new(16)));
+    let app = router(store, Arc::new(BroadcastRunRecorder::new(16)));
 
     for bad in [
       "/assets/does-not-exist.svg",
@@ -782,16 +2005,20 @@ mod tests {
   async fn stream_payload_filters_events_by_run_id() {
     let run_a = RunId::new("run_stream_a");
     let run_b = RunId::new("run_stream_b");
-    let sink = BroadcastRunEventSink::new(16);
-    let mut receiver = sink.subscribe();
-    sink.on_event(RunStreamEvent::EventAppended {
-      run_id: run_b.clone(),
-      event: test_event("event_stream_b"),
-    });
-    sink.on_event(RunStreamEvent::EventAppended {
-      run_id: run_a.clone(),
-      event: test_event("event_stream_a"),
-    });
+    let recorder = BroadcastRunRecorder::new(16);
+    let mut receiver = recorder.subscribe();
+    recorder
+      .record(RunUpdate::EventAppended {
+        run_id: run_b.clone(),
+        event: test_event("event_stream_b"),
+      })
+      .expect("record should publish");
+    recorder
+      .record(RunUpdate::EventAppended {
+        run_id: run_a.clone(),
+        event: test_event("event_stream_a"),
+      })
+      .expect("record should publish");
 
     let payload = tokio::time::timeout(
       std::time::Duration::from_secs(2),
@@ -800,6 +2027,8 @@ mod tests {
     .await
     .expect("matching run event should arrive")
     .expect("matching run event should serialize");
+    let value: serde_json::Value = serde_json::from_str(&payload).expect("stream payload is json");
+    assert_eq!(value["type"], "event_appended");
     assert!(payload.contains("run_stream_a"));
     assert!(payload.contains("event_stream_a"));
     assert!(!payload.contains("run_stream_b"));
@@ -832,7 +2061,7 @@ mod tests {
     let _ = fs::remove_file(&link);
     std::os::unix::fs::symlink(&outside, &link).expect("symlink should write");
 
-    let app = router(store, Arc::new(BroadcastRunEventSink::new(16)));
+    let app = router(store, Arc::new(BroadcastRunRecorder::new(16)));
     let response = app
       .oneshot(
         Request::builder()
@@ -847,11 +2076,195 @@ mod tests {
     let _ = fs::remove_dir_all(root);
   }
 
+  #[cfg(unix)]
+  #[tokio::test]
+  async fn write_artifact_rejects_symlink_target() {
+    let root = temp_dir("inspect-write-artifact-symlink");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let run_id = RunId::new("run_write_symlink_escape");
+    write_test_run(&store, run_id.clone(), Some("escape.txt"));
+    let outside = root.join("outside.txt");
+    fs::write(&outside, "secret").expect("outside file should write");
+    let link = root
+      .join("runs")
+      .join(run_id.as_str())
+      .join("artifacts")
+      .join("escape.txt");
+    let _ = fs::remove_file(&link);
+    std::os::unix::fs::symlink(&outside, &link).expect("symlink should write");
+    let app = router_with_config(
+      store,
+      Arc::new(BroadcastRunRecorder::new(16)),
+      write_without_token(),
+    );
+
+    let response = app
+      .oneshot(
+        Request::builder()
+          .method("POST")
+          .uri("/write/runs/run_write_symlink_escape/artifacts/artifact_server_test")
+          .body(Body::from("artifact body"))
+          .expect("request should build"),
+      )
+      .await
+      .expect("route should respond");
+
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert_eq!(
+      fs::read_to_string(outside).expect("outside file should remain untouched"),
+      "secret"
+    );
+    let _ = fs::remove_dir_all(root);
+  }
+
   fn temp_dir(label: &str) -> std::path::PathBuf {
     let path = std::env::temp_dir().join(format!("auv-{}-{}", label, now_millis()));
     let _ = fs::remove_dir_all(&path);
     fs::create_dir_all(&path).expect("temp dir should be creatable");
     path
+  }
+
+  fn test_run_json(run_id: &str) -> serde_json::Value {
+    serde_json::json!({
+      "apiVersion": RUN_API_VERSION,
+      "runId": run_id,
+      "traceId": "00000000000000000000000000000001",
+      "runType": "execute",
+      "state": "running",
+      "statusCode": "unset",
+      "startedAtMillis": 100,
+      "finishedAtMillis": null,
+      "rootSpanId": "0000000000000001",
+      "attributes": {},
+      "summary": null,
+      "failure": null
+    })
+  }
+
+  fn test_span_json(
+    span_id: &str,
+    parent_span_id: Option<&str>,
+    name: &str,
+    state: &str,
+  ) -> serde_json::Value {
+    serde_json::json!({
+      "apiVersion": SPAN_API_VERSION,
+      "spanId": span_id,
+      "parentSpanId": parent_span_id,
+      "name": name,
+      "state": state,
+      "statusCode": if state == "ended" { "ok" } else { "unset" },
+      "startedAtMillis": 100,
+      "finishedAtMillis": if state == "ended" {
+        serde_json::Value::from(101)
+      } else {
+        serde_json::Value::Null
+      },
+      "attributes": {},
+      "summary": null,
+      "failure": null
+    })
+  }
+
+  fn test_event_json(event_id: &str) -> serde_json::Value {
+    serde_json::json!({
+      "apiVersion": EVENT_API_VERSION,
+      "eventId": event_id,
+      "spanId": "0000000000000001",
+      "name": "inspect.event",
+      "timestampMillis": 101,
+      "attributes": {},
+      "message": null,
+      "artifactIds": []
+    })
+  }
+
+  fn test_artifact_json(artifact_id: &str) -> serde_json::Value {
+    serde_json::json!({
+      "apiVersion": ARTIFACT_API_VERSION,
+      "artifactId": artifact_id,
+      "spanId": "0000000000000001",
+      "eventId": null,
+      "role": "driver.output",
+      "mimeType": "text/plain",
+      "path": "artifacts/test.txt",
+      "sha256": null,
+      "attributes": {},
+      "summary": null
+    })
+  }
+
+  fn write_without_token() -> super::InspectWriteConfig {
+    super::InspectWriteConfig {
+      enabled: true,
+      token: None,
+      no_token: true,
+    }
+  }
+
+  async fn post_write_updates(
+    app: Router,
+    run_id: &str,
+    body: serde_json::Value,
+  ) -> axum::response::Response {
+    app
+      .oneshot(
+        Request::builder()
+          .method("POST")
+          .uri(format!("/write/runs/{run_id}/updates"))
+          .header("content-type", "application/json")
+          .body(Body::from(body.to_string()))
+          .expect("request should build"),
+      )
+      .await
+      .expect("route should respond")
+  }
+
+  async fn assert_conflict_kind(response: axum::response::Response, kind: &str) {
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    let body = to_bytes(response.into_body(), usize::MAX)
+      .await
+      .expect("body should read");
+    let value: serde_json::Value = serde_json::from_slice(&body).expect("json error");
+    assert_eq!(value["error"]["code"], "runConflict");
+    assert_eq!(value["error"]["conflictKind"], kind);
+  }
+
+  fn write_running_test_run(store: &LocalStore, run_id: RunId) {
+    let span_id = SpanId::new("0000000000000001");
+    store
+      .write_run_snapshot(&CanonicalRun {
+        run: RunRecordV1Alpha1 {
+          api_version: RUN_API_VERSION.to_string(),
+          run_id,
+          trace_id: TraceId::new("00000000000000000000000000000001"),
+          run_type: RunType::Execute,
+          state: TraceState::Running,
+          status_code: TraceStatusCode::Unset,
+          started_at_millis: 100,
+          finished_at_millis: None,
+          root_span_id: span_id.clone(),
+          attributes: BTreeMap::new(),
+          summary: None,
+          failure: None,
+        },
+        spans: vec![SpanRecordV1Alpha1 {
+          api_version: SPAN_API_VERSION.to_string(),
+          span_id: span_id.clone(),
+          parent_span_id: None,
+          name: "auv.inspect.server".to_string(),
+          state: TraceState::Running,
+          status_code: TraceStatusCode::Unset,
+          started_at_millis: 100,
+          finished_at_millis: None,
+          attributes: BTreeMap::new(),
+          summary: None,
+          failure: None,
+        }],
+        events: Vec::new(),
+        artifacts: Vec::new(),
+      })
+      .expect("run should persist");
   }
 
   fn write_test_run(store: &LocalStore, run_id: RunId, artifact_name: Option<&str>) {

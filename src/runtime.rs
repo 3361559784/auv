@@ -6,7 +6,7 @@ use crate::driver::DriverRegistry;
 use crate::model::{
   AuvResult, DriverCall, DriverDescriptor, InvokeRequest, InvokeResult, RunStatus, now_millis,
 };
-use crate::recording::{MemoryRunEventSink, RunEventSink};
+use crate::run_recording::{MemoryRunRecorder, RunRecorder, RunRecordingBackend, RunUpdate};
 use crate::store::{ArtifactFileSource, LocalStore};
 use crate::trace::{
   EVENT_API_VERSION, EventRecordV1Alpha1, RUN_API_VERSION, RunId, RunRecordV1Alpha1, RunType,
@@ -18,8 +18,7 @@ pub struct Runtime {
   project_root: PathBuf,
   commands: CommandCatalog,
   drivers: DriverRegistry,
-  store: LocalStore,
-  event_sink: Arc<dyn RunEventSink>,
+  recording: RunRecordingBackend,
 }
 
 impl Runtime {
@@ -33,8 +32,7 @@ impl Runtime {
       project_root,
       commands,
       drivers,
-      store,
-      event_sink: Arc::new(MemoryRunEventSink::new()),
+      recording: RunRecordingBackend::new(store, Arc::new(MemoryRunRecorder::new())),
     }
   }
 
@@ -47,20 +45,26 @@ impl Runtime {
   }
 
   pub fn inspect(&self, run_id: &str) -> AuvResult<String> {
-    let canonical = self.store.read_run(run_id)?;
+    let canonical = self.recording.read_run(run_id)?;
     Ok(crate::inspect::render_text(&canonical))
   }
 
   pub fn read_run(&self, run_id: &str) -> AuvResult<crate::store::CanonicalRun> {
-    self.store.read_run(run_id)
+    self.recording.read_run(run_id)
   }
 
-  pub fn event_sink(&self) -> Arc<dyn RunEventSink> {
-    self.event_sink.clone()
+  pub fn recorder(&self) -> Arc<dyn RunRecorder> {
+    self.recording.recorder()
   }
 
-  pub fn with_event_sink(mut self, event_sink: Arc<dyn RunEventSink>) -> Self {
-    self.event_sink = event_sink;
+  pub fn with_recording(mut self, recording: RunRecordingBackend) -> Self {
+    self.recording = recording;
+    self
+  }
+
+  pub fn with_recorder(mut self, recorder: Arc<dyn RunRecorder>) -> Self {
+    let store = self.recording.store().clone();
+    self.recording = RunRecordingBackend::new(store, recorder);
     self
   }
 
@@ -98,11 +102,14 @@ impl Runtime {
       summary: None,
       failure: None,
     };
-    Ok(crate::recording::RecordingRun::new(
-      run,
-      root_span,
-      self.event_sink.clone(),
-    ))
+    let run = crate::recording::RecordingRun::new(run, root_span, self.recording.recorder());
+    if self.recording.requires_successful_delivery() && !run.recording_errors().is_empty() {
+      return Err(format!(
+        "run recording delivery failed: {}",
+        run.recording_errors().join("; ")
+      ));
+    }
+    Ok(run)
   }
 
   pub fn finish_run(
@@ -113,13 +120,21 @@ impl Runtime {
     let failure = finish.failure.map(|message| TraceFailure { message });
     let recorded = run.finish(finish.status_code, finish.summary, failure);
     let run_id = recorded.snapshot.run.run_id.clone();
-    self.store.write_run_snapshot(&recorded.snapshot)?;
-    self
-      .event_sink
-      .on_event(crate::recording::RunStreamEvent::RunFinished {
-        run_id: run_id.clone(),
-        run: recorded.snapshot.run,
-      });
+    let mut recording_errors = recorded.recording_errors;
+    self.recording.write_run_snapshot(&recorded.snapshot)?;
+    if let Err(error) = self.recording.record(RunUpdate::RunFinished {
+      run_id: run_id.clone(),
+      run: recorded.snapshot.run,
+    }) && self.recording.requires_successful_delivery()
+    {
+      recording_errors.push(error);
+    }
+    if !recording_errors.is_empty() {
+      return Err(format!(
+        "run recording delivery failed: {}",
+        recording_errors.join("; ")
+      ));
+    }
     Ok(run_id)
   }
 
@@ -257,7 +272,7 @@ impl Runtime {
         let mut artifact_failure = None;
         for (index, artifact) in response.artifacts.into_iter().enumerate() {
           let event_id = new_event_id();
-          match self.store.stage_artifact(
+          match self.recording.stage_artifact(
             run.id(),
             index,
             artifact,
@@ -265,6 +280,10 @@ impl Runtime {
             Some(event_id.clone()),
           ) {
             Ok(stored_artifact) => {
+              let staged_path = self
+                .recording
+                .run_dir(run.id())?
+                .join(&stored_artifact.path);
               record_event_with_id(
                 run,
                 driver_span.id(),
@@ -273,8 +292,21 @@ impl Runtime {
                 Some(render_artifact_event(&stored_artifact)),
                 vec![stored_artifact.artifact_id.clone()],
               );
-              artifact_paths.push(self.store.run_dir(run.id())?.join(&stored_artifact.path));
-              run.record_artifact(stored_artifact);
+              artifact_paths.push(staged_path.clone());
+              run.record_artifact(stored_artifact.clone());
+              if let Err(error) =
+                self
+                  .recording
+                  .record_artifact_bytes(run.id(), &stored_artifact, &staged_path)
+              {
+                record_event(
+                  run,
+                  driver_span.id(),
+                  "artifact.failed",
+                  Some(format!("artifact upload failed: {error}")),
+                );
+                artifact_failure = Some(error);
+              }
             }
             Err(error) => {
               record_event(
@@ -291,7 +323,7 @@ impl Runtime {
 
         if let Some(error) = artifact_failure {
           let output_summary = format!(
-            "Artifact staging failed after run creation. Inspect {} for the recorded trace.",
+            "Artifact handling failed after run creation. Inspect {} for the recorded trace.",
             run.id()
           );
           record_event(
@@ -299,7 +331,7 @@ impl Runtime {
             driver_span.id(),
             "run.failed",
             Some(format!(
-              "artifact staging failed after driver success: {error}"
+              "artifact handling failed after driver success: {error}"
             )),
           );
           (RunStatus::Failed, output_summary, Some(error))
@@ -367,7 +399,7 @@ impl Runtime {
     summary: Option<String>,
   ) -> AuvResult<PathBuf> {
     let event_id = new_event_id();
-    let artifact = self.store.stage_artifact_file(
+    let artifact = self.recording.stage_artifact_file(
       run.id(),
       run.artifact_count(),
       span.id(),
@@ -387,8 +419,11 @@ impl Runtime {
       Some(render_artifact_event(&artifact)),
       vec![artifact.artifact_id.clone()],
     );
-    let staged_path = self.store.run_dir(run.id())?.join(&artifact.path);
-    run.record_artifact(artifact);
+    let staged_path = self.recording.run_dir(run.id())?.join(&artifact.path);
+    run.record_artifact(artifact.clone());
+    self
+      .recording
+      .record_artifact_bytes(run.id(), &artifact, &staged_path)?;
     Ok(staged_path)
   }
 }
@@ -422,9 +457,16 @@ fn command_attributes(
   attributes.insert("command_id".to_string(), string_attr(command_id));
   attributes.insert("driver_id".to_string(), string_attr(driver_id));
   attributes.insert("operation".to_string(), string_attr(operation));
+  attributes.insert("auv.command.id".to_string(), string_attr(command_id));
+  attributes.insert("auv.driver.id".to_string(), string_attr(driver_id));
+  attributes.insert("auv.driver.operation".to_string(), string_attr(operation));
   if let Some(target_application_id) = target_application_id {
     attributes.insert(
       "target_application_id".to_string(),
+      string_attr(target_application_id),
+    );
+    attributes.insert(
+      "auv.target.application_id".to_string(),
       string_attr(target_application_id),
     );
   }
@@ -478,6 +520,9 @@ mod tests {
   use std::fs;
   use std::path::PathBuf;
   use std::sync::Arc;
+  use std::sync::atomic::{AtomicUsize, Ordering};
+
+  use serde_json::json;
 
   use super::Runtime;
   use crate::catalog::CommandCatalog;
@@ -486,12 +531,53 @@ mod tests {
     AuvResult, CommandSpec, DriverCall, DriverDescriptor, DriverResponse, ExecutionTarget,
     InvokeRequest, ProducedArtifact, RunStatus, now_millis,
   };
-  use crate::recording::{MemoryRunEventSink, RunStreamEvent};
+  use crate::run_recording::{MemoryRunRecorder, RunRecorder, RunUpdate};
   use crate::store::LocalStore;
 
   struct ArtifactFailureDriver;
   struct ArtifactSuccessDriver;
+  struct CountingDriver {
+    calls: Arc<AtomicUsize>,
+  }
+  struct FailRunFinishedRecorder;
+  struct RequiredFailRunStartedRecorder;
+  struct RequiredFailRunFinishedRecorder;
   struct SuccessDriver;
+
+  impl RunRecorder for FailRunFinishedRecorder {
+    fn record(&self, update: RunUpdate) -> AuvResult<()> {
+      match update {
+        RunUpdate::RunFinished { .. } => Err("run finished recorder failure".to_string()),
+        _ => Ok(()),
+      }
+    }
+  }
+
+  impl RunRecorder for RequiredFailRunStartedRecorder {
+    fn record(&self, update: RunUpdate) -> AuvResult<()> {
+      match update {
+        RunUpdate::RunStarted { .. } => Err("run started recorder failure".to_string()),
+        _ => Ok(()),
+      }
+    }
+
+    fn requires_successful_delivery(&self) -> bool {
+      true
+    }
+  }
+
+  impl RunRecorder for RequiredFailRunFinishedRecorder {
+    fn record(&self, update: RunUpdate) -> AuvResult<()> {
+      match update {
+        RunUpdate::RunFinished { .. } => Err("run finished recorder failure".to_string()),
+        _ => Ok(()),
+      }
+    }
+
+    fn requires_successful_delivery(&self) -> bool {
+      true
+    }
+  }
 
   impl Driver for ArtifactFailureDriver {
     fn descriptor(&self) -> DriverDescriptor {
@@ -545,6 +631,28 @@ mod tests {
           preferred_name: "artifact.txt".to_string(),
           note: Some("captured".to_string()),
         }],
+      })
+    }
+  }
+
+  impl Driver for CountingDriver {
+    fn descriptor(&self) -> DriverDescriptor {
+      DriverDescriptor {
+        id: "test.driver",
+        summary: "Counting driver",
+        capabilities: &["test.counting"],
+        donor_boundary: "test-only",
+      }
+    }
+
+    fn invoke(&self, _call: &DriverCall) -> AuvResult<DriverResponse> {
+      self.calls.fetch_add(1, Ordering::SeqCst);
+      Ok(DriverResponse {
+        summary: "driver counted".to_string(),
+        backend: Some("test.backend".to_string()),
+        signals: BTreeMap::new(),
+        notes: vec![],
+        artifacts: vec![],
       })
     }
   }
@@ -623,6 +731,23 @@ mod tests {
         .iter()
         .any(|span| span.name == "auv.command.invoke")
     );
+    let command_span = canonical
+      .spans
+      .iter()
+      .find(|span| span.name == "auv.command.invoke")
+      .expect("command span should be recorded");
+    assert_eq!(
+      command_span.attributes.get("auv.command.id"),
+      Some(&json!("test.invoke"))
+    );
+    assert_eq!(
+      command_span.attributes.get("auv.driver.id"),
+      Some(&json!("test.driver"))
+    );
+    assert_eq!(
+      command_span.attributes.get("auv.driver.operation"),
+      Some(&json!("test_operation"))
+    );
     assert!(
       canonical
         .spans
@@ -638,9 +763,9 @@ mod tests {
   fn invoke_unknown_command_finishes_failed_implicit_run() {
     let project_root = temp_dir("runtime-unknown-command-project");
     let store_root = temp_dir("runtime-unknown-command-store");
-    let event_sink = Arc::new(MemoryRunEventSink::new());
+    let recorder = Arc::new(MemoryRunRecorder::new());
     let runtime = runtime_with_success_driver(project_root.clone(), store_root.clone())
-      .with_event_sink(event_sink.clone());
+      .with_recorder(recorder.clone());
 
     let error = runtime
       .invoke(InvokeRequest {
@@ -651,11 +776,11 @@ mod tests {
       .expect_err("unknown command should fail");
 
     assert!(error.contains("unknown command"));
-    let run_id = event_sink
+    let run_id = recorder
       .drain_for_test()
       .into_iter()
-      .find_map(|event| match event {
-        RunStreamEvent::RunFinished { run, .. } => Some(run.run_id),
+      .find_map(|update| match update {
+        RunUpdate::RunFinished { run, .. } => Some(run.run_id),
         _ => None,
       })
       .expect("failed implicit run should finish");
@@ -679,6 +804,88 @@ mod tests {
         .all(|span| span.state == crate::trace::TraceState::Ended)
     );
 
+    let _ = fs::remove_dir_all(project_root);
+    let _ = fs::remove_dir_all(store_root);
+  }
+
+  #[test]
+  fn invoke_succeeds_when_run_finished_recorder_delivery_fails_after_snapshot_write() {
+    let project_root = temp_dir("runtime-run-finished-recorder-failure-project");
+    let store_root = temp_dir("runtime-run-finished-recorder-failure-store");
+    let runtime = runtime_with_success_driver(project_root.clone(), store_root.clone())
+      .with_recorder(Arc::new(FailRunFinishedRecorder));
+
+    let result = runtime
+      .invoke(InvokeRequest {
+        command_id: "test.invoke".to_string(),
+        target: ExecutionTarget::default(),
+        inputs: BTreeMap::new(),
+      })
+      .expect("recorder failure after snapshot write should not fail invoke");
+
+    let canonical = runtime
+      .read_run(&result.run_id)
+      .expect("snapshot should still be persisted");
+    assert_eq!(canonical.run.status_code, crate::trace::TraceStatusCode::Ok);
+
+    let _ = fs::remove_dir_all(project_root);
+    let _ = fs::remove_dir_all(store_root);
+  }
+
+  #[test]
+  fn invoke_aborts_before_driver_when_required_initial_recording_fails() {
+    let project_root = temp_dir("runtime-required-initial-recorder-failure-project");
+    let store_root = temp_dir("runtime-required-initial-recorder-failure-store");
+    let calls = Arc::new(AtomicUsize::new(0));
+    let runtime = Runtime::new(
+      project_root.clone(),
+      CommandCatalog::new(vec![CommandSpec {
+        id: "test.invoke",
+        summary: "Test invoke",
+        driver_id: "test.driver",
+        operation: "test_operation",
+        disturbance_classes: &[crate::model::DisturbanceClass::None],
+        max_disturbance: crate::model::DisturbanceClass::None,
+      }]),
+      DriverRegistry::new(vec![Box::new(CountingDriver {
+        calls: calls.clone(),
+      })]),
+      LocalStore::new(store_root.clone()).expect("store should initialize"),
+    )
+    .with_recorder(Arc::new(RequiredFailRunStartedRecorder));
+
+    let error = runtime
+      .invoke(InvokeRequest {
+        command_id: "test.invoke".to_string(),
+        target: ExecutionTarget::default(),
+        inputs: BTreeMap::new(),
+      })
+      .expect_err("required initial recording failure should abort invoke");
+
+    assert!(error.contains("run recording delivery failed"));
+    assert!(error.contains("run started recorder failure"));
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    let _ = fs::remove_dir_all(project_root);
+    let _ = fs::remove_dir_all(store_root);
+  }
+
+  #[test]
+  fn invoke_fails_when_required_run_finished_recorder_delivery_fails() {
+    let project_root = temp_dir("runtime-required-recorder-failure-project");
+    let store_root = temp_dir("runtime-required-recorder-failure-store");
+    let runtime = runtime_with_success_driver(project_root.clone(), store_root.clone())
+      .with_recorder(Arc::new(RequiredFailRunFinishedRecorder));
+
+    let error = runtime
+      .invoke(InvokeRequest {
+        command_id: "test.invoke".to_string(),
+        target: ExecutionTarget::default(),
+        inputs: BTreeMap::new(),
+      })
+      .expect_err("required recorder delivery failure should fail invoke");
+
+    assert!(error.contains("run recording delivery failed"));
+    assert!(error.contains("run finished recorder failure"));
     let _ = fs::remove_dir_all(project_root);
     let _ = fs::remove_dir_all(store_root);
   }

@@ -153,18 +153,63 @@ They are inspection artifacts, not screenshots.
 
 ## Inspect Server
 
-The inspect server is a read-only HTTP and WebSocket access layer over stored
-and same-process live run data. It is not the runtime execution API.
+The inspect server is an HTTP and WebSocket access layer over stored and live
+run data. It is not the runtime execution API.
 
 The server exists so browser viewers, Android WebViews, IDE integrations, and
 other tools can list runs, fetch run structure, load artifacts, and subscribe to
 live run events.
 
 The default CLI endpoint is `127.0.0.1:8765`. A standalone `inspect serve`
-process can read historical runs from `.auv/runs/`; live streaming requires the
-runtime and server to share the same in-process event sink.
+process can read historical runs from the configured store root and can accept
+cross-process run updates only when write mode is explicitly enabled.
 
-Replay and mutation APIs are out of scope for the first inspect-server design.
+Inspect server write mode is opt-in. In write mode, runtimes can report
+incremental run updates to the server over local HTTP, and the server applies
+accepted updates to its configured store before broadcasting them to live
+viewers. The server rejects conflicting updates instead of silently merging or
+overwriting them.
+
+Local recording and inspect server reporting are multi-write behavior. AUV does
+not define a universal single source of truth when both are enabled; each target
+owns the records it accepted, and callers choose which store or server they
+inspect.
+
+Artifact byte upload is available in write mode after the corresponding
+artifact metadata has been accepted for the run. Replay and broader mutation
+APIs remain out of scope for the first inspect-server design.
+
+## Run Recording Backend
+
+A run recording backend is the runtime dependency that owns run recording
+effects. It combines one store for canonical snapshots and artifact staging
+with one or more run recorders for incremental updates.
+
+The backend lets CLI, library calls, and future frontends share the same runtime
+execution model while choosing different recording policies. Examples include
+local-only recording, local plus inspect server reporting, server-required
+reporting, and library-supplied recorders.
+
+## Run Recorder
+
+A run recorder receives incremental run updates such as `runStarted`,
+`spanStarted`, `eventAppended`, `artifactCreated`, `spanFinished`, and
+`runFinished`.
+
+Recorder implementations may persist updates locally, broadcast them to
+same-process viewers, report them to an inspect server, fan them out to multiple
+targets, or intentionally discard them.
+
+## Inspect Server Session
+
+An inspect server session is a local discovery descriptor written by
+`inspect serve` when write mode is enabled. It contains the local server URL,
+store root, write-enabled state, optional write token, process id, and start
+time.
+
+Ordinary CLI runs may use this descriptor when inspect server reporting is left
+at its default. Discovery must use a user-private session path and reject unsafe
+or non-local descriptors before sending run data.
 
 ## Viewer
 
@@ -174,3 +219,41 @@ work across desktop, remote, and mobile contexts.
 
 The viewer should render spans, events, and artifacts as an inspectable
 timeline.
+
+## Scroll Scan
+
+A scroll scan is a recorded workflow that repeatedly observes a window or
+region, scrolls it, and accumulates visible observations into an inspectable
+collection artifact.
+
+A scroll scan records what AUV saw, how it moved the viewport, and why it
+stopped. It should not claim a complete collection unless the stop evidence
+supports that claim.
+
+## Observed Collection
+
+An observed collection is the structured result of a scroll scan. It contains
+page records, raw observations, conservative clusters, optional section
+candidates, hook decisions, stop evidence, and a completeness claim.
+
+Observed collections are evidence artifacts. They are not application-specific
+semantic objects such as playlists, search results, inboxes, or tables.
+
+## Completeness Claim
+
+A completeness claim is the scanner's structured statement about whether the
+observed collection appears complete, partial, or unknown.
+
+Completeness claims must distinguish evidence from uncertainty. For example,
+`complete_by_no_visual_progress` means the scanner observed no further visual
+progress under its configured policy; it does not mean the target application
+proved that no additional content exists.
+
+## Scan Hook
+
+A scan hook is an optional recipe executed at a stable point inside a scroll
+scan. Hooks can annotate observations, request stop, request retry, or adjust
+future scan behavior.
+
+Hooks are observation-only by default. Hooks that mutate UI must declare their
+disturbance explicitly.

@@ -1,9 +1,8 @@
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex};
-
-use tokio::sync::broadcast;
+use std::sync::Arc;
 
 use crate::model::{AuvResult, now_millis};
+use crate::run_recording::{RunRecorder, RunUpdate};
 use crate::store::CanonicalRun;
 use crate::trace::{
   ArtifactId, ArtifactRecordV1Alpha1, EventId, EventRecordV1Alpha1, RunId, RunRecordV1Alpha1,
@@ -27,7 +26,9 @@ mod tests {
     SPAN_API_VERSION, SpanId, SpanRecordV1Alpha1, TraceId, TraceState, TraceStatusCode,
   };
 
-  use super::{BroadcastRunEventSink, MemoryRunEventSink, RecordingRun, SpanFinish, SpanRef};
+  use crate::run_recording::{BroadcastRunRecorder, MemoryRunRecorder, RunUpdate};
+
+  use super::{RecordingRun, SpanFinish, SpanRef};
 
   #[test]
   fn start_span_rejects_parent_from_another_run() {
@@ -42,9 +43,9 @@ mod tests {
   }
 
   #[test]
-  fn broadcast_sink_replays_events_to_subscribers() {
-    let sink = BroadcastRunEventSink::new(16);
-    let mut receiver = sink.subscribe();
+  fn broadcast_recorder_replays_updates_to_subscribers() {
+    let recorder = BroadcastRunRecorder::new(16);
+    let mut receiver = recorder.subscribe();
     let mut run = RecordingRun::new(
       RunRecordV1Alpha1 {
         api_version: RUN_API_VERSION.to_string(),
@@ -73,7 +74,7 @@ mod tests {
         summary: None,
         failure: None,
       },
-      Arc::new(sink),
+      Arc::new(recorder),
     );
 
     run.record_event(EventRecordV1Alpha1 {
@@ -87,14 +88,16 @@ mod tests {
       artifact_ids: Vec::new(),
     });
 
-    let first = receiver.try_recv().expect("root span should broadcast");
-    assert!(matches!(first, super::RunStreamEvent::SpanStarted { .. }));
-    let second = receiver
+    let first = receiver.try_recv().expect("run start should broadcast");
+    assert!(matches!(first, RunUpdate::RunStarted { .. }));
+    let second = receiver.try_recv().expect("root span should broadcast");
+    assert!(matches!(second, RunUpdate::SpanStarted { .. }));
+    let third = receiver
       .try_recv()
       .expect("recorded event should broadcast");
     assert!(matches!(
-      second,
-      super::RunStreamEvent::EventAppended { event, .. } if event.name == "broadcast.event"
+      third,
+      RunUpdate::EventAppended { event, .. } if event.name == "broadcast.event"
     ));
   }
 
@@ -147,7 +150,7 @@ mod tests {
         summary: None,
         failure: None,
       },
-      Arc::new(MemoryRunEventSink::new()),
+      Arc::new(MemoryRunRecorder::new()),
     )
   }
 
@@ -210,133 +213,43 @@ pub struct SpanFinish {
   pub failure: Option<String>,
 }
 
-#[derive(Clone, Debug, serde::Serialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum RunStreamEvent {
-  SpanStarted {
-    run_id: RunId,
-    span: SpanRecordV1Alpha1,
-  },
-  SpanFinished {
-    run_id: RunId,
-    span: SpanRecordV1Alpha1,
-  },
-  EventAppended {
-    run_id: RunId,
-    event: EventRecordV1Alpha1,
-  },
-  ArtifactCreated {
-    run_id: RunId,
-    artifact: ArtifactRecordV1Alpha1,
-  },
-  RunFinished {
-    run_id: RunId,
-    run: RunRecordV1Alpha1,
-  },
-}
-
-impl RunStreamEvent {
-  pub fn run_id(&self) -> &RunId {
-    match self {
-      Self::SpanStarted { run_id, .. }
-      | Self::SpanFinished { run_id, .. }
-      | Self::EventAppended { run_id, .. }
-      | Self::ArtifactCreated { run_id, .. }
-      | Self::RunFinished { run_id, .. } => run_id,
-    }
-  }
-}
-
-pub trait RunEventSink: Send + Sync {
-  fn on_event(&self, event: RunStreamEvent);
-}
-
-#[derive(Clone)]
-pub struct MemoryRunEventSink {
-  events: Arc<Mutex<Vec<RunStreamEvent>>>,
-}
-
-impl MemoryRunEventSink {
-  pub fn new() -> Self {
-    Self {
-      events: Arc::new(Mutex::new(Vec::new())),
-    }
-  }
-
-  pub fn drain_for_test(&self) -> Vec<RunStreamEvent> {
-    self
-      .events
-      .lock()
-      .map(|events| events.clone())
-      .unwrap_or_default()
-  }
-}
-
-impl Default for MemoryRunEventSink {
-  fn default() -> Self {
-    Self::new()
-  }
-}
-
-impl RunEventSink for MemoryRunEventSink {
-  fn on_event(&self, event: RunStreamEvent) {
-    if let Ok(mut events) = self.events.lock() {
-      events.push(event);
-    }
-  }
-}
-
-#[derive(Clone)]
-pub struct BroadcastRunEventSink {
-  sender: broadcast::Sender<RunStreamEvent>,
-}
-
-impl BroadcastRunEventSink {
-  pub fn new(capacity: usize) -> Self {
-    let (sender, _) = broadcast::channel(capacity);
-    Self { sender }
-  }
-
-  pub fn subscribe(&self) -> broadcast::Receiver<RunStreamEvent> {
-    self.sender.subscribe()
-  }
-}
-
-impl RunEventSink for BroadcastRunEventSink {
-  fn on_event(&self, event: RunStreamEvent) {
-    let _ = self.sender.send(event);
-  }
-}
-
 pub struct RecordingRun {
   run: RunRecordV1Alpha1,
   spans: Vec<SpanRecordV1Alpha1>,
   events: Vec<EventRecordV1Alpha1>,
   artifacts: Vec<ArtifactRecordV1Alpha1>,
-  event_sink: Arc<dyn RunEventSink>,
+  recorder: Arc<dyn RunRecorder>,
+  recording_errors: Vec<String>,
 }
 
 pub struct RecordedRun {
   pub snapshot: CanonicalRun,
+  pub recording_errors: Vec<String>,
 }
 
 impl RecordingRun {
   pub fn new(
     run: RunRecordV1Alpha1,
     root_span: SpanRecordV1Alpha1,
-    event_sink: Arc<dyn RunEventSink>,
+    recorder: Arc<dyn RunRecorder>,
   ) -> Self {
-    event_sink.on_event(RunStreamEvent::SpanStarted {
-      run_id: run.run_id.clone(),
-      span: root_span.clone(),
-    });
-    Self {
+    let mut recording = Self {
       run,
       spans: vec![root_span],
       events: Vec::new(),
       artifacts: Vec::new(),
-      event_sink,
-    }
+      recorder,
+      recording_errors: Vec::new(),
+    };
+    recording.record_update(RunUpdate::RunStarted {
+      run_id: recording.run.run_id.clone(),
+      run: recording.run.clone(),
+    });
+    recording.record_update(RunUpdate::SpanStarted {
+      run_id: recording.run.run_id.clone(),
+      span: recording.spans[0].clone(),
+    });
+    recording
   }
 
   pub fn id(&self) -> &RunId {
@@ -345,6 +258,10 @@ impl RecordingRun {
 
   pub fn root_span(&self) -> SpanRef {
     SpanRef::new(self.run.root_span_id.clone())
+  }
+
+  pub fn recording_errors(&self) -> &[String] {
+    &self.recording_errors
   }
 
   pub fn start_span(
@@ -367,7 +284,7 @@ impl RecordingRun {
     }
     span.parent_span_id = Some(parent.id().clone());
     let span_ref = SpanRef::new(span.span_id.clone());
-    self.event_sink.on_event(RunStreamEvent::SpanStarted {
+    self.record_update(RunUpdate::SpanStarted {
       run_id: self.run.run_id.clone(),
       span: span.clone(),
     });
@@ -376,7 +293,7 @@ impl RecordingRun {
   }
 
   pub fn finish_span(&mut self, span: &SpanRef, finish: SpanFinish) -> AuvResult<()> {
-    if let Some(record) = self
+    let update = if let Some(record) = self
       .spans
       .iter_mut()
       .find(|record| record.span_id == *span.id())
@@ -389,22 +306,28 @@ impl RecordingRun {
       record.finished_at_millis = Some(now_millis());
       record.summary = finish.summary;
       record.failure = finish.failure.map(|message| TraceFailure { message });
-      self.event_sink.on_event(RunStreamEvent::SpanFinished {
+      Some(RunUpdate::SpanFinished {
         run_id: self.run.run_id.clone(),
         span: record.clone(),
-      });
-      return Ok(());
+      })
+    } else {
+      None
+    };
+    if let Some(update) = update {
+      self.record_update(update);
+      Ok(())
+    } else {
+      Err(format!(
+        "span {} does not belong to run {}",
+        span.id(),
+        self.run.run_id
+      ))
     }
-    Err(format!(
-      "span {} does not belong to run {}",
-      span.id(),
-      self.run.run_id
-    ))
   }
 
   pub fn record_event(&mut self, event: EventRecordV1Alpha1) -> EventId {
     let event_id = event.event_id.clone();
-    self.event_sink.on_event(RunStreamEvent::EventAppended {
+    self.record_update(RunUpdate::EventAppended {
       run_id: self.run.run_id.clone(),
       event: event.clone(),
     });
@@ -414,7 +337,7 @@ impl RecordingRun {
 
   pub fn record_artifact(&mut self, artifact: ArtifactRecordV1Alpha1) -> ArtifactId {
     let artifact_id = artifact.artifact_id.clone();
-    self.event_sink.on_event(RunStreamEvent::ArtifactCreated {
+    self.record_update(RunUpdate::ArtifactCreated {
       run_id: self.run.run_id.clone(),
       artifact: artifact.clone(),
     });
@@ -438,16 +361,20 @@ impl RecordingRun {
     self.run.finished_at_millis = Some(finished_at_millis);
     self.run.summary = summary;
     self.run.failure = failure;
+    let mut finish_updates = Vec::new();
     for span in &mut self.spans {
       if span.state == TraceState::Running {
         span.state = TraceState::Ended;
         span.status_code = status_code;
         span.finished_at_millis = Some(finished_at_millis);
-        self.event_sink.on_event(RunStreamEvent::SpanFinished {
+        finish_updates.push(RunUpdate::SpanFinished {
           run_id: self.run.run_id.clone(),
           span: span.clone(),
         });
       }
+    }
+    for update in finish_updates {
+      self.record_update(update);
     }
     RecordedRun {
       snapshot: CanonicalRun {
@@ -456,6 +383,15 @@ impl RecordingRun {
         events: self.events,
         artifacts: self.artifacts,
       },
+      recording_errors: self.recording_errors,
+    }
+  }
+
+  fn record_update(&mut self, update: RunUpdate) {
+    if let Err(error) = self.recorder.record(update)
+      && self.recorder.requires_successful_delivery()
+    {
+      self.recording_errors.push(error);
     }
   }
 

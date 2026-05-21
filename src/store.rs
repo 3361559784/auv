@@ -130,6 +130,16 @@ impl LocalStore {
     Ok(())
   }
 
+  pub fn replace_run_snapshot(&self, snapshot: &CanonicalRun) -> AuvResult<()> {
+    let run_id = validate_run_id(snapshot.run.run_id.as_str())?;
+    let run_directory = self.run_dir(run_id)?;
+    if !run_directory.exists() {
+      return self.write_run_snapshot(snapshot);
+    }
+    validate_replaceable_run_directory(&run_directory)?;
+    write_snapshot_files(&run_directory, snapshot)
+  }
+
   pub fn stage_artifact(
     &self,
     run_id: &RunId,
@@ -255,26 +265,8 @@ impl LocalStore {
     run_id: &str,
     artifact_id: &str,
   ) -> AuvResult<(ArtifactRecordV1Alpha1, PathBuf)> {
-    let canonical = self.read_run(run_id)?;
-    let artifact = canonical
-      .artifacts
-      .into_iter()
-      .find(|artifact| artifact.artifact_id.as_str() == artifact_id)
-      .ok_or_else(|| format!("artifact {artifact_id} not found in run {run_id}"))?;
-    let artifact_path = artifact.path.clone();
-    let relative_path = Path::new(&artifact_path);
-    if relative_path.is_absolute()
-      || relative_path
-        .components()
-        .any(|component| !matches!(component, std::path::Component::Normal(_)))
-    {
-      return Err(format!(
-        "invalid artifact path {:?} in run {run_id}",
-        artifact.path
-      ));
-    }
+    let (artifact, candidate_path) = self.artifact_path(run_id, artifact_id)?;
     let run_directory = self.run_dir(run_id)?;
-    let candidate_path = run_directory.join(relative_path);
     let canonical_run_directory = fs::canonicalize(&run_directory).map_err(|error| {
       format!(
         "failed to resolve run directory {}: {error}",
@@ -295,6 +287,99 @@ impl LocalStore {
       ));
     }
     Ok((artifact, canonical_artifact_path))
+  }
+
+  pub fn write_artifact_bytes(
+    &self,
+    run_id: &str,
+    artifact_id: &str,
+    bytes: &[u8],
+  ) -> AuvResult<ArtifactRecordV1Alpha1> {
+    let (artifact, candidate_path) = self.artifact_path(run_id, artifact_id)?;
+    let run_directory = self.run_dir(run_id)?;
+    let canonical_run_directory = fs::canonicalize(&run_directory).map_err(|error| {
+      format!(
+        "failed to resolve run directory {}: {error}",
+        run_directory.display()
+      )
+    })?;
+    let parent = candidate_path
+      .parent()
+      .ok_or_else(|| format!("invalid artifact path {:?} in run {run_id}", artifact.path))?;
+    fs::create_dir_all(parent).map_err(|error| {
+      format!(
+        "failed to create artifact directory {}: {error}",
+        parent.display()
+      )
+    })?;
+    let canonical_parent = fs::canonicalize(parent).map_err(|error| {
+      format!(
+        "failed to resolve artifact directory {}: {error}",
+        parent.display()
+      )
+    })?;
+    if !canonical_parent.starts_with(&canonical_run_directory) {
+      return Err(format!(
+        "artifact directory {} escapes run directory {}",
+        canonical_parent.display(),
+        canonical_run_directory.display()
+      ));
+    }
+    if let Ok(metadata) = fs::symlink_metadata(&candidate_path)
+      && metadata.file_type().is_symlink()
+    {
+      return Err(format!(
+        "refusing to overwrite symlink artifact path {}",
+        candidate_path.display()
+      ));
+    }
+
+    let file_name = candidate_path
+      .file_name()
+      .and_then(|file_name| file_name.to_str())
+      .unwrap_or("artifact");
+    let temp_path = parent.join(format!(".{file_name}.upload-{}.tmp", now_millis()));
+    fs::write(&temp_path, bytes).map_err(|error| {
+      format!(
+        "failed to write artifact upload {}: {error}",
+        temp_path.display()
+      )
+    })?;
+    fs::rename(&temp_path, &candidate_path).map_err(|error| {
+      let _ = fs::remove_file(&temp_path);
+      format!(
+        "failed to publish artifact upload {}: {error}",
+        candidate_path.display()
+      )
+    })?;
+    Ok(artifact)
+  }
+
+  fn artifact_path(
+    &self,
+    run_id: &str,
+    artifact_id: &str,
+  ) -> AuvResult<(ArtifactRecordV1Alpha1, PathBuf)> {
+    let canonical = self.read_run(run_id)?;
+    let artifact = canonical
+      .artifacts
+      .into_iter()
+      .find(|artifact| artifact.artifact_id.as_str() == artifact_id)
+      .ok_or_else(|| format!("artifact {artifact_id} not found in run {run_id}"))?;
+    let artifact_path = artifact.path.clone();
+    let relative_path = Path::new(&artifact_path);
+    if relative_path.is_absolute()
+      || relative_path
+        .components()
+        .any(|component| !matches!(component, std::path::Component::Normal(_)))
+    {
+      return Err(format!(
+        "invalid artifact path {:?} in run {run_id}",
+        artifact.path
+      ));
+    }
+    let run_directory = self.run_dir(run_id)?;
+    Ok((artifact, run_directory.join(relative_path)))
   }
 }
 
@@ -370,12 +455,57 @@ fn validate_unpublished_run_directory(run_directory: &Path) -> AuvResult<()> {
   Ok(())
 }
 
+fn validate_replaceable_run_directory(run_directory: &Path) -> AuvResult<()> {
+  if run_directory.join("run.json").exists() {
+    return Ok(());
+  }
+  validate_unpublished_run_directory(run_directory)
+}
+
 fn cleanup_run_record_files(run_directory: &Path) {
   for file_name in ["run.json", "spans.jsonl", "events.jsonl", "artifacts.jsonl"] {
     let path = run_directory.join(file_name);
     let _ = fs::remove_file(&path);
     let _ = fs::remove_file(path.with_extension("tmp"));
   }
+}
+
+fn write_snapshot_files(run_directory: &Path, snapshot: &CanonicalRun) -> AuvResult<()> {
+  fs::create_dir_all(run_directory.join("artifacts")).map_err(|error| {
+    format!(
+      "failed to create canonical run directory {}: {error}",
+      run_directory.display()
+    )
+  })?;
+  let write_result = (|| {
+    write_jsonl_atomic(
+      &run_directory.join("spans.jsonl"),
+      &snapshot.spans,
+      "span records",
+    )?;
+    write_jsonl_atomic(
+      &run_directory.join("events.jsonl"),
+      &snapshot.events,
+      "event records",
+    )?;
+    write_jsonl_atomic(
+      &run_directory.join("artifacts.jsonl"),
+      &snapshot.artifacts,
+      "artifact records",
+    )?;
+    write_json_atomic(
+      &run_directory.join("run.json"),
+      &snapshot.run,
+      "run metadata",
+    )?;
+    Ok(())
+  })();
+
+  if let Err(error) = write_result {
+    cleanup_run_record_files(run_directory);
+    return Err(error);
+  }
+  Ok(())
 }
 
 fn write_json_atomic<T: serde::Serialize>(path: &Path, value: &T, label: &str) -> AuvResult<()> {
@@ -630,6 +760,62 @@ mod tests {
       .read_run("run_staged_artifact")
       .expect("persisted run should read");
     assert_eq!(loaded.artifacts.len(), 1);
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn local_store_replaces_existing_run_snapshot_without_removing_artifacts() {
+    let root = temp_dir("store-replace-run");
+    let store = LocalStore::new(root.clone()).expect("should initialize");
+    let run = dummy_run("run_replace_snapshot");
+    let span = dummy_span(&run.root_span_id);
+    let source_path = root.join("source-output.txt");
+    fs::write(&source_path, "artifact body").expect("source artifact");
+    let artifact = store
+      .stage_artifact_file(
+        &run.run_id,
+        0,
+        &span.span_id,
+        None,
+        ArtifactFileSource {
+          role: "driver.output".to_string(),
+          source_path,
+          preferred_name: "output.txt".to_string(),
+          summary: Some("output".to_string()),
+        },
+      )
+      .expect("artifact should stage");
+
+    store
+      .write_run_snapshot(&CanonicalRun {
+        run: run.clone(),
+        spans: Vec::new(),
+        events: Vec::new(),
+        artifacts: Vec::new(),
+      })
+      .expect("initial run should persist");
+    store
+      .replace_run_snapshot(&CanonicalRun {
+        run,
+        spans: vec![span],
+        events: Vec::new(),
+        artifacts: vec![artifact.clone()],
+      })
+      .expect("existing run should replace");
+
+    let loaded = store
+      .read_run("run_replace_snapshot")
+      .expect("replaced run should read");
+    assert_eq!(loaded.spans.len(), 1);
+    assert_eq!(loaded.artifacts.len(), 1);
+    assert!(
+      root
+        .join("runs")
+        .join("run_replace_snapshot")
+        .join(&artifact.path)
+        .exists()
+    );
 
     let _ = fs::remove_dir_all(root);
   }

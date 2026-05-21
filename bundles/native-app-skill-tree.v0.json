@@ -164,21 +164,23 @@
       "recipeId": "macos.demo.dual_cursor_press_notes.v0",
       "caseMatrixId": "macos.demo.dual_cursor_press_notes.v0",
       "role": "presentation-demo",
-      "validatedCaseIds": [
+      "candidateCaseIds": [
         "notes-dual-cursor-demo"
       ],
       "contract": "verifyAxText",
       "appBundleId": "com.apple.Notes",
       "targetApplication": ">=4.13.0, <5.0.0",
       "coverageSummary": {
-        "activationStatus": "validated",
+        "activationStatus": "candidate",
         "semanticSelectionStatus": "not-applicable",
-        "validatedClaims": [
-          "Runs Notes v2's cursor-warp-free flow with the dual-cursor overlay enabled on every AX step.",
-          "create-note and focus-body both assert overlayPresentation=dual-cursor-visual-only and dualCursor=true in addition to the Phase 2 cursorDisturbance contract.",
-          "First presentation-layer member that demonstrates the AUV design system's 'ghost dual cursor' contract end-to-end on a live macOS desktop."
-        ],
+        "validatedClaims": [],
         "boundaryClaims": [
+          "Intended contract: run Notes v2's cursor-warp-free flow with the dual-cursor overlay enabled on every AX step.",
+          "Intended contract: create-note and focus-body assert overlayPresentation=dual-cursor-visual-only and dualCursor=true in addition to the Phase 2 cursorDisturbance contract.",
+          "Intended product role: presentation-layer member for the AUV ghost dual cursor contract on a live macOS desktop.",
+          "This member is currently a candidate presentation demo, not a validated baseline.",
+          "A hands-off replay on 2026-05-21 failed because the Notes toolbar button 新建备忘录 was present but not AX-pressable in the live app state (run_1779371986165_16879_0).",
+          "Human desktop interaction contaminates evidence for this demo; any replay where an operator switches into Notes, types, or pastes must not be promoted.",
           "Presentation-only: the recipe does not add new validation for Notes itself; that lives in macos.notes.create_and_verify_note.v2.",
           "Overlay visual fidelity (pixel sprite, pill color, animation) is verified by the design system layer, not by the recipe runner; the runner only checks the contract signals.",
           "Requires a human watching the screen to deliver value."
@@ -186,6 +188,7 @@
       },
       "evidenceRefs": [
         "recipes/macos/demo/README.md",
+        "docs/ai/references/2026-05-21-dual-cursor-notes-demo-boundary.md",
         "docs/design/README.md",
         "docs/ai/references/2026-05-21-phase-2-press-presentation-freeze.md"
       ]

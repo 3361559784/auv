@@ -11,7 +11,7 @@
   "strategy": {
     "family": "native-text",
     "grounding": "ax-text",
-    "activation": "pointer-focus-clipboard-paste",
+    "activation": "ax-perform-action-clipboard-paste",
     "verificationContract": "verifyAxText"
   },
   "objective": "Create and verify a Notes note with zero cursor warp on both the create step AND the body-focus step. First narrow skill whose entire activation chain is keyboard-only at the driver level.",
@@ -53,7 +53,7 @@
     "notes": [
       "First narrow skill with a fully cursor-warp-free activation chain. create-note uses debug.axPressButton; focus-body uses debug.axFocusTextInput. Both steps assert cursorDisturbance=none.",
       "Top-level max_disturbance is clipboard because paste-note-body still uses the clipboard. No step warps the cursor at any point.",
-      "The strategy.activation taxonomy label remains pointer-focus-clipboard-paste because the existing SkillActivation enum is a closed set. Adding ax-perform-action-clipboard-paste (or similar) is a follow-on schema change; this recipe deliberately ships first without that change so the contract win lands without coupling to a schema migration."
+      "strategy.activation is ax-perform-action-clipboard-paste — the taxonomy label now matches the runtime reality (no pointer focus, only AX action + AX focus + clipboard paste)."
     ]
   },
   "steps": [
@@ -185,13 +185,11 @@
       "No step in the recipe warps the macOS cursor."
     ],
     "non_goals": [
-      "This recipe does not change the strategy.activation taxonomy label; that is a follow-on schema migration.",
       "This recipe does not prove cross-app browser or music-player reuse.",
       "This recipe does not exercise smartPress fallback."
     ]
   },
   "known_limits": {
-    "schema_taxonomy_lag": "strategy.activation remains pointer-focus-clipboard-paste because SkillActivation is a closed enum; adding an ax-only variant is a separate commit so this recipe can land first.",
     "shared_app_state": "Do not run concurrently with another Notes recipe against the same live app instance."
   }
 }

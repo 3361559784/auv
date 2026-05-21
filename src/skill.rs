@@ -97,6 +97,11 @@ pub enum SkillActivation {
   PointerDoubleClick,
   PointerRowActivation,
   PointerFocusClipboardPaste,
+  /// Phase 2 + Phase 3 #2: the whole activation chain reaches the
+  /// target via AX (AXUIElementPerformAction + AXUIElementSetAttribute
+  /// for focus) and only uses the clipboard for marker insertion. No
+  /// step warps the macOS cursor.
+  AxPerformActionClipboardPaste,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -167,6 +172,12 @@ impl SkillStrategyTaxonomy {
         family: SkillStrategyFamily::NativeText,
         grounding: SkillGrounding::AxText,
         activation: SkillActivation::PointerFocusClipboardPaste,
+        verification_contract: SkillVerificationContract::VerifyAxText,
+      },
+      SkillStrategyTaxonomy {
+        family: SkillStrategyFamily::NativeText,
+        grounding: SkillGrounding::AxText,
+        activation: SkillActivation::AxPerformActionClipboardPaste,
         verification_contract: SkillVerificationContract::VerifyAxText,
       },
       SkillStrategyTaxonomy {
@@ -252,8 +263,9 @@ impl SkillActivation {
       "pointer-double-click" => Ok(Self::PointerDoubleClick),
       "pointer-row-activation" => Ok(Self::PointerRowActivation),
       "pointer-focus-clipboard-paste" => Ok(Self::PointerFocusClipboardPaste),
+      "ax-perform-action-clipboard-paste" => Ok(Self::AxPerformActionClipboardPaste),
       other => Err(format!(
-        "strategy.activation {} is unsupported; allowed values: clipboard-submit, pointer-click, pointer-double-click, pointer-row-activation, pointer-focus-clipboard-paste",
+        "strategy.activation {} is unsupported; allowed values: clipboard-submit, pointer-click, pointer-double-click, pointer-row-activation, pointer-focus-clipboard-paste, ax-perform-action-clipboard-paste",
         other
       )),
     }
@@ -266,6 +278,7 @@ impl SkillActivation {
       Self::PointerDoubleClick => "pointer-double-click",
       Self::PointerRowActivation => "pointer-row-activation",
       Self::PointerFocusClipboardPaste => "pointer-focus-clipboard-paste",
+      Self::AxPerformActionClipboardPaste => "ax-perform-action-clipboard-paste",
     }
   }
 }

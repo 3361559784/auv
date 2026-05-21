@@ -118,11 +118,14 @@ In rough order:
    as `macos.notes.create_and_verify_note.v2`, the first narrow skill
    with a fully cursor-warp-free activation chain (recipe-level
    disturbance = clipboard).
-2. **Add `ax-perform-action-clipboard-paste` to `SkillActivation`** —
-   the v2 recipe still labels its activation taxonomy
-   `pointer-focus-clipboard-paste` because the enum is closed. Once the
-   schema migration lands, v2's taxonomy label can become honest at
-   the recipe header level too.
+2. ~~**Add `ax-perform-action-clipboard-paste` to `SkillActivation`**~~ —
+   DONE (`feat(skill): add ax-perform-action-clipboard-paste taxonomy
+   variant`). The v2 recipe now labels its activation taxonomy
+   `ax-perform-action-clipboard-paste`; the label matches the runtime
+   reality (no pointer focus, only AX action + AX focus + clipboard
+   paste). The closed-enum check at strategy parsing also lets any
+   future ax-only native-text recipe pick up the same label without
+   another schema migration.
 3. ~~**Recipe-level disturbance assertion**~~ — DONE
    (`feat(skill): enforce recipe disturbance budget at manifest
    validation`). `validate_skill_disturbance_budget` is now part of

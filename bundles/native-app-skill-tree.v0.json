@@ -151,7 +151,7 @@
         ],
         "boundaryClaims": [
           "Recipe-level disturbance is clipboard because paste-note-body still uses the clipboard.",
-          "strategy.activation taxonomy label remains pointer-focus-clipboard-paste because SkillActivation is a closed enum; a schema migration to add an ax-only variant is a follow-on commit.",
+          "strategy.activation is ax-perform-action-clipboard-paste — the taxonomy label matches the runtime reality after Phase 3 #3 schema migration.",
           "This member is a native text sample, not a music-selection skill."
         ]
       },

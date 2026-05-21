@@ -118,9 +118,9 @@ command id：
   `smartPressPrimaryError`
 - artifact kind：`ax-press-button`、`ax-click-window-text`、`smart-press`
 - backend id：`macos.ax.perform-action`、
-  `macos.ax.perform-action+overlay-daemon`、
+  `macos.ax.perform-action+overlay-ffi`、
   `macos.ax.click-window-text`、
-  `macos.ax.click-window-text+overlay-daemon`、
+  `macos.ax.click-window-text+overlay-ffi`、
   `macos.smart-press.ax-action`、`macos.smart-press.pointer-click`
 
 ## Accepted Unresolved Boundary

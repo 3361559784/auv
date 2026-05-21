@@ -34,6 +34,19 @@ pub(crate) fn render_text_match_command_json(report: &TextMatchCommandReport) ->
     .map_err(|error| format!("failed to encode text match command report JSON: {error}"))
 }
 
+pub(crate) fn screenshot_artifact(
+  capture: &CapturedObservation,
+  label: &str,
+  note_suffix: &str,
+) -> ProducedArtifact {
+  ProducedArtifact {
+    kind: "screenshot".to_string(),
+    source_path: capture.screenshot_path.clone(),
+    preferred_name: format!("{}.png", sanitize_file_component(label)),
+    note: Some(format!("Screenshot captured for {note_suffix}.")),
+  }
+}
+
 pub(crate) fn run_text_match_on_capture(
   call: &DriverCall,
   capture: &CapturedObservation,

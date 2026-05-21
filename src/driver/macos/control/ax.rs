@@ -698,6 +698,34 @@ pub(crate) fn ax_click_window_text(call: &DriverCall) -> AuvResult<DriverRespons
     ocr_report,
     "Vision OCR text-anchor report consumed by debug.axClickWindowText.",
   )?;
+  let screenshot_artifact = screenshot_artifact(&capture, &capture_label, "ax click window text");
+  let mut overlay_artifacts = build_overlay_evidence_artifacts(OverlayEvidenceRequest {
+    kind: "ax-click-window-text",
+    label: capture_label.clone(),
+    screenshot_path: screenshot_artifact.source_path.clone(),
+    screenshot_dimensions: capture.dimensions.clone(),
+    capture_contract: capture.capture_contract.clone(),
+    query: Some(query.clone()),
+    strategy: Some("ax-action".to_string()),
+    fallback_used: Some(false),
+    cursor_disturbance: Some("none".to_string()),
+    press_mechanism: Some("ax-action".to_string()),
+    overlay_presentation: overlay.then_some("dual-cursor-visual-only".to_string()),
+    action_point: logical_to_capture_pixel(&capture.capture_contract, center_x, center_y),
+    expected_target: Some(logical_to_capture_pixel(
+      &capture.capture_contract,
+      logical_x,
+      logical_y,
+    )),
+    ocr_match: Some(OverlayEvidenceMatch {
+      text: matched_ocr.text.clone(),
+      confidence: matched_ocr.confidence,
+      bounds: matched_ocr.bounds.clone(),
+    }),
+    row: None,
+    include_user_cursor: overlay,
+    auv_cursor_variant: "auv",
+  })?;
 
   // 5. Notes + signals.
   let mut notes = build_ax_click_notes(&query, ax_node, center_x, center_y);
@@ -775,7 +803,11 @@ pub(crate) fn ax_click_window_text(call: &DriverCall) -> AuvResult<DriverRespons
     backend: Some(backend.to_string()),
     signals,
     notes,
-    artifacts: vec![ocr_artifact, report_artifact],
+    artifacts: {
+      let mut artifacts = vec![screenshot_artifact, ocr_artifact, report_artifact];
+      artifacts.append(&mut overlay_artifacts);
+      artifacts
+    },
   })
 }
 

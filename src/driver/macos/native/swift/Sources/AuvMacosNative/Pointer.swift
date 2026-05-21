@@ -1,3 +1,4 @@
+import AppKit
 import CoreGraphics
 import Foundation
 
@@ -73,6 +74,18 @@ func click_point(
   }
 
   return nativeActionOk()
+}
+
+func current_mouse_location() -> NativeMouseLocationResponse {
+  let location = NSEvent.mouseLocation
+  let referenceHeight =
+    Double(NSScreen.main?.frame.height ?? NSScreen.screens.first?.frame.height ?? 0)
+  return NativeMouseLocationResponse(
+    x: location.x,
+    y: referenceHeight - location.y,
+    error_message: nil,
+    recovery_hint: nil
+  )
 }
 
 func scroll_point(x: Double, y: Double, delta_x: Double, delta_y: Double) -> NativeActionResponse {

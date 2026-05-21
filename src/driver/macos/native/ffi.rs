@@ -238,6 +238,14 @@ pub(crate) mod ffi {
   }
 
   #[swift_bridge(swift_repr = "struct")]
+  struct NativeMouseLocationResponse {
+    x: f64,
+    y: f64,
+    error_message: Option<String>,
+    recovery_hint: Option<String>,
+  }
+
+  #[swift_bridge(swift_repr = "struct")]
   struct NativeClipboardSnapshotResponse {
     payload: Option<String>,
     error_message: Option<String>,
@@ -263,6 +271,7 @@ pub(crate) mod ffi {
       click_count: i64,
       click_interval_ms: u64,
     ) -> NativeActionResponse;
+    fn current_mouse_location() -> NativeMouseLocationResponse;
     fn scroll_point(x: f64, y: f64, delta_x: f64, delta_y: f64) -> NativeActionResponse;
     fn capture_clipboard() -> NativeClipboardSnapshotResponse;
     fn restore_clipboard(snapshot_payload: String) -> NativeActionResponse;

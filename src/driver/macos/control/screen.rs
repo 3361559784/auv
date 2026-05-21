@@ -129,6 +129,33 @@ pub(crate) fn click_screen_text(call: &DriverCall) -> AuvResult<DriverResponse> 
     preferred_name: format!("{}.png", sanitize_file_component(&label)),
     note: Some("Screenshot captured for OCR click-anchor detection.".to_string()),
   };
+  let mut overlay_artifacts = build_overlay_evidence_artifacts(OverlayEvidenceRequest {
+    kind: "screen-text-click",
+    label: label.clone(),
+    screenshot_path: screenshot_artifact.source_path.clone(),
+    screenshot_dimensions: dimensions.clone(),
+    capture_contract: capture_contract.clone(),
+    query: Some(query.clone()),
+    strategy: Some("ocr-text".to_string()),
+    fallback_used: None,
+    cursor_disturbance: Some("warp-visible".to_string()),
+    press_mechanism: Some("pointer-click".to_string()),
+    overlay_presentation: None,
+    action_point: logical_to_capture_pixel(&capture_contract, logical_x, logical_y),
+    expected_target: Some(capture_pixel_to_logical(
+      &capture_contract,
+      screenshot_center_x,
+      screenshot_center_y,
+    )),
+    ocr_match: Some(OverlayEvidenceMatch {
+      text: matched.text.clone(),
+      confidence: matched.confidence,
+      bounds: matched.bounds.clone(),
+    }),
+    row: None,
+    include_user_cursor: false,
+    auv_cursor_variant: "auv-click",
+  })?;
   let mut notes = vec![
     format!("query={query}"),
     format!("matchIndex={match_index}"),
@@ -159,7 +186,11 @@ pub(crate) fn click_screen_text(call: &DriverCall) -> AuvResult<DriverResponse> 
     backend: Some("macos.vision.click-screen-text".to_string()),
     signals: click_screen_text_signals(&matched.text),
     notes,
-    artifacts: vec![screenshot_artifact, report_artifact],
+    artifacts: {
+      let mut artifacts = vec![screenshot_artifact, report_artifact];
+      artifacts.append(&mut overlay_artifacts);
+      artifacts
+    },
   })
 }
 
@@ -305,6 +336,34 @@ pub(crate) fn click_screen_row(call: &DriverCall) -> AuvResult<DriverResponse> {
     preferred_name: format!("{}.png", sanitize_file_component(&label)),
     note: Some("Screenshot captured for visible OCR row detection before row click.".to_string()),
   };
+  let mut overlay_artifacts = build_overlay_evidence_artifacts(OverlayEvidenceRequest {
+    kind: "screen-row-click",
+    label: label.clone(),
+    screenshot_path: screenshot_artifact.source_path.clone(),
+    screenshot_dimensions: dimensions.clone(),
+    capture_contract: capture_contract.clone(),
+    query: None,
+    strategy: Some(detection.strategy.clone()),
+    fallback_used: None,
+    cursor_disturbance: Some("warp-visible".to_string()),
+    press_mechanism: Some("pointer-click".to_string()),
+    overlay_presentation: None,
+    action_point: logical_to_capture_pixel(&capture_contract, logical_x, logical_y),
+    expected_target: Some(capture_pixel_to_logical(
+      &capture_contract,
+      screenshot_center_x,
+      screenshot_center_y,
+    )),
+    ocr_match: None,
+    row: Some(OverlayEvidenceRow {
+      row_index,
+      source: row.source.clone(),
+      bounds: row.bounds.clone(),
+      text_fragments: row.text_fragments.clone(),
+    }),
+    include_user_cursor: false,
+    auv_cursor_variant: "auv-click",
+  })?;
   let mut notes = vec![
     format!("rowStrategy={}", detection.strategy),
     format!("rowIndex={}", row_index + 1),
@@ -342,7 +401,11 @@ pub(crate) fn click_screen_row(call: &DriverCall) -> AuvResult<DriverResponse> {
     )),
     signals: click_screen_row_signals(row_index + 1, rows.len()),
     notes,
-    artifacts: vec![screenshot_artifact, report_artifact],
+    artifacts: {
+      let mut artifacts = vec![screenshot_artifact, report_artifact];
+      artifacts.append(&mut overlay_artifacts);
+      artifacts
+    },
   })
 }
 

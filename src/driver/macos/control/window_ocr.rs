@@ -254,6 +254,33 @@ pub(crate) fn click_window_text(call: &DriverCall) -> AuvResult<DriverResponse> 
     })
     .transpose()?;
   let screenshot_artifact = screenshot_artifact(&capture, &label, "window text click detection");
+  let mut overlay_artifacts = build_overlay_evidence_artifacts(OverlayEvidenceRequest {
+    kind: "window-text-click",
+    label: label.clone(),
+    screenshot_path: screenshot_artifact.source_path.clone(),
+    screenshot_dimensions: capture.dimensions.clone(),
+    capture_contract: capture.capture_contract.clone(),
+    query: Some(query.clone()),
+    strategy: Some("ocr-text".to_string()),
+    fallback_used: None,
+    cursor_disturbance: Some("warp-visible".to_string()),
+    press_mechanism: Some("pointer-click".to_string()),
+    overlay_presentation: overlay.then_some("dual-cursor-visual-only".to_string()),
+    action_point: logical_to_capture_pixel(&capture.capture_contract, logical_x, logical_y),
+    expected_target: Some(capture_pixel_to_logical(
+      &capture.capture_contract,
+      sx + anchor_offset_x,
+      sy + anchor_offset_y,
+    )),
+    ocr_match: Some(OverlayEvidenceMatch {
+      text: matched.text.clone(),
+      confidence: matched.confidence,
+      bounds: matched.bounds.clone(),
+    }),
+    row: None,
+    include_user_cursor: overlay,
+    auv_cursor_variant: "auv-click",
+  })?;
   let mut notes = text_notes(&capture, &query, &snapshot, filtered.len());
   notes.extend([
     format!("matchIndex={match_index}"),
@@ -295,8 +322,16 @@ pub(crate) fn click_window_text(call: &DriverCall) -> AuvResult<DriverResponse> 
     signals,
     notes,
     artifacts: match json_artifact {
-      Some(json_artifact) => vec![screenshot_artifact, report_artifact, json_artifact],
-      None => vec![screenshot_artifact, report_artifact],
+      Some(json_artifact) => {
+        let mut artifacts = vec![screenshot_artifact, report_artifact, json_artifact];
+        artifacts.append(&mut overlay_artifacts);
+        artifacts
+      }
+      None => {
+        let mut artifacts = vec![screenshot_artifact, report_artifact];
+        artifacts.append(&mut overlay_artifacts);
+        artifacts
+      }
     },
   })
 }
@@ -481,6 +516,30 @@ pub(crate) fn click_window_row(call: &DriverCall) -> AuvResult<DriverResponse> {
     "Captured row-detection report before clicking a resolved app window row.",
   )?;
   let screenshot_artifact = screenshot_artifact(&capture, &label, "window row click detection");
+  let mut overlay_artifacts = build_overlay_evidence_artifacts(OverlayEvidenceRequest {
+    kind: "window-row-click",
+    label: label.clone(),
+    screenshot_path: screenshot_artifact.source_path.clone(),
+    screenshot_dimensions: capture.dimensions.clone(),
+    capture_contract: capture.capture_contract.clone(),
+    query: None,
+    strategy: Some(detection.strategy.clone()),
+    fallback_used: None,
+    cursor_disturbance: Some("warp-visible".to_string()),
+    press_mechanism: Some("pointer-click".to_string()),
+    overlay_presentation: None,
+    action_point: logical_to_capture_pixel(&capture.capture_contract, logical_x, logical_y),
+    expected_target: Some(capture_pixel_to_logical(&capture.capture_contract, sx, sy)),
+    ocr_match: None,
+    row: Some(OverlayEvidenceRow {
+      row_index,
+      source: row.source.clone(),
+      bounds: row.bounds.clone(),
+      text_fragments: row.text_fragments.clone(),
+    }),
+    include_user_cursor: false,
+    auv_cursor_variant: "auv-click",
+  })?;
   let mut notes = row_notes(&capture, &detection, rows.len());
   notes.extend([
     format!("rowIndex={}", row_index + 1),
@@ -505,7 +564,11 @@ pub(crate) fn click_window_row(call: &DriverCall) -> AuvResult<DriverResponse> {
     )),
     signals: click_window_row_signals(row_index + 1, rows.len()),
     notes,
-    artifacts: vec![screenshot_artifact, report_artifact],
+    artifacts: {
+      let mut artifacts = vec![screenshot_artifact, report_artifact];
+      artifacts.append(&mut overlay_artifacts);
+      artifacts
+    },
   })
 }
 
@@ -645,19 +708,6 @@ pub(super) fn logical_point_for_match(
     sx,
     sy,
   )
-}
-
-fn screenshot_artifact(
-  capture: &CapturedObservation,
-  label: &str,
-  note_suffix: &str,
-) -> ProducedArtifact {
-  ProducedArtifact {
-    kind: "screenshot".to_string(),
-    source_path: capture.screenshot_path.clone(),
-    preferred_name: format!("{}.png", sanitize_file_component(label)),
-    note: Some(format!("Screenshot captured for {note_suffix}.")),
-  }
 }
 
 #[cfg(test)]

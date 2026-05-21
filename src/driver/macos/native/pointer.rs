@@ -1,6 +1,7 @@
 #[cfg(target_os = "macos")]
 use super::ffi::ffi::{
-  NativeActionResponse, click_point as native_click_point, scroll_point as native_scroll_point,
+  NativeActionResponse, NativeMouseLocationResponse, click_point as native_click_point,
+  current_mouse_location as native_current_mouse_location, scroll_point as native_scroll_point,
 };
 use crate::model::AuvResult;
 
@@ -34,9 +35,19 @@ pub(crate) fn scroll_point(x: f64, y: f64, delta_x: f64, delta_y: f64) -> AuvRes
   action_result("scroll_point", native_scroll_point(x, y, delta_x, delta_y))
 }
 
+#[cfg(target_os = "macos")]
+pub(crate) fn current_mouse_logical_point() -> AuvResult<(f64, f64)> {
+  mouse_location_result("current_mouse_location", native_current_mouse_location())
+}
+
 #[cfg(not(target_os = "macos"))]
 pub(crate) fn scroll_point(_x: f64, _y: f64, _delta_x: f64, _delta_y: f64) -> AuvResult<()> {
   Err("macOS native pointer scroll is unsupported on this target".to_string())
+}
+
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn current_mouse_logical_point() -> AuvResult<(f64, f64)> {
+  Err("macOS native mouse location is unsupported on this target".to_string())
 }
 
 #[cfg(target_os = "macos")]
@@ -44,6 +55,22 @@ fn action_result(operation: &str, response: NativeActionResponse) -> AuvResult<(
   super::error::native_result(
     operation,
     response.ok.then_some(()),
+    response.error_message,
+    response.recovery_hint,
+  )
+}
+
+#[cfg(target_os = "macos")]
+fn mouse_location_result(
+  operation: &str,
+  response: NativeMouseLocationResponse,
+) -> AuvResult<(f64, f64)> {
+  super::error::native_result(
+    operation,
+    response
+      .error_message
+      .is_none()
+      .then_some((response.x, response.y)),
     response.error_message,
     response.recovery_hint,
   )

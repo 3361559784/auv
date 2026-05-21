@@ -1,0 +1,473 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>auv inspect viewer</title>
+<style>
+  /* Design tokens copied from docs/design/colors_and_type.css. Kept inline so
+     the viewer is a single self-contained payload; if these drift, sync with
+     the canonical tokens in docs/design/. */
+  :root {
+    --shell: #0e1013;
+    --shell-2: #16181d;
+    --shell-3: #1e2127;
+    --shell-line: #2a2e36;
+    --fg: #e7e5dd;
+    --fg-2: #b8b6ad;
+    --fg-3: #7a7972;
+    --fg-4: #4f4e49;
+    --brand: #00c4d2;
+    --brand-strong: #009ba6;
+    --brand-soft: #cff4f7;
+    --validated: #2f7d4f;
+    --validated-soft: #dff0e3;
+    --validated-line: #b6d8be;
+    --candidate: #b46a14;
+    --candidate-soft: #fbecd3;
+    --candidate-line: #e8c990;
+    --boundary: #a73b41;
+    --boundary-soft: #f7dcde;
+    --boundary-line: #ebb1b4;
+    --frozen: #4a5462;
+    --frozen-soft: #e3e7ec;
+    --frozen-line: #c3cad3;
+    --running: #1f7d8c;
+    --running-soft: #d3eaee;
+    --running-line: #99ccd3;
+    --failed: #c0392b;
+    --failed-soft: #fadcd7;
+    --failed-line: #f0a99e;
+    --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    --font-sans: "Geist", ui-sans-serif, system-ui, -apple-system, sans-serif;
+    --font-ui: "Geist Mono", "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+  }
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: var(--shell);
+    color: var(--fg);
+    font-family: var(--font-sans);
+    overflow: hidden;
+  }
+  @keyframes auv-pulse {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.35; }
+  }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb { background: var(--shell-line); border-radius: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  button { font-family: inherit; }
+
+  /* Layout shell */
+  .shell {
+    width: 100%; height: 100vh;
+    display: flex; flex-direction: column;
+    background: var(--shell);
+  }
+  .top-bar {
+    height: 44px; flex: none;
+    background: var(--shell);
+    border-bottom: 1px solid var(--shell-line);
+    display: flex; align-items: center;
+    padding: 0 16px; gap: 14px;
+    color: var(--fg);
+  }
+  .top-bar .logo { width: 22px; height: 22px; image-rendering: pixelated; }
+  .top-bar .brand-name {
+    font-family: var(--font-mono); font-size: 13px; font-weight: 500;
+  }
+  .top-bar .crumb {
+    font-family: var(--font-mono); font-size: 12px; color: var(--fg-3);
+  }
+  .top-bar .spacer { flex: 1; }
+  .conn-pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    height: 22px; padding: 0 9px 0 7px; border-radius: 2px;
+    background: var(--shell-2);
+    border: 1px solid var(--running);
+    color: var(--running);
+    font-family: var(--font-ui); font-size: 12px; font-weight: 500;
+  }
+  .conn-pill.bad {
+    border-color: var(--failed);
+    color: var(--failed);
+  }
+  .conn-pill .dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: currentColor;
+  }
+  .conn-pill.live .dot { animation: auv-pulse 1.2s linear infinite; }
+  .conn-endpoint {
+    font-family: var(--font-mono); font-size: 11px; color: var(--fg-2);
+  }
+
+  /* Main split */
+  .main-split {
+    flex: 1; display: flex; overflow: hidden;
+  }
+  .sidebar {
+    width: 320px; flex: none;
+    background: var(--shell-2);
+    border-right: 1px solid var(--shell-line);
+    display: flex; flex-direction: column;
+    overflow: hidden;
+  }
+  .pane-header {
+    height: 32px; flex: none;
+    display: flex; align-items: center; gap: 10px;
+    padding: 0 16px;
+    border-bottom: 1px solid var(--shell-line);
+    background: var(--shell-2);
+  }
+  .pane-header .label {
+    font-family: var(--font-ui); font-size: 10px; letter-spacing: 0.8px;
+    text-transform: uppercase; font-weight: 600;
+    color: var(--fg-3);
+  }
+  .pane-header .spacer { flex: 1; }
+  .pane-header .right {
+    font-family: var(--font-mono); font-size: 11px; color: var(--fg-3);
+  }
+
+  .filter-chips {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--shell-line);
+    display: flex; gap: 6px; flex-wrap: wrap;
+  }
+  .chip {
+    font-family: var(--font-ui); font-size: 11px; font-weight: 500;
+    padding: 3px 8px; border-radius: 2px;
+    border: 1px solid var(--shell-line);
+    background: transparent; color: var(--fg-2);
+    cursor: pointer;
+  }
+  .chip.active {
+    border-color: var(--brand);
+    background: var(--brand);
+    color: #fff;
+  }
+
+  .run-list { overflow: auto; flex: 1; }
+  .run-row {
+    width: 100%; text-align: left;
+    background: transparent; border: 0;
+    border-bottom: 1px solid var(--shell-line);
+    border-left: 2px solid transparent;
+    color: var(--fg); cursor: pointer;
+    padding: 12px 14px;
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  .run-row:hover { background: var(--shell-3); }
+  .run-row.active {
+    background: var(--shell-3);
+    border-left-color: var(--brand);
+  }
+  .run-row .row-head {
+    display: flex; align-items: center; gap: 8px;
+  }
+  .run-row .row-id {
+    font-family: var(--font-mono); font-size: 12px;
+    color: var(--fg); line-height: 1.35;
+    word-break: break-all;
+  }
+  .run-row .row-summary {
+    font-family: var(--font-sans); font-size: 12px;
+    color: var(--fg-2); line-height: 1.4;
+  }
+  .run-row .row-meta {
+    font-family: var(--font-mono); font-size: 10px; color: var(--fg-3);
+    display: flex; gap: 12px;
+  }
+  .run-row .row-meta .right { margin-left: auto; }
+  .run-row.empty {
+    display: block; padding: 20px 16px;
+    color: var(--fg-3); font-family: var(--font-mono); font-size: 12px;
+  }
+
+  /* Status pill */
+  .status-pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    height: 20px; padding: 0 8px 0 6px; border-radius: 2px;
+    border: 1px solid currentColor;
+    background: transparent;
+    font-family: var(--font-ui); font-size: 11px; font-weight: 500;
+  }
+  .status-pill .dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: currentColor;
+  }
+  .status-pill.s-validated { color: var(--validated); }
+  .status-pill.s-running { color: var(--running); }
+  .status-pill.s-running .dot { animation: auv-pulse 1.2s linear infinite; }
+  .status-pill.s-failed { color: var(--failed); }
+  .status-pill.s-frozen { color: var(--frozen); }
+  .status-pill.s-candidate { color: var(--candidate); }
+
+  .run-type-chip {
+    font-family: var(--font-ui); font-size: 10px; font-weight: 500;
+    color: var(--fg-3); border: 1px solid var(--shell-line);
+    padding: 1px 6px; border-radius: 2px; letter-spacing: 0.4px;
+  }
+
+  /* Main pane */
+  .main {
+    flex: 1; min-width: 0;
+    display: flex; flex-direction: column;
+    background: var(--shell);
+  }
+  .placeholder {
+    flex: 1;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    color: var(--fg-3);
+    font-family: var(--font-mono); font-size: 13px;
+    gap: 14px;
+  }
+  .placeholder .sigil {
+    width: 28px; height: 28px; image-rendering: pixelated;
+    opacity: 0.6;
+  }
+  .placeholder code {
+    font-family: var(--font-mono); color: var(--fg-2);
+    background: var(--shell-2);
+    border: 1px solid var(--shell-line);
+    padding: 2px 6px; border-radius: 2px;
+  }
+</style>
+</head>
+<body>
+<div class="shell">
+  <div class="top-bar">
+    <!-- Logo mark — inlined from docs/design/assets/logo-mark.svg -->
+    <svg class="logo" viewBox="0 0 32 32" shape-rendering="crispEdges" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect x="2" y="2" width="28" height="28" fill="#0e1013"/>
+      <rect x="0" y="2" width="2" height="28" fill="#ffffff"/>
+      <rect x="30" y="2" width="2" height="28" fill="#ffffff"/>
+      <rect x="2" y="0" width="28" height="2" fill="#ffffff"/>
+      <rect x="2" y="30" width="28" height="2" fill="#ffffff"/>
+      <rect x="7" y="8" width="2" height="2" fill="#00c4d2"/>
+      <rect x="9" y="8" width="2" height="2" fill="#00c4d2"/>
+      <rect x="5" y="10" width="2" height="2" fill="#00c4d2"/>
+      <rect x="11" y="10" width="2" height="2" fill="#00c4d2"/>
+      <rect x="5" y="12" width="2" height="2" fill="#00c4d2"/>
+      <rect x="7" y="12" width="2" height="2" fill="#00c4d2"/>
+      <rect x="9" y="12" width="2" height="2" fill="#00c4d2"/>
+      <rect x="11" y="12" width="2" height="2" fill="#00c4d2"/>
+      <rect x="5" y="14" width="2" height="2" fill="#00c4d2"/>
+      <rect x="11" y="14" width="2" height="2" fill="#00c4d2"/>
+      <rect x="5" y="16" width="2" height="2" fill="#00c4d2"/>
+      <rect x="11" y="16" width="2" height="2" fill="#00c4d2"/>
+      <rect x="22" y="6" width="2" height="2" fill="#ffffff"/>
+      <rect x="20" y="8" width="2" height="2" fill="#ffffff"/>
+      <rect x="22" y="8" width="2" height="2" fill="#00e0e0"/>
+      <rect x="24" y="8" width="2" height="2" fill="#ffffff"/>
+      <rect x="22" y="10" width="2" height="2" fill="#ffffff"/>
+      <rect x="17" y="16" width="2" height="2" fill="#7fd030"/>
+      <rect x="23" y="16" width="2" height="2" fill="#7fd030"/>
+      <rect x="17" y="18" width="2" height="2" fill="#7fd030"/>
+      <rect x="23" y="18" width="2" height="2" fill="#7fd030"/>
+      <rect x="19" y="20" width="2" height="2" fill="#7fd030"/>
+      <rect x="21" y="20" width="2" height="2" fill="#7fd030"/>
+      <rect x="19" y="22" width="2" height="2" fill="#7fd030"/>
+      <rect x="21" y="22" width="2" height="2" fill="#7fd030"/>
+      <rect x="20" y="24" width="2" height="2" fill="#a0e020"/>
+    </svg>
+    <div class="brand-name">auv</div>
+    <div class="crumb">/ inspect viewer</div>
+    <div class="spacer"></div>
+    <div id="conn" class="conn-pill bad">
+      <span class="dot"></span>
+      <span id="conn-label">connecting</span>
+    </div>
+    <div class="conn-endpoint" id="conn-endpoint">—</div>
+  </div>
+
+  <div class="main-split">
+    <aside class="sidebar">
+      <div class="pane-header">
+        <span class="label">Runs · /runs</span>
+        <span class="spacer"></span>
+        <span class="right" id="run-count">—</span>
+      </div>
+      <div class="filter-chips">
+        <button class="chip active">all</button>
+      </div>
+      <div class="run-list" id="run-list">
+        <div class="run-row empty">loading runs…</div>
+      </div>
+    </aside>
+    <main class="main">
+      <div class="pane-header">
+        <span class="label" id="main-label">Run · —</span>
+        <span class="spacer"></span>
+      </div>
+      <div class="placeholder" id="placeholder">
+        <div>select a run from the sidebar.</div>
+        <div>this viewer reads <code>/runs</code> and renders the AUV trace contract.</div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  function el(tag, props, children) {
+    const node = document.createElement(tag);
+    if (props) {
+      for (const key in props) {
+        if (key === "className") node.className = props[key];
+        else if (key === "onClick") node.addEventListener("click", props[key]);
+        else if (key === "dataset") Object.assign(node.dataset, props[key]);
+        else node.setAttribute(key, props[key]);
+      }
+    }
+    if (children) for (const child of children) {
+      if (child == null) continue;
+      node.appendChild(typeof child === "string" ? document.createTextNode(child) : child);
+    }
+    return node;
+  }
+
+  function midTrunc(s, head, tail) {
+    head = head || 22; tail = tail || 8;
+    if (!s) return "";
+    if (s.length <= head + tail + 1) return s;
+    return s.slice(0, head) + "…" + s.slice(-tail);
+  }
+
+  function fmtDuration(startMs, endMs) {
+    if (endMs == null) return "—";
+    const ms = Math.max(0, endMs - startMs);
+    if (ms < 1000) return ms + "ms";
+    if (ms < 60000) return (ms / 1000).toFixed(2) + "s";
+    const s = Math.floor(ms / 1000);
+    return Math.floor(s / 60) + "m" + (s % 60) + "s";
+  }
+
+  function pillFor(statusCode, state) {
+    if (state === "running") return { cls: "s-running", label: "running" };
+    if (statusCode === "ok") return { cls: "s-validated", label: "ok" };
+    if (statusCode === "error") return { cls: "s-failed", label: "error" };
+    return { cls: "s-frozen", label: statusCode || "unset" };
+  }
+
+  function makeStatusPill(statusCode, state) {
+    const p = pillFor(statusCode, state);
+    return el("span", { className: "status-pill " + p.cls }, [
+      el("span", { className: "dot" }),
+      p.label,
+    ]);
+  }
+
+  function makeTypeChip(runType) {
+    return el("span", { className: "run-type-chip" }, [runType || "—"]);
+  }
+
+  function renderRun(run, isActive, onSelect) {
+    const headerRow = el("div", { className: "row-head" }, [
+      makeStatusPill(run.status_code, run.state),
+      makeTypeChip(run.run_type),
+    ]);
+    const idRow = el("div", { className: "row-id" }, [midTrunc(run.run_id, 24, 8)]);
+    const summary = el("div", { className: "row-summary" }, [run.summary || "—"]);
+    const meta = el("div", { className: "row-meta" }, [
+      el("span", null, [fmtDuration(run.started_at_millis, run.finished_at_millis)]),
+      el("span", { className: "right" }, [(run.run_type || "").toLowerCase()]),
+    ]);
+    const row = el(
+      "button",
+      {
+        className: "run-row" + (isActive ? " active" : ""),
+        dataset: { runId: run.run_id },
+        onClick: function () { onSelect(run.run_id); },
+      },
+      [headerRow, idRow, summary, meta]
+    );
+    return row;
+  }
+
+  const state = {
+    runs: [],
+    activeRunId: null,
+    fetchedAt: null,
+  };
+
+  function renderRunList() {
+    const list = document.getElementById("run-list");
+    list.innerHTML = "";
+    if (state.runs.length === 0) {
+      list.appendChild(el("div", { className: "run-row empty" }, ["no runs recorded yet."]));
+      return;
+    }
+    for (const run of state.runs) {
+      list.appendChild(renderRun(run, run.run_id === state.activeRunId, selectRun));
+    }
+    document.getElementById("run-count").textContent = state.runs.length;
+  }
+
+  function selectRun(runId) {
+    state.activeRunId = runId;
+    const active = state.runs.find(function (r) { return r.run_id === runId; });
+    document.getElementById("main-label").textContent =
+      active ? "Run · " + active.run_id : "Run · —";
+    // Span tree / events / artifacts come in C.2+. For C.1, the main pane
+    // just confirms selection routed through.
+    const placeholder = document.getElementById("placeholder");
+    if (active) {
+      placeholder.innerHTML = "";
+      placeholder.appendChild(el("div", null, [
+        "selected " + active.run_id + ".",
+      ]));
+      placeholder.appendChild(el("div", null, [
+        "span tree, events, and artifact panel land in a follow-on commit.",
+      ]));
+    }
+    renderRunList();
+  }
+
+  function setConnection(ok, endpoint) {
+    const pill = document.getElementById("conn");
+    const label = document.getElementById("conn-label");
+    const endpointNode = document.getElementById("conn-endpoint");
+    if (ok) {
+      pill.classList.remove("bad");
+      pill.classList.add("live");
+      label.textContent = "live";
+    } else {
+      pill.classList.remove("live");
+      pill.classList.add("bad");
+      label.textContent = "disconnected";
+    }
+    if (endpoint) endpointNode.textContent = endpoint;
+  }
+
+  async function loadRuns() {
+    try {
+      const response = await fetch("/runs");
+      if (!response.ok) throw new Error("HTTP " + response.status);
+      const runs = await response.json();
+      // Sort newest first by started_at_millis.
+      runs.sort(function (a, b) {
+        return (b.started_at_millis || 0) - (a.started_at_millis || 0);
+      });
+      state.runs = runs;
+      state.fetchedAt = Date.now();
+      setConnection(true, location.host + "/runs");
+      renderRunList();
+    } catch (err) {
+      setConnection(false, "/runs (" + err.message + ")");
+      const list = document.getElementById("run-list");
+      list.innerHTML = "";
+      list.appendChild(el("div", { className: "run-row empty" }, [
+        "failed to load /runs: " + err.message,
+      ]));
+    }
+  }
+
+  loadRuns();
+})();
+</script>
+</body>
+</html>

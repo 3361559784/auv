@@ -40,12 +40,20 @@ impl Default for InspectServeConfig {
   }
 }
 
+/// Single-payload HTML viewer served at `GET /`. Inlines CSS + JS + the
+/// pixel-art logo SVG; consumes the same `/runs` JSON contract any other
+/// client would. Visual tokens match `docs/design/colors_and_type.css`;
+/// when the canonical tokens drift, sync the inlined `:root` block in the
+/// embedded HTML.
+const VIEWER_HTML: &str = include_str!("inspect_server_viewer.html");
+
 pub fn router(store: LocalStore, event_sink: Arc<BroadcastRunEventSink>) -> Router {
   let state = InspectServerState {
     store: Arc::new(store),
     event_sink,
   };
   Router::new()
+    .route("/", get(serve_viewer))
     .route("/runs", get(list_runs))
     .route("/runs/{run_id}", get(get_run))
     .route("/runs/{run_id}/spans", get(get_spans))
@@ -54,6 +62,15 @@ pub fn router(store: LocalStore, event_sink: Arc<BroadcastRunEventSink>) -> Rout
     .route("/runs/{run_id}/artifacts/{artifact_id}", get(get_artifact))
     .route("/runs/{run_id}/stream", get(stream_run))
     .with_state(state)
+}
+
+async fn serve_viewer() -> Response {
+  let mut response = Body::from(VIEWER_HTML).into_response();
+  response.headers_mut().insert(
+    CONTENT_TYPE,
+    HeaderValue::from_static("text/html; charset=utf-8"),
+  );
+  response
 }
 
 pub async fn serve(
@@ -334,6 +351,53 @@ mod tests {
       .await
       .expect("body should read");
     assert_eq!(&artifact_body[..], b"artifact body");
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
+  async fn root_serves_inline_viewer_html() {
+    let root = temp_dir("inspect-server-viewer");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let app = router(store, Arc::new(BroadcastRunEventSink::new(16)));
+
+    let response = app
+      .oneshot(
+        Request::builder()
+          .uri("/")
+          .body(Body::empty())
+          .expect("request should build"),
+      )
+      .await
+      .expect("route should respond");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+      response
+        .headers()
+        .get("content-type")
+        .and_then(|value| value.to_str().ok()),
+      Some("text/html; charset=utf-8"),
+    );
+    let body = to_bytes(response.into_body(), usize::MAX)
+      .await
+      .expect("body should read");
+    let html = std::str::from_utf8(&body).expect("viewer payload should be utf-8");
+    // Sanity: payload starts with a doctype, references /runs, and includes
+    // the brand cyan token so it stays in sync with docs/design/.
+    assert!(
+      html.starts_with("<!doctype html>"),
+      "expected HTML5 doctype, got prefix {:?}",
+      &html[..32.min(html.len())]
+    );
+    assert!(
+      html.contains("/runs"),
+      "viewer payload should reference the /runs JSON endpoint"
+    );
+    assert!(
+      html.contains("--brand: #00c4d2"),
+      "viewer payload should inline the canonical brand token"
+    );
 
     let _ = fs::remove_dir_all(root);
   }

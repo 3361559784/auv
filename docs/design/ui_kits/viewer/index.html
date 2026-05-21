@@ -1,0 +1,73 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>auv inspect viewer — UI kit</title>
+<link rel="stylesheet" href="../../colors_and_type.css">
+<style>
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: #0e1013;
+    font-family: var(--auv-font-sans);
+    color: var(--auv-shell-fg);
+  }
+  #root { height: 100%; }
+  @keyframes auv-pulse {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.35; }
+  }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb { background: #2a2e36; border-radius: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script src="data.js"></script>
+<script type="text/babel" src="Layout.jsx"></script>
+<script type="text/babel" src="Sidebar.jsx"></script>
+<script type="text/babel" src="SpanTree.jsx"></script>
+<script type="text/babel" src="EventsRail.jsx"></script>
+<script type="text/babel" src="ArtifactPanel.jsx"></script>
+
+<script type="text/babel" data-presets="react">
+function App() {
+  const [activeRunId, setActiveRunId] = React.useState(AUV_RUNS[0].run_id);
+  const [selectedSpan, setSelectedSpan] = React.useState("s08");
+  const [selectedArt, setSelectedArt] = React.useState("a03");
+  const activeRun = AUV_RUNS.find(r => r.run_id === activeRunId);
+  const span = AUV_SPANS.find(s => s.id === selectedSpan);
+
+  return (
+    <Shell>
+      <TopBar connection="live"/>
+      <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
+        <Sidebar runs={AUV_RUNS} activeId={activeRunId} onSelect={setActiveRunId}/>
+        <main style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
+          <PaneHeader label={`Run · ${activeRun.run_id}`} right={
+            <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+              <span style={{ fontFamily: VIEWER_T.fontMono, fontSize: 11, color: VIEWER_T.fg3 }}>
+                {activeRun.run_type} · trace_id={activeRun.trace_id.slice(0, 12)}…
+              </span>
+              <Pill status_code={activeRun.status_code} state={activeRun.state}/>
+            </div>
+          }/>
+          <SpanTree spans={AUV_SPANS} selectedSpanId={selectedSpan} onSelect={setSelectedSpan}/>
+          <EventsRail events={AUV_EVENTS} span={span}/>
+        </main>
+        <ArtifactPanel artifacts={AUV_ARTIFACTS} selectedId={selectedArt} onSelect={setSelectedArt}/>
+      </div>
+    </Shell>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>

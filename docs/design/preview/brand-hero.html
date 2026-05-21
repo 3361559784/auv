@@ -1,0 +1,54 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><link rel="stylesheet" href="card.css"></head>
+<body><div class="card" style="padding:0; background:transparent;">
+
+  <!-- AIRI-inspired hero banner — dark rounded tile, mascot on the right,
+       speech bubble + accent decorations. AUV-specific tagline. -->
+  <div style="position:relative; border-radius:10px; overflow:hidden;
+              background:
+                radial-gradient(circle at 12% 20%, rgba(0,196,210,0.25), transparent 35%),
+                radial-gradient(circle at 92% 80%, rgba(127,208,48,0.15), transparent 40%),
+                #0e1013;
+              height:200px;
+              padding:18px 20px;
+              display:flex; align-items:stretch;">
+
+    <!-- Left column: logo tile + heading -->
+    <div style="display:flex; flex-direction:column; gap:12px; min-width:0; flex:1; z-index:2;">
+
+      <div style="display:flex; align-items:center; gap:10px;">
+        <div style="width:54px; height:54px; background:#16181d; border:2px solid #2a2e36; border-radius:8px; padding:5px; display:flex; align-items:center; justify-content:center; flex:none;">
+          <img src="../assets/logo-mark.svg" alt="" style="width:100%; height:100%; image-rendering:pixelated; display:block;">
+        </div>
+        <img src="../assets/accent-star.svg" alt="" style="width:18px; height:18px; image-rendering:pixelated; margin-top:-30px;">
+      </div>
+
+      <div style="font-family:var(--auv-font-sans); font-size:30px; font-weight:600; color:#fbf8f3; letter-spacing:-0.02em; line-height:1.05;">Project AUV</div>
+      <div style="font-family:var(--auv-font-sans); font-size:13px; color:#b8b6ad; line-height:1.45; max-width:320px;">An inspectable, replayable runtime for application UI workflows — recorded as recipes, validated through case matrices, frozen into skill bundles.</div>
+    </div>
+
+    <!-- Right: mascot + speech bubble + accents -->
+    <div style="position:relative; width:240px; flex:none; z-index:2;">
+      <!-- speech bubble (above mascot left) -->
+      <div style="position:absolute; left:-50px; top:36px; background:#16181d; border:1px solid #2a2e36; border-radius:14px; padding:6px 14px; font-family:var(--auv-font-mono); font-size:11px; color:#e7e5dd; white-space:nowrap;">
+        run.started · trace_id=4b9e2c...
+      </div>
+      <!-- bandage accent -->
+      <img src="../assets/accent-bandage.svg" alt="" style="position:absolute; left:-20px; top:88px; width:24px; height:24px; image-rendering:pixelated;">
+      <!-- heart accent -->
+      <img src="../assets/accent-heart.svg" alt="" style="position:absolute; left:160px; top:120px; width:18px; height:18px; image-rendering:pixelated;">
+      <!-- star accent -->
+      <img src="../assets/accent-star.svg" alt="" style="position:absolute; left:78px; top:6px; width:20px; height:20px; image-rendering:pixelated;">
+
+      <!-- mascot (anchored bottom-right) -->
+      <img src="../assets/sprite-inspector.svg" alt="" style="position:absolute; right:0; bottom:-18px; width:170px; height:auto; image-rendering:pixelated;">
+    </div>
+
+    <!-- Dotted texture left edge -->
+    <div style="position:absolute; left:0; top:0; width:80%; height:100%; opacity:0.18; pointer-events:none;
+                background-image: radial-gradient(circle, #e7e5dd 1px, transparent 1px);
+                background-size: 8px 8px;
+                z-index:1;"></div>
+  </div>
+
+</div></body></html>

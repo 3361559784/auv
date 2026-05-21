@@ -1,0 +1,371 @@
+/* ============================================================
+   AUV Design System — Foundations
+   ------------------------------------------------------------
+   Source: github.com/moeru-ai/auv (Rust CLI; macOS automation,
+   recipe/skill/bundle inspection; planned browser viewer).
+   ============================================================ */
+
+/* ---------- Webfonts -------------------------------------- */
+/* Geist + Geist Mono + JetBrains Mono + Silkscreen (pixel display).
+   All open-licensed. Silkscreen is the moeru-ai pixel-art accent. */
+@import url("https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600;700&family=Silkscreen:wght@400;700&display=swap");
+
+:root {
+  /* ============================================================
+     COLORS — ink palette
+     ------------------------------------------------------------
+     AUV is a CLI / inspect-viewer product. The palette is built
+     for terminals first and a future browser viewer second.
+     Light + dark surfaces both ship; status colors are shared.
+     ============================================================ */
+
+  /* Neutrals — ink scale (light) */
+  --auv-paper:        #f6f5f1;   /* page bg */
+  --auv-paper-2:      #efeee8;   /* recessed bg, hairline cards */
+  --auv-paper-3:      #e6e4dc;   /* dividers, subtle wells */
+  --auv-paper-line:   #d8d5cb;   /* 1px hairline borders */
+
+  --auv-ink:          #15171a;   /* primary text */
+  --auv-ink-2:        #2c2f34;   /* secondary text */
+  --auv-ink-3:        #5a5e66;   /* tertiary, meta */
+  --auv-ink-4:        #8a8e96;   /* placeholder, muted meta */
+
+  /* Neutrals — ink scale (dark / terminal) */
+  --auv-shell:        #0e1013;   /* deepest, terminal bg */
+  --auv-shell-2:      #16181d;   /* card bg on dark */
+  --auv-shell-3:      #1e2127;   /* recessed inside dark card */
+  --auv-shell-line:   #2a2e36;   /* dark hairlines */
+
+  --auv-shell-fg:     #e7e5dd;   /* primary text on dark */
+  --auv-shell-fg-2:   #b8b6ad;
+  --auv-shell-fg-3:   #7a7972;
+  --auv-shell-fg-4:   #4f4e49;
+
+  /* Brand — moeru-ai cyan + lime.
+     AUV is a Moeru AI project (github.com/moeru-ai); the org logo is
+     pixel-art with two dominant hues: a deep aqua 霆え (moe) and a lime
+     green AI. Both are exposed; cyan is the primary action color, lime
+     is paired for accents (sparkles, validated highlights). */
+  --auv-brand:        #00c4d2;   /* primary brand — moeru cyan */
+  --auv-brand-strong: #009ba6;   /* pressed */
+  --auv-brand-soft:   #cff4f7;   /* tint surface */
+  --auv-brand-line:   #8de1e8;   /* tinted border */
+  --auv-brand-bright: #00e0e0;   /* bright accent / hero only */
+  --auv-brand-pastel: #b8e5ea;   /* mascot hair · AIRI-aligned sky cyan */
+
+  /* Mascot accent hues (AIRI alignment) — pixel mascots only */
+  --auv-mascot-pink:  #f7bdd0;   /* hearts, sleepy logo fills */
+  --auv-mascot-star:  #f5d046;   /* yellow star/sparkle accents */
+  --auv-mascot-tie:   #ffd042;   /* uniform tie / hair clip */
+  --auv-mascot-band:  #5a6270;   /* bandage gray */
+
+  --auv-brand-2:        #7fd030;   /* secondary brand — moeru lime */
+  --auv-brand-2-strong: #5fa820;   /* pressed */
+  --auv-brand-2-soft:   #e8f6d2;   /* tint surface */
+  --auv-brand-2-line:   #b8e07f;   /* tinted border */
+  --auv-brand-2-bright: #a0e020;   /* bright accent */
+
+  /* Status — the AUV phase-1 vocabulary, color-coded.
+     These names match what shows up in recipe + bundle JSON. */
+  --auv-validated:        #2f7d4f;   /* validated case / skill */
+  --auv-validated-soft:   #dff0e3;
+  --auv-validated-line:   #b6d8be;
+
+  --auv-candidate:        #b46a14;   /* candidate / pending */
+  --auv-candidate-soft:   #fbecd3;
+  --auv-candidate-line:   #e8c990;
+
+  --auv-boundary:         #a73b41;   /* not-validated / boundary */
+  --auv-boundary-soft:    #f7dcde;
+  --auv-boundary-line:    #ebb1b4;
+
+  --auv-frozen:           #4a5462;   /* phase-1 frozen, locked */
+  --auv-frozen-soft:      #e3e7ec;
+  --auv-frozen-line:      #c3cad3;
+
+  --auv-running:          #1f7d8c;   /* live, streaming, running */
+  --auv-running-soft:     #d3eaee;
+  --auv-running-line:     #99ccd3;
+
+  --auv-failed:           #c0392b;   /* run.status = failed */
+  --auv-failed-soft:      #fadcd7;
+  --auv-failed-line:      #f0a99e;
+
+  /* Disturbance scale — ordered ladder, used on chips next to recipes.
+     Matches src/model.rs DisturbanceClass: none → pointer. */
+  --auv-dist-none:           #6b7280;
+  --auv-dist-focus:          #2563a8;
+  --auv-dist-foreground:     #1f7d8c;
+  --auv-dist-keyboard:       #5a7e3a;
+  --auv-dist-clipboard:      #b46a14;
+  --auv-dist-pointer:        #a73b41;
+
+  /* ============================================================
+     TYPE — primary stacks
+     ============================================================ */
+  --auv-font-sans:    "Geist", ui-sans-serif, system-ui, -apple-system, "Helvetica Neue", sans-serif;
+  --auv-font-mono:    "JetBrains Mono", "Geist Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --auv-font-mono-ui: "Geist Mono", "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --auv-font-pixel:   "Silkscreen", ui-monospace, "Courier New", monospace;
+
+  /* Type scale — anchored to 16px body, mono-leaning */
+  --auv-fs-micro:   11px;   /* status sigils, meta */
+  --auv-fs-xs:      12px;   /* chip text, table meta */
+  --auv-fs-sm:      13px;   /* terminal default */
+  --auv-fs-body:    15px;   /* prose body */
+  --auv-fs-lg:      17px;   /* lead paragraphs, span names */
+  --auv-fs-h4:      20px;
+  --auv-fs-h3:      24px;
+  --auv-fs-h2:      32px;
+  --auv-fs-h1:      44px;
+  --auv-fs-display: 64px;   /* hero, only in marketing surfaces */
+
+  --auv-lh-tight:   1.15;
+  --auv-lh-snug:    1.35;
+  --auv-lh-body:    1.55;
+  --auv-lh-loose:   1.7;
+
+  --auv-tracking-tight:  -0.012em;
+  --auv-tracking-normal:  0;
+  --auv-tracking-meta:    0.04em;
+  --auv-tracking-caps:    0.08em;
+
+  /* ============================================================
+     SPACING / RADII / SHADOWS / MOTION
+     ============================================================ */
+  --auv-space-0:  0;
+  --auv-space-1:  4px;
+  --auv-space-2:  8px;
+  --auv-space-3:  12px;
+  --auv-space-4:  16px;
+  --auv-space-5:  20px;
+  --auv-space-6:  24px;
+  --auv-space-8:  32px;
+  --auv-space-10: 40px;
+  --auv-space-12: 48px;
+  --auv-space-16: 64px;
+
+  /* Radii — restrained, hardware-feeling. No pill cards. */
+  --auv-radius-0:  0;
+  --auv-radius-1:  2px;   /* pills, chips */
+  --auv-radius-2:  4px;   /* inputs, small buttons */
+  --auv-radius-3:  6px;   /* cards */
+  --auv-radius-4:  8px;   /* large cards */
+  --auv-radius-full: 999px;
+
+  /* Borders */
+  --auv-border-hair: 1px solid var(--auv-paper-line);
+  --auv-border-hair-dark: 1px solid var(--auv-shell-line);
+
+  /* Shadows — used sparingly. Most surfaces are flat-with-hairline. */
+  --auv-shadow-0: none;
+  --auv-shadow-1: 0 1px 0 rgba(20,22,26,0.04), 0 1px 2px rgba(20,22,26,0.06);
+  --auv-shadow-2: 0 2px 4px rgba(20,22,26,0.06), 0 4px 12px rgba(20,22,26,0.08);
+  --auv-shadow-pop: 0 8px 24px rgba(20,22,26,0.10), 0 2px 6px rgba(20,22,26,0.06);
+
+  /* Motion — short, linear, no bouncing. This is a forensic tool. */
+  --auv-ease:        cubic-bezier(0.2, 0.0, 0.2, 1);
+  --auv-dur-fast:    80ms;
+  --auv-dur:         140ms;
+  --auv-dur-slow:    220ms;
+}
+
+/* ============================================================
+   SEMANTIC ELEMENTS
+   ============================================================ */
+body, .auv-prose {
+  font-family: var(--auv-font-sans);
+  font-size: var(--auv-fs-body);
+  line-height: var(--auv-lh-body);
+  color: var(--auv-ink);
+  background: var(--auv-paper);
+  font-feature-settings: "ss01", "ss03", "cv11";
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+h1, .auv-h1 {
+  font-family: var(--auv-font-sans);
+  font-weight: 500;
+  font-size: var(--auv-fs-h1);
+  line-height: var(--auv-lh-tight);
+  letter-spacing: var(--auv-tracking-tight);
+  color: var(--auv-ink);
+  margin: 0;
+}
+h2, .auv-h2 {
+  font-family: var(--auv-font-sans);
+  font-weight: 500;
+  font-size: var(--auv-fs-h2);
+  line-height: var(--auv-lh-snug);
+  letter-spacing: var(--auv-tracking-tight);
+  color: var(--auv-ink);
+  margin: 0;
+}
+h3, .auv-h3 {
+  font-family: var(--auv-font-sans);
+  font-weight: 500;
+  font-size: var(--auv-fs-h3);
+  line-height: var(--auv-lh-snug);
+  color: var(--auv-ink);
+  margin: 0;
+}
+h4, .auv-h4 {
+  font-family: var(--auv-font-mono-ui);
+  font-weight: 500;
+  font-size: var(--auv-fs-h4);
+  line-height: var(--auv-lh-snug);
+  color: var(--auv-ink);
+  margin: 0;
+}
+
+p, .auv-p {
+  font-family: var(--auv-font-sans);
+  font-size: var(--auv-fs-body);
+  line-height: var(--auv-lh-body);
+  color: var(--auv-ink-2);
+  text-wrap: pretty;
+  margin: 0;
+}
+
+/* "Meta" — the tiny uppercase labels above ids, versions, dates */
+.auv-meta {
+  font-family: var(--auv-font-mono-ui);
+  font-size: var(--auv-fs-micro);
+  font-weight: 500;
+  letter-spacing: var(--auv-tracking-caps);
+  text-transform: uppercase;
+  color: var(--auv-ink-3);
+}
+
+/* IDs — recipe ids, run ids, bundle ids. */
+.auv-id, code, kbd, samp {
+  font-family: var(--auv-font-mono);
+  font-size: 0.92em;
+  font-weight: 400;
+  color: var(--auv-ink);
+}
+code {
+  background: var(--auv-paper-2);
+  border: 1px solid var(--auv-paper-line);
+  border-radius: var(--auv-radius-1);
+  padding: 1px 5px;
+}
+
+/* Code block / terminal */
+pre, .auv-code, .auv-terminal {
+  font-family: var(--auv-font-mono);
+  font-size: var(--auv-fs-sm);
+  line-height: var(--auv-lh-snug);
+  color: var(--auv-shell-fg);
+  background: var(--auv-shell);
+  border: 1px solid var(--auv-shell-line);
+  border-radius: var(--auv-radius-3);
+  padding: var(--auv-space-4) var(--auv-space-5);
+  overflow: auto;
+  margin: 0;
+}
+
+/* Status pill — the core AUV vocabulary chip. Use everywhere. */
+.auv-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 20px;
+  padding: 0 8px 0 6px;
+  border-radius: var(--auv-radius-1);
+  font-family: var(--auv-font-mono-ui);
+  font-size: var(--auv-fs-xs);
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  border: 1px solid transparent;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.auv-status::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  display: inline-block;
+  flex: none;
+}
+.auv-status--validated  { color: var(--auv-validated);  background: var(--auv-validated-soft);  border-color: var(--auv-validated-line); }
+.auv-status--candidate  { color: var(--auv-candidate);  background: var(--auv-candidate-soft);  border-color: var(--auv-candidate-line); }
+.auv-status--boundary   { color: var(--auv-boundary);   background: var(--auv-boundary-soft);   border-color: var(--auv-boundary-line); }
+.auv-status--frozen     { color: var(--auv-frozen);     background: var(--auv-frozen-soft);     border-color: var(--auv-frozen-line); }
+.auv-status--running    { color: var(--auv-running);    background: var(--auv-running-soft);    border-color: var(--auv-running-line); }
+.auv-status--failed     { color: var(--auv-failed);     background: var(--auv-failed-soft);     border-color: var(--auv-failed-line); }
+.auv-status--running::before { animation: auv-pulse 1.2s var(--auv-ease) infinite; }
+
+@keyframes auv-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.35; }
+}
+
+/* Buttons */
+.auv-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 14px;
+  border-radius: var(--auv-radius-2);
+  font-family: var(--auv-font-mono-ui);
+  font-size: var(--auv-fs-sm);
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  border: 1px solid var(--auv-ink);
+  background: var(--auv-ink);
+  color: var(--auv-paper);
+  cursor: pointer;
+  transition: background var(--auv-dur) var(--auv-ease),
+              border-color var(--auv-dur) var(--auv-ease),
+              color var(--auv-dur) var(--auv-ease),
+              transform var(--auv-dur-fast) var(--auv-ease);
+}
+.auv-btn:hover  { background: #000; }
+.auv-btn:active { transform: translateY(0.5px); }
+
+.auv-btn--ghost {
+  background: transparent;
+  color: var(--auv-ink);
+  border-color: var(--auv-paper-line);
+}
+.auv-btn--ghost:hover {
+  background: var(--auv-paper-2);
+  border-color: var(--auv-ink-4);
+}
+
+.auv-btn--brand {
+  background: var(--auv-brand);
+  border-color: var(--auv-brand);
+  color: #fff;
+}
+.auv-btn--brand:hover { background: var(--auv-brand-strong); border-color: var(--auv-brand-strong); }
+
+/* Card — flat hairline, no shadow by default */
+.auv-card {
+  background: var(--auv-paper);
+  border: 1px solid var(--auv-paper-line);
+  border-radius: var(--auv-radius-3);
+}
+
+/* Boundary callout — used for "do not pretend X" notes */
+.auv-callout--boundary {
+  border-left: 2px solid var(--auv-boundary);
+  background: var(--auv-boundary-soft);
+  padding: var(--auv-space-3) var(--auv-space-4);
+  font-family: var(--auv-font-sans);
+  font-size: var(--auv-fs-sm);
+  color: var(--auv-ink);
+}
+.auv-callout--frozen {
+  border-left: 2px solid var(--auv-frozen);
+  background: var(--auv-frozen-soft);
+  padding: var(--auv-space-3) var(--auv-space-4);
+  font-family: var(--auv-font-sans);
+  font-size: var(--auv-fs-sm);
+  color: var(--auv-ink);
+}

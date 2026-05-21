@@ -1,0 +1,168 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>auv-cli — UI kit (print)</title>
+<link rel="stylesheet" href="../../colors_and_type.css">
+<style>
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    background: #0e1013;
+    font-family: var(--auv-font-sans);
+    color: var(--auv-shell-fg);
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  @keyframes auv-pulse {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.35; }
+  }
+
+  .print-page {
+    width: 100%;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    background: #efeee8;
+    padding: 32px 40px 40px;
+    break-before: page;
+    break-inside: avoid;
+  }
+  .print-page:first-child { break-before: auto; }
+
+  .print-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+  .print-header img { height: 32px; width: auto; }
+  .print-label {
+    font-family: var(--auv-font-mono-ui);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.10em;
+    text-transform: uppercase;
+    color: var(--auv-ink-3);
+  }
+  .print-tab {
+    font-family: var(--auv-font-mono);
+    font-size: 13px;
+    color: var(--auv-ink-2);
+    margin-left: auto;
+  }
+
+  .terminal-wrap {
+    border-radius: 10px;
+    overflow: hidden;
+    background: #0e1013;
+    border: 1px solid #000;
+    box-shadow: 0 16px 40px rgba(0,0,0,0.30);
+    flex: 1;
+  }
+  .terminal-titlebar {
+    height: 28px;
+    background: linear-gradient(#3a3d44, #2c2f35);
+    border-bottom: 1px solid #000;
+    display: flex;
+    align-items: center;
+    padding: 0 14px;
+    position: relative;
+  }
+  .tl { display: flex; gap: 8px; }
+  .tl span {
+    width: 12px; height: 12px; border-radius: 50%;
+    box-shadow: inset 0 0 0 0.5px rgba(0,0,0,0.25);
+  }
+  .terminal-title {
+    position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    pointer-events: none;
+    color: #d6d6d6;
+    font-family: var(--auv-font-sans);
+    font-size: 12px;
+    font-weight: 500;
+  }
+  .terminal-body {
+    background: #0e1013;
+    color: #e7e5dd;
+    font-family: var(--auv-font-mono);
+    font-size: 12px;
+    line-height: 1.65;
+    padding: 16px 20px 24px;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  @media print {
+    @page { size: A4 landscape; margin: 0.5cm; }
+    body { background: #0e1013 !important; }
+    .print-page { min-height: unset; }
+  }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script src="tokens.js"></script>
+<script type="text/babel" src="Terminal.jsx"></script>
+<script type="text/babel" src="Prompt.jsx"></script>
+<script type="text/babel" src="Sessions.jsx"></script>
+
+<script type="text/babel" data-presets="react">
+
+const SESSIONS = [
+  { title: "auv — skill cases report",  tab: "coverage report · macos.qqmusic.play_visible_anchor.v0", body: <SessionCasesReport/> },
+  { title: "auv — skill run --dry-run", tab: "recipe dry-run · play_visible_anchor.v0", body: <SessionDryRun/> },
+  { title: "auv — inspect <run_id>",    tab: "inspect failed run · run_1778945002311_67885_1", body: <SessionInspect/> },
+];
+
+function PrintPage({ session, idx }) {
+  return (
+    <div className="print-page">
+      <div className="print-header">
+        <img src="../../assets/logo-wordmark.svg" alt="auv" style={{imageRendering:"pixelated"}}/>
+        <span className="print-label">UI kit · CLI surface</span>
+        <span className="print-tab">{idx + 1} / {SESSIONS.length} · {session.tab}</span>
+      </div>
+      <div className="terminal-wrap">
+        <div className="terminal-titlebar">
+          <div className="tl">
+            <span style={{background:"#ff5f57"}}/>
+            <span style={{background:"#febc2e"}}/>
+            <span style={{background:"#28c840"}}/>
+          </div>
+          <div className="terminal-title">{session.title}</div>
+        </div>
+        <div className="terminal-body">
+          {session.body}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PrintApp() {
+  return (
+    <>
+      {SESSIONS.map((s, i) => <PrintPage key={i} session={s} idx={i}/>)}
+    </>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<PrintApp/>);
+
+// Auto-print after Babel + fonts load
+document.fonts.ready.then(() => {
+  setTimeout(() => window.print(), 500);
+});
+</script>
+</body>
+</html>

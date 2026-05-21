@@ -1,0 +1,174 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  html, body { margin:0; background:transparent; font-family: var(--auv-font-sans); color: var(--auv-ink); }
+  .frame {
+    box-sizing: border-box;
+    background: #f8f6f1;
+    border-radius: 14px;
+    overflow: hidden;
+    border: 1px solid #e6e4dc;
+    box-shadow: 0 12px 32px rgba(20,22,26,0.08);
+    margin: 10px;
+  }
+  /* macOS-y titlebar */
+  .tb {
+    background: linear-gradient(#ecebe5, #e3e0d8);
+    height: 36px;
+    display: flex; align-items: center;
+    padding: 0 12px; gap: 10px;
+    border-bottom: 1px solid #d8d5cb;
+  }
+  .tl { display:flex; gap:6px; }
+  .tl span { width:11px; height:11px; border-radius:50%; }
+  .tab {
+    background: #f8f6f1;
+    border-radius: 8px 8px 0 0;
+    padding: 5px 14px 7px;
+    display: flex; align-items: center; gap:8px;
+    margin-bottom: -1px; height: 28px;
+    border: 1px solid #d8d5cb; border-bottom: 0;
+    font-family: var(--auv-font-sans);
+    font-size: 12px; font-weight: 500; color: #15171a;
+  }
+  .urlbar {
+    background:#f1efe8; border:1px solid #e0ddd3; border-radius:8px;
+    margin: 12px 16px 14px;
+    padding: 7px 12px;
+    font-family: var(--auv-font-mono); font-size: 11.5px; color:#5a5e66;
+    display:flex; align-items:center; gap:10px;
+  }
+  .nav { color:#8a8e96; font-size:14px; display:flex; gap:6px; }
+
+  .body { padding: 0 18px 22px; }
+  .steps { display:flex; align-items:center; gap:14px; padding: 6px 0 16px; font-family: var(--auv-font-sans); font-size:13px; }
+  .step { display:flex; align-items:center; gap:8px; color:#8a8e96; }
+  .step.active { color:#15171a; font-weight:500; }
+  .step .n { width:18px; height:18px; border-radius:50%; background:#e6e4dc; color:#8a8e96; display:inline-flex; align-items:center; justify-content:center; font-family:var(--auv-font-mono); font-size:10.5px; font-weight:600; }
+  .step.active .n { background:#15171a; color:#fbf8f3; }
+  .step .bar { width:36px; height:1px; background:#d8d5cb; }
+
+  .row-card {
+    background: #fbfaf6;
+    border:1px solid #e0ddd3;
+    border-radius: 10px;
+    padding: 14px 16px;
+    display:flex; align-items:center; gap:14px;
+    position:relative;
+  }
+  .thumb {
+    width: 64px; height: 64px;
+    background: linear-gradient(135deg, #f9d3a0 0%, #f6a6a8 60%, #ef879d 100%);
+    border-radius: 8px;
+    display:flex; align-items:center; justify-content:center;
+    color:#15171a; font-family:var(--auv-font-mono); font-size:10px;
+    border: 1px solid #ecc695;
+  }
+  .meta { display:flex; flex-direction:column; gap:2px; min-width:0; flex:1; }
+  .title { font-family:var(--auv-font-sans); font-size:15px; font-weight:600; color:#15171a; }
+  .sub { font-family:var(--auv-font-sans); font-size:12px; color:#5a5e66; }
+  .price { font-family:var(--auv-font-sans); font-size:13px; font-weight:500; color:#15171a; margin-top:2px; }
+
+  .btn-primary {
+    background:#15171a; color:#fbf8f3; border:0;
+    border-radius:8px;
+    padding:0 16px; height:36px;
+    font-family: var(--auv-font-sans); font-size:13px; font-weight:500;
+    cursor:default;
+  }
+
+  /* cursor stack: each has a label tag */
+  .cursor {
+    position: absolute;
+    width: 22px; height: 22px;
+    image-rendering: pixelated;
+    pointer-events: none;
+  }
+  .cursor-tag {
+    position: absolute;
+    transform: translate(14px, 14px);
+    padding: 3px 8px;
+    border-radius: 999px;
+    font-family: var(--auv-font-mono);
+    font-size: 11px; font-weight: 600;
+    color: #ffffff;
+    white-space: nowrap;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.18);
+  }
+  .cursor-tag.auv   { background: #009ba6; }
+  .cursor-tag.auv::after,
+  .cursor-tag.you::after {
+    content: ""; position:absolute; left:-3px; top:6px;
+    border:5px solid transparent;
+    border-right-color: currentColor;
+    opacity: 0;
+  }
+  .cursor-tag.you   { background: #2a3a52; }
+
+  .cursor-meta {
+    position:absolute;
+    transform: translate(14px, 38px);
+    font-family: var(--auv-font-mono);
+    font-size: 10px; color: #5a5e66;
+    background: rgba(255,255,255,0.85);
+    border: 1px solid #e0ddd3;
+    padding: 2px 6px;
+    border-radius: 4px;
+    white-space: nowrap;
+  }
+</style>
+</head>
+<body>
+
+<div class="frame" style="width: 760px;">
+
+  <div class="tb">
+    <div class="tl">
+      <span style="background:#ff5f57"></span>
+      <span style="background:#febc2e"></span>
+      <span style="background:#28c840"></span>
+    </div>
+    <div class="tab">
+      <img src="../assets/logo-mark.svg" alt="" style="width:14px; height:14px; image-rendering:pixelated;">
+      Returns
+      <span style="color:#8a8e96; font-size:12px;">×</span>
+    </div>
+  </div>
+
+  <div class="urlbar">
+    <span class="nav">← → ↻</span>
+    <span style="color:#15171a;">clawdshop.com/orders</span>
+  </div>
+
+  <div class="body">
+    <div class="steps">
+      <div class="step active"><span class="n">1</span> Start a return</div>
+      <div class="bar"></div>
+      <div class="step"><span class="n">2</span> Select reason</div>
+      <div class="bar"></div>
+      <div class="step"><span class="n">3</span> Confirmation</div>
+    </div>
+
+    <div class="row-card">
+      <div class="thumb">img</div>
+      <div class="meta">
+        <div class="title">Wireless Headphones Pro</div>
+        <div class="sub">Order #8294-1847 · Delivered Jan 28</div>
+        <div class="price">$79.99</div>
+      </div>
+      <button class="btn-primary" id="cta">Start return</button>
+
+      <!-- AUV (replay) cursor — over the Start return button -->
+      <img class="cursor" src="../assets/cursor-auv-click.svg" alt="" style="right: 36px; top: 22px;">
+      <div class="cursor-tag auv" style="right: -6px; top: 38px;">auv · replay</div>
+      <div class="cursor-meta" style="right: -6px; top: 60px;">step_id=double-click-row-anchor · disturbance=pointer</div>
+
+      <!-- YOU cursor — drifting in the body -->
+      <img class="cursor" src="../assets/cursor-you.svg" alt="" style="left: 50%; bottom: -32px;">
+      <div class="cursor-tag you" style="left: 56%; bottom: -42px;">you</div>
+    </div>
+  </div>
+
+</div>
+</body></html>

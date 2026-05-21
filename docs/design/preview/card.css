@@ -1,0 +1,131 @@
+/* Card-shell stylesheet for every preview/*.html.
+   Keep cards visually identical so the Design System tab grid feels uniform. */
+@import url("../colors_and_type.css");
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+}
+body {
+  font-family: var(--auv-font-sans);
+  color: var(--auv-ink);
+}
+.card {
+  box-sizing: border-box;
+  background: var(--auv-paper);
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 100%;
+}
+.card--shell {
+  background: var(--auv-shell);
+  color: var(--auv-shell-fg);
+}
+.card--shell .meta { color: var(--auv-shell-fg-3); }
+
+.meta {
+  font-family: var(--auv-font-mono-ui);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  color: var(--auv-ink-3);
+}
+.row { display: flex; align-items: center; gap: 12px; }
+.col { display: flex; flex-direction: column; }
+.spacer { flex: 1; }
+
+.swatch {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.swatch__chip {
+  width: 100%;
+  height: 56px;
+  border-radius: 4px;
+  border: 1px solid rgba(20,22,26,0.08);
+}
+.swatch__name {
+  font-family: var(--auv-font-mono);
+  font-size: 11px;
+  color: var(--auv-ink-2);
+  line-height: 1.2;
+}
+.swatch__hex {
+  font-family: var(--auv-font-mono);
+  font-size: 11px;
+  color: var(--auv-ink-3);
+  line-height: 1.2;
+}
+.swatch__row {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(var(--cols, 6), 1fr);
+}
+
+/* Status pill (mirrors colors_and_type.css spec, restated for card files
+   that include only this stylesheet) */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 9px 0 7px;
+  border-radius: 2px;
+  font-family: var(--auv-font-mono-ui);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+.pill::before {
+  content: "";
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.pill--validated { color: var(--auv-validated); background: var(--auv-validated-soft); border-color: var(--auv-validated-line); }
+.pill--candidate { color: var(--auv-candidate); background: var(--auv-candidate-soft); border-color: var(--auv-candidate-line); }
+.pill--boundary  { color: var(--auv-boundary);  background: var(--auv-boundary-soft);  border-color: var(--auv-boundary-line); }
+.pill--frozen    { color: var(--auv-frozen);    background: var(--auv-frozen-soft);    border-color: var(--auv-frozen-line); }
+.pill--running   { color: var(--auv-running);   background: var(--auv-running-soft);   border-color: var(--auv-running-line); }
+.pill--failed    { color: var(--auv-failed);    background: var(--auv-failed-soft);    border-color: var(--auv-failed-line); }
+.pill--running::before { animation: auv-pulse 1.2s cubic-bezier(0.2,0,0.2,1) infinite; }
+
+/* Disturbance chip — a thinner mono chip, smaller dot */
+.dist {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 18px;
+  padding: 0 7px;
+  border: 1px solid var(--auv-paper-line);
+  background: var(--auv-paper-2);
+  border-radius: 2px;
+  font-family: var(--auv-font-mono);
+  font-size: 11px;
+  color: var(--auv-ink-2);
+}
+.dist::before {
+  content: "";
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--c, var(--auv-ink-3));
+}
+
+.kv {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 14px;
+  font-family: var(--auv-font-mono);
+  font-size: 12px;
+  color: var(--auv-ink-2);
+}
+.kv dt { color: var(--auv-ink-4); }
+.kv dd { margin: 0; color: var(--auv-ink); }

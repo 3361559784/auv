@@ -1,0 +1,88 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>auv-cli — UI kit</title>
+<link rel="stylesheet" href="../../colors_and_type.css">
+<style>
+  html, body {
+    margin: 0;
+    background: #efeee8;
+    min-height: 100vh;
+    font-family: var(--auv-font-sans);
+    color: var(--auv-ink);
+  }
+  .page {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 40px 24px 80px;
+  }
+  .topline {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 28px;
+  }
+  .topline img { height: 36px; width: auto; }
+  .lead {
+    max-width: 720px;
+    color: var(--auv-ink-3);
+    font-size: 14px;
+    line-height: 1.55;
+    margin: 0 0 28px;
+  }
+  @keyframes auv-pulse {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.35; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="topline">
+    <img src="../../assets/logo-wordmark.svg" alt="auv">
+    <span class="auv-meta">UI kit · CLI surface</span>
+  </div>
+  <p class="lead">
+    A faithful recreation of <code>auv-cli</code> terminal output across three sessions.
+    Switch tabs to walk through reporting case coverage, dry-running the formal recipe,
+    and inspecting a finished failed run.
+  </p>
+  <div id="root"></div>
+</div>
+
+<!-- React + Babel pinned per system instructions -->
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script src="tokens.js"></script>
+<script type="text/babel" src="Terminal.jsx"></script>
+<script type="text/babel" src="Prompt.jsx"></script>
+<script type="text/babel" src="Sessions.jsx"></script>
+
+<script type="text/babel" data-presets="react">
+const TABS = [
+  { id: "cases",   label: "auv-cli skill cases report" },
+  { id: "run",     label: "auv-cli skill run --dry-run" },
+  { id: "inspect", label: "auv-cli inspect <run_id>" },
+];
+
+function App() {
+  const [active, setActive] = React.useState(0);
+  let body = null;
+  if (active === 0) body = <SessionCasesReport/>;
+  if (active === 1) body = <SessionDryRun/>;
+  if (active === 2) body = <SessionInspect/>;
+
+  return (
+    <Terminal title="auv — zsh — 132×40" tabs={TABS} active={active} onSelect={setActive} height={580}>
+      {body}
+    </Terminal>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>

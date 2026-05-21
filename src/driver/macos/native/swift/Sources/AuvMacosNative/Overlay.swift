@@ -132,20 +132,31 @@ final class NativeOverlayCursorView: NSView {
   }
 }
 
+final class NativeOverlayCursorState {
+  let window: NSWindow
+  let view: NativeOverlayCursorView
+  var logicalX: Double?
+  var logicalY: Double?
+  var label: String
+  var variant: AuvOverlayCursorVariant
+
+  init(window: NSWindow, view: NativeOverlayCursorView, label: String, variant: AuvOverlayCursorVariant) {
+    self.window = window
+    self.view = view
+    self.label = label
+    self.variant = variant
+  }
+}
+
 final class NativeOverlayController {
-  private var window: NSWindow?
-  private var overlayView: NativeOverlayCursorView?
-  private var userWindow: NSWindow?
-  private var userOverlayView: NativeOverlayCursorView?
+  private var cursors: [String: NativeOverlayCursorState] = [:]
 
   func show_overlay_cursor(x: Double, y: Double, label: RustString) -> NativeActionResponse {
     runOnMain {
       let resolvedLabel = label.toString()
-      self.userWindow?.orderOut(nil)
-      let (window, view) = self.ensureAuvWindow()
+      self.hideCursor(id: "you")
       self.placeCursor(
-        window: window,
-        view: view,
+        state: self.ensureCursor(id: "auv", label: resolvedLabel, variant: .auv),
         x: x,
         y: y,
         label: resolvedLabel,
@@ -163,21 +174,17 @@ final class NativeOverlayController {
     runOnMain {
       let resolvedLabel = label.toString()
       let resolvedUserLabel = user_label.toString()
-      let (auvWindow, auvView) = self.ensureAuvWindow()
-      let (youWindow, youView) = self.ensureUserWindow()
       let userPoint = self.currentMouseLogicalPoint()
 
       self.placeCursor(
-        window: youWindow,
-        view: youView,
+        state: self.ensureCursor(id: "you", label: resolvedUserLabel, variant: .you),
         x: userPoint.x,
         y: userPoint.y,
         label: resolvedUserLabel.isEmpty ? "you" : resolvedUserLabel,
         variant: .you
       )
       self.placeCursor(
-        window: auvWindow,
-        view: auvView,
+        state: self.ensureCursor(id: "auv", label: resolvedLabel, variant: .auv),
         x: x,
         y: y,
         label: resolvedLabel.isEmpty ? "auv · replay" : resolvedLabel,
@@ -196,13 +203,10 @@ final class NativeOverlayController {
     runOnMain {
       let resolvedLabel = label.toString()
       let resolvedUserLabel = user_label.toString()
-      let (auvWindow, auvView) = self.ensureAuvWindow()
-      let (youWindow, youView) = self.ensureUserWindow()
       let userPoint = self.currentMouseLogicalPoint()
 
       self.placeCursor(
-        window: youWindow,
-        view: youView,
+        state: self.ensureCursor(id: "you", label: resolvedUserLabel, variant: .you),
         x: userPoint.x,
         y: userPoint.y,
         label: resolvedUserLabel.isEmpty ? "you" : resolvedUserLabel,
@@ -210,49 +214,82 @@ final class NativeOverlayController {
       )
 
       let duration = max(0.0, Double(duration_ms) / 1000.0)
-      let start = Date()
-      let deadline = start.addingTimeInterval(duration)
       let targetLabel = resolvedLabel.isEmpty ? "auv · replay" : resolvedLabel
+      self.moveCursor(
+        state: self.ensureCursor(id: "auv", label: targetLabel, variant: .auv),
+        targetX: x,
+        targetY: y,
+        label: targetLabel,
+        variant: .auv,
+        duration: duration,
+        startPoint: userPoint
+      )
+    }
+  }
 
-      if duration <= 0 {
-        self.placeCursor(
-          window: auvWindow,
-          view: auvView,
-          x: x,
-          y: y,
-          label: targetLabel,
-          variant: .auv
-        )
-        return
-      }
-
-      while true {
-        let elapsed = Date().timeIntervalSince(start)
-        let rawT = min(1.0, max(0.0, elapsed / duration))
-        let eased = 1.0 - pow(1.0 - rawT, 3.0)
-        let currentX = userPoint.x + (x - userPoint.x) * eased
-        let currentY = userPoint.y + (y - userPoint.y) * eased
-        self.placeCursor(
-          window: auvWindow,
-          view: auvView,
-          x: currentX,
-          y: currentY,
-          label: targetLabel,
-          variant: .auv
-        )
-        self.drainEvents(until: Date().addingTimeInterval(1.0 / 60.0))
-        if Date() >= deadline || rawT >= 1.0 {
-          break
-        }
-      }
-
+  func set_overlay_cursor(
+    cursor_id: RustString,
+    x: Double,
+    y: Double,
+    label: RustString,
+    variant: RustString
+  ) -> NativeActionResponse {
+    runOnMain {
+      let resolvedId = self.normalizeCursorId(cursor_id.toString(), fallback: "auv")
+      let resolvedLabel = label.toString()
+      let resolvedVariant = self.variantFrom(variant.toString())
       self.placeCursor(
-        window: auvWindow,
-        view: auvView,
+        state: self.ensureCursor(id: resolvedId, label: resolvedLabel, variant: resolvedVariant),
         x: x,
         y: y,
+        label: resolvedLabel.isEmpty ? resolvedId : resolvedLabel,
+        variant: resolvedVariant
+      )
+    }
+  }
+
+  func move_overlay_cursor(
+    cursor_id: RustString,
+    x: Double,
+    y: Double,
+    label: RustString,
+    variant: RustString,
+    duration_ms: UInt64
+  ) -> NativeActionResponse {
+    runOnMain {
+      let resolvedId = self.normalizeCursorId(cursor_id.toString(), fallback: "auv")
+      let resolvedLabel = label.toString()
+      let resolvedVariant = self.variantFrom(variant.toString())
+      let targetLabel = resolvedLabel.isEmpty ? resolvedId : resolvedLabel
+      let state = self.ensureCursor(id: resolvedId, label: targetLabel, variant: resolvedVariant)
+      let startPoint = self.cursorStartPoint(state)
+      self.moveCursor(
+        state: state,
+        targetX: x,
+        targetY: y,
         label: targetLabel,
-        variant: .auv
+        variant: resolvedVariant,
+        duration: max(0.0, Double(duration_ms) / 1000.0),
+        startPoint: startPoint
+      )
+    }
+  }
+
+  func flash_overlay_cursor_id(
+    cursor_id: RustString,
+    x: Double,
+    y: Double,
+    label: RustString,
+    duration_ms: UInt64
+  ) -> NativeActionResponse {
+    runOnMain {
+      let resolvedId = self.normalizeCursorId(cursor_id.toString(), fallback: "auv")
+      self.flashCursor(
+        id: resolvedId,
+        x: x,
+        y: y,
+        label: label.toString(),
+        durationMs: duration_ms
       )
     }
   }
@@ -264,67 +301,53 @@ final class NativeOverlayController {
     duration_ms: UInt64
   ) -> NativeActionResponse {
     runOnMain {
-      let resolvedLabel = label.toString()
-      let targetLabel = resolvedLabel.isEmpty ? "auv · click" : resolvedLabel
-      let (auvWindow, auvView) = self.ensureAuvWindow()
-      self.placeCursor(
-        window: auvWindow,
-        view: auvView,
+      self.flashCursor(
+        id: "auv",
         x: x,
         y: y,
-        label: targetLabel,
-        variant: .auvClick
+        label: label.toString(),
+        durationMs: duration_ms
       )
-      self.drainEvents(until: Date().addingTimeInterval(Double(duration_ms) / 1000.0))
-      self.placeCursor(
-        window: auvWindow,
-        view: auvView,
-        x: x,
-        y: y,
-        label: resolvedLabel.isEmpty ? "auv · replay" : resolvedLabel,
-        variant: .auv
-      )
+    }
+  }
+
+  func hide_overlay_cursor_id(cursor_id: RustString) -> NativeActionResponse {
+    runOnMain {
+      self.hideCursor(id: self.normalizeCursorId(cursor_id.toString(), fallback: "auv"))
     }
   }
 
   func hide_overlay_cursor() -> NativeActionResponse {
     runOnMain {
-      self.window?.orderOut(nil)
-      self.userWindow?.orderOut(nil)
+      for state in self.cursors.values {
+        state.window.orderOut(nil)
+      }
     }
   }
 
   func shutdown_overlay_cursor() -> NativeActionResponse {
     runOnMain {
-      self.window?.orderOut(nil)
-      self.window?.close()
-      self.userWindow?.orderOut(nil)
-      self.userWindow?.close()
-      self.window = nil
-      self.overlayView = nil
-      self.userWindow = nil
-      self.userOverlayView = nil
+      for state in self.cursors.values {
+        state.window.orderOut(nil)
+        state.window.close()
+      }
+      self.cursors.removeAll()
     }
   }
 
-  private func ensureAuvWindow() -> (NSWindow, NativeOverlayCursorView) {
-    if let window, let overlayView {
-      return (window, overlayView)
+  private func ensureCursor(id: String, label: String, variant: AuvOverlayCursorVariant) -> NativeOverlayCursorState {
+    if let state = cursors[id] {
+      return state
     }
     let (window, view) = makeCursorWindow()
-    self.window = window
-    self.overlayView = view
-    return (window, view)
-  }
-
-  private func ensureUserWindow() -> (NSWindow, NativeOverlayCursorView) {
-    if let userWindow, let userOverlayView {
-      return (userWindow, userOverlayView)
-    }
-    let (window, view) = makeCursorWindow()
-    self.userWindow = window
-    self.userOverlayView = view
-    return (window, view)
+    let state = NativeOverlayCursorState(
+      window: window,
+      view: view,
+      label: label.isEmpty ? id : label,
+      variant: variant
+    )
+    cursors[id] = state
+    return state
   }
 
   private func makeCursorWindow() -> (NSWindow, NativeOverlayCursorView) {
@@ -351,15 +374,20 @@ final class NativeOverlayController {
   }
 
   private func placeCursor(
-    window: NSWindow,
-    view: NativeOverlayCursorView,
+    state: NativeOverlayCursorState,
     x: Double,
     y: Double,
     label: String,
     variant: AuvOverlayCursorVariant
   ) {
+    let window = state.window
+    let view = state.view
     view.label = label
     view.variant = variant
+    state.logicalX = x
+    state.logicalY = y
+    state.label = label
+    state.variant = variant
 
     // Resize host window to fit sprite + dynamically-sized label.
     let intrinsic = view.intrinsicLayoutSize()
@@ -387,6 +415,105 @@ final class NativeOverlayController {
     window.setFrame(frame, display: true)
     window.orderFrontRegardless()
     window.displayIfNeeded()
+  }
+
+  private func moveCursor(
+    state: NativeOverlayCursorState,
+    targetX: Double,
+    targetY: Double,
+    label: String,
+    variant: AuvOverlayCursorVariant,
+    duration: Double,
+    startPoint: (x: Double, y: Double)
+  ) {
+    if duration <= 0 {
+      placeCursor(
+        state: state,
+        x: targetX,
+        y: targetY,
+        label: label,
+        variant: variant
+      )
+      return
+    }
+
+    let start = Date()
+    let deadline = start.addingTimeInterval(duration)
+    while true {
+      let elapsed = Date().timeIntervalSince(start)
+      let rawT = min(1.0, max(0.0, elapsed / duration))
+      let eased = 1.0 - pow(1.0 - rawT, 3.0)
+      let currentX = startPoint.x + (targetX - startPoint.x) * eased
+      let currentY = startPoint.y + (targetY - startPoint.y) * eased
+      placeCursor(
+        state: state,
+        x: currentX,
+        y: currentY,
+        label: label,
+        variant: variant
+      )
+      drainEvents(until: Date().addingTimeInterval(1.0 / 60.0))
+      if Date() >= deadline || rawT >= 1.0 {
+        break
+      }
+    }
+
+    placeCursor(
+      state: state,
+      x: targetX,
+      y: targetY,
+      label: label,
+      variant: variant
+    )
+  }
+
+  private func flashCursor(id: String, x: Double, y: Double, label: String, durationMs: UInt64) {
+    let state = ensureCursor(id: id, label: label, variant: .auvClick)
+    let previousLabel = state.label
+    let previousVariant = state.variant
+    let targetLabel = label.isEmpty ? "auv · click" : label
+    placeCursor(
+      state: state,
+      x: x,
+      y: y,
+      label: targetLabel,
+      variant: .auvClick
+    )
+    drainEvents(until: Date().addingTimeInterval(Double(durationMs) / 1000.0))
+    placeCursor(
+      state: state,
+      x: x,
+      y: y,
+      label: previousLabel.isEmpty ? id : previousLabel,
+      variant: previousVariant == .auvClick ? .auv : previousVariant
+    )
+  }
+
+  private func hideCursor(id: String) {
+    cursors[id]?.window.orderOut(nil)
+  }
+
+  private func cursorStartPoint(_ state: NativeOverlayCursorState) -> (x: Double, y: Double) {
+    if let x = state.logicalX, let y = state.logicalY {
+      return (x, y)
+    }
+    return currentMouseLogicalPoint()
+  }
+
+  private func normalizeCursorId(_ raw: String, fallback: String) -> String {
+    let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.isEmpty ? fallback : trimmed
+  }
+
+  private func variantFrom(_ raw: String) -> AuvOverlayCursorVariant {
+    switch raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+    case "you", "user", "human":
+      return .you
+    case "auv-click", "auv_click", "click", "auvclick":
+      return .auvClick
+    default:
+      return .auv
+    }
   }
 
   private func currentMouseLogicalPoint() -> (x: Double, y: Double) {

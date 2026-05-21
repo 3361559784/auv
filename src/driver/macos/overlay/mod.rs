@@ -133,6 +133,142 @@ pub(crate) fn overlay_show_dual_cursor(call: &DriverCall) -> AuvResult<DriverRes
   })
 }
 
+pub(crate) fn overlay_set_cursor(call: &DriverCall) -> AuvResult<DriverResponse> {
+  let cursor_id = optional_non_empty_string(call, "cursor_id").unwrap_or_else(|| "auv".to_string());
+  let x = required_f64(call, "x")?;
+  let y = required_f64(call, "y")?;
+  let variant = optional_non_empty_string(call, "variant").unwrap_or_else(|| "auv".to_string());
+  let label = optional_non_empty_string(call, "label")
+    .unwrap_or_else(|| default_cursor_label(&cursor_id, &variant));
+  let hold_ms = optional_positive_u64(call, "hold_ms")?.unwrap_or(0);
+  crate::driver::macos::native::overlay::set_cursor(&cursor_id, x, y, &label, &variant)?;
+  let controller_pid = std::process::id();
+
+  if hold_ms > 0 {
+    crate::driver::macos::native::overlay::pump_events(hold_ms)?;
+  }
+
+  let report = overlay_report([
+    ("operation", "set_cursor".to_string()),
+    ("event", "shown".to_string()),
+    ("controllerPid", controller_pid.to_string()),
+    ("cursorId", cursor_id.clone()),
+    ("globalLogicalPoint", format!("{x:.3},{y:.3}")),
+    ("label", label.clone()),
+    ("variant", variant.clone()),
+    ("holdMs", hold_ms.to_string()),
+    ("coordinateSpace", "global-logical".to_string()),
+    ("visualOnly", "true".to_string()),
+    ("lifecycle", "in-process".to_string()),
+    ("cursorState", "id-addressed".to_string()),
+    ("crossProcessPersistence", "false".to_string()),
+  ]);
+  let artifact = build_text_artifact(
+    "overlay-cursor",
+    "txt",
+    &format!("overlay-set-cursor-{}", sanitize_file_component(&cursor_id)),
+    report,
+    "Recorded an experimental macOS id-addressed overlay cursor set command.",
+  )?;
+
+  Ok(DriverResponse {
+    summary: format!(
+      "Set experimental overlay cursor {cursor_id} at global logical point ({x:.3}, {y:.3})."
+    ),
+    backend: Some("macos.swift.overlay-ffi-cursor-state-poc".to_string()),
+    signals: cursor_state_signals(controller_pid, "shown", &cursor_id, &variant),
+    notes: vec![
+      "experimental=true".to_string(),
+      "visualOnly=true".to_string(),
+      "cursorState=id-addressed".to_string(),
+      "coordinateSpace=global-logical".to_string(),
+      "lifecycle=in-process".to_string(),
+      "crossProcessPersistence=false".to_string(),
+      format!("controllerPid={controller_pid}"),
+      format!("cursorId={cursor_id}"),
+      format!("label={label}"),
+      format!("variant={variant}"),
+      format!("holdMs={hold_ms}"),
+    ],
+    artifacts: vec![artifact],
+  })
+}
+
+pub(crate) fn overlay_move_cursor_by_id(call: &DriverCall) -> AuvResult<DriverResponse> {
+  let cursor_id = optional_non_empty_string(call, "cursor_id").unwrap_or_else(|| "auv".to_string());
+  let x = required_f64(call, "x")?;
+  let y = required_f64(call, "y")?;
+  let variant = optional_non_empty_string(call, "variant").unwrap_or_else(|| "auv".to_string());
+  let label = optional_non_empty_string(call, "label")
+    .unwrap_or_else(|| default_cursor_label(&cursor_id, &variant));
+  let duration_ms = optional_positive_u64(call, "duration_ms")?.unwrap_or(DEFAULT_MOVE_MS);
+  let hold_ms = optional_positive_u64(call, "hold_ms")?.unwrap_or(0);
+  crate::driver::macos::native::overlay::move_cursor(
+    &cursor_id,
+    x,
+    y,
+    &label,
+    &variant,
+    duration_ms,
+  )?;
+  let controller_pid = std::process::id();
+
+  if hold_ms > 0 {
+    crate::driver::macos::native::overlay::pump_events(hold_ms)?;
+  }
+
+  let report = overlay_report([
+    ("operation", "move_cursor_by_id".to_string()),
+    ("event", "moved".to_string()),
+    ("controllerPid", controller_pid.to_string()),
+    ("cursorId", cursor_id.clone()),
+    ("globalLogicalPoint", format!("{x:.3},{y:.3}")),
+    ("label", label.clone()),
+    ("variant", variant.clone()),
+    ("durationMs", duration_ms.to_string()),
+    ("holdMs", hold_ms.to_string()),
+    ("coordinateSpace", "global-logical".to_string()),
+    ("visualOnly", "true".to_string()),
+    ("animation", "ease-out-cubic".to_string()),
+    ("cursorState", "id-addressed".to_string()),
+    ("crossProcessPersistence", "false".to_string()),
+  ]);
+  let artifact = build_text_artifact(
+    "overlay-cursor",
+    "txt",
+    &format!(
+      "overlay-move-cursor-{}",
+      sanitize_file_component(&cursor_id)
+    ),
+    report,
+    "Recorded an experimental macOS id-addressed overlay cursor move command.",
+  )?;
+
+  Ok(DriverResponse {
+    summary: format!(
+      "Moved experimental overlay cursor {cursor_id} toward global logical point ({x:.3}, {y:.3})."
+    ),
+    backend: Some("macos.swift.overlay-ffi-cursor-state-poc".to_string()),
+    signals: cursor_state_signals(controller_pid, "moved", &cursor_id, &variant),
+    notes: vec![
+      "experimental=true".to_string(),
+      "visualOnly=true".to_string(),
+      "cursorState=id-addressed".to_string(),
+      "coordinateSpace=global-logical".to_string(),
+      "animation=ease-out-cubic".to_string(),
+      "lifecycle=in-process".to_string(),
+      "crossProcessPersistence=false".to_string(),
+      format!("controllerPid={controller_pid}"),
+      format!("cursorId={cursor_id}"),
+      format!("label={label}"),
+      format!("variant={variant}"),
+      format!("durationMs={duration_ms}"),
+      format!("holdMs={hold_ms}"),
+    ],
+    artifacts: vec![artifact],
+  })
+}
+
 pub(crate) fn overlay_move_cursor(call: &DriverCall) -> AuvResult<DriverResponse> {
   let x = required_f64(call, "x")?;
   let y = required_f64(call, "y")?;
@@ -206,6 +342,70 @@ pub(crate) fn overlay_move_cursor(call: &DriverCall) -> AuvResult<DriverResponse
   })
 }
 
+pub(crate) fn overlay_flash_cursor_by_id(call: &DriverCall) -> AuvResult<DriverResponse> {
+  let cursor_id = optional_non_empty_string(call, "cursor_id").unwrap_or_else(|| "auv".to_string());
+  let x = required_f64(call, "x")?;
+  let y = required_f64(call, "y")?;
+  let label = optional_non_empty_string(call, "label").unwrap_or_else(|| "auv · click".to_string());
+  let duration_ms = optional_positive_u64(call, "duration_ms")?.unwrap_or(DEFAULT_FLASH_MS);
+  let hold_ms = optional_positive_u64(call, "hold_ms")?.unwrap_or(0);
+  crate::driver::macos::native::overlay::flash_cursor_id(&cursor_id, x, y, &label, duration_ms)?;
+  let controller_pid = std::process::id();
+
+  if hold_ms > 0 {
+    crate::driver::macos::native::overlay::pump_events(hold_ms)?;
+  }
+
+  let report = overlay_report([
+    ("operation", "flash_cursor_by_id".to_string()),
+    ("event", "flashed".to_string()),
+    ("controllerPid", controller_pid.to_string()),
+    ("cursorId", cursor_id.clone()),
+    ("globalLogicalPoint", format!("{x:.3},{y:.3}")),
+    ("label", label.clone()),
+    ("durationMs", duration_ms.to_string()),
+    ("holdMs", hold_ms.to_string()),
+    ("coordinateSpace", "global-logical".to_string()),
+    ("visualOnly", "true".to_string()),
+    ("sprite", "cursor-auv-click".to_string()),
+    ("cursorState", "id-addressed".to_string()),
+    ("crossProcessPersistence", "false".to_string()),
+  ]);
+  let artifact = build_text_artifact(
+    "overlay-cursor",
+    "txt",
+    &format!(
+      "overlay-flash-cursor-{}",
+      sanitize_file_component(&cursor_id)
+    ),
+    report,
+    "Recorded an experimental macOS id-addressed overlay cursor flash command.",
+  )?;
+
+  Ok(DriverResponse {
+    summary: format!(
+      "Flashed experimental overlay cursor {cursor_id} at global logical point ({x:.3}, {y:.3})."
+    ),
+    backend: Some("macos.swift.overlay-ffi-cursor-state-poc".to_string()),
+    signals: cursor_state_signals(controller_pid, "flashed", &cursor_id, "auv-click"),
+    notes: vec![
+      "experimental=true".to_string(),
+      "visualOnly=true".to_string(),
+      "cursorState=id-addressed".to_string(),
+      "sprite=cursor-auv-click".to_string(),
+      "coordinateSpace=global-logical".to_string(),
+      "lifecycle=in-process".to_string(),
+      "crossProcessPersistence=false".to_string(),
+      format!("controllerPid={controller_pid}"),
+      format!("cursorId={cursor_id}"),
+      format!("label={label}"),
+      format!("durationMs={duration_ms}"),
+      format!("holdMs={hold_ms}"),
+    ],
+    artifacts: vec![artifact],
+  })
+}
+
 pub(crate) fn overlay_flash_cursor(call: &DriverCall) -> AuvResult<DriverResponse> {
   let x = required_f64(call, "x")?;
   let y = required_f64(call, "y")?;
@@ -265,6 +465,47 @@ pub(crate) fn overlay_flash_cursor(call: &DriverCall) -> AuvResult<DriverRespons
       format!("label={label}"),
       format!("durationMs={duration_ms}"),
       format!("holdMs={hold_ms}"),
+    ],
+    artifacts: vec![artifact],
+  })
+}
+
+pub(crate) fn overlay_hide_cursor_id(call: &DriverCall) -> AuvResult<DriverResponse> {
+  let cursor_id = optional_non_empty_string(call, "cursor_id").unwrap_or_else(|| "auv".to_string());
+  crate::driver::macos::native::overlay::hide_cursor_id(&cursor_id)?;
+  let controller_pid = std::process::id();
+  let report = overlay_report([
+    ("operation", "hide_cursor_id".to_string()),
+    ("event", "hidden".to_string()),
+    ("controllerPid", controller_pid.to_string()),
+    ("cursorId", cursor_id.clone()),
+    ("lifecycle", "in-process".to_string()),
+    ("cursorState", "id-addressed".to_string()),
+    ("crossProcessPersistence", "false".to_string()),
+  ]);
+  let artifact = build_text_artifact(
+    "overlay-cursor",
+    "txt",
+    &format!(
+      "overlay-hide-cursor-{}",
+      sanitize_file_component(&cursor_id)
+    ),
+    report,
+    "Recorded an experimental macOS id-addressed overlay cursor hide command.",
+  )?;
+
+  Ok(DriverResponse {
+    summary: format!("Hid experimental overlay cursor {cursor_id}."),
+    backend: Some("macos.swift.overlay-ffi-cursor-state-poc".to_string()),
+    signals: cursor_state_signals(controller_pid, "hidden", &cursor_id, "unknown"),
+    notes: vec![
+      "experimental=true".to_string(),
+      "visualOnly=true".to_string(),
+      "cursorState=id-addressed".to_string(),
+      "lifecycle=in-process".to_string(),
+      "crossProcessPersistence=false".to_string(),
+      format!("controllerPid={controller_pid}"),
+      format!("cursorId={cursor_id}"),
     ],
     artifacts: vec![artifact],
   })
@@ -518,6 +759,32 @@ fn native_overlay_signals(controller_pid: u32, event: &str) -> BTreeMap<String, 
     ("visualOnly".to_string(), "true".to_string()),
     ("crossProcessPersistence".to_string(), "false".to_string()),
   ])
+}
+
+fn cursor_state_signals(
+  controller_pid: u32,
+  event: &str,
+  cursor_id: &str,
+  variant: &str,
+) -> BTreeMap<String, String> {
+  BTreeMap::from([
+    ("overlayEvent".to_string(), event.to_string()),
+    ("controllerPid".to_string(), controller_pid.to_string()),
+    ("visualOnly".to_string(), "true".to_string()),
+    ("cursorState".to_string(), "id-addressed".to_string()),
+    ("cursorId".to_string(), cursor_id.to_string()),
+    ("variant".to_string(), variant.to_string()),
+    ("crossProcessPersistence".to_string(), "false".to_string()),
+  ])
+}
+
+fn default_cursor_label(cursor_id: &str, variant: &str) -> String {
+  match variant {
+    "you" | "user" | "human" => "you".to_string(),
+    "auv-click" | "auv_click" | "click" | "auvClick" => "auv · click".to_string(),
+    _ if cursor_id == "you" => "you".to_string(),
+    _ => "auv · replay".to_string(),
+  }
 }
 
 fn overlay_report<const N: usize>(entries: [(&str, String); N]) -> String {

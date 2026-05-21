@@ -378,6 +378,14 @@ pub fn default_command_catalog() -> CommandCatalog {
       max_disturbance: DisturbanceClass::None,
     },
     CommandSpec {
+      id: "debug.overlaySetCursor",
+      summary: "Show or update one experimental visual-only overlay cursor by cursor_id.",
+      driver_id: "macos.desktop",
+      operation: "overlay_set_cursor",
+      disturbance_classes: NONE,
+      max_disturbance: DisturbanceClass::None,
+    },
+    CommandSpec {
       id: "debug.overlayMoveCursor",
       summary: "Animate the experimental visual-only AUV cursor from the current hardware cursor toward a target point.",
       driver_id: "macos.desktop",
@@ -386,10 +394,34 @@ pub fn default_command_catalog() -> CommandCatalog {
       max_disturbance: DisturbanceClass::None,
     },
     CommandSpec {
+      id: "debug.overlayMoveCursorById",
+      summary: "Animate one experimental visual-only overlay cursor by cursor_id, reusing its previous position when available.",
+      driver_id: "macos.desktop",
+      operation: "overlay_move_cursor_by_id",
+      disturbance_classes: NONE,
+      max_disturbance: DisturbanceClass::None,
+    },
+    CommandSpec {
       id: "debug.overlayFlashCursor",
       summary: "Flash the experimental AUV click-state cursor sprite at a target point.",
       driver_id: "macos.desktop",
       operation: "overlay_flash_cursor",
+      disturbance_classes: NONE,
+      max_disturbance: DisturbanceClass::None,
+    },
+    CommandSpec {
+      id: "debug.overlayFlashCursorById",
+      summary: "Flash the experimental AUV click-state cursor sprite for one overlay cursor_id.",
+      driver_id: "macos.desktop",
+      operation: "overlay_flash_cursor_by_id",
+      disturbance_classes: NONE,
+      max_disturbance: DisturbanceClass::None,
+    },
+    CommandSpec {
+      id: "debug.overlayHideCursorId",
+      summary: "Hide one experimental visual-only overlay cursor by cursor_id.",
+      driver_id: "macos.desktop",
+      operation: "overlay_hide_cursor_id",
       disturbance_classes: NONE,
       max_disturbance: DisturbanceClass::None,
     },
@@ -515,8 +547,12 @@ mod tests {
     assert!(catalog.resolve("debug.overlayClickPoint").is_some());
     assert!(catalog.resolve("debug.overlayShowCursor").is_some());
     assert!(catalog.resolve("debug.overlayShowDualCursor").is_some());
+    assert!(catalog.resolve("debug.overlaySetCursor").is_some());
     assert!(catalog.resolve("debug.overlayMoveCursor").is_some());
+    assert!(catalog.resolve("debug.overlayMoveCursorById").is_some());
     assert!(catalog.resolve("debug.overlayFlashCursor").is_some());
+    assert!(catalog.resolve("debug.overlayFlashCursorById").is_some());
+    assert!(catalog.resolve("debug.overlayHideCursorId").is_some());
     assert!(catalog.resolve("debug.overlayHideCursor").is_some());
     assert!(catalog.resolve("debug.overlayShutdown").is_some());
   }

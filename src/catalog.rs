@@ -474,6 +474,14 @@ pub fn default_command_catalog() -> CommandCatalog {
       disturbance_classes: NONE,
       max_disturbance: DisturbanceClass::None,
     },
+    CommandSpec {
+      id: "music.result.play",
+      summary: "Consume a music.search.results CandidateRef, re-check liveness, activate the resolved row, press play, and emit a typed VerificationResult.",
+      driver_id: "macos.desktop",
+      operation: "music_result_play",
+      disturbance_classes: POINTER_WITH_FOREGROUND,
+      max_disturbance: DisturbanceClass::Pointer,
+    },
   ];
 
   CommandCatalog::new(commands)
@@ -581,6 +589,13 @@ mod tests {
     assert!(catalog.resolve("debug.overlayHideCursorId").is_some());
     assert!(catalog.resolve("debug.overlayHideCursor").is_some());
     assert!(catalog.resolve("debug.overlayShutdown").is_some());
+    assert!(catalog.resolve("music.search.results").is_some());
+    assert!(
+      catalog
+        .resolve("music.validate.candidate.liveness")
+        .is_some()
+    );
+    assert!(catalog.resolve("music.result.play").is_some());
   }
 
   #[test]

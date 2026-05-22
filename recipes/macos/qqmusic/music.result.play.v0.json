@@ -1,0 +1,224 @@
+{
+  "recipe_id": "macos.qqmusic.music.result.play.v0",
+  "version": "0.1.0",
+  "status": "experimental-recipe",
+  "platform": "macOS",
+  "target_app": {
+    "name": "QQ音乐",
+    "bundle_id": "${app_id}",
+    "display_mode": "live-desktop"
+  },
+  "strategy": {
+    "family": "playback",
+    "grounding": "contract-candidate",
+    "activation": "pointer-window-text",
+    "verificationContract": "verifyNowPlayingTitle"
+  },
+  "objective": "Play a search result identified by a CandidateRef from a prior music.search.results OperationResult artifact. Validates liveness preconditions (window_ref + anchor_recheck) before clicking, then delegates to the same row-activation + play-press + verify chain as play_visible_row.v0. The caller must extract anchor_text from the chosen Candidate's target_spec before invoking this recipe.",
+  "inputs": {
+    "app_id": {
+      "type": "string",
+      "default": "com.tencent.QQMusicMac"
+    },
+    "source_run_id": {
+      "type": "string",
+      "note": "run_id of the run that produced the OperationResult candidate-set artifact."
+    },
+    "source_artifact_id": {
+      "type": "string",
+      "default": "artifact_0003",
+      "note": "artifact_id of the OperationResult JSON within source_run_id. Default is artifact_0003 (music.search.results always produces it at index 3)."
+    },
+    "candidate_local_id": {
+      "type": "string",
+      "default": "row#1",
+      "note": "candidate_local_id within the OperationResult to validate and play."
+    },
+    "anchor_text": {
+      "type": "string",
+      "note": "Caller-extracted anchor text from Candidate.target_spec.anchor_text. Used to click the result row via window-scoped OCR."
+    },
+    "target_title": {
+      "type": "string",
+      "note": "Expected now-playing title for verification."
+    },
+    "target_artist": {
+      "type": "string",
+      "default": ""
+    },
+    "play_button_query": {
+      "type": "string",
+      "default": "播放"
+    },
+    "play_button_region_left_ratio": {
+      "type": "number",
+      "default": 0.18
+    },
+    "play_button_region_top_ratio": {
+      "type": "number",
+      "default": 0.28
+    },
+    "play_button_region_right_ratio": {
+      "type": "number",
+      "default": 0.6
+    },
+    "play_button_region_bottom_ratio": {
+      "type": "number",
+      "default": 0.42
+    },
+    "play_button_min_confidence": {
+      "type": "number",
+      "default": 0.75
+    },
+    "play_button_overlay_label": {
+      "type": "string",
+      "default": "auv · play"
+    },
+    "activation_settle_ms": {
+      "type": "integer",
+      "default": 900
+    },
+    "click_count": {
+      "type": "integer",
+      "default": 2
+    },
+    "anchor_min_confidence": {
+      "type": "number",
+      "default": 0.5
+    },
+    "now_playing_scope_path_prefix": {
+      "type": "string",
+      "default": "0.4.4"
+    }
+  },
+  "preconditions": [
+    "The host is macOS.",
+    "QQ音乐 is installed and can be addressed by ${app_id}.",
+    "Screen Recording and Accessibility permissions are already granted.",
+    "source_run_id and source_artifact_id point to a valid OperationResult from music.search.results.",
+    "anchor_text has been extracted by the caller from the chosen Candidate.target_spec.anchor_text.",
+    "The search result surface must still be visible (not navigated away) when this recipe runs."
+  ],
+  "disturbance_policy": {
+    "max_disturbance": "pointer",
+    "declared_classes": ["none", "foreground_app", "pointer"],
+    "notes": [
+      "Liveness check (music.validate.candidate.liveness) is disturbance-free.",
+      "Row click (debug.clickWindowText) uses pointer disturbance.",
+      "Play press (debug.smartPress) may take the AX path (no pointer disturbance) or fall back to pointer."
+    ]
+  },
+  "steps": [
+    {
+      "id": "validate-candidate-liveness",
+      "command_id": "music.validate.candidate.liveness",
+      "disturbance": {
+        "classes": ["none"],
+        "max": "none"
+      },
+      "args": {
+        "target": "${app_id}",
+        "source_run_id": "${source_run_id}",
+        "source_artifact_id": "${source_artifact_id}",
+        "candidate_local_id": "${candidate_local_id}"
+      },
+      "expect": {
+        "signal_equals": {
+          "candidate.liveness_ok": "true"
+        }
+      }
+    },
+    {
+      "id": "click-result-row",
+      "command_id": "debug.clickWindowText",
+      "disturbance": {
+        "classes": ["foreground_app", "pointer"],
+        "max": "pointer"
+      },
+      "args": {
+        "target": "${app_id}",
+        "query": "${anchor_text}",
+        "min_confidence": "${anchor_min_confidence}",
+        "click_count": "${click_count}",
+        "settle_ms": "${activation_settle_ms}",
+        "activate_target_before_capture": "true"
+      },
+      "expect": {
+        "signal_equals": {
+          "ocr.match_count_filtered_gt0": "true"
+        }
+      }
+    },
+    {
+      "id": "press-result-play",
+      "command_id": "debug.smartPress",
+      "disturbance": {
+        "classes": ["foreground_app", "pointer"],
+        "max": "pointer"
+      },
+      "args": {
+        "target": "${app_id}",
+        "query": "${play_button_query}",
+        "min_confidence": "${play_button_min_confidence}",
+        "region_left_ratio": "${play_button_region_left_ratio}",
+        "region_top_ratio": "${play_button_region_top_ratio}",
+        "region_right_ratio": "${play_button_region_right_ratio}",
+        "region_bottom_ratio": "${play_button_region_bottom_ratio}",
+        "label": "${play_button_overlay_label}",
+        "overlay": "true",
+        "allow_pointer_fallback": "true"
+      },
+      "expect": {
+        "artifact_count_at_least": 1
+      }
+    },
+    {
+      "id": "verify-now-playing-title",
+      "command_id": "debug.verifyNowPlayingTitle",
+      "disturbance": {
+        "classes": ["none"],
+        "max": "none"
+      },
+      "args": {
+        "target": "${app_id}",
+        "target_title": "${target_title}",
+        "target_artist": "${target_artist}",
+        "scope_path_prefix": "${now_playing_scope_path_prefix}",
+        "max_depth": "8",
+        "max_children": "40"
+      },
+      "expect": {
+        "signal_equals": {
+          "ax.node_found": "true"
+        },
+        "signal_contains": {
+          "ax.now_playing_title": "${target_title}"
+        }
+      }
+    }
+  ],
+  "verification": {
+    "expected_signals": [
+      "music.validate.candidate.liveness confirms candidate.liveness_ok=true.",
+      "debug.clickWindowText confirms the anchor text was found and clicked in the window.",
+      "debug.smartPress completes for the play control via AX or pointer fallback.",
+      "debug.verifyNowPlayingTitle confirms ${target_title} from the AX tree."
+    ],
+    "success_criteria": [
+      "Candidate liveness preconditions pass (window present, anchor visible).",
+      "The result row is activated through window-scoped OCR anchor click.",
+      "The play control is pressed.",
+      "The current now-playing title is verified through the AX tree."
+    ],
+    "non_goals": [
+      "This recipe does not perform the initial search — it consumes an already-produced OperationResult.",
+      "This recipe does not select which candidate to play — that decision is made by the caller.",
+      "This recipe does not prove generalized playback for arbitrary anchor texts."
+    ]
+  },
+  "known_limits": {
+    "caller_must_extract_anchor_text": "The caller (agent) must read the OperationResult artifact and extract anchor_text from the chosen Candidate.target_spec.anchor_text before invoking this recipe. The recipe cannot do this extraction itself because recipe variables are not updated from step signals.",
+    "click_row_uses_screen_ocr_fallback": "debug.clickWindowText uses window-scoped OCR to find the anchor text. If the anchor text appears in multiple rows, match_index 0 is used (first match). The candidate's region_hint is not currently passed to constrain the search.",
+    "liveness_anchor_recheck_requires_window_ref": "Anchor recheck in music.validate.candidate.liveness requires window_ref.app_bundle_id; candidates produced by music.search.results always include this."
+  }
+}

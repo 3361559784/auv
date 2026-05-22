@@ -459,6 +459,14 @@ pub fn default_command_catalog() -> CommandCatalog {
       max_disturbance: DisturbanceClass::None,
     },
     CommandSpec {
+      id: "music.validate.candidate.liveness",
+      summary: "Resolve a CandidateRef from a stored OperationResult artifact and verify its liveness preconditions (window_ref + anchor_recheck).",
+      driver_id: "macos.desktop",
+      operation: "music_validate_candidate_liveness",
+      disturbance_classes: NONE,
+      max_disturbance: DisturbanceClass::None,
+    },
+    CommandSpec {
       id: "music.search.results",
       summary: "Detect visible search-result rows in a resolved window and produce a typed OperationResult candidate-set artifact.",
       driver_id: "macos.desktop",

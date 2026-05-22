@@ -3,9 +3,9 @@ use super::capture::commands::{capture_display, capture_region, capture_window, 
 use super::control::{
   activate_app, ax_click_window_text, ax_focus_text_input, ax_press_button, click_point,
   click_screen_row, click_screen_text, click_window_point, click_window_row, click_window_text,
-  find_window_rows, find_window_text, focus_text_input, paste_text_preserve_clipboard,
-  press_button, press_key, scroll_point, smart_press, type_text, wait_for_window_rows,
-  wait_for_window_text,
+  find_window_rows, find_window_text, focus_text_input, music_search_results,
+  paste_text_preserve_clipboard, press_button, press_key, scroll_point, smart_press, type_text,
+  wait_for_window_rows, wait_for_window_text,
 };
 use super::observe::{
   find_image_text, find_screen_rows, find_screen_text, identify_point, list_windows,
@@ -54,6 +54,7 @@ pub(crate) fn invoke_operation(call: &DriverCall) -> AuvResult<DriverResponse> {
     "find_window_text" => find_window_text(call),
     "wait_for_window_text" => wait_for_window_text(call),
     "find_window_rows" => find_window_rows(call),
+    "music_search_results" => music_search_results(call),
     "wait_for_window_rows" => wait_for_window_rows(call),
     "find_image_text" => find_image_text(call),
     "probe_permissions" => probe_permissions(call),

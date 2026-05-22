@@ -458,6 +458,14 @@ pub fn default_command_catalog() -> CommandCatalog {
       disturbance_classes: NONE,
       max_disturbance: DisturbanceClass::None,
     },
+    CommandSpec {
+      id: "music.search.results",
+      summary: "Detect visible search-result rows in a resolved window and produce a typed OperationResult candidate-set artifact.",
+      driver_id: "macos.desktop",
+      operation: "music_search_results",
+      disturbance_classes: NONE,
+      max_disturbance: DisturbanceClass::None,
+    },
   ];
 
   CommandCatalog::new(commands)

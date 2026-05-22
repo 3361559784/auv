@@ -131,7 +131,9 @@ Use `docs/ai/explanations/` for committed explanatory material: tutorials,
 interactive explainers, conceptual walkthroughs, diagrams, and other documents
 whose purpose is to teach or clarify an idea rather than record project
 evidence. Prefer English for committed explanations unless the user explicitly
-asks for another language.
+asks for another language. For explanatory HTML files, name the file with the
+relevant module or feature name in kebab case as the prefix, followed by a
+short description, for example `scroll-scan-visual-row-band.html`.
 
 Use `docs/notes/<owner>/` for personal, exploratory, or scratch material,
 including rough HTML demos, temporary investigation notes, local run logs, and

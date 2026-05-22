@@ -1,0 +1,792 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AUV Visual Row Bands Explainer</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f4ee;
+      --panel: #ffffff;
+      --ink: #20242b;
+      --muted: #6a707b;
+      --line: #d8d4c8;
+      --cyan: #00a9b8;
+      --cyan-soft: #d8f5f7;
+      --green: #68a815;
+      --yellow: #f0b400;
+      --red: #d64b4b;
+      --blue: #557ce1;
+      --shadow: 0 8px 24px rgba(32, 36, 43, 0.08);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 14px;
+      line-height: 1.45;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--ink);
+    }
+
+    header {
+      padding: 18px 24px 12px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.72);
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      backdrop-filter: blur(10px);
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 20px;
+      line-height: 1.2;
+      letter-spacing: 0;
+    }
+
+    .subtitle {
+      margin-top: 6px;
+      color: var(--muted);
+      max-width: 980px;
+    }
+
+    main {
+      display: grid;
+      grid-template-columns: 320px minmax(0, 1fr);
+      gap: 16px;
+      padding: 16px;
+      max-width: 1440px;
+      margin: 0 auto;
+    }
+
+    .controls,
+    .stage,
+    .explain {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      box-shadow: var(--shadow);
+    }
+
+    .controls {
+      border-radius: 8px;
+      padding: 14px;
+      align-self: start;
+      position: sticky;
+      top: 94px;
+    }
+
+    .stage {
+      border-radius: 8px;
+      padding: 14px;
+      min-width: 0;
+    }
+
+    .canvas-grid {
+      display: grid;
+      grid-template-columns: minmax(280px, 1.2fr) minmax(280px, 1fr) minmax(220px, 0.85fr);
+      gap: 12px;
+      align-items: stretch;
+    }
+
+    .pane {
+      min-width: 0;
+    }
+
+    .pane h2,
+    .controls h2,
+    .explain h2 {
+      margin: 0 0 10px;
+      font-size: 13px;
+      text-transform: uppercase;
+      color: var(--muted);
+      letter-spacing: 0.04em;
+    }
+
+    canvas {
+      display: block;
+      width: 100%;
+      height: auto;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fbfaf7;
+    }
+
+    .metric-strip {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .metric {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 8px;
+      background: #fbfaf7;
+      min-width: 0;
+    }
+
+    .metric .label {
+      font-size: 11px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .metric .value {
+      margin-top: 3px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 18px;
+    }
+
+    .control {
+      padding: 10px 0;
+      border-top: 1px solid var(--line);
+    }
+
+    .control:first-of-type { border-top: 0; }
+
+    .control label {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      font-size: 13px;
+    }
+
+    .control .value {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      color: var(--cyan);
+      white-space: nowrap;
+    }
+
+    input[type="range"] {
+      width: 100%;
+      margin: 8px 0 0;
+      accent-color: var(--cyan);
+    }
+
+    .buttons {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    button {
+      border: 1px solid var(--line);
+      background: #fbfaf7;
+      color: var(--ink);
+      border-radius: 6px;
+      padding: 8px 10px;
+      cursor: pointer;
+      font: inherit;
+    }
+
+    button.active {
+      border-color: var(--cyan);
+      background: var(--cyan-soft);
+    }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 12px;
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .key {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .swatch {
+      width: 12px;
+      height: 12px;
+      border-radius: 3px;
+      border: 1px solid rgba(0, 0, 0, 0.16);
+    }
+
+    .explain {
+      grid-column: 1 / -1;
+      border-radius: 8px;
+      padding: 16px;
+    }
+
+    .explain-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .note {
+      border-left: 3px solid var(--cyan);
+      padding-left: 10px;
+      color: var(--muted);
+    }
+
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      background: #f0eee7;
+      padding: 1px 4px;
+      border-radius: 4px;
+    }
+
+    @media (max-width: 1080px) {
+      main {
+        grid-template-columns: 1fr;
+      }
+
+      .controls {
+        position: static;
+      }
+
+      .canvas-grid,
+      .explain-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>AUV visual-bands row detection</h1>
+    <div class="subtitle">
+      This explainer mirrors the core idea behind the current visual row-band detector: sample an analysis strip on the left side of a list region, compute an active-pixel ratio for each y coordinate, smooth that into a row signal, and treat continuous spans above the threshold as candidate row bands.
+    </div>
+  </header>
+
+  <main>
+    <aside class="controls">
+      <h2>Controls</h2>
+      <div class="control">
+        <label>Scenario <span class="value" id="sceneLabel">Song list</span></label>
+        <div class="buttons">
+          <button type="button" class="active" data-scene="music">Song list</button>
+          <button type="button" data-scene="cards">Card list</button>
+          <button type="button" data-scene="sections">Multi-section</button>
+        </div>
+      </div>
+      <div class="control">
+        <label>Edge threshold <span class="value" data-value-for="edgeThreshold"></span></label>
+        <input id="edgeThreshold" type="range" min="0.02" max="0.24" step="0.01" value="0.10">
+      </div>
+      <div class="control">
+        <label>Saturation threshold <span class="value" data-value-for="satThreshold"></span></label>
+        <input id="satThreshold" type="range" min="0.08" max="0.50" step="0.01" value="0.24">
+      </div>
+      <div class="control">
+        <label>Row signal threshold <span class="value" data-value-for="rowThreshold"></span></label>
+        <input id="rowThreshold" type="range" min="0.002" max="0.080" step="0.001" value="0.018">
+      </div>
+      <div class="control">
+        <label>Allowed gap <span class="value" data-value-for="maxGap"></span></label>
+        <input id="maxGap" type="range" min="0" max="24" step="1" value="10">
+      </div>
+      <div class="control">
+        <label>Minimum band height <span class="value" data-value-for="minBandHeight"></span></label>
+        <input id="minBandHeight" type="range" min="4" max="80" step="1" value="28">
+      </div>
+      <div class="control">
+        <label>Maximum band height <span class="value" data-value-for="maxBandHeight"></span></label>
+        <input id="maxBandHeight" type="range" min="60" max="300" step="5" value="220">
+      </div>
+      <div class="control">
+        <label>Background noise <span class="value" data-value-for="noise"></span></label>
+        <input id="noise" type="range" min="0" max="40" step="1" value="4">
+      </div>
+      <div class="control">
+        <label>Row gap <span class="value" data-value-for="rowGap"></span></label>
+        <input id="rowGap" type="range" min="0" max="36" step="1" value="12">
+      </div>
+    </aside>
+
+    <section class="stage">
+      <div class="canvas-grid">
+        <div class="pane">
+          <h2>1. Synthetic screenshot</h2>
+          <canvas id="scene" width="520" height="620"></canvas>
+          <div class="legend">
+            <span class="key"><span class="swatch" style="background: rgba(0,169,184,.18)"></span>analysis strip, 2%-24% width</span>
+            <span class="key"><span class="swatch" style="background: rgba(104,168,21,.24)"></span>detected row bands</span>
+          </div>
+        </div>
+        <div class="pane">
+          <h2>2. Row signal per y</h2>
+          <canvas id="signal" width="420" height="620"></canvas>
+          <div class="legend">
+            <span class="key"><span class="swatch" style="background: var(--blue)"></span>raw active ratio</span>
+            <span class="key"><span class="swatch" style="background: var(--cyan)"></span>smoothed signal</span>
+            <span class="key"><span class="swatch" style="background: var(--red)"></span>threshold</span>
+          </div>
+        </div>
+        <div class="pane">
+          <h2>3. Bands</h2>
+          <canvas id="bands" width="300" height="620"></canvas>
+          <div class="legend">
+            <span class="key"><span class="swatch" style="background: var(--yellow)"></span>raw band</span>
+            <span class="key"><span class="swatch" style="background: var(--green)"></span>accepted row</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="metric-strip">
+        <div class="metric"><div class="label">active pixel</div><div class="value" id="activeRule">edge/sat</div></div>
+        <div class="metric"><div class="label">raw bands</div><div class="value" id="rawBands">0</div></div>
+        <div class="metric"><div class="label">accepted rows</div><div class="value" id="acceptedRows">0</div></div>
+        <div class="metric"><div class="label">hover y</div><div class="value" id="hoverReadout">-</div></div>
+      </div>
+    </section>
+
+    <section class="explain">
+      <h2>What the algorithm is assuming</h2>
+      <div class="explain-grid">
+        <div class="note">
+          <strong>Active-pixel ratio</strong><br>
+          For one horizontal line <code>y</code>, inspect only the left-side analysis strip. A pixel is active when it has enough local edge contrast or enough color saturation. <code>activeCount / stripWidth</code> is the active-pixel ratio for that y coordinate.
+        </div>
+        <div class="note">
+          <strong>row signal</strong><br>
+          Every <code>y</code> has an active ratio, so the screenshot becomes a one-dimensional curve from top to bottom. The current implementation averages it with a radius-2 window to produce <code>smoothedSignal</code>, which keeps single-pixel noise from splitting a row.
+        </div>
+        <div class="note">
+          <strong>Why continuous y spans become rows</strong><br>
+          The detector assumes list items appear as horizontal bands: covers, icons, text, and buttons usually share the same vertical range. A continuous high-signal span therefore often corresponds to one item row. This works for lists, but not for masonry layouts, dense tables, strong background textures, or tall cards that span multiple rows.
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const width = 520;
+    const height = 620;
+    const sceneCanvas = document.getElementById("scene");
+    const signalCanvas = document.getElementById("signal");
+    const bandsCanvas = document.getElementById("bands");
+    const sceneCtx = sceneCanvas.getContext("2d", { willReadFrequently: true });
+    const signalCtx = signalCanvas.getContext("2d");
+    const bandsCtx = bandsCanvas.getContext("2d");
+
+    const controls = {
+      edgeThreshold: document.getElementById("edgeThreshold"),
+      satThreshold: document.getElementById("satThreshold"),
+      rowThreshold: document.getElementById("rowThreshold"),
+      maxGap: document.getElementById("maxGap"),
+      minBandHeight: document.getElementById("minBandHeight"),
+      maxBandHeight: document.getElementById("maxBandHeight"),
+      noise: document.getElementById("noise"),
+      rowGap: document.getElementById("rowGap")
+    };
+
+    let scene = "music";
+    let hoverY = null;
+    let latest = null;
+
+    function readSettings() {
+      return {
+        edgeThreshold: Number(controls.edgeThreshold.value),
+        satThreshold: Number(controls.satThreshold.value),
+        rowThreshold: Number(controls.rowThreshold.value),
+        maxGap: Number(controls.maxGap.value),
+        minBandHeight: Number(controls.minBandHeight.value),
+        maxBandHeight: Number(controls.maxBandHeight.value),
+        noise: Number(controls.noise.value),
+        rowGap: Number(controls.rowGap.value)
+      };
+    }
+
+    function updateValueLabels(settings) {
+      for (const [key, value] of Object.entries(settings)) {
+        const el = document.querySelector(`[data-value-for="${key}"]`);
+        if (!el) continue;
+        el.textContent = Number.isInteger(value) ? String(value) : value.toFixed(3);
+      }
+      document.getElementById("activeRule").textContent =
+        `edge>=${settings.edgeThreshold.toFixed(2)} or sat>${settings.satThreshold.toFixed(2)}`;
+    }
+
+    function seededNoise(x, y, amount) {
+      const value = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453;
+      return (value - Math.floor(value) - 0.5) * amount;
+    }
+
+    function drawSyntheticScene(settings) {
+      sceneCtx.clearRect(0, 0, width, height);
+      sceneCtx.fillStyle = "#f9f8f4";
+      sceneCtx.fillRect(0, 0, width, height);
+
+      const imageData = sceneCtx.getImageData(0, 0, width, height);
+      const data = imageData.data;
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          const i = (y * width + x) * 4;
+          const n = seededNoise(x, y, settings.noise);
+          data[i] = clamp(249 + n, 0, 255);
+          data[i + 1] = clamp(248 + n, 0, 255);
+          data[i + 2] = clamp(244 + n, 0, 255);
+          data[i + 3] = 255;
+        }
+      }
+      sceneCtx.putImageData(imageData, 0, 0);
+
+      sceneCtx.fillStyle = "#ffffff";
+      sceneCtx.fillRect(34, 26, width - 68, height - 52);
+      sceneCtx.strokeStyle = "#d8d4c8";
+      sceneCtx.strokeRect(34.5, 26.5, width - 69, height - 53);
+
+      if (scene === "music") drawMusicList(settings);
+      if (scene === "cards") drawCardList(settings);
+      if (scene === "sections") drawSectionList(settings);
+    }
+
+    function drawMusicList(settings) {
+      const rowHeight = 52;
+      let y = 72;
+      for (let row = 0; row < 8; row++) {
+        drawListRow(y, rowHeight, row, settings.rowGap, row % 3 === 0);
+        y += rowHeight + settings.rowGap;
+      }
+    }
+
+    function drawCardList(settings) {
+      const rowHeight = 86;
+      let y = 56;
+      for (let row = 0; row < 5; row++) {
+        sceneCtx.fillStyle = row % 2 ? "#fbfbf8" : "#f3f8f9";
+        roundRect(sceneCtx, 64, y, 392, rowHeight, 8);
+        sceneCtx.fill();
+        sceneCtx.strokeStyle = "#d8d4c8";
+        sceneCtx.stroke();
+        drawListRow(y + 14, 52, row, settings.rowGap, true);
+        y += rowHeight + settings.rowGap;
+      }
+    }
+
+    function drawSectionList(settings) {
+      const rowHeight = 48;
+      let y = 54;
+      for (let section = 0; section < 3; section++) {
+        sceneCtx.fillStyle = "#eef0ea";
+        sceneCtx.fillRect(58, y, 390, 28);
+        sceneCtx.fillStyle = "#6a707b";
+        sceneCtx.font = "12px ui-monospace, monospace";
+        sceneCtx.fillText(`SECTION ${section + 1}`, 72, y + 18);
+        y += 36;
+        for (let row = 0; row < 3; row++) {
+          drawListRow(y, rowHeight, section * 3 + row, settings.rowGap, row === 1);
+          y += rowHeight + settings.rowGap;
+        }
+        y += 10;
+      }
+    }
+
+    function drawListRow(y, rowHeight, row, rowGap, accent) {
+      sceneCtx.fillStyle = row % 2 ? "#ffffff" : "#fbfaf7";
+      sceneCtx.fillRect(58, y, 390, rowHeight);
+      sceneCtx.strokeStyle = "#ece8dd";
+      sceneCtx.beginPath();
+      sceneCtx.moveTo(58, y + rowHeight + 0.5);
+      sceneCtx.lineTo(448, y + rowHeight + 0.5);
+      sceneCtx.stroke();
+
+      sceneCtx.fillStyle = accent ? "#00a9b8" : "#99a0aa";
+      roundRect(sceneCtx, 74, y + 9, 34, 34, 5);
+      sceneCtx.fill();
+      sceneCtx.fillStyle = "#20242b";
+      sceneCtx.fillRect(122, y + 13, 150 + (row % 3) * 18, 8);
+      sceneCtx.fillStyle = "#8b929d";
+      sceneCtx.fillRect(122, y + 31, 100 + (row % 4) * 22, 6);
+      sceneCtx.fillStyle = row % 2 ? "#68a815" : "#f0b400";
+      sceneCtx.fillRect(385, y + 20, 28, 12);
+    }
+
+    function analyze(settings) {
+      const imageData = sceneCtx.getImageData(0, 0, width, height);
+      const data = imageData.data;
+      const stripLeft = Math.max(0, Math.round(width * 0.02));
+      const stripRight = Math.min(width, Math.max(stripLeft + 1, Math.round(width * 0.24)));
+      const stripWidth = Math.max(1, stripRight - stripLeft);
+      const rowSignal = new Array(height).fill(0);
+
+      function pixel(x, y) {
+        const i = (y * width + x) * 4;
+        return {
+          r: data[i] / 255,
+          g: data[i + 1] / 255,
+          b: data[i + 2] / 255,
+          a: data[i + 3] / 255
+        };
+      }
+
+      function luminance(p) {
+        return 0.2126 * p.r + 0.7152 * p.g + 0.0722 * p.b;
+      }
+
+      function saturation(p) {
+        return Math.max(p.r, p.g, p.b) - Math.min(p.r, p.g, p.b);
+      }
+
+      function edgeStrength(x, y) {
+        const p = pixel(x, y);
+        const right = pixel(Math.min(width - 1, x + 1), y);
+        const down = pixel(x, Math.min(height - 1, y + 1));
+        return Math.abs(luminance(p) - luminance(right)) + Math.abs(luminance(p) - luminance(down));
+      }
+
+      function isActive(x, y) {
+        const p = pixel(x, y);
+        if (p.a <= 0.05) return false;
+        return edgeStrength(x, y) >= settings.edgeThreshold || saturation(p) > settings.satThreshold;
+      }
+
+      for (let y = 0; y < height; y++) {
+        let activeCount = 0;
+        for (let x = stripLeft; x < stripRight; x++) {
+          if (isActive(x, y)) activeCount++;
+        }
+        rowSignal[y] = activeCount / stripWidth;
+      }
+
+      const smoothingRadius = 2;
+      const smoothedSignal = new Array(height).fill(0);
+      for (let y = 0; y < height; y++) {
+        const lower = Math.max(0, y - smoothingRadius);
+        const upper = Math.min(height - 1, y + smoothingRadius);
+        let sum = 0;
+        for (let yy = lower; yy <= upper; yy++) sum += rowSignal[yy];
+        smoothedSignal[y] = sum / (upper - lower + 1);
+      }
+
+      const rawBands = [];
+      let bandStart = null;
+      let gap = 0;
+      for (let y = 0; y < height; y++) {
+        if (smoothedSignal[y] >= settings.rowThreshold) {
+          if (bandStart === null) bandStart = y;
+          gap = 0;
+        } else if (bandStart !== null) {
+          gap++;
+          if (gap > settings.maxGap) {
+            rawBands.push({ start: bandStart, end: y - gap });
+            bandStart = null;
+            gap = 0;
+          }
+        }
+      }
+      if (bandStart !== null) rawBands.push({ start: bandStart, end: height - 1 });
+
+      const acceptedBands = rawBands
+        .map((band, index) => ({ ...band, index, height: band.end - band.start + 1 }))
+        .filter(band => band.height >= settings.minBandHeight && band.height <= settings.maxBandHeight);
+
+      return {
+        stripLeft,
+        stripRight,
+        stripWidth,
+        rowSignal,
+        smoothedSignal,
+        rawBands,
+        acceptedBands
+      };
+    }
+
+    function render(settings, result) {
+      drawSceneOverlay(result);
+      drawSignal(settings, result);
+      drawBands(settings, result);
+      document.getElementById("rawBands").textContent = String(result.rawBands.length);
+      document.getElementById("acceptedRows").textContent = String(result.acceptedBands.length);
+      updateHoverReadout(result);
+    }
+
+    function drawSceneOverlay(result) {
+      sceneCtx.save();
+      sceneCtx.fillStyle = "rgba(0, 169, 184, 0.14)";
+      sceneCtx.fillRect(result.stripLeft, 0, result.stripRight - result.stripLeft, height);
+      sceneCtx.strokeStyle = "rgba(0, 169, 184, 0.9)";
+      sceneCtx.strokeRect(result.stripLeft + 0.5, 0.5, result.stripRight - result.stripLeft, height - 1);
+      for (const band of result.acceptedBands) {
+        sceneCtx.fillStyle = "rgba(104, 168, 21, 0.18)";
+        sceneCtx.fillRect(0, band.start, width, band.end - band.start + 1);
+        sceneCtx.strokeStyle = "rgba(104, 168, 21, 0.95)";
+        sceneCtx.strokeRect(0.5, band.start + 0.5, width - 1, band.end - band.start);
+      }
+      if (hoverY !== null) {
+        sceneCtx.strokeStyle = "rgba(214,75,75,.95)";
+        sceneCtx.beginPath();
+        sceneCtx.moveTo(0, hoverY + 0.5);
+        sceneCtx.lineTo(width, hoverY + 0.5);
+        sceneCtx.stroke();
+      }
+      sceneCtx.restore();
+    }
+
+    function drawSignal(settings, result) {
+      signalCtx.clearRect(0, 0, signalCanvas.width, signalCanvas.height);
+      signalCtx.fillStyle = "#fbfaf7";
+      signalCtx.fillRect(0, 0, signalCanvas.width, signalCanvas.height);
+      const leftPad = 46;
+      const plotWidth = signalCanvas.width - leftPad - 16;
+      const maxSignal = Math.max(0.08, ...result.smoothedSignal, ...result.rowSignal);
+
+      signalCtx.strokeStyle = "#ece8dd";
+      for (let y = 0; y <= height; y += 50) {
+        signalCtx.beginPath();
+        signalCtx.moveTo(leftPad, y + 0.5);
+        signalCtx.lineTo(signalCanvas.width - 16, y + 0.5);
+        signalCtx.stroke();
+      }
+
+      const thresholdX = leftPad + (settings.rowThreshold / maxSignal) * plotWidth;
+      signalCtx.strokeStyle = "#d64b4b";
+      signalCtx.beginPath();
+      signalCtx.moveTo(thresholdX, 0);
+      signalCtx.lineTo(thresholdX, height);
+      signalCtx.stroke();
+
+      drawSignalPath(result.rowSignal, leftPad, plotWidth, maxSignal, "#557ce1", 0.45);
+      drawSignalPath(result.smoothedSignal, leftPad, plotWidth, maxSignal, "#00a9b8", 1);
+
+      for (const band of result.acceptedBands) {
+        signalCtx.fillStyle = "rgba(104, 168, 21, 0.10)";
+        signalCtx.fillRect(leftPad, band.start, plotWidth, band.end - band.start + 1);
+      }
+
+      if (hoverY !== null) {
+        signalCtx.strokeStyle = "rgba(214,75,75,.95)";
+        signalCtx.beginPath();
+        signalCtx.moveTo(0, hoverY + 0.5);
+        signalCtx.lineTo(signalCanvas.width, hoverY + 0.5);
+        signalCtx.stroke();
+      }
+
+      signalCtx.fillStyle = "#6a707b";
+      signalCtx.font = "11px ui-monospace, monospace";
+      signalCtx.fillText("0", 18, 14);
+      signalCtx.fillText(maxSignal.toFixed(2), 8, 34);
+      signalCtx.fillText("threshold", thresholdX + 4, 14);
+    }
+
+    function drawSignalPath(values, leftPad, plotWidth, maxSignal, color, alpha) {
+      signalCtx.save();
+      signalCtx.globalAlpha = alpha;
+      signalCtx.strokeStyle = color;
+      signalCtx.lineWidth = 2;
+      signalCtx.beginPath();
+      for (let y = 0; y < values.length; y++) {
+        const x = leftPad + (values[y] / maxSignal) * plotWidth;
+        if (y === 0) signalCtx.moveTo(x, y);
+        else signalCtx.lineTo(x, y);
+      }
+      signalCtx.stroke();
+      signalCtx.restore();
+    }
+
+    function drawBands(settings, result) {
+      bandsCtx.clearRect(0, 0, bandsCanvas.width, bandsCanvas.height);
+      bandsCtx.fillStyle = "#fbfaf7";
+      bandsCtx.fillRect(0, 0, bandsCanvas.width, bandsCanvas.height);
+      bandsCtx.strokeStyle = "#ece8dd";
+      for (let y = 0; y <= height; y += 50) {
+        bandsCtx.beginPath();
+        bandsCtx.moveTo(0, y + 0.5);
+        bandsCtx.lineTo(bandsCanvas.width, y + 0.5);
+        bandsCtx.stroke();
+      }
+
+      for (const band of result.rawBands) {
+        bandsCtx.fillStyle = "rgba(240, 180, 0, 0.20)";
+        bandsCtx.fillRect(28, band.start, 110, band.end - band.start + 1);
+      }
+      for (const band of result.acceptedBands) {
+        bandsCtx.fillStyle = "rgba(104, 168, 21, 0.30)";
+        bandsCtx.fillRect(150, band.start, 118, band.end - band.start + 1);
+        bandsCtx.fillStyle = "#20242b";
+        bandsCtx.font = "11px ui-monospace, monospace";
+        bandsCtx.fillText(`#${band.index + 1} h=${band.height}`, 156, band.start + 14);
+      }
+
+      bandsCtx.fillStyle = "#6a707b";
+      bandsCtx.font = "12px ui-monospace, monospace";
+      bandsCtx.fillText("raw", 68, 18);
+      bandsCtx.fillText("accepted", 174, 18);
+
+      if (hoverY !== null) {
+        bandsCtx.strokeStyle = "rgba(214,75,75,.95)";
+        bandsCtx.beginPath();
+        bandsCtx.moveTo(0, hoverY + 0.5);
+        bandsCtx.lineTo(bandsCanvas.width, hoverY + 0.5);
+        bandsCtx.stroke();
+      }
+    }
+
+    function updateHoverReadout(result) {
+      const el = document.getElementById("hoverReadout");
+      if (hoverY === null || !result) {
+        el.textContent = "-";
+        return;
+      }
+      const y = Math.max(0, Math.min(height - 1, Math.round(hoverY)));
+      el.textContent = `y=${y} raw=${result.rowSignal[y].toFixed(3)} smooth=${result.smoothedSignal[y].toFixed(3)}`;
+    }
+
+    function rerender() {
+      const settings = readSettings();
+      updateValueLabels(settings);
+      drawSyntheticScene(settings);
+      latest = analyze(settings);
+      render(settings, latest);
+    }
+
+    function clamp(value, min, max) {
+      return Math.max(min, Math.min(max, value));
+    }
+
+    function roundRect(ctx, x, y, w, h, r) {
+      ctx.beginPath();
+      ctx.moveTo(x + r, y);
+      ctx.arcTo(x + w, y, x + w, y + h, r);
+      ctx.arcTo(x + w, y + h, x, y + h, r);
+      ctx.arcTo(x, y + h, x, y, r);
+      ctx.arcTo(x, y, x + w, y, r);
+      ctx.closePath();
+    }
+
+    for (const input of Object.values(controls)) {
+      input.addEventListener("input", rerender);
+    }
+
+    document.querySelectorAll("[data-scene]").forEach(button => {
+      button.addEventListener("click", () => {
+        document.querySelectorAll("[data-scene]").forEach(item => item.classList.remove("active"));
+        button.classList.add("active");
+        scene = button.dataset.scene;
+        document.getElementById("sceneLabel").textContent = button.textContent;
+        rerender();
+      });
+    });
+
+    for (const canvas of [sceneCanvas, signalCanvas, bandsCanvas]) {
+      canvas.addEventListener("mousemove", event => {
+        const rect = canvas.getBoundingClientRect();
+        hoverY = Math.round((event.clientY - rect.top) * (canvas.height / rect.height));
+        rerender();
+      });
+      canvas.addEventListener("mouseleave", () => {
+        hoverY = null;
+        rerender();
+      });
+    }
+
+    rerender();
+  </script>
+</body>
+</html>

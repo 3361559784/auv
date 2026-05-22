@@ -177,6 +177,22 @@ pub(crate) fn ax_focus_text_input(call: &DriverCall) -> AuvResult<DriverResponse
     report,
     "Focused a text input via AXUIElementSetAttributeValue(kAXFocusedAttribute); the real cursor is not moved.",
   )?;
+  let capture_label = format!("ax-focus-text-input-{}", sanitize_file_component(&query));
+  let (mut overlay_artifacts, overlay_capture_note) = best_effort_ax_overlay_artifacts(
+    call,
+    &capture_label,
+    "ax-focus-text-input",
+    &query,
+    "ax-attribute",
+    "ax-attribute",
+    "none",
+    overlay.then_some("dual-cursor-visual-only"),
+    center_x,
+    center_y,
+    overlay,
+    "auv",
+    matched,
+  );
 
   let mut notes = build_ax_click_notes(&query, matched, center_x, center_y);
   notes.push("focusMechanism=ax-attribute".to_string());
@@ -204,6 +220,9 @@ pub(crate) fn ax_focus_text_input(call: &DriverCall) -> AuvResult<DriverResponse
   }
   if !matched.placeholder.is_empty() {
     notes.push(format!("matchedPlaceholder={}", matched.placeholder));
+  }
+  if let Some(note) = overlay_capture_note {
+    notes.push(note);
   }
 
   let mut signals = std::collections::BTreeMap::new();
@@ -272,7 +291,11 @@ pub(crate) fn ax_focus_text_input(call: &DriverCall) -> AuvResult<DriverResponse
     ),
     signals,
     notes,
-    artifacts: vec![artifact],
+    artifacts: {
+      let mut artifacts = vec![artifact];
+      artifacts.append(&mut overlay_artifacts);
+      artifacts
+    },
   })
 }
 
@@ -370,6 +393,22 @@ pub(crate) fn ax_press_button(call: &DriverCall) -> AuvResult<DriverResponse> {
     report,
     "Pressed a control via AXUIElementPerformAction; the real cursor is not moved.",
   )?;
+  let capture_label = format!("ax-press-button-{}", sanitize_file_component(&query));
+  let (mut overlay_artifacts, overlay_capture_note) = best_effort_ax_overlay_artifacts(
+    call,
+    &capture_label,
+    "ax-press-button",
+    &query,
+    "ax-action",
+    "ax-action",
+    "none",
+    overlay.then_some("dual-cursor-visual-only"),
+    center_x,
+    center_y,
+    overlay,
+    "auv",
+    matched,
+  );
 
   let mut notes = build_ax_click_notes(&query, matched, center_x, center_y);
   notes.push("pressMechanism=ax-action".to_string());
@@ -396,6 +435,9 @@ pub(crate) fn ax_press_button(call: &DriverCall) -> AuvResult<DriverResponse> {
   }
   if !matched.help.is_empty() {
     notes.push(format!("matchedHelp={}", matched.help));
+  }
+  if let Some(note) = overlay_capture_note {
+    notes.push(note);
   }
 
   let mut signals = std::collections::BTreeMap::new();
@@ -459,7 +501,11 @@ pub(crate) fn ax_press_button(call: &DriverCall) -> AuvResult<DriverResponse> {
     backend: Some(backend.to_string()),
     signals,
     notes,
-    artifacts: vec![artifact],
+    artifacts: {
+      let mut artifacts = vec![artifact];
+      artifacts.append(&mut overlay_artifacts);
+      artifacts
+    },
   })
 }
 
@@ -723,6 +769,15 @@ pub(crate) fn ax_click_window_text(call: &DriverCall) -> AuvResult<DriverRespons
       bounds: matched_ocr.bounds.clone(),
     }),
     row: None,
+    ax_target: Some(OverlayEvidenceAxTarget {
+      role: ax_node.role.clone(),
+      label: if ax_node.title.is_empty() {
+        query.clone()
+      } else {
+        ax_node.title.clone()
+      },
+      bounds: ax_node.bounds.clone(),
+    }),
     include_user_cursor: overlay,
     auv_cursor_variant: "auv",
   })?;
@@ -843,6 +898,84 @@ pub(crate) fn smart_press(call: &DriverCall) -> AuvResult<DriverResponse> {
       }
     }
   }
+}
+
+fn best_effort_ax_overlay_artifacts(
+  call: &DriverCall,
+  capture_label: &str,
+  kind: &'static str,
+  query: &str,
+  strategy: &str,
+  press_mechanism: &str,
+  cursor_disturbance: &str,
+  overlay_presentation: Option<&str>,
+  center_x: f64,
+  center_y: f64,
+  include_user_cursor: bool,
+  auv_cursor_variant: &'static str,
+  matched: &ObservedAxNode,
+) -> (Vec<ProducedArtifact>, Option<String>) {
+  let capture = match capture_resolved_window_observation(call, capture_label) {
+    Ok(capture) => capture,
+    Err(error) => {
+      return (
+        Vec::new(),
+        Some(format!(
+          "overlayEvidenceCaptureError={}",
+          report_value(&error)
+        )),
+      );
+    }
+  };
+
+  let screenshot_artifact = screenshot_artifact(&capture, capture_label, "ax overlay evidence");
+  let overlay_artifacts = match build_overlay_evidence_artifacts(OverlayEvidenceRequest {
+    kind,
+    label: capture_label.to_string(),
+    screenshot_path: screenshot_artifact.source_path.clone(),
+    screenshot_dimensions: capture.dimensions.clone(),
+    capture_contract: capture.capture_contract.clone(),
+    query: Some(query.to_string()),
+    strategy: Some(strategy.to_string()),
+    fallback_used: Some(false),
+    cursor_disturbance: Some(cursor_disturbance.to_string()),
+    press_mechanism: Some(press_mechanism.to_string()),
+    overlay_presentation: overlay_presentation.map(str::to_string),
+    action_point: logical_to_capture_pixel(&capture.capture_contract, center_x, center_y),
+    expected_target: Some(logical_to_capture_pixel(
+      &capture.capture_contract,
+      center_x,
+      center_y,
+    )),
+    ocr_match: None,
+    row: None,
+    ax_target: Some(OverlayEvidenceAxTarget {
+      role: matched.role.clone(),
+      label: if matched.title.is_empty() {
+        query.to_string()
+      } else {
+        matched.title.clone()
+      },
+      bounds: matched.bounds.clone(),
+    }),
+    include_user_cursor,
+    auv_cursor_variant,
+  }) {
+    Ok(artifacts) => artifacts,
+    Err(error) => {
+      return (
+        vec![screenshot_artifact],
+        Some(format!(
+          "overlayEvidenceBuildError={}",
+          report_value(&error)
+        )),
+      );
+    }
+  };
+
+  let mut artifacts = vec![screenshot_artifact];
+  artifacts.extend(overlay_artifacts);
+  (artifacts, None)
 }
 
 fn mark_smart_press_response(

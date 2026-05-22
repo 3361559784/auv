@@ -752,7 +752,7 @@
     events: [],
     artifacts: [],
     activeSpanId: null,
-    activeArtifactId: null,
+    activeArtifactKey: null,
     activeEvidenceRequestId: 0,
     fetchedAt: null,
     // C.4: WebSocket live stream state. ws is the open socket (or
@@ -804,7 +804,7 @@
     state.events = [];
     state.artifacts = [];
     state.activeSpanId = null;
-    state.activeArtifactId = null;
+    state.activeArtifactKey = null;
     const active = state.runs.find(function (r) { return r.run_id === runId; });
     setMainHeader(active, true);
     if (active) {
@@ -847,13 +847,13 @@
       state.spans = Array.isArray(spans) ? spans : [];
       state.events = Array.isArray(events) ? events : [];
       state.artifacts = Array.isArray(artifacts) ? artifacts : [];
-      state.activeArtifactId = defaultArtifactId(state.artifacts);
+      state.activeArtifactKey = defaultArtifactKey(state.artifacts);
       setMainHeader(run, false);
       renderSpanTree(run, state.spans);
       renderSpanDetail(state.activeSpanId ? findSpan(state.activeSpanId) : null);
       renderEventList(state.events, run);
       renderArtifactList(state.artifacts);
-      renderArtifactPreview(findArtifact(state.activeArtifactId), state.artifacts);
+      renderArtifactPreview(findArtifact(state.activeArtifactKey), state.artifacts);
     } catch (err) {
       if (state.activeRunId !== runId) return;
       setConnection(false, "/runs/:id (" + err.message + ")");
@@ -1017,7 +1017,9 @@
     if (!overlayArtifact || !artifacts) return null;
     const stem = pairedOverlayStem(overlayArtifact);
     return artifacts.find(function (candidate) {
-      return isClickOverlayAnnotation(candidate) && pairedOverlayStem(candidate) === stem;
+      return isClickOverlayAnnotation(candidate)
+        && candidate.span_id === overlayArtifact.span_id
+        && pairedOverlayStem(candidate) === stem;
     }) || null;
   }
 
@@ -1025,14 +1027,31 @@
     if (!annotationArtifact || !artifacts) return null;
     const stem = pairedOverlayStem(annotationArtifact);
     return artifacts.find(function (candidate) {
-      return isClickOverlayArtifact(candidate) && pairedOverlayStem(candidate) === stem;
+      return isClickOverlayArtifact(candidate)
+        && candidate.span_id === annotationArtifact.span_id
+        && pairedOverlayStem(candidate) === stem;
     }) || null;
   }
 
-  function defaultArtifactId(artifacts) {
+  function artifactKey(artifact) {
+    if (!artifact) return "";
+    return (artifact.span_id || "") + "::" + (artifact.artifact_id || "");
+  }
+
+  function defaultArtifactKey(artifacts) {
     if (!artifacts || !artifacts.length) return null;
     const overlay = artifacts.slice().reverse().find(isClickOverlayArtifact);
-    return overlay ? overlay.artifact_id : null;
+    return overlay ? artifactKey(overlay) : null;
+  }
+
+  function preferredArtifactKeyForSpan(spanId, artifacts) {
+    if (!spanId || !artifacts || !artifacts.length) return null;
+    const spanArtifacts = artifacts.filter(function (artifact) {
+      return artifact.span_id === spanId;
+    });
+    if (!spanArtifacts.length) return null;
+    const overlay = spanArtifacts.slice().reverse().find(isClickOverlayArtifact);
+    return artifactKey(overlay || spanArtifacts[spanArtifacts.length - 1]);
   }
 
   function artifactBadge(artifact, artifacts) {
@@ -1047,8 +1066,20 @@
     return idx >= 0 ? path.slice(idx + 1) : path;
   }
 
-  function findArtifact(artifactId) {
-    return state.artifacts.find(function (a) { return a.artifact_id === artifactId; }) || null;
+  function findArtifact(key) {
+    return state.artifacts.find(function (artifact) {
+      return artifactKey(artifact) === key;
+    }) || null;
+  }
+
+  function artifactUrl(artifact) {
+    if (!artifact) return "";
+    const params = new URLSearchParams();
+    if (artifact.span_id) params.set("spanId", artifact.span_id);
+    const suffix = params.toString();
+    return "/runs/" + encodeURIComponent(state.activeRunId)
+      + "/artifacts/" + encodeURIComponent(artifact.artifact_id)
+      + (suffix ? "?" + suffix : "");
   }
 
   function renderArtifactList(artifacts) {
@@ -1070,7 +1101,7 @@
         el("span", { className: "role" }, [artifact.role || artifact.artifact_id]),
         el("span", { className: "file" }, [pathBasename(artifact.path)]),
       ]);
-      const active = artifact.artifact_id === state.activeArtifactId;
+      const active = artifactKey(artifact) === state.activeArtifactKey;
       const badge = artifactBadge(artifact, artifacts);
       const rowChildren = badge
         ? [icon, meta, el("span", { className: "badge" }, [badge])]
@@ -1082,11 +1113,11 @@
             + (isClickOverlayArtifact(artifact) ? " evidence" : "")
             + (isClickOverlayAnnotation(artifact) ? " annotation" : "")
             + (active ? " active" : ""),
-          dataset: { artifactId: artifact.artifact_id },
+          dataset: { artifactKey: artifactKey(artifact) },
           onClick: function () {
-            state.activeArtifactId = artifact.artifact_id;
+            state.activeArtifactKey = artifactKey(artifact);
             renderArtifactList(state.artifacts);
-            renderArtifactPreview(findArtifact(state.activeArtifactId), state.artifacts);
+            renderArtifactPreview(findArtifact(state.activeArtifactKey), state.artifacts);
           },
         },
         rowChildren
@@ -1191,8 +1222,7 @@
       container.appendChild(el("span", { className: "v" }, ["missing click.overlay.annotation artifact"]));
       return;
     }
-    const annotationUrl = "/runs/" + encodeURIComponent(state.activeRunId)
-      + "/artifacts/" + encodeURIComponent(annotation.artifact_id);
+    const annotationUrl = artifactUrl(annotation);
     fetch(annotationUrl)
       .then(function (response) {
         if (!response.ok) throw new Error("HTTP " + response.status);
@@ -1223,7 +1253,7 @@
     if (isClickOverlayAnnotation(artifact)) {
       const overlay = findClickOverlayImageArtifact(artifact, artifacts);
       if (overlay) {
-        state.activeArtifactId = overlay.artifact_id;
+        state.activeArtifactKey = artifactKey(overlay);
         renderArtifactList(state.artifacts);
         renderArtifactPreview(overlay, artifacts);
         return;
@@ -1233,15 +1263,13 @@
     preview.innerHTML = "";
     preview.appendChild(renderArtifactMeta(artifact));
 
-    const runId = state.activeRunId;
-    const artifactUrl = "/runs/" + encodeURIComponent(runId)
-      + "/artifacts/" + encodeURIComponent(artifact.artifact_id);
+    const url = artifactUrl(artifact);
     const surface = el("div", { className: "surface" }, []);
     preview.appendChild(surface);
 
     if (isImageMime(artifact.mime_type)) {
       surface.className = "surface image";
-      surface.appendChild(el("img", { src: artifactUrl, alt: artifact.role || "" }));
+      surface.appendChild(el("img", { src: url, alt: artifact.role || "" }));
       if (isClickOverlayArtifact(artifact)) {
         const summary = renderEvidenceSummaryContainer();
         preview.appendChild(summary);
@@ -1252,19 +1280,19 @@
 
     if (isTextLikeMime(artifact.mime_type)) {
       surface.appendChild(el("pre", null, ["loading…"]));
-      const expectedArtifactId = artifact.artifact_id;
-      fetch(artifactUrl)
+      const expectedArtifactKey = artifactKey(artifact);
+      fetch(url)
         .then(function (response) {
           if (!response.ok) throw new Error("HTTP " + response.status);
           return response.text();
         })
         .then(function (text) {
-          if (state.activeArtifactId !== expectedArtifactId) return;
+          if (state.activeArtifactKey !== expectedArtifactKey) return;
           surface.innerHTML = "";
           surface.appendChild(el("pre", null, [text]));
         })
         .catch(function (err) {
-          if (state.activeArtifactId !== expectedArtifactId) return;
+          if (state.activeArtifactKey !== expectedArtifactKey) return;
           surface.className = "surface error";
           surface.textContent = "failed to load artifact bytes: " + err.message;
         });
@@ -1381,11 +1409,17 @@
         const artifact = frame.artifact;
         if (artifact) {
           state.artifacts.push(artifact);
-          if (isClickOverlayArtifact(artifact)) {
-            state.activeArtifactId = artifact.artifact_id;
+          if (state.activeSpanId && artifact.span_id === state.activeSpanId) {
+            const preferredArtifactKey = preferredArtifactKeyForSpan(
+              state.activeSpanId,
+              state.artifacts
+            );
+            if (preferredArtifactKey) state.activeArtifactKey = preferredArtifactKey;
+          } else if (isClickOverlayArtifact(artifact)) {
+            state.activeArtifactKey = artifactKey(artifact);
           }
           renderArtifactList(state.artifacts);
-          renderArtifactPreview(findArtifact(state.activeArtifactId), state.artifacts);
+          renderArtifactPreview(findArtifact(state.activeArtifactKey), state.artifacts);
         }
         break;
       }
@@ -1504,8 +1538,14 @@
         dataset: { spanId: span.span_id },
         onClick: function () {
           state.activeSpanId = span.span_id;
+          const preferredArtifactKey = preferredArtifactKeyForSpan(span.span_id, state.artifacts);
+          if (preferredArtifactKey) {
+            state.activeArtifactKey = preferredArtifactKey;
+          }
           renderSpanTree(run, spans);
           renderSpanDetail(span);
+          renderArtifactList(state.artifacts);
+          renderArtifactPreview(findArtifact(state.activeArtifactKey), state.artifacts);
         },
       }, [
         el("span", {

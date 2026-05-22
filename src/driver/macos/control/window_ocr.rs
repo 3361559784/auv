@@ -278,6 +278,7 @@ pub(crate) fn click_window_text(call: &DriverCall) -> AuvResult<DriverResponse> 
       bounds: matched.bounds.clone(),
     }),
     row: None,
+    ax_target: None,
     include_user_cursor: overlay,
     auv_cursor_variant: "auv-click",
   })?;
@@ -537,6 +538,7 @@ pub(crate) fn click_window_row(call: &DriverCall) -> AuvResult<DriverResponse> {
       bounds: row.bounds.clone(),
       text_fragments: row.text_fragments.clone(),
     }),
+    ax_target: None,
     include_user_cursor: false,
     auv_cursor_variant: "auv-click",
   })?;

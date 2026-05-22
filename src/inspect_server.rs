@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use axum::body::{Body, to_bytes};
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::header::{AUTHORIZATION, CONTENT_TYPE};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -335,10 +335,11 @@ async fn get_artifacts(
 async fn get_artifact(
   State(state): State<InspectServerState>,
   Path((run_id, artifact_id)): Path<(String, String)>,
+  Query(query): Query<ArtifactLookupQuery>,
 ) -> Result<Response, InspectHttpError> {
   let (artifact, path) = state
     .store
-    .artifact_file(&run_id, &artifact_id)
+    .artifact_file_scoped(&run_id, &artifact_id, query.span_id.as_deref())
     .map_err(InspectHttpError::from_store)?;
   let bytes = tokio::fs::read(&path)
     .await
@@ -435,6 +436,7 @@ async fn write_updates(
 async fn write_artifact(
   State(state): State<InspectServerState>,
   Path((run_id, artifact_id)): Path<(String, String)>,
+  Query(query): Query<ArtifactLookupQuery>,
   headers: HeaderMap,
   body: Body,
 ) -> Result<Response, InspectHttpError> {
@@ -446,9 +448,15 @@ async fn write_artifact(
     })?;
   let artifact = state
     .store
-    .write_artifact_bytes(&run_id, &artifact_id, &bytes)
+    .write_artifact_bytes_scoped(&run_id, &artifact_id, query.span_id.as_deref(), &bytes)
     .map_err(InspectHttpError::from_store)?;
   Ok(Json(artifact).into_response())
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ArtifactLookupQuery {
+  span_id: Option<String>,
 }
 
 #[allow(clippy::result_large_err)]
@@ -780,7 +788,7 @@ struct InspectHttpError {
 
 impl InspectHttpError {
   fn from_store(error: String) -> Self {
-    let status = if error.contains("invalid run id") {
+    let status = if error.contains("invalid run id") || error.contains("specify span_id") {
       StatusCode::BAD_REQUEST
     } else if error.contains("escapes run directory") || error.contains("symlink artifact path") {
       StatusCode::FORBIDDEN
@@ -1137,6 +1145,99 @@ mod tests {
       fs::read_to_string(artifact_path).expect("artifact should read"),
       "artifact body"
     );
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
+  async fn artifact_endpoint_requires_span_id_when_artifact_id_is_ambiguous() {
+    let root = temp_dir("inspect-artifact-ambiguous");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let run_id = RunId::new("run_ambiguous_artifact");
+    write_test_run_with_duplicate_artifacts(&store, run_id.clone());
+    let app = router(store, Arc::new(BroadcastRunRecorder::new(16)));
+
+    let response = app
+      .clone()
+      .oneshot(
+        Request::builder()
+          .uri("/runs/run_ambiguous_artifact/artifacts/artifact_dup")
+          .body(Body::empty())
+          .expect("request should build"),
+      )
+      .await
+      .expect("route should respond");
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    let scoped = app
+      .oneshot(
+        Request::builder()
+          .uri("/runs/run_ambiguous_artifact/artifacts/artifact_dup?spanId=0000000000000002")
+          .body(Body::empty())
+          .expect("request should build"),
+      )
+      .await
+      .expect("route should respond");
+    assert_eq!(scoped.status(), StatusCode::OK);
+    let body = to_bytes(scoped.into_body(), usize::MAX)
+      .await
+      .expect("body should read");
+    assert_eq!(body.as_ref(), b"second artifact");
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
+  async fn write_artifact_uses_span_id_to_target_duplicate_artifact_ids() {
+    let root = temp_dir("inspect-write-artifact-ambiguous");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let run_id = RunId::new("run_write_ambiguous_artifact");
+    write_test_run_with_duplicate_artifacts(&store, run_id.clone());
+    let app = router_with_config(
+      store.clone(),
+      Arc::new(BroadcastRunRecorder::new(16)),
+      super::InspectWriteConfig {
+        enabled: true,
+        token: Some("secret".to_string()),
+        no_token: false,
+      },
+    );
+
+    let response = app
+      .oneshot(
+        Request::builder()
+          .method("POST")
+          .uri("/write/runs/run_write_ambiguous_artifact/artifacts/artifact_dup?spanId=0000000000000002")
+          .header("authorization", "Bearer secret")
+          .body(Body::from("updated second"))
+          .expect("request should build"),
+      )
+      .await
+      .expect("route should respond");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let (_, first_path) = store
+      .artifact_file_scoped(
+        "run_write_ambiguous_artifact",
+        "artifact_dup",
+        Some("0000000000000001"),
+      )
+      .expect("first artifact should resolve");
+    let (_, second_path) = store
+      .artifact_file_scoped(
+        "run_write_ambiguous_artifact",
+        "artifact_dup",
+        Some("0000000000000002"),
+      )
+      .expect("second artifact should resolve");
+    assert_eq!(
+      fs::read_to_string(first_path).expect("first artifact should read"),
+      "first artifact"
+    );
+    assert_eq!(
+      fs::read_to_string(second_path).expect("second artifact should read"),
+      "updated second"
+    );
+
     let _ = fs::remove_dir_all(root);
   }
 
@@ -1909,9 +2010,8 @@ mod tests {
       "viewer payload should fetch /runs/:id/artifacts on selection"
     );
     assert!(
-      html.contains("/runs/\" + encodeURIComponent(runId)\n      + \"/artifacts/\" + encodeURIComponent(artifact.artifact_id)")
-        || html.contains("/artifacts/\" + encodeURIComponent(artifact.artifact_id)"),
-      "viewer payload should reference the per-artifact bytes endpoint"
+      html.contains("encodeURIComponent(artifact.artifact_id)") && html.contains("spanId"),
+      "viewer payload should reference the per-artifact bytes endpoint with span scoping"
     );
     assert!(
       html.contains("sprite-inspector.svg"),
@@ -1924,10 +2024,12 @@ mod tests {
       "viewer payload should include click overlay evidence-aware preview helpers"
     );
     assert!(
-      html.contains("defaultArtifactId")
+      html.contains("defaultArtifactKey")
+        && html.contains("artifactKey")
+        && html.contains("preferredArtifactKeyForSpan")
         && html.contains("findClickOverlayAnnotationArtifact")
         && html.contains("loadEvidenceSummary"),
-      "viewer payload should prioritize click overlay artifacts and load paired annotation summaries"
+      "viewer payload should prioritize click overlay artifacts, sync them to span selection, and load paired annotation summaries"
     );
 
     let _ = fs::remove_dir_all(root);
@@ -2248,7 +2350,7 @@ mod tests {
       .write_run_snapshot(&CanonicalRun {
         run: RunRecordV1Alpha1 {
           api_version: RUN_API_VERSION.to_string(),
-          run_id,
+          run_id: run_id.clone(),
           trace_id: TraceId::new("00000000000000000000000000000001"),
           run_type: RunType::Execute,
           state: TraceState::Running,
@@ -2302,7 +2404,7 @@ mod tests {
       .write_run_snapshot(&CanonicalRun {
         run: RunRecordV1Alpha1 {
           api_version: RUN_API_VERSION.to_string(),
-          run_id,
+          run_id: run_id.clone(),
           trace_id: TraceId::new("00000000000000000000000000000001"),
           run_type: RunType::Command,
           state: TraceState::Ended,
@@ -2343,6 +2445,119 @@ mod tests {
         artifacts,
       })
       .expect("run should persist");
+  }
+
+  fn write_test_run_with_duplicate_artifacts(store: &LocalStore, run_id: RunId) {
+    let span_a = SpanId::new("0000000000000001");
+    let span_b = SpanId::new("0000000000000002");
+    let artifact_a = ArtifactRecordV1Alpha1 {
+      api_version: ARTIFACT_API_VERSION.to_string(),
+      artifact_id: ArtifactId::new("artifact_dup"),
+      span_id: span_a.clone(),
+      event_id: Some(EventId::new("event_dup_a")),
+      role: "driver.output".to_string(),
+      mime_type: "text/plain".to_string(),
+      path: "artifacts/artifact_dup_first.txt".to_string(),
+      sha256: None,
+      attributes: BTreeMap::new(),
+      summary: Some("first".to_string()),
+    };
+    let artifact_b = ArtifactRecordV1Alpha1 {
+      api_version: ARTIFACT_API_VERSION.to_string(),
+      artifact_id: ArtifactId::new("artifact_dup"),
+      span_id: span_b.clone(),
+      event_id: Some(EventId::new("event_dup_b")),
+      role: "driver.output".to_string(),
+      mime_type: "text/plain".to_string(),
+      path: "artifacts/artifact_dup_second.txt".to_string(),
+      sha256: None,
+      attributes: BTreeMap::new(),
+      summary: Some("second".to_string()),
+    };
+    store
+      .write_run_snapshot(&CanonicalRun {
+        run: RunRecordV1Alpha1 {
+          api_version: RUN_API_VERSION.to_string(),
+          run_id: run_id.clone(),
+          trace_id: TraceId::new("00000000000000000000000000000001"),
+          run_type: RunType::Command,
+          state: TraceState::Ended,
+          status_code: TraceStatusCode::Ok,
+          started_at_millis: 100,
+          finished_at_millis: Some(101),
+          root_span_id: span_a.clone(),
+          attributes: BTreeMap::new(),
+          summary: Some("done".to_string()),
+          failure: None,
+        },
+        spans: vec![
+          SpanRecordV1Alpha1 {
+            api_version: SPAN_API_VERSION.to_string(),
+            span_id: span_a.clone(),
+            parent_span_id: None,
+            name: "auv.inspect.server.first".to_string(),
+            state: TraceState::Ended,
+            status_code: TraceStatusCode::Ok,
+            started_at_millis: 100,
+            finished_at_millis: Some(101),
+            attributes: BTreeMap::new(),
+            summary: None,
+            failure: None,
+          },
+          SpanRecordV1Alpha1 {
+            api_version: SPAN_API_VERSION.to_string(),
+            span_id: span_b.clone(),
+            parent_span_id: None,
+            name: "auv.inspect.server.second".to_string(),
+            state: TraceState::Ended,
+            status_code: TraceStatusCode::Ok,
+            started_at_millis: 100,
+            finished_at_millis: Some(101),
+            attributes: BTreeMap::new(),
+            summary: None,
+            failure: None,
+          },
+        ],
+        events: vec![
+          EventRecordV1Alpha1 {
+            api_version: EVENT_API_VERSION.to_string(),
+            event_id: EventId::new("event_dup_a"),
+            span_id: span_a.clone(),
+            name: "inspect.event".to_string(),
+            timestamp_millis: 100,
+            attributes: BTreeMap::new(),
+            message: None,
+            artifact_ids: vec![artifact_a.artifact_id.clone()],
+          },
+          EventRecordV1Alpha1 {
+            api_version: EVENT_API_VERSION.to_string(),
+            event_id: EventId::new("event_dup_b"),
+            span_id: span_b.clone(),
+            name: "inspect.event".to_string(),
+            timestamp_millis: 101,
+            attributes: BTreeMap::new(),
+            message: None,
+            artifact_ids: vec![artifact_b.artifact_id.clone()],
+          },
+        ],
+        artifacts: vec![artifact_a, artifact_b],
+      })
+      .expect("run should persist");
+    let run_dir = store
+      .run_dir(run_id.as_str())
+      .expect("run dir should resolve");
+    let artifacts_dir = run_dir.join("artifacts");
+    fs::create_dir_all(&artifacts_dir).expect("artifact dir should create");
+    fs::write(
+      artifacts_dir.join("artifact_dup_first.txt"),
+      "first artifact",
+    )
+    .expect("first artifact should write");
+    fs::write(
+      artifacts_dir.join("artifact_dup_second.txt"),
+      "second artifact",
+    )
+    .expect("second artifact should write");
   }
 
   fn test_event(event_id: &str) -> EventRecordV1Alpha1 {

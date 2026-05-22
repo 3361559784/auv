@@ -20,6 +20,7 @@ const YOU_HIGHLIGHT: [u8; 4] = [154, 163, 178, 255];
 const OCR_BOX: [u8; 4] = [255, 196, 0, 255];
 const TARGET_BOX: [u8; 4] = [0, 155, 166, 255];
 const ROW_BOX: [u8; 4] = [127, 208, 48, 255];
+const AX_BOX: [u8; 4] = [105, 168, 255, 255];
 const LABEL_BG: [u8; 4] = [0, 155, 166, 238];
 const LABEL_YOU_BG: [u8; 4] = [42, 58, 82, 238];
 const LABEL_FG: [u8; 4] = [255, 255, 255, 255];
@@ -61,6 +62,13 @@ pub(crate) struct OverlayEvidenceRow {
 }
 
 #[derive(Clone, Debug, Serialize)]
+pub(crate) struct OverlayEvidenceAxTarget {
+  pub(crate) role: String,
+  pub(crate) label: String,
+  pub(crate) bounds: ObservedRect,
+}
+
+#[derive(Clone, Debug, Serialize)]
 pub(crate) struct OverlayEvidencePayload {
   pub(crate) version: String,
   pub(crate) kind: String,
@@ -77,6 +85,7 @@ pub(crate) struct OverlayEvidencePayload {
   pub(crate) expected_target: Option<OverlayEvidencePoint>,
   pub(crate) ocr_match: Option<OverlayEvidenceMatch>,
   pub(crate) row: Option<OverlayEvidenceRow>,
+  pub(crate) ax_target: Option<OverlayEvidenceAxTarget>,
   pub(crate) user_cursor: Option<OverlayEvidenceCursor>,
   pub(crate) auv_cursor: Option<OverlayEvidenceCursor>,
 }
@@ -98,6 +107,7 @@ pub(crate) struct OverlayEvidenceRequest {
   pub(crate) expected_target: Option<OverlayEvidencePoint>,
   pub(crate) ocr_match: Option<OverlayEvidenceMatch>,
   pub(crate) row: Option<OverlayEvidenceRow>,
+  pub(crate) ax_target: Option<OverlayEvidenceAxTarget>,
   pub(crate) include_user_cursor: bool,
   pub(crate) auv_cursor_variant: &'static str,
 }
@@ -152,6 +162,9 @@ pub(crate) fn build_overlay_evidence_artifacts(
   }
   if let Some(row) = request.row.as_ref() {
     draw_rect_outline(&mut image, &row.bounds, ROW_BOX, 2);
+  }
+  if let Some(ax_target) = request.ax_target.as_ref() {
+    draw_rect_outline(&mut image, &ax_target.bounds, AX_BOX, 2);
   }
   if let Some(target) = request.expected_target.as_ref() {
     draw_target_marker(
@@ -217,6 +230,7 @@ pub(crate) fn build_overlay_evidence_artifacts(
       request.overlay_presentation.as_deref(),
       request.ocr_match.as_ref(),
       request.row.as_ref(),
+      request.ax_target.as_ref(),
     ),
   );
 
@@ -236,6 +250,7 @@ pub(crate) fn build_overlay_evidence_artifacts(
     expected_target: request.expected_target.clone(),
     ocr_match: request.ocr_match.clone(),
     row: request.row.clone(),
+    ax_target: request.ax_target.clone(),
     user_cursor,
     auv_cursor: Some(auv_cursor),
   };
@@ -266,7 +281,7 @@ pub(crate) fn build_overlay_evidence_artifacts(
         sanitize_file_component(&request.label)
       ),
       note: Some(
-        "Evidence screenshot with dual-cursor and OCR/click overlay annotations.".to_string(),
+        "Evidence screenshot with dual-cursor and interaction overlay annotations.".to_string(),
       ),
     },
     overlay_json_artifact,
@@ -496,6 +511,7 @@ fn build_signal_lines(
   overlay_presentation: Option<&str>,
   ocr_match: Option<&OverlayEvidenceMatch>,
   row: Option<&OverlayEvidenceRow>,
+  ax_target: Option<&OverlayEvidenceAxTarget>,
 ) -> Vec<String> {
   let mut lines = Vec::new();
   if let Some(query) = query {
@@ -521,6 +537,14 @@ fn build_signal_lines(
   }
   if let Some(row) = row {
     lines.push(format!("row: #{} {}", row.row_index + 1, row.source));
+  }
+  if let Some(ax_target) = ax_target {
+    let label = if ax_target.label.is_empty() {
+      ax_target.role.as_str()
+    } else {
+      ax_target.label.as_str()
+    };
+    lines.push(format!("ax: {} {}", ax_target.role, label));
   }
   lines
 }
@@ -858,6 +882,16 @@ mod tests {
         },
         text_fragments: vec!["Play".to_string(), "Song".to_string()],
       }),
+      ax_target: Some(OverlayEvidenceAxTarget {
+        role: "AXButton".to_string(),
+        label: "Play".to_string(),
+        bounds: ObservedRect {
+          x: 20,
+          y: 10,
+          width: 24,
+          height: 14,
+        },
+      }),
       include_user_cursor: false,
       auv_cursor_variant: "auv-click",
     };
@@ -920,6 +954,13 @@ mod tests {
         }),
       Some(vec!["Play".to_string(), "Song".to_string()])
     );
+    assert_eq!(
+      payload
+        .get("ax_target")
+        .and_then(|value| value.get("role"))
+        .and_then(|value| value.as_str()),
+      Some("AXButton")
+    );
     assert!(
       payload
         .get("user_cursor")
@@ -964,6 +1005,16 @@ mod tests {
         },
         text_fragments: vec!["天空仍灿烂".to_string()],
       }),
+      Some(&OverlayEvidenceAxTarget {
+        role: "AXButton".to_string(),
+        label: "播放".to_string(),
+        bounds: ObservedRect {
+          x: 1,
+          y: 2,
+          width: 3,
+          height: 4,
+        },
+      }),
     );
 
     assert!(lines.contains(&"query: 晴天".to_string()));
@@ -974,5 +1025,6 @@ mod tests {
     assert!(lines.contains(&"overlay: dual-cursor-visual-only".to_string()));
     assert!(lines.contains(&"ocr: 天空仍灿烂 (0.81)".to_string()));
     assert!(lines.contains(&"row: #2 row_ratio".to_string()));
+    assert!(lines.contains(&"ax: AXButton 播放".to_string()));
   }
 }

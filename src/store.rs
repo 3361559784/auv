@@ -265,7 +265,16 @@ impl LocalStore {
     run_id: &str,
     artifact_id: &str,
   ) -> AuvResult<(ArtifactRecordV1Alpha1, PathBuf)> {
-    let (artifact, candidate_path) = self.artifact_path(run_id, artifact_id)?;
+    self.artifact_file_scoped(run_id, artifact_id, None)
+  }
+
+  pub fn artifact_file_scoped(
+    &self,
+    run_id: &str,
+    artifact_id: &str,
+    span_id: Option<&str>,
+  ) -> AuvResult<(ArtifactRecordV1Alpha1, PathBuf)> {
+    let (artifact, candidate_path) = self.artifact_path(run_id, artifact_id, span_id)?;
     let run_directory = self.run_dir(run_id)?;
     let canonical_run_directory = fs::canonicalize(&run_directory).map_err(|error| {
       format!(
@@ -295,7 +304,17 @@ impl LocalStore {
     artifact_id: &str,
     bytes: &[u8],
   ) -> AuvResult<ArtifactRecordV1Alpha1> {
-    let (artifact, candidate_path) = self.artifact_path(run_id, artifact_id)?;
+    self.write_artifact_bytes_scoped(run_id, artifact_id, None, bytes)
+  }
+
+  pub fn write_artifact_bytes_scoped(
+    &self,
+    run_id: &str,
+    artifact_id: &str,
+    span_id: Option<&str>,
+    bytes: &[u8],
+  ) -> AuvResult<ArtifactRecordV1Alpha1> {
+    let (artifact, candidate_path) = self.artifact_path(run_id, artifact_id, span_id)?;
     let run_directory = self.run_dir(run_id)?;
     let canonical_run_directory = fs::canonicalize(&run_directory).map_err(|error| {
       format!(
@@ -359,13 +378,31 @@ impl LocalStore {
     &self,
     run_id: &str,
     artifact_id: &str,
+    span_id: Option<&str>,
   ) -> AuvResult<(ArtifactRecordV1Alpha1, PathBuf)> {
     let canonical = self.read_run(run_id)?;
-    let artifact = canonical
+    let matches = canonical
       .artifacts
       .into_iter()
-      .find(|artifact| artifact.artifact_id.as_str() == artifact_id)
-      .ok_or_else(|| format!("artifact {artifact_id} not found in run {run_id}"))?;
+      .filter(|artifact| artifact.artifact_id.as_str() == artifact_id)
+      .collect::<Vec<_>>();
+    let artifact = match span_id {
+      Some(span_id) => matches
+        .into_iter()
+        .find(|artifact| artifact.span_id.as_str() == span_id)
+        .ok_or_else(|| {
+          format!("artifact {artifact_id} with span_id {span_id} not found in run {run_id}")
+        })?,
+      None => match matches.as_slice() {
+        [] => return Err(format!("artifact {artifact_id} not found in run {run_id}")),
+        [artifact] => artifact.clone(),
+        _ => {
+          return Err(format!(
+            "artifact {artifact_id} is ambiguous in run {run_id}; specify span_id"
+          ));
+        }
+      },
+    };
     let artifact_path = artifact.path.clone();
     let relative_path = Path::new(&artifact_path);
     if relative_path.is_absolute()
@@ -760,6 +797,60 @@ mod tests {
       .read_run("run_staged_artifact")
       .expect("persisted run should read");
     assert_eq!(loaded.artifacts.len(), 1);
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn local_store_requires_span_id_for_duplicate_artifact_ids() {
+    let root = temp_dir("store-duplicate-artifact-id");
+    let store = LocalStore::new(root.clone()).expect("should initialize");
+    let run = dummy_run("run_duplicate_artifact_id");
+    let span_a = dummy_span(&run.root_span_id);
+    let span_b_id = crate::trace::SpanId::new("0000000000000002");
+    let span_b = dummy_span(&span_b_id);
+    let artifact_a = dummy_artifact(&span_a.span_id);
+    let artifact_b = ArtifactRecordV1Alpha1 {
+      span_id: span_b.span_id.clone(),
+      path: "artifacts/artifact_0001_other-output.txt".to_string(),
+      ..dummy_artifact(&span_b.span_id)
+    };
+
+    store
+      .write_run_snapshot(&CanonicalRun {
+        run,
+        spans: vec![span_a.clone(), span_b.clone()],
+        events: vec![dummy_event(&span_a.span_id), dummy_event(&span_b.span_id)],
+        artifacts: vec![artifact_a.clone(), artifact_b.clone()],
+      })
+      .expect("run should persist");
+    let run_dir = root
+      .join("runs")
+      .join("run_duplicate_artifact_id")
+      .join("artifacts");
+    fs::create_dir_all(&run_dir).expect("artifact dir should create");
+    fs::write(run_dir.join("artifact_0001_output.txt"), "first output")
+      .expect("first artifact should write");
+    fs::write(
+      run_dir.join("artifact_0001_other-output.txt"),
+      "second output",
+    )
+    .expect("second artifact should write");
+
+    let error = store
+      .artifact_file("run_duplicate_artifact_id", "artifact_0001")
+      .expect_err("duplicate artifact ids should require span scoping");
+    assert!(error.contains("specify span_id"));
+
+    let (resolved, _) = store
+      .artifact_file_scoped(
+        "run_duplicate_artifact_id",
+        "artifact_0001",
+        Some(span_b.span_id.as_str()),
+      )
+      .expect("scoped artifact lookup should succeed");
+    assert_eq!(resolved.span_id, span_b.span_id);
+    assert_eq!(resolved.path, artifact_b.path);
 
     let _ = fs::remove_dir_all(root);
   }

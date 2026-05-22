@@ -757,12 +757,17 @@ impl RunRecorder for InspectServerRunRecorder {
     let required = self.required;
     let run_id = run_id.as_str().to_string();
     let artifact_id = artifact.artifact_id.as_str().to_string();
+    let span_id = artifact.span_id.as_str().to_string();
     let mime_type = artifact.mime_type.clone();
     let path = path.to_path_buf();
     let result = std::thread::spawn(move || {
       let bytes = std::fs::read(&path)
         .map_err(|error| format!("inspect server artifact upload read failed: {error}"))?;
-      let url = format!("{base_url}/write/runs/{run_id}/artifacts/{artifact_id}");
+      let mut url = reqwest::Url::parse(&format!(
+        "{base_url}/write/runs/{run_id}/artifacts/{artifact_id}"
+      ))
+      .map_err(|error| format!("inspect server artifact upload url build failed: {error}"))?;
+      url.query_pairs_mut().append_pair("spanId", &span_id);
       let client = reqwest::blocking::Client::builder()
         .connect_timeout(INSPECT_SERVER_WRITE_TIMEOUT)
         .timeout(INSPECT_SERVER_WRITE_TIMEOUT)
@@ -1212,30 +1217,45 @@ mod tests {
   async fn inspect_server_recorder_uploads_artifact_bytes_with_token() {
     use axum::Router;
     use axum::body::{Body, to_bytes};
+    use axum::extract::Query;
     use axum::http::{HeaderMap, header::AUTHORIZATION};
     use axum::routing::post;
     use tokio::net::TcpListener;
 
-    let captured = Arc::new(Mutex::new(None::<(Option<String>, String, Vec<u8>)>));
+    #[derive(Clone, Debug, serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct UploadQuery {
+      span_id: Option<String>,
+    }
+
+    let captured = Arc::new(Mutex::new(
+      None::<(Option<String>, String, Option<String>, Vec<u8>)>,
+    ));
     let captured_route = captured.clone();
     let app = Router::new().route(
       "/write/runs/run_update_test/artifacts/artifact_0001",
-      post(move |headers: HeaderMap, body: Body| {
-        let captured = captured_route.clone();
-        async move {
-          let authorization = headers
-            .get(AUTHORIZATION)
-            .and_then(|value| value.to_str().ok())
-            .map(ToOwned::to_owned);
-          let bytes = to_bytes(body, usize::MAX)
-            .await
-            .expect("body should read")
-            .to_vec();
-          *captured.lock().expect("capture lock") =
-            Some((authorization, "artifact_0001".to_string(), bytes));
-          "ok"
-        }
-      }),
+      post(
+        move |headers: HeaderMap, Query(query): Query<UploadQuery>, body: Body| {
+          let captured = captured_route.clone();
+          async move {
+            let authorization = headers
+              .get(AUTHORIZATION)
+              .and_then(|value| value.to_str().ok())
+              .map(ToOwned::to_owned);
+            let bytes = to_bytes(body, usize::MAX)
+              .await
+              .expect("body should read")
+              .to_vec();
+            *captured.lock().expect("capture lock") = Some((
+              authorization,
+              "artifact_0001".to_string(),
+              query.span_id,
+              bytes,
+            ));
+            "ok"
+          }
+        },
+      ),
     );
     let listener = TcpListener::bind("127.0.0.1:0")
       .await
@@ -1272,13 +1292,14 @@ mod tests {
       .record_artifact_bytes(&RunId::new("run_update_test"), &artifact, &path)
       .expect("artifact upload should succeed");
 
-    let (authorization, artifact_id, bytes) = captured
+    let (authorization, artifact_id, span_id, bytes) = captured
       .lock()
       .expect("capture lock")
       .clone()
       .expect("captured request");
     assert_eq!(authorization.as_deref(), Some("Bearer secret"));
     assert_eq!(artifact_id, "artifact_0001");
+    assert_eq!(span_id.as_deref(), Some("0000000000000001"));
     assert_eq!(bytes, b"artifact body");
     let _ = std::fs::remove_file(path);
   }

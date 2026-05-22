@@ -1,4 +1,6 @@
 use super::Driver;
+use std::collections::BTreeMap;
+
 use crate::model::{AuvResult, DriverCall, DriverDescriptor, DriverResponse};
 
 pub(crate) struct FixtureObserveDriver;
@@ -32,13 +34,24 @@ impl Driver for FixtureObserveDriver {
       .cloned()
       .unwrap_or_else(|| "fixture-observation".to_string());
 
+    let mut signals = BTreeMap::new();
+    if let Some(action) = call.inputs.get("hook_action") {
+      signals.insert("last.scan.hook.action".to_string(), action.clone());
+    }
+    if let Some(reason) = call.inputs.get("hook_reason") {
+      signals.insert("last.scan.hook.reason".to_string(), reason.clone());
+    }
+    if let Some(context) = call.inputs.get("context") {
+      signals.insert("fixture.context".to_string(), context.clone());
+    }
+
     Ok(DriverResponse {
       summary: format!(
         "Observed deterministic fixture scene for target {} with label {}.",
         target, label
       ),
       backend: Some("fixture.static".to_string()),
-      signals: std::collections::BTreeMap::new(),
+      signals,
       notes: vec![
         "This command does not touch the real desktop.".to_string(),
         "Use it to verify that implicit run creation and inspect output stay stable.".to_string(),

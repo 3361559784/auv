@@ -12,7 +12,7 @@ use auv_cli::bundle::{
   verify_exported_bundle_package_standalone,
 };
 use auv_cli::model::RunStatus;
-use auv_cli::scan::{
+use auv_cli::scroll_scan::{
   ScanRegion, ScanTarget, ScanWindowRegionOptions, StopPolicy, scan_window_region,
 };
 use auv_cli::skill::{
@@ -195,6 +195,7 @@ async fn run() -> Result<(), String> {
       min_confidence,
       max_observations,
       per_page_after_observe_recipe,
+      per_list_item_candidate_recipe,
       on_stop_candidate_recipe,
     } => {
       let runtime = build_default_runtime(project_root.clone())?;
@@ -218,6 +219,7 @@ async fn run() -> Result<(), String> {
           min_confidence,
           max_observations,
           per_page_after_observe_recipe,
+          per_list_item_candidate_recipe,
           on_stop_candidate_recipe,
         },
       )?;
@@ -410,6 +412,7 @@ async fn run() -> Result<(), String> {
           dry_run,
           max_disturbance,
           overrides,
+          quiet: false,
         },
       )?;
     }

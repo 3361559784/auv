@@ -114,6 +114,10 @@ pub struct SectionCandidate {
 pub struct HookDecisionRecord {
   pub hook_name: String,
   pub page_index: usize,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub item_index: Option<usize>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub row_candidate_index: Option<usize>,
   pub action: HookAction,
   pub reason: String,
 }
@@ -188,6 +192,7 @@ pub struct ScanWindowRegionOptions {
   pub min_confidence: f64,
   pub max_observations: i64,
   pub per_page_after_observe_recipe: Option<String>,
+  pub per_list_item_candidate_recipe: Option<String>,
   pub on_stop_candidate_recipe: Option<String>,
 }
 
@@ -259,11 +264,24 @@ fn scan_window_region_into_run(
       consecutive_no_progress = 0;
     }
 
-    // WORKAROUND: First scan progress uses OCR novelty only. Add lightweight
-    // screenshot-region diffing before treating no-progress as strong bottom
-    // evidence in broader workflows. Current novelty keys include page-local
-    // x/y/width/height bounds so repeated visible labels at different positions
-    // are not treated as inherently stale.
+    // TODO: Replace this weak no-progress proxy with explicit directional
+    // scroll-boundary evidence. Downward scans need reliable bottom detection;
+    // upward scans need reliable top detection; both directions also need
+    // "scroll until match" semantics so UntilMatch can search above or below
+    // the current viewport instead of only checking already visible rows.
+    // Today we infer progress only from newly observed item signatures, so
+    // repeated virtualized rows, OCR churn, or duplicated labels can make
+    // "top/bottom reached" ambiguous. We need at least one of:
+    // screenshot-region diffing before/after scroll, scrollbar/thumb geometry,
+    // AX scroll value when available, or driver-level scroll-effect evidence.
+    // Sectioned lists also need middleware that can detect separators,
+    // sticky headers, or section boundary regions during the scroll loop so a
+    // scan can stop at, enter, or report section transitions deliberately.
+    // MaaFW reference: Context::wait_freezes and ActionHelper compare image
+    // stability around an action, while Pipeline roi/target references keep
+    // image evidence tied to a node result; see:
+    // /Users/neko/Git/github.com/MaaXYZ/MaaFramework/source/MaaFramework/Task/Context.cpp
+    // /Users/neko/Git/github.com/MaaXYZ/MaaFramework/source/MaaFramework/Task/Component/ActionHelper.cpp
     let progress = ScanProgress {
       page_index,
       scroll_count,
@@ -413,8 +431,10 @@ pub fn observations_from_observe_json(
   let value: Value =
     serde_json::from_str(raw).map_err(|error| format!("malformed observe JSON: {error}"))?;
   let rows = value
-    .get("rows")
+    .get("item_candidates")
     .and_then(Value::as_array)
+    .filter(|candidates| !candidates.is_empty())
+    .or_else(|| value.get("rows").and_then(Value::as_array))
     .ok_or_else(|| "malformed observe JSON: missing rows array".to_string())?;
 
   rows
@@ -482,8 +502,26 @@ fn scan_window_region_page(
   let source_artifact = screenshot_artifact
     .clone()
     .unwrap_or_else(|| first_artifact_with_extension(&observe_result, "json").unwrap_or_default());
-  let page_observations =
+  let mut page_observations =
     observations_from_first_json_artifact(page_index, &observe_result, source_artifact)?;
+  enrich_list_item_observations_with_crops(
+    runtime,
+    run,
+    root,
+    page_index,
+    screenshot_artifact.as_deref(),
+    &options,
+    &mut page_observations,
+  )?;
+  run_list_item_candidate_hooks(
+    runtime,
+    run,
+    root,
+    options.per_list_item_candidate_recipe.as_deref(),
+    options,
+    &page_observations,
+    state,
+  )?;
   let new_observation_count =
     count_new_observations(&page_observations, &mut state.known_observation_signatures);
   let observation_count = page_observations.len();
@@ -580,9 +618,11 @@ fn bounded_or_no_progress_stop(
       StopReason::NoProgressLimit,
       format!("reached no_progress_limit={no_progress_limit}"),
       progress.page_index,
-      // REVIEW: "Complete by no visual progress" is an evidence claim, not a proof
-      // that the application has no hidden content. Keep this wording visible in
-      // reports and docs.
+      // TODO: Back this completeness claim with explicit boundary evidence.
+      // "Complete by no visual progress" is only an evidence claim today, not
+      // proof that the application has no hidden content. Split the future
+      // evidence into direction-aware top/bottom claims so upward and downward
+      // scans do not both collapse into generic no-progress.
       CompletenessClaim::CompleteByNoVisualProgress,
     ));
   }
@@ -669,9 +709,13 @@ pub fn hook_decision_from_variables(
   page_index: usize,
   variables: &BTreeMap<String, String>,
 ) -> AuvResult<Option<HookDecisionRecord>> {
-  // REVIEW: Hook recipes currently communicate decisions through exported
-  // variables such as last.scan.hook.action. Revisit if hooks need a smaller
-  // manifest or a first-class typed return artifact.
+  // TODO: Replace exported scalar variables with a typed recipe return value.
+  // Hook recipes currently communicate decisions through strings such as
+  // last.scan.hook.action because SkillRunSummary has no structured return
+  // channel. MaaFW keeps recognition/action details as JSON in runtime cache
+  // and exposes them by id; the closest references are:
+  // /Users/neko/Git/github.com/MaaXYZ/MaaFramework/source/MaaFramework/Task/Component/Recognizer.cpp
+  // /Users/neko/Git/github.com/MaaXYZ/MaaFramework/source/MaaFramework/Tasker/RuntimeCache.cpp
   let Some(action) = variables.get("last.scan.hook.action") else {
     return Ok(None);
   };
@@ -683,6 +727,8 @@ pub fn hook_decision_from_variables(
   Ok(Some(HookDecisionRecord {
     hook_name: hook_name.to_string(),
     page_index,
+    item_index: None,
+    row_candidate_index: None,
     action,
     reason,
   }))
@@ -775,9 +821,9 @@ pub fn conservative_merge_observations(
   clusters
 }
 
-// REVIEW: This first merge rule is intentionally conservative and only merges
-// adjacent-page overlap with nearly identical y positions. Revisit after
-// real scan artifacts show whether OCR y jitter needs a wider threshold.
+// TODO: Revisit merge identity after scroll-boundary evidence and row-local
+// image hashes exist. This first rule is intentionally conservative and only
+// merges adjacent-page overlap with nearly identical y positions.
 fn should_merge_adjacent_observations(
   left: &CollectionObservation,
   right: &CollectionObservation,
@@ -822,8 +868,44 @@ fn observation_from_row(
     },
     section_context: None,
     source_artifacts: vec![source_artifact.to_path_buf()],
-    attributes: BTreeMap::new(),
+    attributes: observation_attributes_from_row(row),
   })
+}
+
+fn observation_attributes_from_row(row: &Value) -> BTreeMap<String, String> {
+  let mut attributes = BTreeMap::new();
+  if let Some(source) = row.get("source").and_then(Value::as_str) {
+    attributes.insert("source".to_string(), source.to_string());
+  }
+  if let Some(row_index) = row.get("row_index").and_then(Value::as_u64) {
+    attributes.insert("row_index".to_string(), row_index.to_string());
+  }
+  if let Some(item_index) = row.get("item_index").and_then(Value::as_u64) {
+    attributes.insert("item_index".to_string(), item_index.to_string());
+  }
+  if let Some(row_candidate_index) = row.get("row_candidate_index").and_then(Value::as_u64) {
+    attributes.insert(
+      "row_candidate_index".to_string(),
+      row_candidate_index.to_string(),
+    );
+  }
+  if let Some(role) = row.get("segmented_region_role").and_then(Value::as_str) {
+    attributes.insert("segmented_region_role".to_string(), role.to_string());
+  }
+  if let Some(reason) = row.get("filter_reason").and_then(Value::as_str) {
+    attributes.insert("filter_reason".to_string(), reason.to_string());
+  }
+  if let Some(fragments) = row.get("text_fragments").and_then(Value::as_array) {
+    let text = fragments
+      .iter()
+      .filter_map(Value::as_str)
+      .collect::<Vec<_>>()
+      .join(" | ");
+    if !text.is_empty() {
+      attributes.insert("text_fragments".to_string(), text);
+    }
+  }
+  attributes
 }
 
 fn json_i64(bounds: &Value, key: &str, row_index: usize) -> AuvResult<i64> {
@@ -866,6 +948,11 @@ fn observe_request(options: &ScanWindowRegionOptions, page_index: usize) -> Invo
 
 fn scroll_request(options: &ScanWindowRegionOptions) -> InvokeRequest {
   let mut inputs = region_inputs(&options.target);
+  // TODO: Preserve scroll-effect evidence in the scroll command result. The
+  // scan loop needs to know whether an up/down scroll actually moved the
+  // viewport, hit the top, hit the bottom, or crossed a section boundary; the
+  // current request only sends direction/amount and treats command success as
+  // movement.
   inputs.insert("direction".to_string(), options.direction.clone());
   inputs.insert(
     "amount".to_string(),
@@ -960,17 +1047,34 @@ fn count_new_observations(
 ) -> usize {
   observations
     .iter()
-    .filter(|observation| {
-      !observation.normalized_text_key.is_empty()
-        && known_observation_signatures.insert(observation_signature(observation))
-    })
+    .filter(|observation| known_observation_signatures.insert(observation_signature(observation)))
     .count()
 }
 
 fn observation_signature(observation: &CollectionObservation) -> String {
+  let identity = if observation.normalized_text_key.is_empty() {
+    // TODO: Replace visual-only geometry identity with row OCR, AX ids, or
+    // local image hashes. Source + viewport geometry is only a bounded progress
+    // signal and can misidentify virtualized or repeated rows.
+    format!(
+      "visual:{}:{}",
+      observation
+        .attributes
+        .get("source")
+        .map(String::as_str)
+        .unwrap_or("unknown"),
+      observation
+        .attributes
+        .get("row_index")
+        .map(String::as_str)
+        .unwrap_or("?")
+    )
+  } else {
+    observation.normalized_text_key.clone()
+  };
   format!(
     "{}|x={}|y={}|w={}|h={}",
-    observation.normalized_text_key,
+    identity,
     observation.bounds.x,
     observation.bounds.y,
     observation.bounds.width,
@@ -990,6 +1094,479 @@ fn match_found_on_current_page(
     && current_page_observations
       .iter()
       .any(|observation| observation.normalized_text_key.contains(&normalized_query))
+}
+
+fn list_item_candidate_hook_overrides(
+  options: &ScanWindowRegionOptions,
+  item: &CollectionObservation,
+) -> BTreeMap<String, String> {
+  // TODO: Replace these scalar scan.item.* overrides with one typed hook
+  // context object. We keep the scalar surface small for now because recipe
+  // step args are still rendered as strings, but list-item parsing needs the
+  // crop artifact, OCR fragments, bounds, and provenance as one coherent value.
+  // MaaFW reference: custom_recognition_param/custom_action_param are JSON
+  // values, and custom recognition returns a box plus JSON detail:
+  // /Users/neko/Git/github.com/MaaXYZ/MaaFramework/source/MaaFramework/Resource/PipelineTypes.h
+  // /Users/neko/Git/github.com/MaaXYZ/MaaFramework/source/MaaFramework/Task/Component/CustomRecognition.cpp
+  // TODO: Include section-boundary and segmentation context here once region
+  // segmentation can identify list bodies, sticky headers, separators, and
+  // section-local item ranges. That middleware is the core difference between
+  // "scroll until match" and "scroll within this section until match".
+  let mut overrides = BTreeMap::from([
+    (
+      "scan.hook.name".to_string(),
+      "per_list_item_candidate".to_string(),
+    ),
+    (
+      "scan.hook.stage".to_string(),
+      "per_list_item_candidate".to_string(),
+    ),
+    ("scan.page_index".to_string(), item.page_index.to_string()),
+    ("scan.direction".to_string(), options.direction.clone()),
+    (
+      "scan.target.application_id".to_string(),
+      options.target.application_id.clone().unwrap_or_default(),
+    ),
+    (
+      "scan.item.index".to_string(),
+      item
+        .attributes
+        .get("item_index")
+        .cloned()
+        .unwrap_or_else(|| "0".to_string()),
+    ),
+    (
+      "scan.item.row_candidate_index".to_string(),
+      item
+        .attributes
+        .get("row_candidate_index")
+        .cloned()
+        .unwrap_or_default(),
+    ),
+    ("scan.item.text".to_string(), item.raw_text.clone()),
+    ("scan.item.bounds.x".to_string(), item.bounds.x.to_string()),
+    ("scan.item.bounds.y".to_string(), item.bounds.y.to_string()),
+    (
+      "scan.item.bounds.width".to_string(),
+      item.bounds.width.to_string(),
+    ),
+    (
+      "scan.item.bounds.height".to_string(),
+      item.bounds.height.to_string(),
+    ),
+  ]);
+  for key in [
+    "source",
+    "filter_reason",
+    "segmented_region_role",
+    "text_fragments",
+  ] {
+    if let Some(value) = item.attributes.get(key) {
+      overrides.insert(format!("scan.item.{key}"), value.clone());
+    }
+  }
+  if let Some(source_artifact) = item.source_artifacts.first() {
+    overrides.insert(
+      "scan.item.source_artifact".to_string(),
+      source_artifact.display().to_string(),
+    );
+  }
+  if let Some(crop_artifact) = item.attributes.get("crop_artifact") {
+    overrides.insert("scan.item.crop_artifact".to_string(), crop_artifact.clone());
+  }
+  if let Some(context_artifact) = item.attributes.get("context_artifact") {
+    overrides.insert(
+      "scan.item.context_artifact".to_string(),
+      context_artifact.clone(),
+    );
+  }
+  overrides
+}
+
+#[derive(Clone, Debug)]
+struct ListItemCropOcrResult {
+  crop_artifact: PathBuf,
+  context_artifact: PathBuf,
+  text_fragments: Vec<String>,
+  strategy: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+struct ListItemCandidateContextArtifact {
+  schema: String,
+  observation_id: String,
+  page_index: usize,
+  raw_text: String,
+  text_fragments: Vec<String>,
+  bounds: ScanRect,
+  attributes: BTreeMap<String, String>,
+  source_artifacts: Vec<PathBuf>,
+  crop_artifact: PathBuf,
+  ocr_strategy: String,
+}
+
+impl ListItemCandidateContextArtifact {
+  const SCHEMA: &'static str = "auv.scan.list_item_candidate_context.v1";
+  const OCR_STRATEGY: &'static str = "crop_ocr";
+}
+
+fn enrich_list_item_observations_with_crops(
+  runtime: &crate::runtime::Runtime,
+  run: &mut crate::recording::RecordingRun,
+  root: &crate::recording::SpanRef,
+  page_index: usize,
+  screenshot_artifact: Option<&Path>,
+  options: &ScanWindowRegionOptions,
+  observations: &mut [CollectionObservation],
+) -> AuvResult<()> {
+  let Some(screenshot_artifact) = screenshot_artifact else {
+    return Ok(());
+  };
+
+  let mut crop_jobs = Vec::new();
+  for (observation_index, observation) in observations.iter().enumerate() {
+    let item_index = observation_item_index(observation);
+    let crop_temp_path = crop_list_item_image(
+      screenshot_artifact,
+      &observation.bounds,
+      &format!(
+        "scan-page-{:04}-list-item-{:04}",
+        page_index + 1,
+        item_index + 1
+      ),
+    )?;
+    crop_jobs.push((observation_index, item_index, crop_temp_path));
+  }
+
+  let text_results =
+    ocr_list_item_crops_parallel(&crop_jobs, options.min_confidence, options.max_observations)?;
+
+  for (observation_index, item_index, crop_temp_path) in crop_jobs {
+    let observation = &mut observations[observation_index];
+    let text_fragments = text_results
+      .get(observation_index)
+      .cloned()
+      .unwrap_or_default();
+    let crop_artifact = runtime.stage_artifact_file(
+      run,
+      root,
+      "list-item-crop",
+      &crop_temp_path,
+      format!(
+        "scan-page-{:04}-list-item-{:04}.png",
+        page_index + 1,
+        item_index + 1
+      ),
+      Some("Cropped screenshot for one list item candidate.".to_string()),
+    )?;
+    let context_temp_path =
+      write_list_item_context_artifact(observation, &crop_artifact, &text_fragments)?;
+    let context_artifact = runtime.stage_artifact_file(
+      run,
+      root,
+      "list-item-context",
+      &context_temp_path,
+      format!(
+        "scan-page-{:04}-list-item-{:04}-context.json",
+        page_index + 1,
+        item_index + 1
+      ),
+      Some("Typed context for one list item candidate.".to_string()),
+    )?;
+    let _ = fs::remove_file(&crop_temp_path);
+    let _ = fs::remove_file(&context_temp_path);
+    apply_list_item_crop_ocr_result(
+      observation,
+      ListItemCropOcrResult {
+        crop_artifact,
+        context_artifact,
+        text_fragments,
+        strategy: "crop_ocr".to_string(),
+      },
+    );
+  }
+
+  Ok(())
+}
+
+fn ocr_list_item_crops_parallel(
+  crop_jobs: &[(usize, usize, PathBuf)],
+  min_confidence: f64,
+  max_observations: i64,
+) -> AuvResult<Vec<Vec<String>>> {
+  let mut handles = Vec::new();
+  for (observation_index, _, crop_path) in crop_jobs {
+    let crop_path = crop_path.clone();
+    let observation_index = *observation_index;
+    handles.push(std::thread::spawn(move || {
+      crate::driver::ocr_text_fragments_in_image(&crop_path, min_confidence, max_observations)
+        .map(|fragments| (observation_index, fragments))
+    }));
+  }
+
+  let mut results = vec![Vec::new(); crop_jobs.len()];
+  for handle in handles {
+    let (observation_index, fragments) = handle
+      .join()
+      .map_err(|_| "list item crop OCR worker panicked".to_string())??;
+    if let Some(slot) = results.get_mut(observation_index) {
+      *slot = fragments;
+    }
+  }
+  Ok(results)
+}
+
+fn observation_item_index(observation: &CollectionObservation) -> usize {
+  observation
+    .attributes
+    .get("item_index")
+    .and_then(|value| value.parse::<usize>().ok())
+    .unwrap_or(0)
+}
+
+fn crop_list_item_image(source: &Path, bounds: &ScanRect, label: &str) -> AuvResult<PathBuf> {
+  let image = image::open(source).map_err(|error| {
+    format!(
+      "failed to open list item source image {}: {error}",
+      source.display()
+    )
+  })?;
+  let image_width = image.width() as i64;
+  let image_height = image.height() as i64;
+  let crop = clamped_crop_rect(bounds, image_width, image_height)?;
+  let cropped = image.crop_imm(
+    crop.x as u32,
+    crop.y as u32,
+    crop.width as u32,
+    crop.height as u32,
+  );
+  let path = std::env::temp_dir().join(format!(
+    "auv-{}-{}-{}.png",
+    sanitize_scan_artifact_component(label),
+    std::process::id(),
+    crate::model::now_millis()
+  ));
+  cropped
+    .save(&path)
+    .map_err(|error| format!("failed to write list item crop {}: {error}", path.display()))?;
+  Ok(path)
+}
+
+fn clamped_crop_rect(
+  bounds: &ScanRect,
+  image_width: i64,
+  image_height: i64,
+) -> AuvResult<ScanRect> {
+  if image_width <= 0 || image_height <= 0 {
+    return Err(format!(
+      "invalid source image dimensions {}x{} for list item crop",
+      image_width, image_height
+    ));
+  }
+  let x = bounds.x.clamp(0, image_width.saturating_sub(1));
+  let y = bounds.y.clamp(0, image_height.saturating_sub(1));
+  let max_x = (bounds.x + bounds.width).clamp(x + 1, image_width);
+  let max_y = (bounds.y + bounds.height).clamp(y + 1, image_height);
+  Ok(ScanRect {
+    x,
+    y,
+    width: max_x - x,
+    height: max_y - y,
+  })
+}
+
+fn write_list_item_context_artifact(
+  observation: &CollectionObservation,
+  crop_artifact: &Path,
+  text_fragments: &[String],
+) -> AuvResult<PathBuf> {
+  let path = std::env::temp_dir().join(format!(
+    "auv-list-item-context-{}-{}-{}.json",
+    sanitize_scan_artifact_component(&observation.observation_id),
+    std::process::id(),
+    crate::model::now_millis()
+  ));
+  let payload = build_list_item_context_payload(observation, crop_artifact, text_fragments);
+  let rendered = serde_json::to_string_pretty(&payload)
+    .map_err(|error| format!("failed to render list item context JSON: {error}"))?;
+  fs::write(&path, format!("{rendered}\n")).map_err(|error| {
+    format!(
+      "failed to write list item context {}: {error}",
+      path.display()
+    )
+  })?;
+  Ok(path)
+}
+
+fn build_list_item_context_payload(
+  observation: &CollectionObservation,
+  crop_artifact: &Path,
+  text_fragments: &[String],
+) -> ListItemCandidateContextArtifact {
+  let raw_text = joined_text_fragments(text_fragments);
+  let mut attributes = observation.attributes.clone();
+  if !raw_text.is_empty() {
+    attributes.insert("text_fragments".to_string(), raw_text.clone());
+  }
+  attributes.insert(
+    "ocr_strategy".to_string(),
+    ListItemCandidateContextArtifact::OCR_STRATEGY.to_string(),
+  );
+
+  ListItemCandidateContextArtifact {
+    schema: ListItemCandidateContextArtifact::SCHEMA.to_string(),
+    observation_id: observation.observation_id.clone(),
+    page_index: observation.page_index,
+    raw_text,
+    text_fragments: text_fragments.to_vec(),
+    bounds: observation.bounds.clone(),
+    attributes,
+    source_artifacts: observation.source_artifacts.clone(),
+    crop_artifact: crop_artifact.to_path_buf(),
+    ocr_strategy: ListItemCandidateContextArtifact::OCR_STRATEGY.to_string(),
+  }
+}
+
+fn apply_list_item_crop_ocr_result(
+  observation: &mut CollectionObservation,
+  result: ListItemCropOcrResult,
+) {
+  observation.attributes.insert(
+    "crop_artifact".to_string(),
+    result.crop_artifact.display().to_string(),
+  );
+  observation.attributes.insert(
+    "context_artifact".to_string(),
+    result.context_artifact.display().to_string(),
+  );
+  observation
+    .attributes
+    .insert("ocr_strategy".to_string(), result.strategy);
+  if !result.text_fragments.is_empty() {
+    let raw_text = joined_text_fragments(&result.text_fragments);
+    observation.raw_text = raw_text.clone();
+    observation.normalized_text_key = normalize_observation_text(&raw_text);
+    observation
+      .attributes
+      .insert("text_fragments".to_string(), raw_text);
+  }
+}
+
+fn joined_text_fragments(text_fragments: &[String]) -> String {
+  text_fragments.join(" | ")
+}
+
+fn sanitize_scan_artifact_component(raw: &str) -> String {
+  let sanitized = raw
+    .chars()
+    .map(|character| {
+      if character.is_ascii_alphanumeric() || matches!(character, '-' | '_') {
+        character
+      } else {
+        '-'
+      }
+    })
+    .collect::<String>()
+    .trim_matches('-')
+    .to_string();
+  if sanitized.is_empty() {
+    "item".to_string()
+  } else {
+    sanitized
+  }
+}
+
+fn run_list_item_candidate_hooks(
+  runtime: &crate::runtime::Runtime,
+  run: &mut crate::recording::RecordingRun,
+  root: &crate::recording::SpanRef,
+  recipe: Option<&str>,
+  options: &ScanWindowRegionOptions,
+  items: &[CollectionObservation],
+  state: &mut ScanWindowRegionState,
+) -> AuvResult<()> {
+  let Some(recipe) = recipe else {
+    return Ok(());
+  };
+  let project_root = runtime.project_root();
+  // TODO: Allow recipe manifests to declare inline hook/sub-recipe blocks.
+  // This standalone recipe lookup exists because SkillCatalog currently resolves
+  // only top-level recipe_id values from recipes/**/*.json, while scroll scan
+  // needs a per-list-item hook that belongs conceptually to the parent workflow.
+  // MaaFW reference: Context::run_task/run_recognition/run_action accept a JSON
+  // pipeline_override, so a caller can synthesize or override nested pipeline
+  // nodes without creating a separate resource file for every hook:
+  // /Users/neko/Git/github.com/MaaXYZ/MaaFramework/source/MaaFramework/Task/Context.cpp
+  // /Users/neko/Git/github.com/MaaXYZ/MaaFramework/docs/zh_cn/3.1-任务流水线协议.md
+  let catalog = crate::skill::SkillCatalog::discover(project_root)?;
+  let entry = catalog.resolve(project_root, recipe)?;
+  validate_scan_sub_recipe(&entry.manifest, "per_list_item_candidate")?;
+
+  for item in items {
+    let summary = crate::skill::run_skill_manifest_into_run(
+      runtime,
+      run,
+      root,
+      &entry.manifest,
+      crate::skill::SkillRunOptions {
+        dry_run: false,
+        max_disturbance: Some(DisturbanceClass::None),
+        overrides: list_item_candidate_hook_overrides(options, item),
+        quiet: true,
+      },
+    )?;
+    let Some(mut decision) = hook_decision_from_variables(
+      "per_list_item_candidate",
+      item.page_index,
+      &summary.exported_variables,
+    )?
+    else {
+      continue;
+    };
+    decision.item_index = item
+      .attributes
+      .get("item_index")
+      .and_then(|value| value.parse::<usize>().ok());
+    decision.row_candidate_index = item
+      .attributes
+      .get("row_candidate_index")
+      .and_then(|value| value.parse::<usize>().ok());
+    validate_list_item_candidate_hook_decision(&decision)?;
+    let should_stop = decision.action == HookAction::Stop;
+    state.hook_decisions.push(decision);
+    if should_stop {
+      break;
+    }
+  }
+
+  Ok(())
+}
+
+fn validate_scan_sub_recipe(
+  manifest: &crate::skill::SkillManifest,
+  expected_stage: &str,
+) -> AuvResult<()> {
+  let invocation = &manifest.invocation;
+  if invocation.kind != "sub_recipe"
+    || invocation.host != "scroll_scan"
+    || invocation.stage != expected_stage
+  {
+    return Err(format!(
+      "recipe {} is not a scroll_scan sub_recipe for stage {expected_stage}",
+      manifest.recipe_id
+    ));
+  }
+  Ok(())
+}
+
+fn validate_list_item_candidate_hook_decision(decision: &HookDecisionRecord) -> AuvResult<()> {
+  match decision.action {
+    HookAction::Continue | HookAction::Stop | HookAction::Annotate => Ok(()),
+    HookAction::RetryObserve | HookAction::AdjustRegion | HookAction::AdjustScroll => Err(format!(
+      "list item hook action {} is parsed but not implemented by scan_window_region yet",
+      hook_action_name(decision.action)
+    )),
+  }
 }
 
 fn run_optional_scan_hook(
@@ -1036,6 +1613,7 @@ fn run_optional_scan_hook(
       dry_run: false,
       max_disturbance: Some(DisturbanceClass::None),
       overrides,
+      quiet: false,
     },
   )?;
   hook_decision_from_variables(hook_name, page_index, &summary.exported_variables)
@@ -1295,6 +1873,8 @@ mod tests {
     let decision = HookDecisionRecord {
       hook_name: "per_page_after_observe".to_string(),
       page_index: 0,
+      item_index: None,
+      row_candidate_index: None,
       action: HookAction::AdjustRegion,
       reason: "need a wider region".to_string(),
     };
@@ -1356,7 +1936,9 @@ mod tests {
     "rows": [
       {
         "row_index": 0,
+        "source": "visual-bands+ocr-text",
         "text": "Alpha",
+        "text_fragments": ["Alpha"],
         "bounds": { "x": 1, "y": 2, "width": 30, "height": 10 },
         "peak_density": 0.42
       }
@@ -1369,6 +1951,225 @@ mod tests {
     assert_eq!(observations.len(), 1);
     assert_eq!(observations[0].raw_text, "Alpha");
     assert_eq!(observations[0].normalized_text_key, "alpha");
+    assert_eq!(
+      observations[0].attributes.get("source").map(String::as_str),
+      Some("visual-bands+ocr-text")
+    );
+    assert_eq!(
+      observations[0]
+        .attributes
+        .get("text_fragments")
+        .map(String::as_str),
+      Some("Alpha")
+    );
+  }
+
+  #[test]
+  fn parse_observe_json_prefers_list_item_candidates_over_raw_rows() {
+    let raw = r#"{
+    "extractor": "ocr-row",
+    "screenshot_path": "/tmp/page.png",
+    "rows": [
+      {
+        "row_index": 0,
+        "source": "visual-bands",
+        "text": "",
+        "text_fragments": [],
+        "bounds": { "x": 10, "y": 20, "width": 400, "height": 160 }
+      }
+    ],
+    "item_candidates": [
+      {
+        "item_index": 0,
+        "row_candidate_index": 2,
+        "source": "row_filter",
+        "text": "Whisper of time",
+        "text_fragments": ["Whisper of time"],
+        "bounds": { "x": 100, "y": 220, "width": 600, "height": 84 }
+      },
+      {
+        "item_index": 1,
+        "row_candidate_index": 3,
+        "source": "row_filter",
+        "text": "万书隙",
+        "text_fragments": ["万书隙"],
+        "bounds": { "x": 100, "y": 348, "width": 600, "height": 86 }
+      }
+    ]
+  }"#;
+
+    let observations = observations_from_observe_json(0, raw, PathBuf::from("artifacts/page.png"))
+      .expect("parse observations");
+
+    assert_eq!(observations.len(), 2);
+    assert_eq!(observations[0].raw_text, "Whisper of time");
+    assert_eq!(
+      observations[0]
+        .attributes
+        .get("row_candidate_index")
+        .map(String::as_str),
+      Some("2")
+    );
+    assert_eq!(
+      observations[0].attributes.get("source").map(String::as_str),
+      Some("row_filter")
+    );
+  }
+
+  #[test]
+  fn count_new_observations_tracks_visual_only_rows_once() {
+    let mut known = BTreeSet::new();
+    let mut visual = observation("obs_0001_0001", 0, "", 120);
+    visual
+      .attributes
+      .insert("source".to_string(), "visual-bands".to_string());
+    visual
+      .attributes
+      .insert("row_index".to_string(), "0".to_string());
+
+    assert_eq!(count_new_observations(&[visual.clone()], &mut known), 1);
+    assert_eq!(count_new_observations(&[visual], &mut known), 0);
+  }
+
+  #[test]
+  fn list_item_candidate_hook_overrides_include_outer_scan_context() {
+    let mut item = observation("obs_0001_0001", 2, "Song A", 120);
+    item
+      .attributes
+      .insert("item_index".to_string(), "4".to_string());
+    item
+      .attributes
+      .insert("row_candidate_index".to_string(), "7".to_string());
+    item
+      .attributes
+      .insert("source".to_string(), "row_filter".to_string());
+    item.attributes.insert(
+      "filter_reason".to_string(),
+      "accepted_repeating_row_geometry".to_string(),
+    );
+    item
+      .source_artifacts
+      .push(PathBuf::from("artifacts/page.png"));
+    let options = ScanWindowRegionOptions {
+      target: ScanTarget {
+        application_id: Some("com.example.App".to_string()),
+        window_title: None,
+        region: ScanRegion {
+          left_ratio: 0.2,
+          top_ratio: 0.3,
+          right_ratio: 0.9,
+          bottom_ratio: 0.8,
+        },
+      },
+      stop_policy: StopPolicy::Bounded {
+        max_pages: 1,
+        max_scrolls: 0,
+      },
+      direction: "down".to_string(),
+      scroll_amount: 40.0,
+      settle_ms: 250,
+      min_confidence: 0.0,
+      max_observations: 128,
+      per_page_after_observe_recipe: None,
+      per_list_item_candidate_recipe: Some(
+        "scan.fixture.list_item_candidate_continue.v0".to_string(),
+      ),
+      on_stop_candidate_recipe: None,
+    };
+
+    let overrides = list_item_candidate_hook_overrides(&options, &item);
+
+    assert_eq!(
+      overrides.get("scan.hook.stage").map(String::as_str),
+      Some("per_list_item_candidate")
+    );
+    assert_eq!(
+      overrides.get("scan.page_index").map(String::as_str),
+      Some("2")
+    );
+    assert_eq!(
+      overrides.get("scan.item.index").map(String::as_str),
+      Some("4")
+    );
+    assert_eq!(
+      overrides
+        .get("scan.item.row_candidate_index")
+        .map(String::as_str),
+      Some("7")
+    );
+    assert_eq!(
+      overrides.get("scan.item.bounds.y").map(String::as_str),
+      Some("120")
+    );
+    assert_eq!(
+      overrides
+        .get("scan.item.source_artifact")
+        .map(String::as_str),
+      Some("artifacts/page.png")
+    );
+  }
+
+  #[test]
+  fn crop_ocr_enrichment_writes_text_and_artifact_context() {
+    let mut observation = observation("obs_0001_0001", 0, "", 120);
+    observation
+      .attributes
+      .insert("item_index".to_string(), "2".to_string());
+
+    let enrichment = ListItemCropOcrResult {
+      crop_artifact: PathBuf::from("artifacts/list-item-0003.png"),
+      context_artifact: PathBuf::from("artifacts/list-item-0003-context.json"),
+      text_fragments: vec!["Song A".to_string(), "Artist B".to_string()],
+      strategy: "crop_ocr".to_string(),
+    };
+
+    apply_list_item_crop_ocr_result(&mut observation, enrichment);
+
+    assert_eq!(observation.raw_text, "Song A | Artist B");
+    assert_eq!(observation.normalized_text_key, "song a | artist b");
+    assert_eq!(
+      observation
+        .attributes
+        .get("crop_artifact")
+        .map(String::as_str),
+      Some("artifacts/list-item-0003.png")
+    );
+    assert_eq!(
+      observation
+        .attributes
+        .get("context_artifact")
+        .map(String::as_str),
+      Some("artifacts/list-item-0003-context.json")
+    );
+    assert_eq!(
+      observation
+        .attributes
+        .get("text_fragments")
+        .map(String::as_str),
+      Some("Song A | Artist B")
+    );
+  }
+
+  #[test]
+  fn list_item_context_payload_uses_crop_ocr_fragments_as_single_text_source() {
+    let mut observation = observation("obs_0001_0001", 0, "old observe text", 120);
+    observation
+      .attributes
+      .insert("text_fragments".to_string(), "old observe text".to_string());
+    let fragments = vec!["Song A".to_string(), "Artist B".to_string()];
+
+    let payload = build_list_item_context_payload(
+      &observation,
+      Path::new("artifacts/list-item-0001.png"),
+      &fragments,
+    );
+
+    assert_eq!(payload.raw_text, "Song A | Artist B");
+    assert_eq!(payload.text_fragments, fragments);
+    assert_eq!(
+      payload.attributes.get("text_fragments").map(String::as_str),
+      Some("Song A | Artist B")
+    );
   }
 
   fn observation(id: &str, page_index: usize, text: &str, y: i64) -> CollectionObservation {

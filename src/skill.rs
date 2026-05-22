@@ -27,6 +27,8 @@ pub struct SkillManifest {
   pub target_app: SkillTargetApp,
   #[serde(default)]
   pub strategy: SkillStrategy,
+  #[serde(default)]
+  pub invocation: SkillInvocation,
   pub objective: String,
   #[serde(default)]
   pub inputs: BTreeMap<String, SkillInputSpec>,
@@ -62,6 +64,20 @@ pub struct SkillStrategy {
   pub activation: String,
   #[serde(default, rename = "verificationContract")]
   pub verification_contract: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Default, PartialEq, Eq)]
+pub struct SkillInvocation {
+  #[serde(default)]
+  pub kind: String,
+  #[serde(default)]
+  pub host: String,
+  #[serde(default)]
+  pub stage: String,
+  #[serde(default)]
+  pub context_schema: String,
+  #[serde(default)]
+  pub return_schema: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -456,6 +472,7 @@ pub struct SkillRunOptions {
   pub dry_run: bool,
   pub max_disturbance: Option<DisturbanceClass>,
   pub overrides: BTreeMap<String, String>,
+  pub quiet: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -687,14 +704,16 @@ pub(crate) fn run_skill_manifest_into_run(
   let active_max = validate_disturbance_policy(manifest, options.max_disturbance)?;
   let _lock = maybe_acquire_live_app_lock(manifest, &variables, options.dry_run)?;
 
-  println!("skill: {}", manifest.recipe_id);
-  println!("version: {}", manifest.version);
-  println!("objective: {}", manifest.objective);
-  println!(
-    "target: {}",
-    render_template(&manifest.target_app.bundle_id, &variables)
-  );
-  println!("max disturbance: {}", active_max.as_str());
+  if !options.quiet {
+    println!("skill: {}", manifest.recipe_id);
+    println!("version: {}", manifest.version);
+    println!("objective: {}", manifest.objective);
+    println!(
+      "target: {}",
+      render_template(&manifest.target_app.bundle_id, &variables)
+    );
+    println!("max disturbance: {}", active_max.as_str());
+  }
 
   for (index, step) in manifest.steps.iter().enumerate() {
     let step_id = step_id(step, index);
@@ -722,6 +741,7 @@ pub(crate) fn run_skill_manifest_into_run(
         step_span: &step_span,
         manifest,
         dry_run: options.dry_run,
+        quiet: options.quiet,
         variables: &mut variables,
         top_level_signal_exports: &mut top_level_signal_exports,
       };
@@ -766,6 +786,7 @@ struct SkillStepRuntime<'a> {
   step_span: &'a crate::recording::SpanRef,
   manifest: &'a SkillManifest,
   dry_run: bool,
+  quiet: bool,
   variables: &'a mut BTreeMap<String, String>,
   top_level_signal_exports: &'a mut BTreeSet<String>,
 }
@@ -783,14 +804,16 @@ fn run_skill_step_into_span(
   } else {
     step.disturbance.classes.join(", ")
   };
-  print_step_preview(
-    index + 1,
-    context.manifest.steps.len(),
-    step_id,
-    &request,
-    step_max,
-    &step_classes,
-  );
+  if !context.quiet {
+    print_step_preview(
+      index + 1,
+      context.manifest.steps.len(),
+      step_id,
+      &request,
+      step_max,
+      &step_classes,
+    );
+  }
 
   if context.dry_run {
     return Ok(());
@@ -799,7 +822,9 @@ fn run_skill_step_into_span(
   let result = context
     .runtime
     .invoke_in_span(context.run, context.step_span, request)?;
-  print_invoke_result(&result);
+  if !context.quiet {
+    print_invoke_result(&result);
+  }
   enforce_step_expectations(step_id, step, &result, context.variables)?;
   export_step_variables(
     step_id,
@@ -1385,6 +1410,7 @@ pub(crate) fn run_skill_case_matrix_into_run(
         dry_run: options.dry_run,
         max_disturbance: options.max_disturbance,
         overrides: case.inputs.clone(),
+        quiet: false,
       },
     );
 
@@ -2424,6 +2450,35 @@ mod tests {
   }
 
   #[test]
+  fn skill_manifest_parses_sub_recipe_invocation_contract() {
+    let manifest: SkillManifest = serde_json::from_value(json!({
+      "recipe_id": "scan.fixture.list_item_candidate_continue.v0",
+      "version": "0.1.0",
+      "target_app": { "bundle_id": "fixture://scan-hook", "display_mode": "fixture" },
+      "strategy": {
+        "family": "native-text",
+        "grounding": "ax-text",
+        "activation": "pointer-focus-clipboard-paste",
+        "verificationContract": "verifyAxText"
+      },
+      "invocation": {
+        "kind": "sub_recipe",
+        "host": "scroll_scan",
+        "stage": "per_list_item_candidate",
+        "context_schema": "auv.scan.list_item_candidate.scalar_context.v0",
+        "return_schema": "auv.scan.hook_decision.v0"
+      },
+      "objective": "test",
+      "steps": []
+    }))
+    .expect("manifest should deserialize");
+
+    assert_eq!(manifest.invocation.kind, "sub_recipe");
+    assert_eq!(manifest.invocation.host, "scroll_scan");
+    assert_eq!(manifest.invocation.stage, "per_list_item_candidate");
+  }
+
+  #[test]
   fn render_value_substitutes_step_artifact_placeholders() {
     let rendered = render_value(
       &json!("${step_capture_evidence_artifact_image_0}"),
@@ -2503,6 +2558,7 @@ mod tests {
         dry_run: false,
         max_disturbance: None,
         overrides: BTreeMap::new(),
+        quiet: false,
       },
     )
     .expect("skill should run");
@@ -2712,6 +2768,7 @@ mod tests {
         dry_run: false,
         max_disturbance: None,
         overrides: BTreeMap::new(),
+        quiet: false,
       },
     )
     .expect("recorded skill should run");

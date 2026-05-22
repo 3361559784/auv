@@ -37,15 +37,39 @@ pub(crate) fn observe_window_region(call: &DriverCall) -> AuvResult<DriverRespon
     json,
     "Machine-readable OCR row observation for a window region.",
   )?;
-  // WORKAROUND: Window-region observation records the screenshot and OCR-region
-  // bounds, but does not yet emit a full capture contract artifact. Remove this
-  // once window capture contract staging is shared with scan artifacts.
+  // TODO: Emit a full typed capture contract artifact for window-region
+  // observation. This command records the screenshot and OCR-region bounds so
+  // scroll scan can crop list item candidates, but it still lacks the same
+  // reusable capture contract produced by the dedicated capture commands.
+  // TODO: Extend window-region observation into a real region-segmentation
+  // pass. Scroll scan needs candidates for list bodies, section separators,
+  // sticky headers, empty states, and scrollbars/thumbs so the scan loop can
+  // distinguish top/bottom boundaries from ordinary repeated content.
   let screenshot_artifact = ProducedArtifact {
     kind: "screenshot".to_string(),
     source_path: capture.screenshot_path,
     preferred_name: format!("{}.png", sanitize_file_component(&label)),
     note: Some("Window screenshot captured for region observation.".to_string()),
   };
+  let mut artifacts = vec![screenshot_artifact.clone(), json_artifact];
+  let overlay_rows = rows
+    .iter()
+    .map(|row| OverlayEvidenceRow {
+      row_index: row.row_index,
+      source: row.source.clone(),
+      bounds: row.bounds.clone(),
+      text_fragments: row.text_fragments.clone(),
+    })
+    .collect::<Vec<_>>();
+  artifacts.extend(build_row_observation_overlay_artifacts(
+    RowObservationOverlayRequest {
+      label: label.clone(),
+      screenshot_path: screenshot_artifact.source_path.clone(),
+      screenshot_dimensions: capture.dimensions.clone(),
+      strategy: detection.strategy.clone(),
+      rows: overlay_rows,
+    },
+  )?);
 
   Ok(DriverResponse {
     summary: format!(
@@ -67,7 +91,7 @@ pub(crate) fn observe_window_region(call: &DriverCall) -> AuvResult<DriverRespon
         capture.dimensions.width, capture.dimensions.height
       ),
     ],
-    artifacts: vec![screenshot_artifact, json_artifact],
+    artifacts,
   })
 }
 
@@ -293,14 +317,48 @@ fn render_observe_window_region_json(
   dimensions: &ScreenshotDimensions,
   screenshot_path: &std::path::Path,
 ) -> AuvResult<String> {
-  let rows = rows
+  let filter = filter_list_row_candidates(rows);
+  let row_candidates = rows
     .iter()
     .map(|row| {
-      serde_json::json!({
+      let accepted = filter.accepted_indices.contains(&row.row_index);
+      let reject_reason = filter
+        .rejected
+        .iter()
+        .find(|rejected| rejected.row_index == row.row_index)
+        .map(|rejected| rejected.reason.as_str());
+      let mut value = serde_json::json!({
         "row_index": row.row_index,
         "source": row.source,
         "text": row.text_fragments.join(" | "),
         "text_fragments": row.text_fragments,
+        "accepted_by_row_filter": accepted,
+        "bounds": {
+          "x": row.bounds.x,
+          "y": row.bounds.y,
+          "width": row.bounds.width,
+          "height": row.bounds.height,
+        },
+      });
+      if let Some(reason) = reject_reason {
+        value["reject_reason"] = serde_json::Value::String(reason.to_string());
+      }
+      value
+    })
+    .collect::<Vec<_>>();
+  let item_candidates = rows
+    .iter()
+    .filter(|row| filter.accepted_indices.contains(&row.row_index))
+    .enumerate()
+    .map(|(item_index, row)| {
+      serde_json::json!({
+        "item_index": item_index,
+        "row_candidate_index": row.row_index,
+        "source": "row_filter",
+        "text": row.text_fragments.join(" | "),
+        "text_fragments": row.text_fragments,
+        "filter_reason": "accepted_repeating_row_geometry",
+        "segmented_region_role": "list_region",
         "bounds": {
           "x": row.bounds.x,
           "y": row.bounds.y,
@@ -310,6 +368,47 @@ fn render_observe_window_region_json(
       })
     })
     .collect::<Vec<_>>();
+  let rejected_row_candidates = filter
+    .rejected
+    .iter()
+    .filter_map(|rejected| {
+      rows
+        .iter()
+        .find(|row| row.row_index == rejected.row_index)
+        .map(|row| (rejected, row))
+    })
+    .map(|(rejected, row)| {
+      serde_json::json!({
+        "row_candidate_index": row.row_index,
+        "reject_reason": rejected.reason,
+        "source": row.source,
+        "bounds": {
+          "x": row.bounds.x,
+          "y": row.bounds.y,
+          "width": row.bounds.width,
+          "height": row.bounds.height,
+        },
+      })
+    })
+    .collect::<Vec<_>>();
+  let segmented_regions = filter
+    .list_region
+    .as_ref()
+    .map(|list_region| {
+      vec![serde_json::json!({
+        "region_index": 0,
+        "role": "list_region",
+        "confidence": filter.confidence,
+        "evidence": filter.evidence,
+        "bounds": {
+          "x": list_region.x,
+          "y": list_region.y,
+          "width": list_region.width,
+          "height": list_region.height,
+        },
+      })]
+    })
+    .unwrap_or_default();
   serde_json::to_string_pretty(&serde_json::json!({
     "extractor": "ocr-row",
     "coordinate_space": "window_screenshot_pixels",
@@ -322,13 +421,162 @@ fn render_observe_window_region_json(
       "width": region.width,
       "height": region.height,
     },
-    "rows": rows,
+    "segmented_regions": segmented_regions,
+    "rows": row_candidates,
+    "row_candidates": row_candidates,
+    "rejected_row_candidates": rejected_row_candidates,
+    "item_candidates": item_candidates,
   }))
   .map(|mut rendered| {
     rendered.push('\n');
     rendered
   })
   .map_err(|error| format!("failed to render window region observation json: {error}"))
+}
+
+#[derive(Clone, Debug)]
+struct ListRowFilterResult {
+  accepted_indices: Vec<usize>,
+  rejected: Vec<RejectedRowCandidate>,
+  list_region: Option<ObservedRect>,
+  confidence: &'static str,
+  evidence: &'static str,
+}
+
+#[derive(Clone, Debug)]
+struct RejectedRowCandidate {
+  row_index: usize,
+  reason: String,
+}
+
+fn filter_list_row_candidates(rows: &[ObservedOcrRow]) -> ListRowFilterResult {
+  if rows.is_empty() {
+    return ListRowFilterResult {
+      accepted_indices: Vec::new(),
+      rejected: Vec::new(),
+      list_region: None,
+      confidence: "none",
+      evidence: "no_row_candidates",
+    };
+  }
+
+  // TODO: Add OCR/AX anchor evidence and optional icon/template matching to the
+  // Row Filter before making semantic decisions. This is still geometry-only
+  // and intentionally rejects only clear height outliers so likely list rows
+  // remain available to later hooks. Icon evidence will matter for rows whose
+  // identity or state is mostly visual, such as selected/liked/downloaded
+  // markers or section-specific affordances.
+  let Some((height_band, evidence_count)) = repeating_row_height_band(rows) else {
+    let accepted_indices = rows.iter().map(|row| row.row_index).collect::<Vec<_>>();
+    return ListRowFilterResult {
+      list_region: union_row_bounds(rows),
+      accepted_indices,
+      rejected: Vec::new(),
+      confidence: "low",
+      evidence: "insufficient_repeating_row_evidence",
+    };
+  };
+
+  if rows.len() < 4 || evidence_count < 3 {
+    let accepted_indices = rows.iter().map(|row| row.row_index).collect::<Vec<_>>();
+    return ListRowFilterResult {
+      list_region: union_row_bounds(rows),
+      accepted_indices,
+      rejected: Vec::new(),
+      confidence: "low",
+      evidence: "insufficient_repeating_row_evidence",
+    };
+  }
+
+  let mut accepted = Vec::new();
+  let mut rejected = Vec::new();
+  for row in rows {
+    if height_band.contains(row.bounds.height) {
+      accepted.push(row.row_index);
+    } else {
+      rejected.push(RejectedRowCandidate {
+        row_index: row.row_index,
+        reason: "height_outside_repeating_row_band".to_string(),
+      });
+    }
+  }
+
+  let accepted_rows = rows
+    .iter()
+    .filter(|row| accepted.contains(&row.row_index))
+    .cloned()
+    .collect::<Vec<_>>();
+
+  ListRowFilterResult {
+    accepted_indices: accepted,
+    rejected,
+    list_region: union_row_bounds(&accepted_rows),
+    confidence: "heuristic",
+    evidence: "repeating_row_height_band",
+  }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct RowHeightBand {
+  min: i64,
+  max: i64,
+}
+
+impl RowHeightBand {
+  fn contains(self, height: i64) -> bool {
+    self.min <= height && height <= self.max
+  }
+}
+
+fn repeating_row_height_band(rows: &[ObservedOcrRow]) -> Option<(RowHeightBand, usize)> {
+  let mut heights = rows.iter().map(|row| row.bounds.height).collect::<Vec<_>>();
+  heights.sort_unstable();
+  if heights.is_empty() {
+    return None;
+  }
+
+  let sample = trimmed_height_sample(&heights);
+  let median = sample[sample.len() / 2];
+  let min = ((median as f64) * 0.80).floor() as i64;
+  let max = ((median as f64) * 1.45).ceil() as i64;
+  let band = RowHeightBand {
+    min: min.max(1),
+    max: max.max(min + 1),
+  };
+  let evidence_count = heights
+    .iter()
+    .filter(|height| band.contains(**height))
+    .count();
+  Some((band, evidence_count))
+}
+
+fn trimmed_height_sample(heights: &[i64]) -> &[i64] {
+  if heights.len() < 5 {
+    return heights;
+  }
+  let trim = (heights.len() / 5).max(1);
+  &heights[trim..heights.len() - trim]
+}
+
+fn union_row_bounds(rows: &[ObservedOcrRow]) -> Option<ObservedRect> {
+  let mut iter = rows.iter();
+  let first = iter.next()?;
+  Some(iter.fold(first.bounds.clone(), |bounds, row| {
+    union_observed_rects(&bounds, &row.bounds)
+  }))
+}
+
+fn union_observed_rects(left: &ObservedRect, right: &ObservedRect) -> ObservedRect {
+  let min_x = left.x.min(right.x);
+  let min_y = left.y.min(right.y);
+  let max_x = (left.x + left.width).max(right.x + right.width);
+  let max_y = (left.y + left.height).max(right.y + right.height);
+  ObservedRect {
+    x: min_x,
+    y: min_y,
+    width: max_x - min_x,
+    height: max_y - min_y,
+  }
 }
 
 #[cfg(test)]
@@ -424,5 +672,104 @@ mod tests {
     );
     assert_eq!(value["screenshot_width"], serde_json::Value::from(100));
     assert_eq!(value["screenshot_height"], serde_json::Value::from(200));
+  }
+
+  #[test]
+  fn render_observe_window_region_json_emits_list_item_candidates() {
+    let rows = vec![
+      observed_row(0, 100, 120, 500, 160),
+      observed_row(1, 100, 340, 700, 64),
+      observed_row(2, 120, 460, 700, 84),
+      observed_row(3, 120, 588, 700, 86),
+      observed_row(4, 120, 716, 700, 82),
+    ];
+
+    let json = render_observe_window_region_json(
+      &rows,
+      &ObservedRect {
+        x: 80,
+        y: 100,
+        width: 800,
+        height: 720,
+      },
+      &ScreenshotDimensions {
+        width: 1000,
+        height: 900,
+      },
+      std::path::Path::new("/tmp/window.png"),
+    )
+    .expect("json should render");
+    let value: serde_json::Value = serde_json::from_str(&json).expect("json should parse");
+
+    assert_eq!(value["row_candidates"].as_array().unwrap().len(), 5);
+    assert_eq!(value["item_candidates"].as_array().unwrap().len(), 3);
+    assert_eq!(
+      value["item_candidates"][0]["row_candidate_index"],
+      serde_json::Value::from(2)
+    );
+    assert_eq!(
+      value["rejected_row_candidates"][0]["reject_reason"],
+      serde_json::Value::from("height_outside_repeating_row_band")
+    );
+    assert_eq!(
+      value["segmented_regions"][0]["role"],
+      serde_json::Value::from("list_region")
+    );
+  }
+
+  #[test]
+  fn row_filter_keeps_varied_music_rows_and_rejects_clear_outliers() {
+    let heights = [213, 65, 113, 85, 100, 113, 92, 113, 97, 113, 63];
+    let rows = heights
+      .iter()
+      .enumerate()
+      .map(|(index, height)| observed_row(index, 120, 100 + index as i64 * 120, 700, *height))
+      .collect::<Vec<_>>();
+
+    let json = render_observe_window_region_json(
+      &rows,
+      &ObservedRect {
+        x: 80,
+        y: 100,
+        width: 800,
+        height: 1200,
+      },
+      &ScreenshotDimensions {
+        width: 1000,
+        height: 1400,
+      },
+      std::path::Path::new("/tmp/window.png"),
+    )
+    .expect("json should render");
+    let value: serde_json::Value = serde_json::from_str(&json).expect("json should parse");
+    let item_row_indices = value["item_candidates"]
+      .as_array()
+      .unwrap()
+      .iter()
+      .map(|item| item["row_candidate_index"].as_u64().unwrap())
+      .collect::<Vec<_>>();
+    let rejected_row_indices = value["rejected_row_candidates"]
+      .as_array()
+      .unwrap()
+      .iter()
+      .map(|item| item["row_candidate_index"].as_u64().unwrap())
+      .collect::<Vec<_>>();
+
+    assert_eq!(item_row_indices, vec![2, 3, 4, 5, 6, 7, 8, 9]);
+    assert_eq!(rejected_row_indices, vec![0, 1, 10]);
+  }
+
+  fn observed_row(index: usize, x: i64, y: i64, width: i64, height: i64) -> ObservedOcrRow {
+    ObservedOcrRow {
+      row_index: index,
+      source: "visual-bands".to_string(),
+      bounds: ObservedRect {
+        x,
+        y,
+        width,
+        height,
+      },
+      text_fragments: Vec::new(),
+    }
   }
 }

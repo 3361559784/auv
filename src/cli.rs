@@ -143,6 +143,7 @@ pub enum CliCommand {
     min_confidence: f64,
     max_observations: i64,
     per_page_after_observe_recipe: Option<String>,
+    per_list_item_candidate_recipe: Option<String>,
     on_stop_candidate_recipe: Option<String>,
   },
   XtaskGenerateSwiftBridge,
@@ -528,6 +529,7 @@ fn parse_scan(arguments: &[String]) -> AuvResult<CliCommand> {
   let mut min_confidence = 0.0;
   let mut max_observations = 128i64;
   let mut per_page_after_observe_recipe = None;
+  let mut per_list_item_candidate_recipe = None;
   let mut on_stop_candidate_recipe = None;
 
   let mut index = 2;
@@ -592,6 +594,14 @@ fn parse_scan(arguments: &[String]) -> AuvResult<CliCommand> {
         )?);
         index += 2;
       }
+      "--per-list-item-candidate-recipe" => {
+        per_list_item_candidate_recipe = Some(required_flag_value(
+          arguments,
+          index,
+          "--per-list-item-candidate-recipe",
+        )?);
+        index += 2;
+      }
       "--on-stop-candidate-recipe" => {
         on_stop_candidate_recipe = Some(required_flag_value(
           arguments,
@@ -615,6 +625,7 @@ fn parse_scan(arguments: &[String]) -> AuvResult<CliCommand> {
     min_confidence,
     max_observations,
     per_page_after_observe_recipe,
+    per_list_item_candidate_recipe,
     on_stop_candidate_recipe,
   })
 }
@@ -921,11 +932,41 @@ mod tests {
         target,
         region,
         max_pages,
+        per_list_item_candidate_recipe,
         ..
       } => {
         assert_eq!(target, "com.example.App");
         assert_eq!(region, "0.1,0.2,0.9,0.8");
         assert_eq!(max_pages, 3);
+        assert!(per_list_item_candidate_recipe.is_none());
+      }
+      other => panic!("unexpected command: {other:?}"),
+    }
+  }
+
+  #[test]
+  fn parse_scan_window_region_accepts_per_list_item_candidate_recipe() {
+    let command = parse_cli(&[
+      "scan".to_string(),
+      "window-region".to_string(),
+      "--target".to_string(),
+      "com.example.App".to_string(),
+      "--region".to_string(),
+      "0.1,0.2,0.9,0.8".to_string(),
+      "--per-list-item-candidate-recipe".to_string(),
+      "scan.fixture.list_item_candidate_continue.v0".to_string(),
+    ])
+    .expect("scan window-region command should parse");
+
+    match command {
+      CliCommand::ScanWindowRegion {
+        per_list_item_candidate_recipe,
+        ..
+      } => {
+        assert_eq!(
+          per_list_item_candidate_recipe.as_deref(),
+          Some("scan.fixture.list_item_candidate_continue.v0")
+        );
       }
       other => panic!("unexpected command: {other:?}"),
     }

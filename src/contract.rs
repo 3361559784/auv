@@ -65,10 +65,57 @@ pub struct Candidate {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CandidateQuery {
+  pub query_id: String,
+  pub selector: SurfaceSelector,
+  pub output_kind: Option<String>,
+  pub known_limits: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SurfaceSelector {
+  pub any_of: Vec<SurfaceSelectorClause>,
+  pub within: SelectorScope,
+  pub require_visible: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "source", rename_all = "snake_case")]
+pub enum SurfaceSelectorClause {
+  Ax {
+    role: Option<String>,
+    label: Option<String>,
+    path: Option<String>,
+    enabled: Option<bool>,
+    visible: Option<bool>,
+  },
+  Ocr {
+    text: String,
+    region_hint: Option<RatioRegion>,
+    min_provider_score: Option<f64>,
+  },
+  Row {
+    row_index: Option<usize>,
+    contains_text: Option<String>,
+    region_hint: Option<RatioRegion>,
+  },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SelectorScope {
+  ActiveWindow,
+  TargetWindow,
+  CaptureRegion,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TargetSpec {
   pub grounding: TargetGrounding,
   pub anchor_text: Option<String>,
   pub region_hint: Option<RatioRegion>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub row_index: Option<usize>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -201,6 +248,58 @@ mod tests {
   }
 
   #[test]
+  fn candidate_query_round_trips_minimal_cross_surface_selector() {
+    let query = CandidateQuery {
+      query_id: "play-control".to_string(),
+      selector: SurfaceSelector {
+        any_of: vec![
+          SurfaceSelectorClause::Ax {
+            role: Some("AXButton".to_string()),
+            label: Some("播放".to_string()),
+            path: None,
+            enabled: Some(true),
+            visible: Some(true),
+          },
+          SurfaceSelectorClause::Ocr {
+            text: "播放".to_string(),
+            region_hint: Some(RatioRegion {
+              left: 0.18,
+              top: 0.28,
+              right: 0.60,
+              bottom: 0.42,
+            }),
+            min_provider_score: Some(0.75),
+          },
+          SurfaceSelectorClause::Row {
+            row_index: Some(1),
+            contains_text: None,
+            region_hint: None,
+          },
+        ],
+        within: SelectorScope::TargetWindow,
+        require_visible: true,
+      },
+      output_kind: Some("button".to_string()),
+      known_limits: vec!["dom and visual-icon backends are not part of v0".to_string()],
+    };
+
+    let value = serde_json::to_value(&query).expect("candidate query should serialize");
+    assert_eq!(value["selector"]["within"], json!("target_window"));
+    assert_eq!(value["selector"]["any_of"][0]["source"], json!("ax"));
+    assert_eq!(value["selector"]["any_of"][1]["source"], json!("ocr"));
+    assert_eq!(value["selector"]["any_of"][2]["source"], json!("row"));
+    assert_eq!(
+      value["selector"]["any_of"][1]["min_provider_score"],
+      json!(0.75)
+    );
+    assert!(value["selector"]["any_of"][1].get("confidence").is_none());
+
+    let parsed: CandidateQuery =
+      serde_json::from_value(value).expect("candidate query should deserialize");
+    assert_eq!(parsed, query);
+  }
+
+  #[test]
   fn operation_result_with_candidate_round_trips() {
     let artifact = artifact_ref();
     let result = OperationResult {
@@ -222,6 +321,7 @@ mod tests {
               right: 0.8,
               bottom: 0.9,
             }),
+            row_index: None,
           },
           evidence: CandidateEvidence {
             artifact_ref: artifact.clone(),
@@ -273,6 +373,61 @@ mod tests {
     let parsed: OperationResult =
       serde_json::from_value(value).expect("operation result should deserialize");
     assert_eq!(parsed, result);
+  }
+
+  #[test]
+  fn visual_row_candidate_serializes_row_index_without_anchor_recheck() {
+    let artifact = artifact_ref();
+    let candidate = Candidate {
+      candidate_local_id: "row#2".to_string(),
+      kind: "search_result_row".to_string(),
+      label: Some("Visual row 2".to_string()),
+      target_spec: TargetSpec {
+        grounding: TargetGrounding::VisualRow,
+        anchor_text: None,
+        region_hint: Some(RatioRegion {
+          left: 0.1,
+          top: 0.2,
+          right: 0.9,
+          bottom: 0.3,
+        }),
+        row_index: Some(2),
+      },
+      evidence: CandidateEvidence {
+        artifact_ref: artifact,
+        observation: json!({
+          "provider": "vision_ocr.window_rows",
+          "source": "visual-bands"
+        }),
+      },
+      liveness: CandidateLiveness {
+        preconditions: LivenessPreconditions {
+          window_ref: Some(WindowRefPrecondition {
+            app_bundle_id: "com.tencent.QQMusicMac".to_string(),
+            window_title_substring: None,
+            window_number: None,
+          }),
+          anchor_recheck: None,
+        },
+        ttl_hint_ms: Some(5000),
+      },
+      control: ControlRequirements {
+        requires_app_frontmost: true,
+        requires_window_focus: true,
+      },
+      known_limits: vec!["visual row index may drift after scrolling".to_string()],
+    };
+
+    let value = serde_json::to_value(&candidate).expect("candidate should serialize");
+    assert_eq!(value["target_spec"]["grounding"], json!("visual_row"));
+    assert_eq!(value["target_spec"]["row_index"], json!(2));
+    assert_eq!(
+      value["liveness"]["preconditions"]["anchor_recheck"],
+      serde_json::Value::Null
+    );
+
+    let parsed: Candidate = serde_json::from_value(value).expect("candidate should deserialize");
+    assert_eq!(parsed, candidate);
   }
 
   #[test]

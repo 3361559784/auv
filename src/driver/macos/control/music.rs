@@ -28,6 +28,7 @@ pub(crate) fn music_search_results(call: &DriverCall) -> AuvResult<DriverRespons
     captured_event_id: None,
   };
 
+  let ocr_text_strategy = detection.strategy == "ocr-text";
   let candidates: Vec<Candidate> = rows
     .iter()
     .map(|row| {
@@ -41,6 +42,22 @@ pub(crate) fn music_search_results(call: &DriverCall) -> AuvResult<DriverRespons
         bottom: (row.bounds.y + row.bounds.height) as f64 / h,
       };
       let joined_label = row.text_fragments.join(" ");
+      // VisualRow grounding when OCR text detection fell back to visual-bands.
+      // anchor_recheck requires window-scoped OCR; omit it for visual-bands rows
+      // where window OCR returns no matches (e.g. WebView-based result lists).
+      let (grounding, anchor_recheck) = if ocr_text_strategy {
+        (
+          TargetGrounding::OcrAnchor,
+          anchor_text.as_ref().map(|text| AnchorRecheckPrecondition {
+            text: text.clone(),
+            region_hint: None,
+            expected_min_confidence: 0.5,
+            max_pixel_distance: 32.0,
+          }),
+        )
+      } else {
+        (TargetGrounding::VisualRow, None)
+      };
       Candidate {
         candidate_local_id: format!("row#{}", row.row_index + 1),
         kind: "search_result_row".to_string(),
@@ -50,9 +67,10 @@ pub(crate) fn music_search_results(call: &DriverCall) -> AuvResult<DriverRespons
           Some(joined_label)
         },
         target_spec: TargetSpec {
-          grounding: TargetGrounding::OcrAnchor,
+          grounding,
           anchor_text: anchor_text.clone(),
           region_hint: Some(region),
+          row_index: Some(row.row_index + 1),
         },
         evidence: CandidateEvidence {
           artifact_ref: evidence_artifact_ref(SCREENSHOT_ARTIFACT_ID),
@@ -76,12 +94,7 @@ pub(crate) fn music_search_results(call: &DriverCall) -> AuvResult<DriverRespons
               window_title_substring: None,
               window_number: None,
             }),
-            anchor_recheck: anchor_text.map(|text| AnchorRecheckPrecondition {
-              text,
-              region_hint: None,
-              expected_min_confidence: 0.5,
-              max_pixel_distance: 32.0,
-            }),
+            anchor_recheck,
           },
           ttl_hint_ms: Some(5000),
         },
@@ -186,22 +199,21 @@ pub(crate) fn music_validate_candidate_liveness(call: &DriverCall) -> AuvResult<
     format!("failed to read artifact {source_artifact_id} from run {source_run_id}: {error}")
   })?;
 
-  let operation_result: OperationResult =
-    serde_json::from_str(&json_content).map_err(|error| {
-      format!("failed to parse OperationResult from {source_artifact_id}: {error}")
-    })?;
+  let operation_result: OperationResult = serde_json::from_str(&json_content).map_err(|error| {
+    format!("failed to parse OperationResult from {source_artifact_id}: {error}")
+  })?;
 
   let candidates = match &operation_result.output {
     OperationOutput::Candidates { candidates } => candidates,
     OperationOutput::Verification { .. } => {
       return Err(format!(
         "artifact {source_artifact_id} contains a verification result, not a candidate set"
-      ))
+      ));
     }
     OperationOutput::Acknowledged { .. } => {
       return Err(format!(
         "artifact {source_artifact_id} contains an acknowledged result, not a candidate set"
-      ))
+      ));
     }
   };
 
@@ -231,7 +243,9 @@ pub(crate) fn music_validate_candidate_liveness(call: &DriverCall) -> AuvResult<
     })?;
   }
 
-  let anchor_recheck_ran = if let Some(anchor_recheck) = &candidate.liveness.preconditions.anchor_recheck {
+  let anchor_recheck_ran = if let Some(anchor_recheck) =
+    &candidate.liveness.preconditions.anchor_recheck
+  {
     let app_bundle_id = candidate
       .liveness
       .preconditions
@@ -246,14 +260,10 @@ pub(crate) fn music_validate_candidate_liveness(call: &DriverCall) -> AuvResult<
     }
     let mut recheck_call = call.clone();
     recheck_call.inputs.insert("app".to_string(), app_bundle_id);
-    let capture =
-      capture_resolved_window_observation(&recheck_call, "liveness-anchor-recheck").map_err(
-        |error| {
-          format!(
-            "candidate {candidate_local_id} liveness failed: window capture failed: {error}"
-          )
-        },
-      )?;
+    let capture = capture_resolved_window_observation(&recheck_call, "liveness-anchor-recheck")
+      .map_err(|error| {
+        format!("candidate {candidate_local_id} liveness failed: window capture failed: {error}")
+      })?;
     let ocr_result = crate::driver::macos::native::ocr::find_text(
       &capture.screenshot_path,
       &anchor_recheck.text,
@@ -283,17 +293,23 @@ pub(crate) fn music_validate_candidate_liveness(call: &DriverCall) -> AuvResult<
     .anchor_text
     .clone()
     .unwrap_or_default();
+  let row_index = candidate
+    .target_spec
+    .row_index
+    .map(|value| value.to_string())
+    .unwrap_or_default();
   let label = candidate.label.clone().unwrap_or_default();
 
   Ok(DriverResponse {
     summary: format!(
-      "Candidate {candidate_local_id} liveness OK; anchor_text={anchor_text}"
+      "Candidate {candidate_local_id} liveness OK; anchor_text={anchor_text}; row_index={row_index}"
     ),
     backend: Some("macos.contract.music-validate-candidate-liveness".to_string()),
     signals: BTreeMap::from([
       ("candidate.resolved".to_string(), "true".to_string()),
       ("candidate.local_id".to_string(), candidate_local_id.clone()),
       ("candidate.anchor_text".to_string(), anchor_text),
+      ("candidate.row_index".to_string(), row_index),
       ("candidate.label".to_string(), label),
       ("candidate.liveness_ok".to_string(), "true".to_string()),
       (

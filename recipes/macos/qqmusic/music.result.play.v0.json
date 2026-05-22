@@ -1,6 +1,6 @@
 {
   "recipe_id": "macos.qqmusic.music.result.play.v0",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "status": "experimental-recipe",
   "platform": "macOS",
   "target_app": {
@@ -11,10 +11,10 @@
   "strategy": {
     "family": "playback",
     "grounding": "contract-candidate",
-    "activation": "pointer-window-text",
+    "activation": "pointer-window-row",
     "verificationContract": "verifyNowPlayingTitle"
   },
-  "objective": "Play a search result identified by a CandidateRef from a prior music.search.results OperationResult artifact. Validates liveness preconditions (window_ref + anchor_recheck) before clicking, then delegates to the same row-activation + play-press + verify chain as play_visible_row.v0. The caller must extract anchor_text from the chosen Candidate's target_spec before invoking this recipe.",
+  "objective": "Play a search result identified by a CandidateRef from a prior music.search.results OperationResult artifact. Validates liveness preconditions (window_ref) before clicking, then activates the row by index via debug.clickWindowRow (visual-band detection, no text OCR required). The caller must extract row_index from the chosen Candidate.target_spec.row_index before invoking this recipe.",
   "inputs": {
     "app_id": {
       "type": "string",
@@ -34,9 +34,10 @@
       "default": "row#1",
       "note": "candidate_local_id within the OperationResult to validate and play."
     },
-    "anchor_text": {
-      "type": "string",
-      "note": "Caller-extracted anchor text from Candidate.target_spec.anchor_text. Used to click the result row via window-scoped OCR."
+    "target_row_index": {
+      "type": "integer",
+      "default": 1,
+      "note": "Caller-extracted 1-based row index from Candidate.target_spec.row_index. Passed directly to debug.clickWindowRow."
     },
     "target_title": {
       "type": "string",
@@ -82,9 +83,25 @@
       "type": "integer",
       "default": 2
     },
-    "anchor_min_confidence": {
+    "row_min_confidence": {
       "type": "number",
-      "default": 0.5
+      "default": 0.90
+    },
+    "row_max_observations": {
+      "type": "integer",
+      "default": 128
+    },
+    "row_anchor_mode": {
+      "type": "string",
+      "default": "title_band"
+    },
+    "row_anchor_x_ratio": {
+      "type": "number",
+      "default": 0.25
+    },
+    "row_anchor_y_ratio": {
+      "type": "number",
+      "default": 0.50
     },
     "now_playing_scope_path_prefix": {
       "type": "string",
@@ -96,7 +113,7 @@
     "QQ音乐 is installed and can be addressed by ${app_id}.",
     "Screen Recording and Accessibility permissions are already granted.",
     "source_run_id and source_artifact_id point to a valid OperationResult from music.search.results.",
-    "anchor_text has been extracted by the caller from the chosen Candidate.target_spec.anchor_text.",
+    "target_row_index has been extracted by the caller from the chosen Candidate.target_spec.row_index.",
     "The search result surface must still be visible (not navigated away) when this recipe runs."
   ],
   "disturbance_policy": {
@@ -104,7 +121,7 @@
     "declared_classes": ["none", "foreground_app", "pointer"],
     "notes": [
       "Liveness check (music.validate.candidate.liveness) is disturbance-free.",
-      "Row click (debug.clickWindowText) uses pointer disturbance.",
+      "Row click (debug.clickWindowRow) uses pointer disturbance.",
       "Play press (debug.smartPress) may take the AX path (no pointer disturbance) or fall back to pointer."
     ]
   },
@@ -130,22 +147,26 @@
     },
     {
       "id": "click-result-row",
-      "command_id": "debug.clickWindowText",
+      "command_id": "debug.clickWindowRow",
       "disturbance": {
         "classes": ["foreground_app", "pointer"],
         "max": "pointer"
       },
       "args": {
         "target": "${app_id}",
-        "query": "${anchor_text}",
-        "min_confidence": "${anchor_min_confidence}",
+        "row_index": "${target_row_index}",
         "click_count": "${click_count}",
         "settle_ms": "${activation_settle_ms}",
+        "row_anchor_mode": "${row_anchor_mode}",
+        "row_anchor_x_ratio": "${row_anchor_x_ratio}",
+        "row_anchor_y_ratio": "${row_anchor_y_ratio}",
+        "min_confidence": "${row_min_confidence}",
+        "max_observations": "${row_max_observations}",
         "activate_target_before_capture": "true"
       },
       "expect": {
         "signal_equals": {
-          "ocr.match_count_filtered_gt0": "true"
+          "rows.clicked_index": "${target_row_index}"
         }
       }
     },
@@ -200,25 +221,26 @@
   "verification": {
     "expected_signals": [
       "music.validate.candidate.liveness confirms candidate.liveness_ok=true.",
-      "debug.clickWindowText confirms the anchor text was found and clicked in the window.",
+      "debug.clickWindowRow confirms the row was found and clicked in the window (rows.clicked_index matches target_row_index).",
       "debug.smartPress completes for the play control via AX or pointer fallback.",
       "debug.verifyNowPlayingTitle confirms ${target_title} from the AX tree."
     ],
     "success_criteria": [
-      "Candidate liveness preconditions pass (window present, anchor visible).",
-      "The result row is activated through window-scoped OCR anchor click.",
+      "Candidate liveness preconditions pass (window present).",
+      "The result row is activated through window-scoped visual-band row detection.",
       "The play control is pressed.",
       "The current now-playing title is verified through the AX tree."
     ],
     "non_goals": [
       "This recipe does not perform the initial search — it consumes an already-produced OperationResult.",
       "This recipe does not select which candidate to play — that decision is made by the caller.",
-      "This recipe does not prove generalized playback for arbitrary anchor texts."
+      "This recipe does not prove generalized playback for arbitrary row indices.",
+      "This recipe does not use OCR text anchors for row activation (visual-band detection is used instead)."
     ]
   },
   "known_limits": {
-    "caller_must_extract_anchor_text": "The caller (agent) must read the OperationResult artifact and extract anchor_text from the chosen Candidate.target_spec.anchor_text before invoking this recipe. The recipe cannot do this extraction itself because recipe variables are not updated from step signals.",
-    "click_row_uses_screen_ocr_fallback": "debug.clickWindowText uses window-scoped OCR to find the anchor text. If the anchor text appears in multiple rows, match_index 0 is used (first match). The candidate's region_hint is not currently passed to constrain the search.",
-    "liveness_anchor_recheck_requires_window_ref": "Anchor recheck in music.validate.candidate.liveness requires window_ref.app_bundle_id; candidates produced by music.search.results always include this."
+    "caller_must_extract_row_index": "The caller (agent) must read the OperationResult artifact and extract row_index from the chosen Candidate.target_spec.row_index before invoking this recipe.",
+    "visual_row_index_stability": "Row index is detected from the current visual state. If the result list scrolls or reorders between music.search.results and this recipe, the row_index may point to a different song.",
+    "liveness_window_ref_only": "For VisualRow candidates produced by QQ音乐, anchor_recheck is not set (window-level OCR cannot see WebView content). Liveness is checked via window_ref only (app running with visible windows)."
   }
 }

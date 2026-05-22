@@ -1205,6 +1205,15 @@
         + " · " + (payload.row.source || "—")
         + " · " + ((payload.row.text_fragments || []).join(" | ") || "—"),
     ]);
+    if (payload.decision) rows.push([
+      "decision",
+      (payload.decision.primary_strategy || "—") + " -> "
+        + (payload.decision.selected_strategy || "—"),
+    ]);
+    if (payload.decision && payload.decision.primary_error) rows.push([
+      "primary_error",
+      payload.decision.primary_error,
+    ]);
     rows.push(["annotation", annotationArtifact ? annotationArtifact.artifact_id : "—"]);
 
     for (const [k, v] of rows) {

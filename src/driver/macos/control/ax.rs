@@ -7,6 +7,7 @@ use super::common::{
 use super::window_ocr::{
   capture_resolved_window_observation, click_window_text, logical_point_for_match,
 };
+use std::fs;
 
 pub(crate) fn focus_text_input(call: &DriverCall) -> AuvResult<DriverResponse> {
   let app = app_identifier(call).unwrap_or_default();
@@ -778,6 +779,7 @@ pub(crate) fn ax_click_window_text(call: &DriverCall) -> AuvResult<DriverRespons
       },
       bounds: ax_node.bounds.clone(),
     }),
+    decision: None,
     include_user_cursor: overlay,
     auv_cursor_variant: "auv",
   })?;
@@ -958,6 +960,7 @@ fn best_effort_ax_overlay_artifacts(
       },
       bounds: matched.bounds.clone(),
     }),
+    decision: None,
     include_user_cursor,
     auv_cursor_variant,
   }) {
@@ -985,6 +988,12 @@ fn mark_smart_press_response(
   fallback_used: bool,
   primary_error: Option<String>,
 ) -> AuvResult<DriverResponse> {
+  augment_smart_press_overlay_annotation(
+    &mut response,
+    strategy,
+    fallback_used,
+    primary_error.as_deref(),
+  )?;
   response
     .signals
     .insert("smartPress.strategy".to_string(), strategy.to_string());
@@ -1028,10 +1037,125 @@ fn mark_smart_press_response(
   Ok(response)
 }
 
+fn augment_smart_press_overlay_annotation(
+  response: &mut DriverResponse,
+  selected_strategy: &str,
+  fallback_used: bool,
+  primary_error: Option<&str>,
+) -> AuvResult<()> {
+  let Some(annotation_artifact) = response
+    .artifacts
+    .iter()
+    .find(|artifact| artifact.kind == "click.overlay.annotation")
+  else {
+    return Ok(());
+  };
+
+  let annotation_raw = fs::read_to_string(&annotation_artifact.source_path).map_err(|error| {
+    format!(
+      "failed to read smartPress overlay annotation {}: {error}",
+      annotation_artifact.source_path.display()
+    )
+  })?;
+  let mut payload: serde_json::Value = serde_json::from_str(&annotation_raw).map_err(|error| {
+    format!(
+      "failed to parse smartPress overlay annotation {}: {error}",
+      annotation_artifact.source_path.display()
+    )
+  })?;
+
+  payload["decision"] = serde_json::json!({
+    "operation": "smart_press",
+    "primary_strategy": "ax-action",
+    "selected_strategy": selected_strategy,
+    "fallback_used": fallback_used,
+    "primary_error": primary_error,
+  });
+  payload["fallback_used"] = serde_json::Value::Bool(fallback_used);
+  payload["strategy"] = serde_json::Value::String("smart-press".to_string());
+  payload["press_mechanism"] = serde_json::Value::String(selected_strategy.to_string());
+
+  fs::write(
+    &annotation_artifact.source_path,
+    serde_json::to_string_pretty(&payload)
+      .map_err(|error| format!("failed to encode smartPress overlay annotation: {error}"))?
+      + "\n",
+  )
+  .map_err(|error| {
+    format!(
+      "failed to write smartPress overlay annotation {}: {error}",
+      annotation_artifact.source_path.display()
+    )
+  })?;
+
+  Ok(())
+}
+
 fn report_value(raw: &str) -> String {
   raw
     .replace('\\', "\\\\")
     .replace('\n', "\\n")
     .replace('\r', "\\r")
     .replace('\t', "\\t")
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use crate::driver::macos::support::temp_file_path;
+  use crate::model::ProducedArtifact;
+
+  #[test]
+  fn augment_smart_press_overlay_annotation_records_decision() {
+    let annotation_path = temp_file_path("smart-press-overlay-annotation-test", "json");
+    fs::write(
+      &annotation_path,
+      serde_json::json!({
+        "version": "v1alpha1",
+        "kind": "window-text-click",
+        "strategy": "ocr-text",
+        "fallback_used": null,
+        "press_mechanism": "pointer-click",
+      })
+      .to_string(),
+    )
+    .expect("annotation fixture should write");
+    let mut response = DriverResponse {
+      summary: "ok".to_string(),
+      backend: None,
+      signals: std::collections::BTreeMap::new(),
+      notes: Vec::new(),
+      artifacts: vec![ProducedArtifact {
+        kind: "click.overlay.annotation".to_string(),
+        source_path: annotation_path.clone(),
+        preferred_name: "smart-press-overlay-annotation-test.json".to_string(),
+        note: None,
+      }],
+    };
+
+    augment_smart_press_overlay_annotation(
+      &mut response,
+      "pointer-click",
+      true,
+      Some("AX target had no matching action"),
+    )
+    .expect("annotation rewrite should succeed");
+
+    let payload: serde_json::Value = serde_json::from_str(
+      &fs::read_to_string(&annotation_path).expect("annotation should remain readable"),
+    )
+    .expect("annotation should remain valid json");
+    assert_eq!(payload["strategy"], "smart-press");
+    assert_eq!(payload["fallback_used"], true);
+    assert_eq!(payload["press_mechanism"], "pointer-click");
+    assert_eq!(payload["decision"]["operation"], "smart_press");
+    assert_eq!(payload["decision"]["primary_strategy"], "ax-action");
+    assert_eq!(payload["decision"]["selected_strategy"], "pointer-click");
+    assert_eq!(
+      payload["decision"]["primary_error"],
+      "AX target had no matching action"
+    );
+
+    let _ = fs::remove_file(annotation_path);
+  }
 }

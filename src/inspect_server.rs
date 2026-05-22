@@ -2028,8 +2028,10 @@ mod tests {
         && html.contains("artifactKey")
         && html.contains("preferredArtifactKeyForSpan")
         && html.contains("findClickOverlayAnnotationArtifact")
-        && html.contains("loadEvidenceSummary"),
-      "viewer payload should prioritize click overlay artifacts, sync them to span selection, and load paired annotation summaries"
+        && html.contains("loadEvidenceSummary")
+        && html.contains("primary_error")
+        && html.contains("payload.decision"),
+      "viewer payload should prioritize click overlay artifacts, sync them to span selection, and render decision-aware annotation summaries"
     );
 
     let _ = fs::remove_dir_all(root);

@@ -69,6 +69,15 @@ pub(crate) struct OverlayEvidenceAxTarget {
 }
 
 #[derive(Clone, Debug, Serialize)]
+pub(crate) struct OverlayEvidenceDecision {
+  pub(crate) operation: String,
+  pub(crate) primary_strategy: String,
+  pub(crate) selected_strategy: String,
+  pub(crate) fallback_used: bool,
+  pub(crate) primary_error: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
 pub(crate) struct OverlayEvidencePayload {
   pub(crate) version: String,
   pub(crate) kind: String,
@@ -86,6 +95,7 @@ pub(crate) struct OverlayEvidencePayload {
   pub(crate) ocr_match: Option<OverlayEvidenceMatch>,
   pub(crate) row: Option<OverlayEvidenceRow>,
   pub(crate) ax_target: Option<OverlayEvidenceAxTarget>,
+  pub(crate) decision: Option<OverlayEvidenceDecision>,
   pub(crate) user_cursor: Option<OverlayEvidenceCursor>,
   pub(crate) auv_cursor: Option<OverlayEvidenceCursor>,
 }
@@ -108,6 +118,7 @@ pub(crate) struct OverlayEvidenceRequest {
   pub(crate) ocr_match: Option<OverlayEvidenceMatch>,
   pub(crate) row: Option<OverlayEvidenceRow>,
   pub(crate) ax_target: Option<OverlayEvidenceAxTarget>,
+  pub(crate) decision: Option<OverlayEvidenceDecision>,
   pub(crate) include_user_cursor: bool,
   pub(crate) auv_cursor_variant: &'static str,
 }
@@ -231,6 +242,7 @@ pub(crate) fn build_overlay_evidence_artifacts(
       request.ocr_match.as_ref(),
       request.row.as_ref(),
       request.ax_target.as_ref(),
+      request.decision.as_ref(),
     ),
   );
 
@@ -251,6 +263,7 @@ pub(crate) fn build_overlay_evidence_artifacts(
     ocr_match: request.ocr_match.clone(),
     row: request.row.clone(),
     ax_target: request.ax_target.clone(),
+    decision: request.decision.clone(),
     user_cursor,
     auv_cursor: Some(auv_cursor),
   };
@@ -512,6 +525,7 @@ fn build_signal_lines(
   ocr_match: Option<&OverlayEvidenceMatch>,
   row: Option<&OverlayEvidenceRow>,
   ax_target: Option<&OverlayEvidenceAxTarget>,
+  decision: Option<&OverlayEvidenceDecision>,
 ) -> Vec<String> {
   let mut lines = Vec::new();
   if let Some(query) = query {
@@ -546,7 +560,33 @@ fn build_signal_lines(
     };
     lines.push(format!("ax: {} {}", ax_target.role, label));
   }
+  if let Some(decision) = decision {
+    lines.push(format!(
+      "decision: {} -> {}",
+      decision.primary_strategy, decision.selected_strategy
+    ));
+    if decision.fallback_used {
+      lines.push("fallback_reason: primary_error".to_string());
+    }
+    if let Some(primary_error) = decision.primary_error.as_deref() {
+      lines.push(format!(
+        "error: {}",
+        abbreviate_signal_line(primary_error, 44)
+      ));
+    }
+  }
   lines
+}
+
+fn abbreviate_signal_line(value: &str, max_chars: usize) -> String {
+  let chars = value.chars().collect::<Vec<_>>();
+  if chars.len() <= max_chars {
+    return value.to_string();
+  }
+  chars[..max_chars.saturating_sub(1)]
+    .iter()
+    .collect::<String>()
+    + "…"
 }
 
 fn fill_rect(image: &mut RgbaImage, x: i64, y: i64, width: i64, height: i64, color: [u8; 4]) {
@@ -892,6 +932,13 @@ mod tests {
           height: 14,
         },
       }),
+      decision: Some(OverlayEvidenceDecision {
+        operation: "smart_press".to_string(),
+        primary_strategy: "ax-action".to_string(),
+        selected_strategy: "pointer-click".to_string(),
+        fallback_used: true,
+        primary_error: Some("no matching AX action".to_string()),
+      }),
       include_user_cursor: false,
       auv_cursor_variant: "auv-click",
     };
@@ -961,6 +1008,13 @@ mod tests {
         .and_then(|value| value.as_str()),
       Some("AXButton")
     );
+    assert_eq!(
+      payload
+        .get("decision")
+        .and_then(|value| value.get("selected_strategy"))
+        .and_then(|value| value.as_str()),
+      Some("pointer-click")
+    );
     assert!(
       payload
         .get("user_cursor")
@@ -1015,6 +1069,13 @@ mod tests {
           height: 4,
         },
       }),
+      Some(&OverlayEvidenceDecision {
+        operation: "smart_press".to_string(),
+        primary_strategy: "ax-action".to_string(),
+        selected_strategy: "pointer-click".to_string(),
+        fallback_used: true,
+        primary_error: Some("no action".to_string()),
+      }),
     );
 
     assert!(lines.contains(&"query: 晴天".to_string()));
@@ -1026,5 +1087,7 @@ mod tests {
     assert!(lines.contains(&"ocr: 天空仍灿烂 (0.81)".to_string()));
     assert!(lines.contains(&"row: #2 row_ratio".to_string()));
     assert!(lines.contains(&"ax: AXButton 播放".to_string()));
+    assert!(lines.contains(&"decision: ax-action -> pointer-click".to_string()));
+    assert!(lines.contains(&"fallback_reason: primary_error".to_string()));
   }
 }

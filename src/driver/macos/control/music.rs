@@ -18,6 +18,7 @@ use crate::trace::{ArtifactId, RunId, SpanId};
 const SCREENSHOT_ARTIFACT_ID: &str = "artifact_0001";
 const REPORT_ARTIFACT_ID: &str = "artifact_0002";
 const OPERATION_RESULT_ARTIFACT_ID: &str = "artifact_0003";
+const RECOGNITION_RESULT_ARTIFACT_ID: &str = "artifact_0004";
 
 struct ResolvedMusicCandidate {
   operation_result: OperationResult,
@@ -31,6 +32,8 @@ struct CandidateLivenessCheck {
 pub(crate) fn music_search_results(call: &DriverCall) -> AuvResult<DriverResponse> {
   let capture = capture_resolved_window_observation(call, "music-search-results")?;
   let (detection, rows) = detect_rows_for_capture(call, &capture)?;
+  let region =
+    parse_ocr_region_constraint(call, capture.dimensions.width, capture.dimensions.height)?;
 
   let run_id = optional_string(call, "_auv_run_id").unwrap_or_default();
   let span_id = optional_string(call, "_auv_span_id").unwrap_or_default();
@@ -99,7 +102,9 @@ pub(crate) fn music_search_results(call: &DriverCall) -> AuvResult<DriverRespons
               "y": row.bounds.y,
               "width": row.bounds.width,
               "height": row.bounds.height,
-            }
+            },
+            "recognition_result_ref": evidence_artifact_ref(RECOGNITION_RESULT_ARTIFACT_ID),
+            "recognized_item_id": format!("row#{}", row.row_index + 1),
           }),
         },
         liveness: CandidateLiveness {
@@ -129,6 +134,7 @@ pub(crate) fn music_search_results(call: &DriverCall) -> AuvResult<DriverRespons
     evidence_artifacts: vec![
       evidence_artifact_ref(SCREENSHOT_ARTIFACT_ID),
       evidence_artifact_ref(REPORT_ARTIFACT_ID),
+      evidence_artifact_ref(RECOGNITION_RESULT_ARTIFACT_ID),
     ],
     output: OperationOutput::Candidates {
       candidates: candidates.clone(),
@@ -163,16 +169,57 @@ pub(crate) fn music_search_results(call: &DriverCall) -> AuvResult<DriverRespons
     operation_result_json,
     "Typed OperationResult candidate set for music.search.results.",
   )?;
+  let (display_ref, native_display_id) = match &capture.capture_contract.capture_source {
+    crate::driver::macos::capture::types::CaptureSource::Window {
+      display_ref,
+      native_display_id,
+      ..
+    } => (Some(display_ref.as_str()), Some(native_display_id.as_str())),
+    _ => (None, None),
+  };
+  let recognition_artifact = row_recognition_artifact(
+    "music-search-results-recognition",
+    "music-search-results-recognition",
+    "Structured recognition result for music.search.results row detection.",
+    RowRecognitionArtifactRequest {
+      recognition_id: "music_search_results".to_string(),
+      source: recognition_source_for_rows(&detection.strategy, &rows),
+      surface: crate::contract::RecognitionSurface::Window,
+      rows: &rows,
+      strategy: &detection.strategy,
+      raw_match_count: detection.raw_match_count,
+      filtered_match_count: detection.filtered_match_count,
+      screenshot_path: capture.screenshot_path.as_path(),
+      screenshot_dimensions: &capture.dimensions,
+      display_ref,
+      native_display_id,
+      app_bundle_id: looks_like_bundle_identifier(&app_bundle_id).then_some(app_bundle_id.as_str()),
+      window_title: None,
+      window_number: window_number_from_ref(&capture.capture_source),
+      region_hint: region
+        .as_ref()
+        .map(|value| observed_rect_to_ratio_region(value, &capture.dimensions)),
+      capture_contract: Some(&capture.capture_contract),
+      additional_detail: serde_json::json!({
+        "scope": &capture.scope,
+        "capture_source": &capture.capture_source,
+        "consumer": "music.search.results",
+      }),
+      known_limits: vec![
+        "driver-stage recognition evidence has no runtime artifact refs yet".to_string(),
+      ],
+    },
+  )?;
 
   let row_count = rows.len();
   let summary = if row_count > 0 {
     format!(
-      "Produced {} search-result candidate(s) from window OCR rows (strategy {}); typed OperationResult at artifact_0003.",
+      "Produced {} search-result candidate(s) from window OCR rows (strategy {}); typed OperationResult at artifact_0003 and structured recognition at artifact_0004.",
       row_count, detection.strategy
     )
   } else {
     format!(
-      "Detected 0 rows inside resolved window after strategy {}; empty candidate set in OperationResult artifact_0003.",
+      "Detected 0 rows inside resolved window after strategy {}; empty candidate set in OperationResult artifact_0003 with structured recognition at artifact_0004.",
       detection.strategy
     )
   };
@@ -191,8 +238,9 @@ pub(crate) fn music_search_results(call: &DriverCall) -> AuvResult<DriverRespons
       format!("rowCount={row_count}"),
       format!("candidateCount={row_count}"),
       "operationResultArtifact=artifact_0003".to_string(),
+      "recognitionResultArtifact=artifact_0004".to_string(),
     ],
-    artifacts: vec![screenshot, report, result_artifact],
+    artifacts: vec![screenshot, report, result_artifact, recognition_artifact],
   })
 }
 
@@ -289,7 +337,7 @@ pub(crate) fn music_result_play(call: &DriverCall) -> AuvResult<DriverResponse> 
     }
   };
   let candidate = &resolved.candidate;
-  let candidate_evidence = vec![candidate.evidence.artifact_ref.clone()];
+  let candidate_evidence = candidate_evidence_refs(candidate);
 
   let liveness = match check_music_candidate_liveness(call, candidate, &candidate_local_id) {
     Ok(liveness) => liveness,
@@ -664,6 +712,21 @@ fn check_music_candidate_liveness(
   Ok(CandidateLivenessCheck { anchor_recheck_ran })
 }
 
+fn candidate_evidence_refs(candidate: &Candidate) -> Vec<ArtifactRef> {
+  let mut refs = vec![candidate.evidence.artifact_ref.clone()];
+  if let Some(recognition_ref) = recognition_result_ref(&candidate.evidence)
+    && recognition_ref != candidate.evidence.artifact_ref
+  {
+    refs.push(recognition_ref);
+  }
+  refs
+}
+
+fn recognition_result_ref(evidence: &CandidateEvidence) -> Option<ArtifactRef> {
+  let value = evidence.observation.get("recognition_result_ref")?.clone();
+  serde_json::from_value(value).ok()
+}
+
 fn resolve_music_result_play_app(call: &DriverCall, candidate: &Candidate) -> String {
   app_identifier(call).unwrap_or_else(|| {
     candidate
@@ -980,4 +1043,84 @@ fn failure_layer_id(layer: FailureLayer) -> &'static str {
 
 fn report_text(raw: &str) -> String {
   raw.replace('\n', " ")
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use serde_json::json;
+
+  fn artifact_ref(id: &str) -> ArtifactRef {
+    ArtifactRef {
+      run_id: RunId::new("run_test"),
+      artifact_id: ArtifactId::new(id),
+      span_id: SpanId::new("span_test"),
+      captured_event_id: None,
+    }
+  }
+
+  fn sample_candidate(observation: serde_json::Value) -> Candidate {
+    Candidate {
+      candidate_local_id: "row#1".to_string(),
+      kind: "search_result_row".to_string(),
+      label: Some("Song A".to_string()),
+      target_spec: TargetSpec {
+        grounding: TargetGrounding::OcrAnchor,
+        anchor_text: Some("Song A".to_string()),
+        region_hint: None,
+        row_index: Some(1),
+      },
+      evidence: CandidateEvidence {
+        artifact_ref: artifact_ref(SCREENSHOT_ARTIFACT_ID),
+        observation,
+      },
+      liveness: CandidateLiveness {
+        preconditions: LivenessPreconditions {
+          window_ref: None,
+          anchor_recheck: None,
+        },
+        ttl_hint_ms: None,
+      },
+      control: ControlRequirements {
+        requires_app_frontmost: true,
+        requires_window_focus: true,
+      },
+      known_limits: Vec::new(),
+    }
+  }
+
+  #[test]
+  fn candidate_evidence_refs_include_recognition_artifact_when_present() {
+    let candidate = sample_candidate(json!({
+      "recognition_result_ref": artifact_ref(RECOGNITION_RESULT_ARTIFACT_ID),
+      "recognized_item_id": "row#1"
+    }));
+
+    let refs = candidate_evidence_refs(&candidate);
+
+    assert_eq!(refs.len(), 2);
+    assert_eq!(refs[0].artifact_id.as_str(), SCREENSHOT_ARTIFACT_ID);
+    assert_eq!(refs[1].artifact_id.as_str(), RECOGNITION_RESULT_ARTIFACT_ID);
+  }
+
+  #[test]
+  fn candidate_evidence_refs_stay_backward_compatible_without_recognition_ref() {
+    let candidate = sample_candidate(json!({
+      "provider": "vision_ocr.window_rows"
+    }));
+
+    let refs = candidate_evidence_refs(&candidate);
+
+    assert_eq!(refs.len(), 1);
+    assert_eq!(refs[0].artifact_id.as_str(), SCREENSHOT_ARTIFACT_ID);
+  }
+
+  #[test]
+  fn recognition_result_ref_ignores_invalid_shape() {
+    let candidate = sample_candidate(json!({
+      "recognition_result_ref": { "artifact_id": "artifact_0004" }
+    }));
+
+    assert!(recognition_result_ref(&candidate.evidence).is_none());
+  }
 }

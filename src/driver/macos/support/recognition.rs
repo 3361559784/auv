@@ -125,7 +125,7 @@ pub(crate) fn observed_rect_to_ratio_region(
 
 fn recognized_row_item(row: &ObservedOcrRow) -> RecognizedItem {
   RecognizedItem {
-    item_id: format!("row#{}", row.row_index),
+    item_id: format!("row#{}", row.row_index + 1),
     kind: "row".to_string(),
     box_: recognition_box(&row.bounds),
     text: joined_row_text(row),

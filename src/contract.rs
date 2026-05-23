@@ -53,6 +53,71 @@ pub struct FreshnessBasis {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct RecognitionResult {
+  pub recognition_id: String,
+  pub source: RecognitionSource,
+  pub scope: RecognitionScope,
+  pub best: Option<RecognizedItem>,
+  pub filtered: Vec<RecognizedItem>,
+  pub all: Vec<RecognizedItem>,
+  pub detail: serde_json::Value,
+  pub evidence: Vec<ArtifactRef>,
+  pub known_limits: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct RecognizedItem {
+  pub item_id: String,
+  pub kind: String,
+  #[serde(rename = "box")]
+  pub box_: RecognitionBox,
+  pub text: Option<String>,
+  pub provider_score: Option<f64>,
+  pub detail: serde_json::Value,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecognitionBox {
+  pub x: i64,
+  pub y: i64,
+  pub width: i64,
+  pub height: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct RecognitionScope {
+  pub surface: RecognitionSurface,
+  pub display_ref: Option<String>,
+  pub native_display_id: Option<String>,
+  pub app_bundle_id: Option<String>,
+  pub window_title: Option<String>,
+  pub window_number: Option<i64>,
+  pub region_hint: Option<RatioRegion>,
+  pub capture_artifact: Option<ArtifactRef>,
+  pub capture_contract_artifact: Option<ArtifactRef>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RecognitionSource {
+  OcrText,
+  OcrRow,
+  VisualRow,
+  SegmentedRegion,
+  IconMatch,
+  Custom,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RecognitionSurface {
+  Screen,
+  Display,
+  Window,
+  Region,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Candidate {
   pub candidate_local_id: String,
   pub kind: String,
@@ -297,6 +362,159 @@ mod tests {
     let parsed: CandidateQuery =
       serde_json::from_value(value).expect("candidate query should deserialize");
     assert_eq!(parsed, query);
+  }
+
+  #[test]
+  fn recognition_result_round_trips_populated_best_filtered_and_all() {
+    let capture_artifact = artifact_ref();
+    let contract_artifact = ArtifactRef {
+      run_id: RunId::new("run_123"),
+      artifact_id: ArtifactId::new("artifact_contract"),
+      span_id: SpanId::new("span_01"),
+      captured_event_id: Some(EventId::new("event_02")),
+    };
+    let best = RecognizedItem {
+      item_id: "item_best".to_string(),
+      kind: "ocr_text".to_string(),
+      box_: RecognitionBox {
+        x: 2155,
+        y: 1402,
+        width: 170,
+        height: 24,
+      },
+      text: Some("Cure For Me".to_string()),
+      provider_score: Some(0.97),
+      detail: json!({
+        "provider": "vision_ocr",
+        "fragments": ["Cure", "For", "Me"],
+      }),
+    };
+    let filtered = RecognizedItem {
+      item_id: "item_filtered".to_string(),
+      kind: "ocr_text".to_string(),
+      box_: RecognitionBox {
+        x: 2140,
+        y: 1440,
+        width: 196,
+        height: 22,
+      },
+      text: Some("A Temporary High".to_string()),
+      provider_score: Some(0.84),
+      detail: json!({
+        "provider": "vision_ocr",
+        "fragments": ["A", "Temporary", "High"],
+      }),
+    };
+    let rejected = RecognizedItem {
+      item_id: "item_rejected".to_string(),
+      kind: "ocr_text".to_string(),
+      box_: RecognitionBox {
+        x: 1980,
+        y: 1328,
+        width: 140,
+        height: 19,
+      },
+      text: None,
+      provider_score: Some(0.31),
+      detail: json!({
+        "provider": "vision_ocr",
+        "reject_reason": "below_min_provider_score",
+      }),
+    };
+    let result = RecognitionResult {
+      recognition_id: "recognition_window_rows_01".to_string(),
+      source: RecognitionSource::OcrRow,
+      scope: RecognitionScope {
+        surface: RecognitionSurface::Window,
+        display_ref: Some("display-main".to_string()),
+        native_display_id: Some("69733248".to_string()),
+        app_bundle_id: Some("com.tencent.QQMusicMac".to_string()),
+        window_title: Some("QQ音乐".to_string()),
+        window_number: Some(42),
+        region_hint: Some(RatioRegion {
+          left: 0.18,
+          top: 0.28,
+          right: 0.82,
+          bottom: 0.92,
+        }),
+        capture_artifact: Some(capture_artifact.clone()),
+        capture_contract_artifact: Some(contract_artifact.clone()),
+      },
+      best: Some(best.clone()),
+      filtered: vec![best.clone(), filtered.clone()],
+      all: vec![best.clone(), filtered.clone(), rejected.clone()],
+      detail: json!({
+        "provider": "vision_ocr.window_rows",
+        "strategy": "ocr-first",
+        "raw_match_count": 3,
+      }),
+      evidence: vec![capture_artifact.clone(), contract_artifact.clone()],
+      known_limits: vec![
+        "provider score is detector-local, not semantic truth".to_string(),
+        "window scope depends on the capture contract".to_string(),
+      ],
+    };
+
+    let value = serde_json::to_value(&result).expect("recognition result should serialize");
+    assert_eq!(value["source"], json!("ocr_row"));
+    assert_eq!(value["scope"]["surface"], json!("window"));
+    assert_eq!(value["best"]["box"]["x"], json!(2155));
+    assert_eq!(value["filtered"][1]["box"]["width"], json!(196));
+    assert_eq!(
+      value["all"][2]["detail"]["reject_reason"],
+      json!("below_min_provider_score")
+    );
+    assert_eq!(value["best"]["provider_score"], json!(0.97));
+    assert!(value["best"].get("box_").is_none());
+    assert!(value.get("confidence").is_none());
+
+    let parsed: RecognitionResult =
+      serde_json::from_value(value).expect("recognition result should deserialize");
+    assert_eq!(parsed, result);
+  }
+
+  #[test]
+  fn recognition_result_round_trips_with_empty_filtered_and_all() {
+    let result = RecognitionResult {
+      recognition_id: "recognition_empty".to_string(),
+      source: RecognitionSource::VisualRow,
+      scope: RecognitionScope {
+        surface: RecognitionSurface::Region,
+        display_ref: None,
+        native_display_id: None,
+        app_bundle_id: Some("com.tencent.QQMusicMac".to_string()),
+        window_title: None,
+        window_number: None,
+        region_hint: Some(RatioRegion {
+          left: 0.22,
+          top: 0.30,
+          right: 0.88,
+          bottom: 0.76,
+        }),
+        capture_artifact: None,
+        capture_contract_artifact: None,
+      },
+      best: None,
+      filtered: Vec::new(),
+      all: Vec::new(),
+      detail: json!({
+        "provider": "visual_rows",
+        "strategy": "visual-bands",
+      }),
+      evidence: Vec::new(),
+      known_limits: vec!["no rows detected on this page".to_string()],
+    };
+
+    let value = serde_json::to_value(&result).expect("empty recognition result should serialize");
+    assert_eq!(value["source"], json!("visual_row"));
+    assert_eq!(value["scope"]["surface"], json!("region"));
+    assert_eq!(value["best"], serde_json::Value::Null);
+    assert_eq!(value["filtered"], json!([]));
+    assert_eq!(value["all"], json!([]));
+
+    let parsed: RecognitionResult =
+      serde_json::from_value(value).expect("empty recognition result should deserialize");
+    assert_eq!(parsed, result);
   }
 
   #[test]

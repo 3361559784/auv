@@ -4,6 +4,7 @@ use super::super::*;
 
 pub(crate) fn observe_window_region(call: &DriverCall) -> AuvResult<DriverResponse> {
   let label = optional_string(call, "label").unwrap_or_else(|| "window-region-observe".to_string());
+  let app_bundle_id = app_identifier(call).filter(|value| looks_like_bundle_identifier(value));
   let min_confidence = optional_f64(call, "min_confidence")?.unwrap_or(0.0);
   if !(0.0..=1.0).contains(&min_confidence) {
     return Err(format!(
@@ -37,6 +38,56 @@ pub(crate) fn observe_window_region(call: &DriverCall) -> AuvResult<DriverRespon
     json,
     "Machine-readable OCR row observation for a window region.",
   )?;
+  let (display_ref, native_display_id) = match &capture.capture_contract.capture_source {
+    crate::driver::macos::capture::types::CaptureSource::Window {
+      display_ref,
+      native_display_id,
+      ..
+    } => (Some(display_ref.as_str()), Some(native_display_id.as_str())),
+    _ => (None, None),
+  };
+  let recognition_artifact = row_recognition_artifact(
+    "window-region-recognition",
+    &format!("{}-recognition", sanitize_file_component(&label)),
+    "Structured recognition result for OCR row observation in a window region.",
+    RowRecognitionArtifactRequest {
+      recognition_id: format!("window_region_{}", sanitize_file_component(&label)),
+      source: recognition_source_for_rows(&detection.strategy, &rows),
+      surface: crate::contract::RecognitionSurface::Region,
+      rows: &rows,
+      strategy: &detection.strategy,
+      raw_match_count: detection.raw_match_count,
+      filtered_match_count: detection.filtered_match_count,
+      screenshot_path: capture.screenshot_path.as_path(),
+      screenshot_dimensions: &capture.dimensions,
+      display_ref,
+      native_display_id,
+      app_bundle_id: app_bundle_id.as_deref(),
+      window_title: None,
+      window_number: window_number_from_ref(&capture.capture_source),
+      region_hint: Some(observed_rect_to_ratio_region(
+        &ocr_region,
+        &capture.dimensions,
+      )),
+      capture_contract: Some(&capture.capture_contract),
+      additional_detail: serde_json::json!({
+        "scope": &capture.scope,
+        "capture_source": &capture.capture_source,
+        "region_pixels": {
+          "x": ocr_region.x,
+          "y": ocr_region.y,
+          "width": ocr_region.width,
+          "height": ocr_region.height,
+        },
+        "max_observations": max_observations,
+        "min_confidence": min_confidence,
+      }),
+      known_limits: vec![
+        "driver-stage recognition evidence has no runtime artifact refs yet".to_string(),
+        "region observation still uses heuristic row filtering for list semantics".to_string(),
+      ],
+    },
+  )?;
   // TODO: Emit a full typed capture contract artifact for window-region
   // observation. This command records the screenshot and OCR-region bounds so
   // scroll scan can crop list item candidates, but it still lacks the same
@@ -51,7 +102,11 @@ pub(crate) fn observe_window_region(call: &DriverCall) -> AuvResult<DriverRespon
     preferred_name: format!("{}.png", sanitize_file_component(&label)),
     note: Some("Window screenshot captured for region observation.".to_string()),
   };
-  let mut artifacts = vec![screenshot_artifact.clone(), json_artifact];
+  let mut artifacts = vec![
+    screenshot_artifact.clone(),
+    json_artifact,
+    recognition_artifact,
+  ];
   let overlay_rows = rows
     .iter()
     .map(|row| OverlayEvidenceRow {

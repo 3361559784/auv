@@ -928,6 +928,7 @@ pub(super) fn wait_for_screen_text(call: &DriverCall) -> AuvResult<DriverRespons
 pub(super) fn find_screen_rows(call: &DriverCall) -> AuvResult<DriverResponse> {
   let label = optional_string(call, "label").unwrap_or_else(|| "screen-rows".to_string());
   let activated_app = maybe_activate_target_app_for_observation(call)?;
+  let app_bundle_id = app_identifier(call).filter(|value| looks_like_bundle_identifier(value));
   let display_selection = parse_display_selection(call)?;
   let displays = crate::driver::macos::capture::xcap_backend::list_displays()?;
   let capture_source = resolve_screen_capture_source(&displays, display_selection.as_ref(), None)?;
@@ -963,6 +964,40 @@ pub(super) fn find_screen_rows(call: &DriverCall) -> AuvResult<DriverResponse> {
     &format!("screen-rows-report-{}", sanitize_file_component(&label)),
     detection.report,
     "Captured row-detection report used for visible-row grouping (OCR first, then visual-band fallback).",
+  )?;
+  let recognition_artifact = row_recognition_artifact(
+    "screen-rows-recognition",
+    &format!(
+      "screen-rows-recognition-{}",
+      sanitize_file_component(&label)
+    ),
+    "Structured recognition result for screen row detection.",
+    RowRecognitionArtifactRequest {
+      recognition_id: format!("screen_rows_{}", sanitize_file_component(&label)),
+      source: recognition_source_for_rows(&detection.strategy, &rows),
+      surface: crate::contract::RecognitionSurface::Display,
+      rows: &rows,
+      strategy: &detection.strategy,
+      raw_match_count: detection.raw_match_count,
+      filtered_match_count: detection.filtered_match_count,
+      screenshot_path: screenshot_path.as_path(),
+      screenshot_dimensions: &dimensions,
+      display_ref: Some(&capture_source.display_ref),
+      native_display_id: Some(&capture_source.native_display_id),
+      app_bundle_id: app_bundle_id.as_deref(),
+      window_title: None,
+      window_number: None,
+      region_hint: region
+        .as_ref()
+        .map(|value| observed_rect_to_ratio_region(value, &dimensions)),
+      capture_contract: None,
+      additional_detail: serde_json::json!({
+        "capture_source_reason": &capture_source.selection_reason,
+      }),
+      known_limits: vec![
+        "driver-stage recognition evidence has no runtime artifact refs yet".to_string(),
+      ],
+    },
   )?;
   let screenshot_artifact = ProducedArtifact {
     kind: "screenshot".to_string(),
@@ -1024,7 +1059,7 @@ pub(super) fn find_screen_rows(call: &DriverCall) -> AuvResult<DriverResponse> {
     backend: Some(format!("macos.vision.screen-rows.{}", detection.strategy)),
     signals: row_detection_signals(rows.len()),
     notes,
-    artifacts: vec![screenshot_artifact, report_artifact],
+    artifacts: vec![screenshot_artifact, report_artifact, recognition_artifact],
   })
 }
 
@@ -1046,6 +1081,7 @@ pub(super) fn wait_for_screen_rows(call: &DriverCall) -> AuvResult<DriverRespons
   let timeout_ms = optional_positive_u64(call, "timeout_ms")?.unwrap_or(3000);
   let poll_interval_ms = optional_positive_u64(call, "poll_interval_ms")?.unwrap_or(250);
   let display_selection = parse_display_selection(call)?;
+  let app_bundle_id = app_identifier(call).filter(|value| looks_like_bundle_identifier(value));
   let displays = crate::driver::macos::capture::xcap_backend::list_displays()?;
   let capture_source = resolve_screen_capture_source(&displays, display_selection.as_ref(), None)?;
   let started_at = Instant::now();
@@ -1088,6 +1124,42 @@ pub(super) fn wait_for_screen_rows(call: &DriverCall) -> AuvResult<DriverRespons
         ),
         detection.report,
         "Captured row-detection report from the final wait-for-screen-rows polling attempt.",
+      )?;
+      let recognition_artifact = row_recognition_artifact(
+        "screen-rows-wait-recognition",
+        &format!(
+          "screen-rows-wait-recognition-{}",
+          sanitize_file_component(&label)
+        ),
+        "Structured recognition result from the final wait-for-screen-rows polling attempt.",
+        RowRecognitionArtifactRequest {
+          recognition_id: format!("screen_rows_wait_{}", sanitize_file_component(&label)),
+          source: recognition_source_for_rows(&detection.strategy, &rows),
+          surface: crate::contract::RecognitionSurface::Display,
+          rows: &rows,
+          strategy: &detection.strategy,
+          raw_match_count: detection.raw_match_count,
+          filtered_match_count: detection.filtered_match_count,
+          screenshot_path: screenshot_path.as_path(),
+          screenshot_dimensions: &dimensions,
+          display_ref: Some(&capture_source.display_ref),
+          native_display_id: Some(&capture_source.native_display_id),
+          app_bundle_id: app_bundle_id.as_deref(),
+          window_title: None,
+          window_number: None,
+          region_hint: region
+            .as_ref()
+            .map(|value| observed_rect_to_ratio_region(value, &dimensions)),
+          capture_contract: None,
+          additional_detail: serde_json::json!({
+            "capture_source_reason": &capture_source.selection_reason,
+            "timed_out": timed_out,
+            "attempt_count": attempts,
+          }),
+          known_limits: vec![
+            "driver-stage recognition evidence has no runtime artifact refs yet".to_string(),
+          ],
+        },
       )?;
       let screenshot_artifact = ProducedArtifact {
         kind: "screenshot".to_string(),
@@ -1151,7 +1223,7 @@ pub(super) fn wait_for_screen_rows(call: &DriverCall) -> AuvResult<DriverRespons
         )),
         signals: wait_row_detection_signals(rows.len(), min_row_count, timed_out),
         notes,
-        artifacts: vec![screenshot_artifact, report_artifact],
+        artifacts: vec![screenshot_artifact, report_artifact, recognition_artifact],
       });
     }
 

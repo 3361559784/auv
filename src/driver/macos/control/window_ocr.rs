@@ -340,14 +340,60 @@ pub(crate) fn click_window_text(call: &DriverCall) -> AuvResult<DriverResponse> 
 
 pub(crate) fn find_window_rows(call: &DriverCall) -> AuvResult<DriverResponse> {
   let label = optional_string(call, "label").unwrap_or_else(|| "window-rows".to_string());
+  let app_bundle_id = app_identifier(call).filter(|value| looks_like_bundle_identifier(value));
   let capture = capture_resolved_window_observation(call, &label)?;
   let (detection, rows) = detect_rows_for_capture(call, &capture)?;
+  let region =
+    parse_ocr_region_constraint(call, capture.dimensions.width, capture.dimensions.height)?;
   let report_artifact = build_text_artifact(
     "window-rows-report",
     "txt",
     &format!("window-rows-report-{}", sanitize_file_component(&label)),
     detection.report.clone(),
     "Captured row-detection report for a resolved app window.",
+  )?;
+  let (display_ref, native_display_id) = match &capture.capture_contract.capture_source {
+    crate::driver::macos::capture::types::CaptureSource::Window {
+      display_ref,
+      native_display_id,
+      ..
+    } => (Some(display_ref.as_str()), Some(native_display_id.as_str())),
+    _ => (None, None),
+  };
+  let recognition_artifact = row_recognition_artifact(
+    "window-rows-recognition",
+    &format!(
+      "window-rows-recognition-{}",
+      sanitize_file_component(&label)
+    ),
+    "Structured recognition result for window row detection.",
+    RowRecognitionArtifactRequest {
+      recognition_id: format!("window_rows_{}", sanitize_file_component(&label)),
+      source: recognition_source_for_rows(&detection.strategy, &rows),
+      surface: crate::contract::RecognitionSurface::Window,
+      rows: &rows,
+      strategy: &detection.strategy,
+      raw_match_count: detection.raw_match_count,
+      filtered_match_count: detection.filtered_match_count,
+      screenshot_path: capture.screenshot_path.as_path(),
+      screenshot_dimensions: &capture.dimensions,
+      display_ref,
+      native_display_id,
+      app_bundle_id: app_bundle_id.as_deref(),
+      window_title: None,
+      window_number: window_number_from_ref(&capture.capture_source),
+      region_hint: region
+        .as_ref()
+        .map(|value| observed_rect_to_ratio_region(value, &capture.dimensions)),
+      capture_contract: Some(&capture.capture_contract),
+      additional_detail: serde_json::json!({
+        "scope": &capture.scope,
+        "capture_source": &capture.capture_source,
+      }),
+      known_limits: vec![
+        "driver-stage recognition evidence has no runtime artifact refs yet".to_string(),
+      ],
+    },
   )?;
   let screenshot_artifact = screenshot_artifact(&capture, &label, "window row detection");
   let mut notes = row_notes(&capture, &detection, rows.len());
@@ -372,12 +418,13 @@ pub(crate) fn find_window_rows(call: &DriverCall) -> AuvResult<DriverResponse> {
     backend: Some(format!("macos.vision.window-rows.{}", detection.strategy)),
     signals: crate::driver::macos::observe::row_detection_signals(rows.len()),
     notes,
-    artifacts: vec![screenshot_artifact, report_artifact],
+    artifacts: vec![screenshot_artifact, report_artifact, recognition_artifact],
   })
 }
 
 pub(crate) fn wait_for_window_rows(call: &DriverCall) -> AuvResult<DriverResponse> {
   let label = optional_string(call, "label").unwrap_or_else(|| "window-rows-wait".to_string());
+  let app_bundle_id = app_identifier(call).filter(|value| looks_like_bundle_identifier(value));
   let min_row_count = optional_i64(call, "min_row_count")?
     .unwrap_or(1)
     .clamp(1, 64) as usize;
@@ -392,6 +439,8 @@ pub(crate) fn wait_for_window_rows(call: &DriverCall) -> AuvResult<DriverRespons
     let capture =
       capture_resolved_window_observation(call, &format!("{label}-attempt-{attempts}"))?;
     let (detection, rows) = detect_rows_for_capture(call, &capture)?;
+    let region =
+      parse_ocr_region_constraint(call, capture.dimensions.width, capture.dimensions.height)?;
     let elapsed_ms = started_at.elapsed().as_millis() as u64;
     let timed_out = elapsed_ms >= timeout_ms;
 
@@ -408,6 +457,51 @@ pub(crate) fn wait_for_window_rows(call: &DriverCall) -> AuvResult<DriverRespons
         ),
         detection.report.clone(),
         "Captured row-detection report from the final wait-for-window-rows polling attempt.",
+      )?;
+      let (display_ref, native_display_id) = match &capture.capture_contract.capture_source {
+        crate::driver::macos::capture::types::CaptureSource::Window {
+          display_ref,
+          native_display_id,
+          ..
+        } => (Some(display_ref.as_str()), Some(native_display_id.as_str())),
+        _ => (None, None),
+      };
+      let recognition_artifact = row_recognition_artifact(
+        "window-rows-wait-recognition",
+        &format!(
+          "window-rows-wait-recognition-{}",
+          sanitize_file_component(&label)
+        ),
+        "Structured recognition result from the final wait-for-window-rows polling attempt.",
+        RowRecognitionArtifactRequest {
+          recognition_id: format!("window_rows_wait_{}", sanitize_file_component(&label)),
+          source: recognition_source_for_rows(&detection.strategy, &rows),
+          surface: crate::contract::RecognitionSurface::Window,
+          rows: &rows,
+          strategy: &detection.strategy,
+          raw_match_count: detection.raw_match_count,
+          filtered_match_count: detection.filtered_match_count,
+          screenshot_path: capture.screenshot_path.as_path(),
+          screenshot_dimensions: &capture.dimensions,
+          display_ref,
+          native_display_id,
+          app_bundle_id: app_bundle_id.as_deref(),
+          window_title: None,
+          window_number: window_number_from_ref(&capture.capture_source),
+          region_hint: region
+            .as_ref()
+            .map(|value| observed_rect_to_ratio_region(value, &capture.dimensions)),
+          capture_contract: Some(&capture.capture_contract),
+          additional_detail: serde_json::json!({
+            "scope": &capture.scope,
+            "capture_source": &capture.capture_source,
+            "attempt_count": attempts,
+            "timed_out": timed_out,
+          }),
+          known_limits: vec![
+            "driver-stage recognition evidence has no runtime artifact refs yet".to_string(),
+          ],
+        },
       )?;
       let screenshot_artifact =
         screenshot_artifact(&capture, &label, "final waitForWindowRows polling attempt");
@@ -446,7 +540,7 @@ pub(crate) fn wait_for_window_rows(call: &DriverCall) -> AuvResult<DriverRespons
           timed_out,
         ),
         notes,
-        artifacts: vec![screenshot_artifact, report_artifact],
+        artifacts: vec![screenshot_artifact, report_artifact, recognition_artifact],
       });
     }
 

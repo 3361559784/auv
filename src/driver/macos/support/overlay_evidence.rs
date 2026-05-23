@@ -101,6 +101,26 @@ pub(crate) struct OverlayEvidencePayload {
 }
 
 #[derive(Clone, Debug)]
+pub(crate) struct RowObservationOverlayRequest {
+  pub(crate) label: String,
+  pub(crate) screenshot_path: std::path::PathBuf,
+  pub(crate) screenshot_dimensions: ScreenshotDimensions,
+  pub(crate) strategy: String,
+  pub(crate) rows: Vec<OverlayEvidenceRow>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub(crate) struct RowObservationOverlayPayload {
+  pub(crate) version: String,
+  pub(crate) kind: String,
+  pub(crate) screenshot_path: String,
+  pub(crate) screenshot_width: i64,
+  pub(crate) screenshot_height: i64,
+  pub(crate) strategy: String,
+  pub(crate) rows: Vec<OverlayEvidenceRow>,
+}
+
+#[derive(Clone, Debug)]
 pub(crate) struct OverlayEvidenceRequest {
   pub(crate) kind: &'static str,
   pub(crate) label: String,
@@ -296,6 +316,86 @@ pub(crate) fn build_overlay_evidence_artifacts(
       note: Some(
         "Evidence screenshot with dual-cursor and interaction overlay annotations.".to_string(),
       ),
+    },
+    overlay_json_artifact,
+  ])
+}
+
+pub(crate) fn build_row_observation_overlay_artifacts(
+  request: RowObservationOverlayRequest,
+) -> AuvResult<Vec<ProducedArtifact>> {
+  let bytes = fs::read(&request.screenshot_path).map_err(|error| {
+    format!(
+      "failed to read screenshot source {} for row observation overlay: {error}",
+      request.screenshot_path.display()
+    )
+  })?;
+  let mut image = image::load_from_memory(&bytes)
+    .map_err(|error| {
+      format!("failed to decode screenshot PNG for row observation overlay: {error}")
+    })?
+    .to_rgba8();
+
+  for row in &request.rows {
+    draw_rect_outline(&mut image, &row.bounds, ROW_BOX, 2);
+    draw_label_chip(
+      &mut image,
+      row.bounds.x,
+      row.bounds.y.saturating_sub(18),
+      &format!("#{} {}", row.row_index + 1, row.source),
+      LABEL_BG,
+    );
+  }
+  draw_signal_panel(
+    &mut image,
+    vec![
+      "row observation".to_string(),
+      format!("strategy: {}", request.strategy),
+      format!("rows: {}", request.rows.len()),
+    ],
+  );
+
+  let overlay_png_path = temp_file_path(
+    &format!(
+      "{}-row-observation-overlay",
+      sanitize_file_component(&request.label)
+    ),
+    "png",
+  );
+  save_rgba_image(image, overlay_png_path.as_path())?;
+
+  let payload = RowObservationOverlayPayload {
+    version: "v1alpha1".to_string(),
+    kind: "row_observation_overlay".to_string(),
+    screenshot_path: request.screenshot_path.display().to_string(),
+    screenshot_width: request.screenshot_dimensions.width,
+    screenshot_height: request.screenshot_dimensions.height,
+    strategy: request.strategy,
+    rows: request.rows,
+  };
+  let overlay_json = serde_json::to_string_pretty(&payload)
+    .map_err(|error| format!("failed to encode row observation overlay JSON: {error}"))?
+    + "\n";
+  let overlay_json_artifact = build_text_artifact(
+    "row-observation.overlay.annotation",
+    "json",
+    &format!(
+      "{}-row-observation-overlay",
+      sanitize_file_component(&request.label)
+    ),
+    overlay_json,
+    "Structured annotation payload for the row observation overlay image.",
+  )?;
+
+  Ok(vec![
+    ProducedArtifact {
+      kind: "row-observation.overlay".to_string(),
+      source_path: overlay_png_path,
+      preferred_name: format!(
+        "{}-row-observation-overlay.png",
+        sanitize_file_component(&request.label)
+      ),
+      note: Some("Evidence screenshot with observed row bounds overlay.".to_string()),
     },
     overlay_json_artifact,
   ])

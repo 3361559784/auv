@@ -204,18 +204,75 @@ pub(crate) fn detect_screen_rows(
   let ocr_report = crate::driver::macos::native::ocr::render_ocr_text_report(&ocr_capture);
   let ocr_snapshot = ocr_capture.snapshot;
   let filtered_matches = filter_ocr_matches(&ocr_snapshot.matches, min_confidence, region);
-  let rows = group_ocr_matches_into_rows(&filtered_matches);
-  if !rows.is_empty() {
+  let ocr_rows = group_ocr_matches_into_rows(&filtered_matches);
+
+  let mut visual_detection = crate::driver::macos::native::ocr::find_rows(image_path, region)?.rows;
+  if visual_detection.rows.is_empty() && !ocr_rows.is_empty() {
     return Ok(DetectedScreenRows {
       strategy: "ocr-text".to_string(),
       raw_match_count: ocr_snapshot.matches.len(),
       filtered_match_count: filtered_matches.len(),
-      rows,
+      rows: ocr_rows,
       report: ocr_report,
     });
   }
+  attach_ocr_fragments_to_visual_rows(&mut visual_detection.rows, &filtered_matches);
+  let mut row_ocr_match_count = 0;
+  if visual_detection
+    .rows
+    .iter()
+    .any(|row| row.text_fragments.is_empty())
+  {
+    row_ocr_match_count = attach_row_crop_ocr_fragments(
+      image_path,
+      &mut visual_detection.rows,
+      min_confidence,
+      max_observations,
+      ocr_snapshot.image_width,
+      ocr_snapshot.image_height,
+    )?;
+  }
+  if visual_detection
+    .rows
+    .iter()
+    .any(|row| !row.text_fragments.is_empty())
+  {
+    visual_detection.strategy = "visual-bands+ocr-text".to_string();
+    visual_detection.raw_match_count = ocr_snapshot.matches.len() + row_ocr_match_count;
+    visual_detection.filtered_match_count = filtered_matches.len() + row_ocr_match_count;
+  }
 
-  crate::driver::macos::native::ocr::find_rows(image_path, region).map(|capture| capture.rows)
+  Ok(visual_detection)
+}
+
+pub(crate) fn ocr_text_fragments_in_image(
+  image_path: &Path,
+  min_confidence: f64,
+  max_observations: i64,
+) -> AuvResult<Vec<String>> {
+  let capture = crate::driver::macos::native::ocr::find_text(
+    image_path,
+    "",
+    false,
+    false,
+    max_observations.min(64),
+    None,
+  )?;
+  let mut matches = filter_ocr_matches(&capture.snapshot.matches, min_confidence, None);
+  matches.sort_by(|left, right| {
+    left
+      .bounds
+      .y
+      .cmp(&right.bounds.y)
+      .then_with(|| left.bounds.x.cmp(&right.bounds.x))
+  });
+  let mut fragments = Vec::new();
+  for matched in matches {
+    if !fragments.iter().any(|fragment| fragment == &matched.text) {
+      fragments.push(matched.text.clone());
+    }
+  }
+  Ok(fragments)
 }
 
 pub(crate) fn group_ocr_matches_into_rows(matches: &[&OcrTextMatch]) -> Vec<ObservedOcrRow> {
@@ -263,6 +320,108 @@ pub(crate) fn group_ocr_matches_into_rows(matches: &[&OcrTextMatch]) -> Vec<Obse
   rows
 }
 
+// REVIEW: Visual row bands and Vision text boxes do not share a stable list
+// model yet. This joins text by row containment/centerline as a conservative
+// bridge so scroll-scan artifacts expose readable row content before a richer
+// item extractor contract exists.
+pub(crate) fn attach_ocr_fragments_to_visual_rows(
+  rows: &mut [ObservedOcrRow],
+  matches: &[&OcrTextMatch],
+) -> usize {
+  let mut attached = 0;
+  for row in rows.iter_mut() {
+    for matched in matches {
+      let (_, center_y) = ocr_match_center(matched);
+      if !row_contains_y(&row.bounds, center_y) || !rects_overlap_x(&row.bounds, &matched.bounds) {
+        continue;
+      }
+      if !row
+        .text_fragments
+        .iter()
+        .any(|fragment| fragment == &matched.text)
+      {
+        row.text_fragments.push(matched.text.clone());
+        attached += 1;
+      }
+    }
+    if !row.text_fragments.is_empty() && row.source == "visual-bands" {
+      row.source = "visual-bands+ocr-text".to_string();
+    }
+  }
+  attached
+}
+
+fn attach_row_crop_ocr_fragments(
+  image_path: &Path,
+  rows: &mut [ObservedOcrRow],
+  min_confidence: f64,
+  max_observations: i64,
+  image_width: i64,
+  image_height: i64,
+) -> AuvResult<usize> {
+  let mut attached = 0;
+  for row in rows.iter_mut() {
+    if !row.text_fragments.is_empty() {
+      continue;
+    }
+    let row_region = expand_rect(&row.bounds, 12, 8, image_width, image_height);
+    let row_capture = crate::driver::macos::native::ocr::find_text(
+      image_path,
+      "",
+      false,
+      false,
+      max_observations.min(32),
+      Some(&row_region),
+    )?;
+    let row_matches = filter_ocr_matches(&row_capture.snapshot.matches, min_confidence, None);
+    for matched in row_matches {
+      if row
+        .text_fragments
+        .iter()
+        .any(|fragment| fragment == &matched.text)
+      {
+        continue;
+      }
+      row.text_fragments.push(matched.text.clone());
+      attached += 1;
+    }
+    if !row.text_fragments.is_empty() {
+      row.source = "visual-bands+row-ocr".to_string();
+    }
+  }
+  Ok(attached)
+}
+
+fn row_contains_y(row: &ObservedRect, y: f64) -> bool {
+  let padding = (row.height as f64 * 0.25).max(8.0);
+  y >= row.y as f64 - padding && y <= (row.y + row.height) as f64 + padding
+}
+
+fn rects_overlap_x(left: &ObservedRect, right: &ObservedRect) -> bool {
+  let left_max = left.x + left.width;
+  let right_max = right.x + right.width;
+  left.x < right_max && right.x < left_max
+}
+
+fn expand_rect(
+  rect: &ObservedRect,
+  pad_x: i64,
+  pad_y: i64,
+  image_width: i64,
+  image_height: i64,
+) -> ObservedRect {
+  let x = (rect.x - pad_x).clamp(0, image_width.saturating_sub(1));
+  let y = (rect.y - pad_y).clamp(0, image_height.saturating_sub(1));
+  let max_x = (rect.x + rect.width + pad_x).clamp(x + 1, image_width);
+  let max_y = (rect.y + rect.height + pad_y).clamp(y + 1, image_height);
+  ObservedRect {
+    x,
+    y,
+    width: max_x - x,
+    height: max_y - y,
+  }
+}
+
 pub(crate) fn render_ocr_row_note(row: &ObservedOcrRow) -> String {
   if row.text_fragments.is_empty() {
     return format!(
@@ -303,5 +462,79 @@ fn union_rects(left: &ObservedRect, right: &ObservedRect) -> ObservedRect {
     y: min_y,
     width: max_x - min_x,
     height: max_y - min_y,
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn attaches_ocr_fragments_to_overlapping_visual_rows() {
+    let mut rows = vec![
+      ObservedOcrRow {
+        row_index: 0,
+        source: "visual-bands".to_string(),
+        bounds: ObservedRect {
+          x: 100,
+          y: 200,
+          width: 400,
+          height: 80,
+        },
+        text_fragments: Vec::new(),
+      },
+      ObservedOcrRow {
+        row_index: 1,
+        source: "visual-bands".to_string(),
+        bounds: ObservedRect {
+          x: 100,
+          y: 320,
+          width: 400,
+          height: 80,
+        },
+        text_fragments: Vec::new(),
+      },
+    ];
+    let first = OcrTextMatch {
+      match_index: 0,
+      text: "Song A".to_string(),
+      confidence: 0.9,
+      bounds: ObservedRect {
+        x: 140,
+        y: 220,
+        width: 120,
+        height: 28,
+      },
+    };
+    let second = OcrTextMatch {
+      match_index: 1,
+      text: "Artist B".to_string(),
+      confidence: 0.9,
+      bounds: ObservedRect {
+        x: 150,
+        y: 340,
+        width: 120,
+        height: 28,
+      },
+    };
+    let outside = OcrTextMatch {
+      match_index: 2,
+      text: "Outside".to_string(),
+      confidence: 0.9,
+      bounds: ObservedRect {
+        x: 700,
+        y: 220,
+        width: 120,
+        height: 28,
+      },
+    };
+    let matches = vec![&first, &second, &outside];
+
+    let attached = attach_ocr_fragments_to_visual_rows(&mut rows, &matches);
+
+    assert_eq!(attached, 2);
+    assert_eq!(rows[0].source, "visual-bands+ocr-text");
+    assert_eq!(rows[0].text_fragments, vec!["Song A"]);
+    assert_eq!(rows[1].text_fragments, vec!["Artist B"]);
   }
 }

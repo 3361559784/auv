@@ -130,6 +130,70 @@ window image, while the same ratio on a display-scoped command is relative to
 the selected display capture. A region should not be used as a substitute for
 the scope itself.
 
+## Segmented Region
+
+A segmented region is a derived region produced by an observation or scan step.
+It is evidence about visible layout, not a user-authored target region.
+
+Segmented regions should carry their coordinate space, bounds, role,
+confidence, and evidence. For example, a list scanner may emit one segmented
+region with the role `list_region` after detecting a repeated row pattern.
+
+## Anchor
+
+An anchor is a visible or native UI signal used to locate another observation or
+action target. Anchors may come from OCR text, AX text, image features, stable
+window metadata, or previously recorded geometry.
+
+Anchors are evidence, not guarantees. Recipes should record which anchor was
+used and how it resolved to a region, row, item, or action point.
+
+## List Region
+
+A list region is a segmented region that appears to contain repeated list-like
+content. It is not tied to one domain such as playlists, tables, search results,
+or inboxes.
+
+A list region may contain section headers, partial rows, ads, dividers, and
+other non-item content. Those are filtered or interpreted by later stages.
+
+## List Row Candidate
+
+A list row candidate is a row-like visual or textual band observed inside a
+region. It is a candidate because row detection can include headers, tabs,
+partial rows, and other repeated or near-repeated layout elements.
+
+List row candidates should preserve source evidence such as OCR fragments,
+visual-band bounds, row index, and detection strategy.
+
+## Row Filter
+
+A row filter is a deterministic step that turns list row candidates into list
+item candidates by rejecting candidates that are clearly outside the expected
+row pattern.
+
+Row filters should be conservative. They should avoid semantic parsing and
+should preserve rejected candidates with reasons so a reviewer or later hook can
+inspect what was lost.
+
+## List Item Candidate
+
+A list item candidate is a list row candidate that survived row filtering and is
+ready for item-level observation or recipe handling.
+
+A list item candidate is still not a parsed domain object. It may have geometry
+and OCR fragments, but it does not become a semantic song, email, file, or table
+record until a recipe or parser interprets it.
+
+## List Item Observation
+
+A list item observation is recorded evidence extracted from a list item
+candidate on one scan page. It can include text fragments, geometry, source
+artifacts, row-filter metadata, and parser attributes.
+
+List item observations are the per-page entries that can later be merged into
+an observed collection.
+
 ## AX Tree
 
 An AX tree is a snapshot of accessibility elements exposed by a target
@@ -266,3 +330,25 @@ future scan behavior.
 
 Hooks are observation-only by default. Hooks that mutate UI must declare their
 disturbance explicitly.
+
+## Sub Recipe
+
+A sub recipe is a recipe manifest invoked by another runtime workflow instead
+of directly by a user-facing command. The host workflow supplies context from
+its own execution, such as a scan page, list item candidate, or stop candidate.
+
+Sub recipes should declare their invocation host and stage in the manifest so
+the caller can reject incompatible recipes before execution. Current scan sub
+recipes use a provisional scalar context; typed context artifacts should replace
+that once the hook contract stabilizes.
+
+## List Scan Hook
+
+A list scan hook is a scan hook that runs while scanning list-like content.
+Depending on where it is attached, it may inspect a segmented region, list row
+candidate, list item candidate, page observation, or stop candidate.
+
+List scan hooks should make their input stage explicit. A hook that runs after
+row filtering is not the same as a row filter, because it can run recipe logic
+and may produce annotations or decisions rather than only deterministic
+accept/reject results.

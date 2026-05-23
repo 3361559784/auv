@@ -166,6 +166,9 @@ func find_ocr_text(request: NativeOcrTextRequest) -> NativeOcrTextResponse {
   let normalizedAnchorQuery = normalizeForAnchorMatch(rawQuery, caseSensitive: request.case_sensitive)
 
   func matches(_ text: String) -> Bool {
+    if rawQuery.isEmpty {
+      return true
+    }
     let normalizedText = request.case_sensitive ? text : text.lowercased()
     let normalizedAnchorText = normalizeForAnchorMatch(text, caseSensitive: request.case_sensitive)
     if request.exact {
@@ -179,7 +182,9 @@ func find_ocr_text(request: NativeOcrTextRequest) -> NativeOcrTextResponse {
   visionRequest.recognitionLevel = .accurate
   visionRequest.usesLanguageCorrection = true
   visionRequest.recognitionLanguages = ["zh-Hans", "zh-Hant", "en-US"]
-  visionRequest.customWords = [rawQuery]
+  if !rawQuery.isEmpty {
+    visionRequest.customWords = [rawQuery]
+  }
   if #available(macOS 26.0, *) {
     visionRequest.automaticallyDetectsLanguage = true
   }

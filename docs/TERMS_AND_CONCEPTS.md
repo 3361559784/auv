@@ -139,6 +139,18 @@ Segmented regions should carry their coordinate space, bounds, role,
 confidence, and evidence. For example, a list scanner may emit one segmented
 region with the role `list_region` after detecting a repeated row pattern.
 
+## Recognition Result
+
+A recognition result is a provisional structured observation contract for
+detector-like outputs. It should preserve the best match, rejected candidates,
+filtered candidates, bounds, provider-native detail, and evidence references in
+one inspectable object.
+
+Recognition results sit between raw provider output and higher-level
+candidates. OCR rows, visual row bands, segmented regions, icon matches, and
+future detector outputs should be able to project into this shape before an
+action consumes them.
+
 ## Anchor
 
 An anchor is a visible or native UI signal used to locate another observation or

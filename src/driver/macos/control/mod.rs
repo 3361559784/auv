@@ -2,6 +2,7 @@ mod app;
 mod ax;
 pub(crate) mod common;
 mod icon_match;
+mod neural_detect;
 mod music;
 mod pointer;
 mod region;
@@ -16,6 +17,7 @@ pub(crate) use self::ax::{
   smart_press,
 };
 pub(crate) use self::icon_match::find_icon_match;
+pub(crate) use self::neural_detect::find_neural_detect;
 pub(crate) use self::music::{
   music_result_play, music_search_results, music_validate_candidate_liveness,
 };

@@ -189,6 +189,14 @@ pub fn default_command_catalog() -> CommandCatalog {
       max_disturbance: DisturbanceClass::None,
     },
     CommandSpec {
+      id: "debug.findIconMatch",
+      summary: "Match a template image against a resolved macOS window screenshot using NCC and emit a RecognitionResult artifact.",
+      driver_id: "macos.desktop",
+      operation: "find_icon_match",
+      disturbance_classes: NONE,
+      max_disturbance: DisturbanceClass::None,
+    },
+    CommandSpec {
       id: "debug.scrollWindowRegion",
       summary: "Scroll at the center of a resolved macOS window region and record scroll evidence.",
       driver_id: "macos.desktop",

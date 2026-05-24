@@ -1,6 +1,7 @@
 mod app;
 mod ax;
 pub(crate) mod common;
+mod icon_match;
 mod music;
 mod pointer;
 mod region;
@@ -14,6 +15,7 @@ pub(crate) use self::ax::{
   ax_click_window_text, ax_focus_text_input, ax_press_button, focus_text_input, press_button,
   smart_press,
 };
+pub(crate) use self::icon_match::find_icon_match;
 pub(crate) use self::music::{
   music_result_play, music_search_results, music_validate_candidate_liveness,
 };

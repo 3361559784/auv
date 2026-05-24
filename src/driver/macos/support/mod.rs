@@ -12,6 +12,7 @@ mod recognition;
 mod runtime;
 mod scripts;
 mod selector;
+pub(crate) mod template_match;
 
 pub(crate) use self::artifacts::*;
 pub(crate) use self::ax::*;

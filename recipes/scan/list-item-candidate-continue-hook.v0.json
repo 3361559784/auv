@@ -56,6 +56,9 @@
         "label": "list-item-candidate-hook",
         "hook_action": "${hook_action}",
         "hook_reason": "${hook_reason}",
+        "hook_name": "${scan.hook.name}",
+        "hook_stage": "${scan.hook.stage}",
+        "hook_page_index": "${scan.page_index}",
         "context": "${context}"
       },
       "expect": {

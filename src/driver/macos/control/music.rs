@@ -1057,6 +1057,7 @@ fn report_text(raw: &str) -> String {
 #[cfg(test)]
 mod tests {
   use super::*;
+  use crate::model::{DriverCall, DriverRunContext, ExecutionTarget};
   use crate::trace::{ArtifactId, SpanId};
   use serde_json::json;
 
@@ -1139,5 +1140,62 @@ mod tests {
     }));
 
     assert!(recognition_result_ref(&candidate.evidence).is_none());
+  }
+
+  #[test]
+  fn music_result_play_operation_result_keeps_candidate_and_recognition_evidence() {
+    let candidate = sample_candidate(json!({
+      "recognition_result_ref": artifact_ref(RECOGNITION_RESULT_ARTIFACT_ID),
+      "recognized_item_id": "row#1"
+    }));
+    let evidence = candidate_evidence_refs(&candidate);
+    let verification = VerificationResult {
+      executed: true,
+      state_changed: true,
+      semantic_matched: Some(true),
+      failure_layer: None,
+      evidence: evidence.clone(),
+      observed_label: Some("Song A".to_string()),
+    };
+    let call = DriverCall {
+      operation: "music.result.play".to_string(),
+      target: ExecutionTarget {
+        application_id: Some("com.tencent.QQMusicMac".to_string()),
+      },
+      inputs: BTreeMap::new(),
+      working_directory: std::env::temp_dir(),
+      run_context: DriverRunContext {
+        run_id: "run_music_test".to_string(),
+        span_id: "span_music_test".to_string(),
+      },
+    };
+
+    let result =
+      music_result_play_operation_result(&call, OperationStatus::Completed, verification, evidence);
+
+    assert_eq!(result.operation_id, "music.result.play");
+    assert_eq!(result.evidence_artifacts.len(), 2);
+    assert_eq!(
+      result.evidence_artifacts[0].artifact_id.as_str(),
+      SCREENSHOT_ARTIFACT_ID
+    );
+    assert_eq!(
+      result.evidence_artifacts[1].artifact_id.as_str(),
+      RECOGNITION_RESULT_ARTIFACT_ID
+    );
+    match result.output {
+      OperationOutput::Verification { verification } => {
+        assert_eq!(verification.evidence.len(), 2);
+        assert_eq!(
+          verification.evidence[0].artifact_id.as_str(),
+          SCREENSHOT_ARTIFACT_ID
+        );
+        assert_eq!(
+          verification.evidence[1].artifact_id.as_str(),
+          RECOGNITION_RESULT_ARTIFACT_ID
+        );
+      }
+      other => panic!("expected verification output, got {other:?}"),
+    }
   }
 }

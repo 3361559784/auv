@@ -4,7 +4,8 @@ use std::sync::Arc;
 use crate::catalog::CommandCatalog;
 use crate::driver::DriverRegistry;
 use crate::model::{
-  AuvResult, DriverCall, DriverDescriptor, InvokeRequest, InvokeResult, RunStatus, now_millis,
+  AuvResult, DriverCall, DriverDescriptor, DriverRunContext, InvokeRequest, InvokeResult,
+  RunStatus, now_millis,
 };
 use crate::run_recording::{MemoryRunRecorder, RunRecorder, RunRecordingBackend, RunUpdate};
 use crate::store::{ArtifactFileSource, LocalStore};
@@ -247,15 +248,15 @@ impl Runtime {
       )),
     );
 
-    let mut call_inputs = request.inputs;
-    call_inputs.insert("_auv_run_id".to_string(), run.id().to_string());
-    call_inputs.insert("_auv_span_id".to_string(), driver_span.id().to_string());
-
     let call = DriverCall {
       operation: command.operation.to_string(),
       target: request.target,
-      inputs: call_inputs,
+      inputs: request.inputs,
       working_directory: self.project_root.clone(),
+      run_context: DriverRunContext {
+        run_id: run.id().to_string(),
+        span_id: driver_span.id().to_string(),
+      },
     };
 
     let mut artifact_paths = Vec::new();

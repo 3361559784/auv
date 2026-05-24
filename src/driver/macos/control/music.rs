@@ -35,14 +35,12 @@ pub(crate) fn music_search_results(call: &DriverCall) -> AuvResult<DriverRespons
   let region =
     parse_ocr_region_constraint(call, capture.dimensions.width, capture.dimensions.height)?;
 
-  let run_id = optional_string(call, "_auv_run_id").unwrap_or_default();
-  let span_id = optional_string(call, "_auv_span_id").unwrap_or_default();
   let app_bundle_id = app_identifier(call).unwrap_or_default();
 
   let evidence_artifact_ref = |artifact_id: &str| ArtifactRef {
-    run_id: RunId::new(run_id.as_str()),
+    run_id: RunId::new(call.run_context.run_id.as_str()),
     artifact_id: ArtifactId::new(artifact_id),
-    span_id: SpanId::new(span_id.as_str()),
+    span_id: SpanId::new(call.run_context.span_id.as_str()),
     captured_event_id: None,
   };
 
@@ -128,7 +126,7 @@ pub(crate) fn music_search_results(call: &DriverCall) -> AuvResult<DriverRespons
     .collect();
 
   let operation_result = OperationResult {
-    run_id: RunId::new(run_id.as_str()),
+    run_id: RunId::new(call.run_context.run_id.as_str()),
     status: OperationStatus::Completed,
     operation_id: "music.search.results".to_string(),
     evidence_artifacts: vec![
@@ -796,6 +794,7 @@ fn click_music_candidate_row(
     },
     inputs,
     working_directory: call.working_directory.clone(),
+    run_context: call.run_context.clone(),
   })
 }
 
@@ -874,6 +873,7 @@ fn press_music_play_button(call: &DriverCall, app_id: &str) -> AuvResult<DriverR
     },
     inputs,
     working_directory: call.working_directory.clone(),
+    run_context: call.run_context.clone(),
   })
 }
 
@@ -903,6 +903,7 @@ fn verify_music_now_playing(
     },
     inputs,
     working_directory: call.working_directory.clone(),
+    run_context: call.run_context.clone(),
   })
 }
 
@@ -982,11 +983,7 @@ fn music_result_play_operation_result(
   evidence_artifacts: Vec<ArtifactRef>,
 ) -> OperationResult {
   OperationResult {
-    run_id: RunId::new(
-      optional_string(call, "_auv_run_id")
-        .unwrap_or_default()
-        .as_str(),
-    ),
+    run_id: RunId::new(call.run_context.run_id.as_str()),
     status,
     operation_id: "music.result.play".to_string(),
     evidence_artifacts,

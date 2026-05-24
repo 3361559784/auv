@@ -211,6 +211,7 @@ pub(crate) fn click_window_text(call: &DriverCall) -> AuvResult<DriverResponse> 
   let mut nested_call = build_click_point_call(
     &call.target,
     call.working_directory.as_path(),
+    call.run_context.clone(),
     ClickPointCallOptions {
       x: logical_x,
       y: logical_y,
@@ -592,6 +593,7 @@ pub(crate) fn click_window_row(call: &DriverCall) -> AuvResult<DriverResponse> {
   let nested_call = build_click_point_call(
     &call.target,
     call.working_directory.as_path(),
+    call.run_context.clone(),
     ClickPointCallOptions {
       x: logical_x,
       y: logical_y,

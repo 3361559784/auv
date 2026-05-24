@@ -2,7 +2,7 @@ use std::thread;
 use std::time::Duration;
 
 use super::super::*;
-use crate::model::ExecutionTarget;
+use crate::model::{DriverRunContext, ExecutionTarget};
 
 pub(crate) const DEFAULT_CLICK_INTERVAL_MS: u64 = 80;
 pub(crate) const MAX_CLICK_INTERVAL_MS: u64 = 1000;
@@ -44,6 +44,7 @@ pub(super) fn send_reveal_shortcut_if_needed(
 pub(crate) fn build_click_point_call(
   target: &ExecutionTarget,
   working_directory: &std::path::Path,
+  run_context: DriverRunContext,
   options: ClickPointCallOptions<'_>,
 ) -> DriverCall {
   let mut inputs = std::collections::BTreeMap::from([
@@ -70,6 +71,7 @@ pub(crate) fn build_click_point_call(
     target: target.clone(),
     inputs,
     working_directory: working_directory.to_path_buf(),
+    run_context,
   }
 }
 

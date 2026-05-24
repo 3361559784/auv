@@ -21,7 +21,7 @@ use super::{
 };
 use crate::{
   driver::{Driver, DriverRegistry, fixture::FixtureObserveDriver},
-  model::{DriverCall, ExecutionTarget, now_millis},
+  model::{DriverCall, DriverRunContext, ExecutionTarget, now_millis},
 };
 
 #[test]
@@ -392,6 +392,7 @@ fn build_click_point_call_populates_required_inputs() {
   let call = build_click_point_call(
     &target,
     &working_directory,
+    DriverRunContext::default(),
     ClickPointCallOptions {
       x: 12.5,
       y: 48.25,
@@ -424,6 +425,7 @@ fn build_click_point_call_omits_optional_inputs_when_absent() {
   let call = build_click_point_call(
     &ExecutionTarget::default(),
     std::path::Path::new("."),
+    DriverRunContext::default(),
     ClickPointCallOptions {
       x: 1.0,
       y: 2.0,
@@ -1025,6 +1027,7 @@ fn build_call<const N: usize>(entries: [(&str, &str); N]) -> DriverCall {
     target: ExecutionTarget::default(),
     inputs,
     working_directory: PathBuf::from("."),
+    run_context: DriverRunContext::default(),
   }
 }
 

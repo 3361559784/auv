@@ -255,6 +255,7 @@ mod tests {
         .map(|(key, value)| (key.to_string(), value.to_string()))
         .collect::<BTreeMap<_, _>>(),
       working_directory: PathBuf::from("."),
+      run_context: crate::model::DriverRunContext::default(),
     }
   }
 }

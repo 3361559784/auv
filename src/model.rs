@@ -100,12 +100,22 @@ pub struct DriverDescriptor {
   pub donor_boundary: &'static str,
 }
 
+/// Control-plane metadata the runtime injects into every `DriverCall` so drivers can
+/// build evidence `ArtifactRef`s and emit `OperationResult`s tied to the active run/span
+/// without smuggling identifiers through the user-facing `inputs` map.
+#[derive(Clone, Debug, Default)]
+pub struct DriverRunContext {
+  pub run_id: String,
+  pub span_id: String,
+}
+
 #[derive(Clone, Debug)]
 pub struct DriverCall {
   pub operation: String,
   pub target: ExecutionTarget,
   pub inputs: BTreeMap<String, String>,
   pub working_directory: PathBuf,
+  pub run_context: DriverRunContext,
 }
 
 #[derive(Clone, Debug)]

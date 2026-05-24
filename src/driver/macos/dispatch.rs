@@ -4,10 +4,9 @@ use super::control::{
   activate_app, ax_click_window_text, ax_focus_text_input, ax_press_button, click_point,
   click_screen_row, click_screen_text, click_window_point, click_window_row, click_window_text,
   find_icon_match, find_neural_detect, find_window_rows, find_window_text, focus_text_input,
-  music_result_play,
-  music_search_results, music_validate_candidate_liveness, observe_window_region,
-  paste_text_preserve_clipboard, press_button, press_key, scroll_point, scroll_window_region,
-  smart_press, type_text, wait_for_window_rows, wait_for_window_text,
+  music_result_play, music_search_results, music_validate_candidate_liveness,
+  observe_window_region, paste_text_preserve_clipboard, press_button, press_key, scroll_point,
+  scroll_window_region, smart_press, type_text, wait_for_window_rows, wait_for_window_text,
 };
 use super::observe::{
   find_image_text, find_screen_rows, find_screen_text, identify_point, list_windows,

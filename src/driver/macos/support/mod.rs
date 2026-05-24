@@ -3,6 +3,7 @@ mod ax;
 mod call;
 mod display;
 mod geometry;
+pub(crate) mod neural_detect;
 mod observation;
 mod ocr;
 mod ocr_commands;
@@ -12,7 +13,6 @@ mod recognition;
 mod runtime;
 mod scripts;
 mod selector;
-pub(crate) mod neural_detect;
 pub(crate) mod template_match;
 
 pub(crate) use self::artifacts::*;

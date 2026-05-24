@@ -156,7 +156,7 @@ artifacts plus the `live-inspect` server. No direct adoption needed.
 | Three-bucket result (all/filtered/best) | Already in `RecognitionResult` ✅            |
 | `detail_json` per algorithm         | Already `RecognizedItem.detail: Value` ✅     |
 | Pipeline override as execution context | Phase 6 `SkillInlineHook` — already done ✅  |
-| NeuralNetworkDetect result shape    | Phase 7c: emit as `RecognitionSource::IconMatch` with `detail: { cls_index, label, score }` |
+| NeuralNetworkDetect result shape    | Phase 7c: emit as `RecognitionSource::NeuralNetworkDetect` with `detail: { cls_index, label, score }` |
 | `wait_freezes` stability model      | Consider for Phase 7a segmentation stability gate |
 
 ## 8. What AUV Will NOT Copy
@@ -185,10 +185,13 @@ artifacts plus the `live-inspect` server. No direct adoption needed.
 - Use `green_mask` concept for masking irrelevant regions during match (optional).
 
 **Phase 7c (YOLO plug-in)**:
-- Replace Phase 7b's template engine with `NeuralNetworkDetect` (YOLOv8/v11 ONNX).
+- Add `NeuralNetworkDetect` (YOLOv8/v11 ONNX) as a separate backend and command;
+  do not replace Phase 7b's NCC template command.
 - Output shape: `RecognizedItem { kind: label, box_: ..., provider_score: score, detail: { cls_index } }`.
-- `RecognitionSource::IconMatch` stays unchanged — detector is an implementation detail.
-- Model goes under `model/detect/`, loaded at runtime; no pipeline JSON changes.
+- Use `RecognitionSource::NeuralNetworkDetect`; keep `RecognitionSource::IconMatch`
+  reserved for template/icon matching.
+- Load the model through the `auv-onnx-runner` subprocess boundary so Rust does
+  not take a hard ONNX runtime dependency.
 
 ---
 

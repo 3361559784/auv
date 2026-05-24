@@ -6,8 +6,7 @@ use crate::contract::{
 use crate::driver::macos::support::neural_detect;
 
 pub(crate) fn find_neural_detect(call: &DriverCall) -> AuvResult<DriverResponse> {
-  let label =
-    optional_string(call, "label").unwrap_or_else(|| "neural-detect".to_string());
+  let label = optional_string(call, "label").unwrap_or_else(|| "neural-detect".to_string());
 
   let model_path_str = optional_string(call, "model")
     .ok_or_else(|| "find_neural_detect requires --model <onnx-path>".to_string())?;
@@ -94,10 +93,9 @@ pub(crate) fn find_neural_detect(call: &DriverCall) -> AuvResult<DriverResponse>
     bottom: (r.y + r.height) as f64 / capture.dimensions.height as f64,
   });
 
-  let model_input_size_json =
-    detect_output.model_input_width.map(|w| {
-      serde_json::json!({"width": w, "height": detect_output.model_input_height})
-    });
+  let model_input_size_json = detect_output
+    .model_input_width
+    .map(|w| serde_json::json!({"width": w, "height": detect_output.model_input_height}));
 
   let screenshot_path_str = capture.screenshot_path.display().to_string();
   let screenshot_w = capture.dimensions.width;

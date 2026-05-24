@@ -48,7 +48,12 @@ pub(crate) fn run_neural_detect(
   search_region: Option<&ObservedRect>,
 ) -> AuvResult<NeuralDetectOutput> {
   let (img_w, img_h) = image::open(screenshot_path)
-    .map_err(|e| format!("failed to open screenshot {}: {e}", screenshot_path.display()))?
+    .map_err(|e| {
+      format!(
+        "failed to open screenshot {}: {e}",
+        screenshot_path.display()
+      )
+    })?
     .dimensions();
 
   let (sx, sy, sw, sh) = if let Some(r) = search_region {
@@ -56,13 +61,18 @@ pub(crate) fn run_neural_detect(
     let y = r.y.max(0) as u32;
     let max_x = ((r.x + r.width) as u32).min(img_w);
     let max_y = ((r.y + r.height) as u32).min(img_h);
-    (x as i64, y as i64, max_x.saturating_sub(x), max_y.saturating_sub(y))
+    (
+      x as i64,
+      y as i64,
+      max_x.saturating_sub(x),
+      max_y.saturating_sub(y),
+    )
   } else {
     (0i64, 0i64, img_w, img_h)
   };
 
-  let region_val = search_region
-    .map(|_| serde_json::json!({"x": sx, "y": sy, "width": sw, "height": sh}));
+  let region_val =
+    search_region.map(|_| serde_json::json!({"x": sx, "y": sy, "width": sw, "height": sh}));
 
   let request = serde_json::json!({
     "screenshot": screenshot_path.display().to_string(),

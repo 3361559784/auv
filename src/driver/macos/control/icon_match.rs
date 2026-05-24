@@ -77,6 +77,11 @@ pub(crate) fn find_icon_match(call: &DriverCall) -> AuvResult<DriverResponse> {
     bottom: (r.y + r.height) as f64 / capture.dimensions.height as f64,
   });
 
+  // Reserve slot 0 for the screenshot so the recognition can cite its
+  // ArtifactRef before being pushed itself.
+  let mut artifacts = DriverArtifactBuilder::new(&call.run_context);
+  let screenshot_ref = artifacts.ref_at(0);
+
   let result = RecognitionResult {
     recognition_id: format!("icon_match_{}", sanitize_file_component(&label)),
     source: RecognitionSource::IconMatch,
@@ -88,7 +93,7 @@ pub(crate) fn find_icon_match(call: &DriverCall) -> AuvResult<DriverResponse> {
       window_title: None,
       window_number: window_number_from_ref(&capture.capture_source),
       region_hint,
-      capture_artifact: None,
+      capture_artifact: Some(screenshot_ref.clone()),
       capture_contract_artifact: None,
     },
     best: best.clone(),
@@ -115,7 +120,7 @@ pub(crate) fn find_icon_match(call: &DriverCall) -> AuvResult<DriverResponse> {
         "height": capture.dimensions.height,
       },
     }),
-    evidence: Vec::new(),
+    evidence: vec![screenshot_ref.clone()],
     known_limits: vec![
       "grayscale NCC only: color and alpha channels are ignored".to_string(),
       "no scale or rotation invariance: template must match screenshot resolution".to_string(),
@@ -143,6 +148,10 @@ pub(crate) fn find_icon_match(call: &DriverCall) -> AuvResult<DriverResponse> {
     preferred_name: format!("{}.png", sanitize_file_component(&label)),
     note: Some("Window screenshot used for icon template matching.".to_string()),
   };
+
+  // Push in slot order: must match `ref_at(0)` reservation.
+  artifacts.push(screenshot_artifact);
+  artifacts.push(recognition_artifact);
 
   Ok(DriverResponse {
     summary: format!(
@@ -172,6 +181,6 @@ pub(crate) fn find_icon_match(call: &DriverCall) -> AuvResult<DriverResponse> {
         capture.dimensions.width, capture.dimensions.height
       ),
     ],
-    artifacts: vec![screenshot_artifact, recognition_artifact],
+    artifacts: artifacts.into_vec(),
   })
 }

@@ -201,14 +201,13 @@ pub(crate) fn music_search_results(call: &DriverCall) -> AuvResult<DriverRespons
         .as_ref()
         .map(|value| observed_rect_to_ratio_region(value, &capture.dimensions)),
       capture_contract: Some(&capture.capture_contract),
+      capture_artifact: Some(screenshot_ref.clone()),
       additional_detail: serde_json::json!({
         "scope": &capture.scope,
         "capture_source": &capture.capture_source,
         "consumer": "music.search.results",
       }),
-      known_limits: vec![
-        "driver-stage recognition evidence has no runtime artifact refs yet".to_string(),
-      ],
+      known_limits: Vec::new(),
     },
   )?;
 

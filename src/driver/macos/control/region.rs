@@ -72,6 +72,7 @@ pub(crate) fn observe_window_region(call: &DriverCall) -> AuvResult<DriverRespon
         &capture.dimensions,
       )),
       capture_contract: Some(&capture.capture_contract),
+      capture_artifact: None,
       additional_detail: serde_json::json!({
         "scope": &capture.scope,
         "capture_source": &capture.capture_source,

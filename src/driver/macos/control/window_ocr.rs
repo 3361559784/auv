@@ -387,6 +387,7 @@ pub(crate) fn find_window_rows(call: &DriverCall) -> AuvResult<DriverResponse> {
         .as_ref()
         .map(|value| observed_rect_to_ratio_region(value, &capture.dimensions)),
       capture_contract: Some(&capture.capture_contract),
+      capture_artifact: None,
       additional_detail: serde_json::json!({
         "scope": &capture.scope,
         "capture_source": &capture.capture_source,
@@ -493,6 +494,7 @@ pub(crate) fn wait_for_window_rows(call: &DriverCall) -> AuvResult<DriverRespons
             .as_ref()
             .map(|value| observed_rect_to_ratio_region(value, &capture.dimensions)),
           capture_contract: Some(&capture.capture_contract),
+          capture_artifact: None,
           additional_detail: serde_json::json!({
             "scope": &capture.scope,
             "capture_source": &capture.capture_source,

@@ -4,7 +4,7 @@ use serde_json::json;
 
 use super::super::*;
 use crate::contract::{
-  RatioRegion, RecognitionBox, RecognitionResult, RecognitionScope, RecognitionSource,
+  ArtifactRef, RatioRegion, RecognitionBox, RecognitionResult, RecognitionScope, RecognitionSource,
   RecognitionSurface, RecognizedItem,
 };
 use crate::driver::macos::capture::types::{CaptureContract, CaptureSource};
@@ -28,6 +28,13 @@ pub(crate) struct RowRecognitionArtifactRequest<'a> {
   pub(crate) window_number: Option<i64>,
   pub(crate) region_hint: Option<RatioRegion>,
   pub(crate) capture_contract: Option<&'a CaptureContract>,
+  /// `ArtifactRef` pointing at the screenshot artifact this recognition is
+  /// derived from. When provided, it is set on `scope.capture_artifact` and
+  /// pushed into `evidence` so consumers can traverse from the recognition
+  /// back to the source capture. `None` produces the legacy "evidence-empty"
+  /// shape for callers that haven't been wired through `DriverArtifactBuilder`
+  /// yet.
+  pub(crate) capture_artifact: Option<ArtifactRef>,
   pub(crate) additional_detail: serde_json::Value,
   pub(crate) known_limits: Vec<String>,
 }
@@ -70,6 +77,10 @@ pub(crate) fn render_row_recognition_result(
     "capture_contract": request.capture_contract.map(capture_contract_detail),
     "provider_detail": request.additional_detail,
   });
+  let evidence = match request.capture_artifact.as_ref() {
+    Some(reference) => vec![reference.clone()],
+    None => Vec::new(),
+  };
   let result = RecognitionResult {
     recognition_id: request.recognition_id,
     source: request.source,
@@ -81,14 +92,14 @@ pub(crate) fn render_row_recognition_result(
       window_title: request.window_title.map(str::to_string),
       window_number: request.window_number,
       region_hint: request.region_hint,
-      capture_artifact: None,
+      capture_artifact: request.capture_artifact,
       capture_contract_artifact: None,
     },
     best: best.clone(),
     filtered,
     all,
     detail,
-    evidence: Vec::new(),
+    evidence,
     known_limits: request.known_limits,
   };
 
@@ -310,6 +321,7 @@ mod tests {
       window_number: None,
       region_hint: None,
       capture_contract: Some(&sample_capture_contract()),
+      capture_artifact: None,
       additional_detail: json!({ "note": "sample" }),
       known_limits: vec!["single row sample".to_string()],
     })
@@ -326,6 +338,57 @@ mod tests {
       value["detail"]["capture_contract"]["source_kind"],
       json!("display")
     );
+  }
+
+  #[test]
+  fn render_row_recognition_result_populates_evidence_when_capture_artifact_given() {
+    use crate::trace::{ArtifactId, RunId, SpanId};
+
+    let capture_ref = ArtifactRef {
+      run_id: RunId::new("run_42"),
+      artifact_id: ArtifactId::new("artifact_0001"),
+      span_id: SpanId::new("span_7"),
+      captured_event_id: None,
+    };
+    let rows = sample_rows();
+    let json = render_row_recognition_result(RowRecognitionArtifactRequest {
+      recognition_id: "recognition_with_evidence".to_string(),
+      source: RecognitionSource::OcrRow,
+      surface: RecognitionSurface::Window,
+      rows: &rows,
+      strategy: "ocr-text",
+      raw_match_count: 2,
+      filtered_match_count: 2,
+      screenshot_path: Path::new("/tmp/screen.png"),
+      screenshot_dimensions: &ScreenshotDimensions {
+        width: 1440,
+        height: 900,
+      },
+      display_ref: None,
+      native_display_id: None,
+      app_bundle_id: None,
+      window_title: None,
+      window_number: None,
+      region_hint: None,
+      capture_contract: None,
+      capture_artifact: Some(capture_ref.clone()),
+      additional_detail: json!({}),
+      known_limits: Vec::new(),
+    })
+    .expect("json should render");
+
+    let value: serde_json::Value = serde_json::from_str(&json).expect("json should parse");
+    assert_eq!(
+      value["scope"]["capture_artifact"]["run_id"],
+      json!("run_42")
+    );
+    assert_eq!(
+      value["scope"]["capture_artifact"]["artifact_id"],
+      json!("artifact_0001")
+    );
+    let evidence = value["evidence"].as_array().expect("evidence is array");
+    assert_eq!(evidence.len(), 1);
+    assert_eq!(evidence[0]["artifact_id"], json!("artifact_0001"));
   }
 
   #[test]
@@ -356,6 +419,7 @@ mod tests {
         bottom: 0.9,
       }),
       capture_contract: None,
+      capture_artifact: None,
       additional_detail: json!({
         "region_semantics": "window_rows"
       }),

@@ -991,6 +991,7 @@ pub(super) fn find_screen_rows(call: &DriverCall) -> AuvResult<DriverResponse> {
         .as_ref()
         .map(|value| observed_rect_to_ratio_region(value, &dimensions)),
       capture_contract: None,
+      capture_artifact: None,
       additional_detail: serde_json::json!({
         "capture_source_reason": &capture_source.selection_reason,
       }),
@@ -1151,6 +1152,7 @@ pub(super) fn wait_for_screen_rows(call: &DriverCall) -> AuvResult<DriverRespons
             .as_ref()
             .map(|value| observed_rect_to_ratio_region(value, &dimensions)),
           capture_contract: None,
+          capture_artifact: None,
           additional_detail: serde_json::json!({
             "capture_source_reason": &capture_source.selection_reason,
             "timed_out": timed_out,

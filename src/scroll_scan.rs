@@ -1341,6 +1341,9 @@ fn observation_attributes_from_recognized_item(
     recognition_surface_name(recognition.scope.surface).to_string(),
   );
   attributes.insert("recognized_item_kind".to_string(), item.kind.clone());
+  if let Some(provider_score) = item.provider_score {
+    attributes.insert("provider_score".to_string(), provider_score.to_string());
+  }
   if let Some(source) = item.detail.get("source").and_then(Value::as_str) {
     attributes.insert("source".to_string(), source.to_string());
   } else {
@@ -2971,7 +2974,7 @@ mod tests {
         "kind": "row",
         "box": { "x": 100, "y": 220, "width": 600, "height": 84 },
         "text": "Whisper of time",
-        "provider_score": null,
+        "provider_score": 0.84,
         "detail": {
           "row_index": 2,
           "source": "row_filter",
@@ -2983,7 +2986,7 @@ mod tests {
         "kind": "row",
         "box": { "x": 100, "y": 348, "width": 600, "height": 86 },
         "text": "万书隙",
-        "provider_score": null,
+        "provider_score": 0.31,
         "detail": {
           "row_index": 3,
           "source": "row_filter",
@@ -3053,6 +3056,27 @@ mod tests {
     assert_eq!(
       observations[0].attributes.get("source").map(String::as_str),
       Some("row_filter")
+    );
+    assert_eq!(
+      observations[0]
+        .attributes
+        .get("provider_score")
+        .map(String::as_str),
+      Some("0.84")
+    );
+    assert_eq!(
+      observations[1]
+        .attributes
+        .get("recognized_item_id")
+        .map(String::as_str),
+      Some("row#2")
+    );
+    assert_eq!(
+      observations[1]
+        .attributes
+        .get("provider_score")
+        .map(String::as_str),
+      Some("0.31")
     );
   }
 
@@ -3150,6 +3174,132 @@ mod tests {
         .map(String::as_str),
       Some("row#1")
     );
+  }
+
+  #[test]
+  fn scan_artifact_serializes_recognition_item_provenance() {
+    let raw = r#"{
+    "recognition_id": "window_region_demo",
+    "source": "visual_row",
+    "scope": {
+      "surface": "region",
+      "display_ref": "display-1",
+      "native_display_id": "69732928",
+      "app_bundle_id": "com.tencent.QQMusicMac",
+      "window_title": null,
+      "window_number": 91,
+      "region_hint": null,
+      "capture_artifact": null,
+      "capture_contract_artifact": null
+    },
+    "best": null,
+    "filtered": [
+      {
+        "item_id": "row#1",
+        "kind": "row",
+        "box": { "x": 100, "y": 220, "width": 600, "height": 84 },
+        "text": "Whisper of time",
+        "provider_score": 0.84,
+        "detail": {
+          "row_index": 2,
+          "source": "row_filter",
+          "text_fragments": ["Whisper of time"]
+        }
+      },
+      {
+        "item_id": "row#2",
+        "kind": "row",
+        "box": { "x": 100, "y": 348, "width": 600, "height": 86 },
+        "text": "万书隙",
+        "provider_score": 0.31,
+        "detail": {
+          "row_index": 3,
+          "source": "row_filter",
+          "text_fragments": ["万书隙"]
+        }
+      }
+    ],
+    "all": [
+      {
+        "item_id": "row#1",
+        "kind": "row",
+        "box": { "x": 100, "y": 220, "width": 600, "height": 84 },
+        "text": "Whisper of time",
+        "provider_score": 0.84,
+        "detail": {
+          "row_index": 2,
+          "source": "row_filter",
+          "text_fragments": ["Whisper of time"]
+        }
+      },
+      {
+        "item_id": "row#2",
+        "kind": "row",
+        "box": { "x": 100, "y": 348, "width": 600, "height": 86 },
+        "text": "万书隙",
+        "provider_score": 0.31,
+        "detail": {
+          "row_index": 3,
+          "source": "row_filter",
+          "text_fragments": ["万书隙"]
+        }
+      }
+    ],
+    "detail": { "provider": "macos.row_detection" },
+    "evidence": [],
+    "known_limits": []
+  }"#;
+
+    let observations = observations_from_observe_json(0, raw, PathBuf::from("artifacts/page.png"))
+      .expect("parse recognition observations");
+
+    let artifact = ScrollScanArtifact {
+      scan_id: "scan_test".to_string(),
+      target: ScanTarget {
+        application_id: Some("com.example.App".to_string()),
+        window_title: Some("Library".to_string()),
+        region: ScanRegion {
+          left_ratio: 0.1,
+          top_ratio: 0.2,
+          right_ratio: 0.9,
+          bottom_ratio: 0.8,
+        },
+      },
+      stop_policy: StopPolicy::Bounded {
+        max_pages: 2,
+        max_scrolls: 1,
+      },
+      pages: vec![ScanPageRecord {
+        page_index: 0,
+        observe_run_id: Some("run_observe".to_string()),
+        screenshot_artifact: Some(PathBuf::from("artifacts/page.png")),
+        observation_count: observations.len(),
+        new_observation_count: observations.len(),
+        summary: "observed recognition rows".to_string(),
+      }],
+      observations,
+      clusters: vec![],
+      section_candidates: Vec::new(),
+      scroll_boundary_candidates: Vec::new(),
+      hook_decisions: Vec::new(),
+      stop_evidence: StopEvidence {
+        reason: StopReason::MaxPages,
+        message: "reached max_pages=2".to_string(),
+        page_index: 1,
+      },
+      completeness_claim: CompletenessClaim::PartialMaxPages,
+      warnings: vec!["bounded scan".to_string()],
+    };
+
+    let rendered = serde_json::to_string_pretty(&artifact).expect("serialize");
+
+    assert!(rendered.contains("\"recognized_item_id\": \"row#1\""));
+    assert!(rendered.contains("\"recognized_item_id\": \"row#2\""));
+    assert!(rendered.contains("\"provider_score\": \"0.84\""));
+    assert!(rendered.contains("\"provider_score\": \"0.31\""));
+    assert!(rendered.contains("\"recognition_source\": \"visual_row\""));
+    assert!(rendered.contains("\"source_artifacts\": ["));
+    assert!(rendered.contains("artifacts/page.png"));
   }
 
   #[test]

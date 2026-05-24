@@ -965,6 +965,12 @@ pub(super) fn find_screen_rows(call: &DriverCall) -> AuvResult<DriverResponse> {
     detection.report,
     "Captured row-detection report used for visible-row grouping (OCR first, then visual-band fallback).",
   )?;
+
+  // Reserve slot 0 for the screenshot so the recognition artifact can cite its
+  // ArtifactRef before the screenshot is pushed.
+  let mut artifacts = DriverArtifactBuilder::new(&call.run_context);
+  let screenshot_ref = artifacts.ref_at(0);
+
   let recognition_artifact = row_recognition_artifact(
     "screen-rows-recognition",
     &format!(
@@ -991,13 +997,11 @@ pub(super) fn find_screen_rows(call: &DriverCall) -> AuvResult<DriverResponse> {
         .as_ref()
         .map(|value| observed_rect_to_ratio_region(value, &dimensions)),
       capture_contract: None,
-      capture_artifact: None,
+      capture_artifact: Some(screenshot_ref.clone()),
       additional_detail: serde_json::json!({
         "capture_source_reason": &capture_source.selection_reason,
       }),
-      known_limits: vec![
-        "driver-stage recognition evidence has no runtime artifact refs yet".to_string(),
-      ],
+      known_limits: Vec::new(),
     },
   )?;
   let screenshot_artifact = ProducedArtifact {
@@ -1055,12 +1059,17 @@ pub(super) fn find_screen_rows(call: &DriverCall) -> AuvResult<DriverResponse> {
     )
   };
 
+  // Push in slot order: must match `ref_at(0)` reservation.
+  artifacts.push(screenshot_artifact);
+  artifacts.push(report_artifact);
+  artifacts.push(recognition_artifact);
+
   Ok(DriverResponse {
     summary,
     backend: Some(format!("macos.vision.screen-rows.{}", detection.strategy)),
     signals: row_detection_signals(rows.len()),
     notes,
-    artifacts: vec![screenshot_artifact, report_artifact, recognition_artifact],
+    artifacts: artifacts.into_vec(),
   })
 }
 
@@ -1126,6 +1135,12 @@ pub(super) fn wait_for_screen_rows(call: &DriverCall) -> AuvResult<DriverRespons
         detection.report,
         "Captured row-detection report from the final wait-for-screen-rows polling attempt.",
       )?;
+
+      // Reserve slot 0 for the screenshot so the recognition artifact can cite
+      // its ArtifactRef before the screenshot is pushed.
+      let mut artifacts = DriverArtifactBuilder::new(&call.run_context);
+      let screenshot_ref = artifacts.ref_at(0);
+
       let recognition_artifact = row_recognition_artifact(
         "screen-rows-wait-recognition",
         &format!(
@@ -1152,15 +1167,13 @@ pub(super) fn wait_for_screen_rows(call: &DriverCall) -> AuvResult<DriverRespons
             .as_ref()
             .map(|value| observed_rect_to_ratio_region(value, &dimensions)),
           capture_contract: None,
-          capture_artifact: None,
+          capture_artifact: Some(screenshot_ref.clone()),
           additional_detail: serde_json::json!({
             "capture_source_reason": &capture_source.selection_reason,
             "timed_out": timed_out,
             "attempt_count": attempts,
           }),
-          known_limits: vec![
-            "driver-stage recognition evidence has no runtime artifact refs yet".to_string(),
-          ],
+          known_limits: Vec::new(),
         },
       )?;
       let screenshot_artifact = ProducedArtifact {
@@ -1217,6 +1230,11 @@ pub(super) fn wait_for_screen_rows(call: &DriverCall) -> AuvResult<DriverRespons
         )
       };
 
+      // Push in slot order: must match `ref_at(0)` reservation.
+      artifacts.push(screenshot_artifact);
+      artifacts.push(report_artifact);
+      artifacts.push(recognition_artifact);
+
       return Ok(DriverResponse {
         summary,
         backend: Some(format!(
@@ -1225,7 +1243,7 @@ pub(super) fn wait_for_screen_rows(call: &DriverCall) -> AuvResult<DriverRespons
         )),
         signals: wait_row_detection_signals(rows.len(), min_row_count, timed_out),
         notes,
-        artifacts: vec![screenshot_artifact, report_artifact, recognition_artifact],
+        artifacts: artifacts.into_vec(),
       });
     }
 

@@ -30,7 +30,7 @@ What it proves:
 2. create a new note
 3. focus the note body through AX
 4. write a stable marker through clipboard-backed text entry
-5. verify the marker through the AX tree with `debug.verifyAxText`
+5. verify the marker through the AX tree with `verify.axText`
 
 This baseline deliberately avoids screenshot OCR. It is meant to show that
 AUV can distill a reusable native-app skill shape from the QQ音乐 work into a

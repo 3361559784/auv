@@ -217,7 +217,7 @@ USAGE
 NOTES
   - Names are provisional and reflect the current phase-0/1 runtime skeleton.
   - The CLI is a thin frontend over the library runtime in src/lib.rs.
-  - `debug.captureDisplay`, `debug.listDisplays`, `debug.listWindows`, `debug.projectScreenshotPoint`, `debug.identifyPoint`, `debug.probeCoordinateReadiness`, `debug.captureAxTree`, `debug.probePermissions`, `debug.focusTextInput`, `debug.pressButton`, `debug.verifyNowPlayingTitle`, `debug.verifyAxText`, `debug.clickPoint`, and `debug.scrollPoint` are the current desktop donor entrypoints.
+  - `debug.captureDisplay`, `debug.listDisplays`, `debug.listWindows`, `debug.projectScreenshotPoint`, `debug.identifyPoint`, `debug.probeCoordinateReadiness`, `debug.captureAxTree`, `debug.probePermissions`, `debug.focusTextInput`, `debug.pressButton`, `verify.musicNowPlaying`, `verify.axText`, `debug.clickPoint`, and `debug.scrollPoint` are the current desktop donor entrypoints.
   - `debug.overlayShowCursor`, `debug.overlayHideCursor`, and `debug.overlayShutdown` are experimental visual-only macOS overlay probes; standalone `invoke` calls run in separate Rust processes, so use `--hold_ms` on show when manually observing the PoC.
   - `debug.captureAxTree`, `debug.focusTextInput`, and `debug.pressButton` accept `--reveal_shortcut cmd+f`-style hints when an app hides the target UI until a keyboard shortcut reveals it.
   - `--reveal_settle_ms <millis>` can be used to make the reveal step explicit instead of depending on hard-coded timing assumptions.
@@ -228,8 +228,8 @@ NOTES
   - `debug.waitForScreenText` polls that same OCR path until a filtered anchor appears or the timeout expires; use it when result-page readiness is the real problem instead of guessing longer sleeps.
   - `debug.findScreenRows`, `debug.waitForScreenRows`, and `debug.clickScreenRow` treat OCR observations as grouped visible rows, which is the current fallback direction when exact text anchors are visually present but not OCR-reliable.
   - `debug.findImageText` runs the same OCR matching over an existing image artifact, which is useful for verifying captured evidence without recapturing the live desktop.
-  - `debug.verifyNowPlayingTitle` prefers AX tree matching for player-title verification, which is the current direction for native playback disambiguation.
-  - `debug.verifyAxText` is the generic AX-tree text verification contract for native apps with reliable text-bearing nodes.
+  - `verify.musicNowPlaying` prefers AX tree matching for player-title verification, which is the current direction for native playback disambiguation.
+  - `verify.axText` is the generic AX-tree text verification contract for native apps with reliable text-bearing nodes.
   - `debug.clickScreenText` supports `--match_index` and `--click_count` when the query resolves to multiple OCR anchors.
   - `skill run` is the product-facing recipe entrypoint: it resolves a recipe manifest from `recipes/`, validates disturbance policy, replays steps through the shared runtime, and carries step artifact paths into later verification steps.
   - `skill cases run` replays validated case-matrix entries serially; this is the current narrow-skill coverage entrypoint for productization.

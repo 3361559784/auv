@@ -250,7 +250,7 @@ pub(crate) fn render_native_text_candidate_recipe(analysis: &AppAnalysis) -> Val
       },
       {
         "id": "verify-text",
-        "command_id": "debug.verifyAxText",
+        "command_id": "verify.axText",
         "disturbance": { "classes": ["none"], "max": "none" },
         "args": { "target": "${app_id}", "target_text": "${target_text}", "max_depth": 6, "max_children": 48 },
         "expect": {

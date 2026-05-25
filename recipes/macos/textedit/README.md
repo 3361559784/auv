@@ -12,7 +12,7 @@ What it proves:
 1. activate TextEdit
 2. focus the main text area through AX
 3. paste a stable marker through the clipboard
-4. verify that marker through the AX tree with `debug.verifyAxText`
+4. verify that marker through the AX tree with `verify.axText`
 
 This sample reuses the same generic AX text verification contract introduced
 for Notes, but it exercises a different native editor surface.

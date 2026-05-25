@@ -251,7 +251,7 @@
     },
     {
       "id": "verify-now-playing-title",
-      "command_id": "debug.verifyNowPlayingTitle",
+      "command_id": "verify.musicNowPlaying",
       "disturbance": {
         "classes": ["none"],
         "max": "none"
@@ -280,7 +280,7 @@
       "debug.waitForScreenRows reports enough visible rows in the constrained result region.",
       "debug.clickScreenRow reports row bounds and a projected logical click point.",
       "debug.smartPress completes for the result play control on either the AX path or the pointer-click fallback.",
-      "debug.verifyNowPlayingTitle confirms ${target_title} from the AX tree without relying on screenshot OCR."
+      "verify.musicNowPlaying confirms ${target_title} from the AX tree without relying on screenshot OCR."
     ],
     "success_criteria": [
       "A visible row is activated through row detection.",

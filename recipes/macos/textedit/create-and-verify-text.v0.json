@@ -108,7 +108,7 @@
     },
     {
       "id": "verify-text-marker",
-      "command_id": "debug.verifyAxText",
+      "command_id": "verify.axText",
       "disturbance": {
         "classes": [
           "none"

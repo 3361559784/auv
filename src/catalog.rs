@@ -243,7 +243,7 @@ pub fn default_command_catalog() -> CommandCatalog {
       max_disturbance: DisturbanceClass::Pointer,
     },
     CommandSpec {
-      id: "debug.verifyNowPlayingTitle",
+      id: "verify.musicNowPlaying",
       namespace: VERIFY,
       summary: "Verify the current now-playing title from the observed AX tree without relying on screenshot OCR.",
       driver_id: "macos.desktop",
@@ -252,7 +252,7 @@ pub fn default_command_catalog() -> CommandCatalog {
       max_disturbance: DisturbanceClass::None,
     },
     CommandSpec {
-      id: "debug.verifyAxText",
+      id: "verify.axText",
       namespace: VERIFY,
       summary: "Verify that a text-bearing AX node exists in the observed tree without relying on screenshot OCR.",
       driver_id: "macos.desktop",
@@ -660,8 +660,11 @@ mod tests {
     assert!(catalog.resolve("debug.identifyPoint").is_some());
     assert!(catalog.resolve("debug.probeCoordinateReadiness").is_some());
     assert!(catalog.resolve("debug.findScreenText").is_some());
-    assert!(catalog.resolve("debug.verifyNowPlayingTitle").is_some());
-    assert!(catalog.resolve("debug.verifyAxText").is_some());
+    assert!(catalog.resolve("verify.musicNowPlaying").is_some());
+    assert!(catalog.resolve("verify.axText").is_some());
+    // Old debug.* names must not resolve — they were renamed into verify.*.
+    assert!(catalog.resolve("debug.verifyNowPlayingTitle").is_none());
+    assert!(catalog.resolve("debug.verifyAxText").is_none());
     assert!(catalog.resolve("debug.listWindows").is_some());
     assert!(catalog.resolve("debug.captureAxTree").is_some());
     assert!(catalog.resolve("debug.probePermissions").is_some());
@@ -828,7 +831,7 @@ mod tests {
       );
     }
 
-    let verify_cases = ["debug.verifyNowPlayingTitle", "debug.verifyAxText"];
+    let verify_cases = ["verify.musicNowPlaying", "verify.axText"];
     for id in verify_cases {
       let command = catalog
         .resolve(id)

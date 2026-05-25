@@ -1,4 +1,3 @@
-// File: src/inspect_server.rs
 //! HTTP/WebSocket inspection server for recorded runs.
 //!
 //! The inspect server serves a single-page HTML viewer plus JSON endpoints for
@@ -8,6 +7,12 @@
 //!
 //! Boundary: this is a viewer-facing storage API. It does not execute commands
 //! or perform UI automation; those live in `runtime`, drivers, and recipes.
+
+pub mod session;
+
+pub use session::{
+  InspectServerSession, default_session_path, read_inspect_session, write_inspect_session,
+};
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -117,7 +122,7 @@ fn is_loopback_host(host: &str) -> bool {
 /// from the design-system asset library (see [`design_asset`]). Visual
 /// tokens match `docs/design/colors_and_type.css`; when the canonical
 /// tokens drift, sync the inlined `:root` block in the embedded HTML.
-const VIEWER_HTML: &str = include_str!("inspect_server_viewer.html");
+const VIEWER_HTML: &str = include_str!("../inspect_server_viewer.html");
 
 /// Compile-time map of design-system asset filename -> bytes, mounted at
 /// `GET /assets/:name`. Each entry is pulled in via `include_bytes!`
@@ -131,47 +136,47 @@ const VIEWER_HTML: &str = include_str!("inspect_server_viewer.html");
 const DESIGN_ASSETS: &[(&str, &[u8], &str)] = &[
   (
     "logo-mark.svg",
-    include_bytes!("../docs/design/assets/logo-mark.svg"),
+    include_bytes!("../../docs/design/assets/logo-mark.svg"),
     "image/svg+xml",
   ),
   (
     "sparkle.svg",
-    include_bytes!("../docs/design/assets/sparkle.svg"),
+    include_bytes!("../../docs/design/assets/sparkle.svg"),
     "image/svg+xml",
   ),
   (
     "icon-png.svg",
-    include_bytes!("../docs/design/assets/icon-png.svg"),
+    include_bytes!("../../docs/design/assets/icon-png.svg"),
     "image/svg+xml",
   ),
   (
     "icon-json.svg",
-    include_bytes!("../docs/design/assets/icon-json.svg"),
+    include_bytes!("../../docs/design/assets/icon-json.svg"),
     "image/svg+xml",
   ),
   (
     "icon-bin.svg",
-    include_bytes!("../docs/design/assets/icon-bin.svg"),
+    include_bytes!("../../docs/design/assets/icon-bin.svg"),
     "image/svg+xml",
   ),
   (
     "sprite-inspector.svg",
-    include_bytes!("../docs/design/assets/sprite-inspector.svg"),
+    include_bytes!("../../docs/design/assets/sprite-inspector.svg"),
     "image/svg+xml",
   ),
   (
     "cursor-auv.svg",
-    include_bytes!("../docs/design/assets/cursor-auv.svg"),
+    include_bytes!("../../docs/design/assets/cursor-auv.svg"),
     "image/svg+xml",
   ),
   (
     "cursor-auv-click.svg",
-    include_bytes!("../docs/design/assets/cursor-auv-click.svg"),
+    include_bytes!("../../docs/design/assets/cursor-auv-click.svg"),
     "image/svg+xml",
   ),
   (
     "cursor-you.svg",
-    include_bytes!("../docs/design/assets/cursor-you.svg"),
+    include_bytes!("../../docs/design/assets/cursor-you.svg"),
     "image/svg+xml",
   ),
 ];
@@ -275,7 +280,7 @@ pub async fn serve(
     .map_err(|error| format!("failed to read inspect server address: {error}"))?;
   println!("inspect server: http://{local_address}");
   if config.write.enabled {
-    let session = crate::run_recording::InspectServerSession {
+    let session = session::InspectServerSession {
       url: format!("http://{local_address}"),
       store_root: store.root().display().to_string(),
       write_enabled: true,
@@ -283,7 +288,7 @@ pub async fn serve(
       pid: std::process::id(),
       started_at_millis: crate::model::now_millis(),
     };
-    crate::run_recording::write_inspect_session(&session)?;
+    session::write_inspect_session(&session)?;
   }
   axum::serve(listener, router_with_config(store, recorder, config.write))
     .await

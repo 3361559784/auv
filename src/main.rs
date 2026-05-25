@@ -581,8 +581,8 @@ fn resolve_inspect_server_target(
 
 fn read_discovered_inspect_session(
   inspect: &InspectClientOptions,
-) -> Result<Option<auv_cli::run_recording::InspectServerSession>, String> {
-  match auv_cli::run_recording::read_inspect_session() {
+) -> Result<Option<auv_cli::inspect_server::InspectServerSession>, String> {
+  match auv_cli::inspect_server::read_inspect_session() {
     Ok(session) => Ok(session),
     Err(error) if inspect.require_server_write => Err(error),
     Err(error) => {
@@ -877,7 +877,7 @@ mod tests {
     let session_path = root.join("session.json");
     fs::write(
       &session_path,
-      serde_json::to_string(&auv_cli::run_recording::InspectServerSession {
+      serde_json::to_string(&auv_cli::inspect_server::InspectServerSession {
         url: "http://203.0.113.7:8765".to_string(),
         store_root: root.display().to_string(),
         write_enabled: true,

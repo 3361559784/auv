@@ -528,6 +528,68 @@
   }
   .artifact-preview .evidence-summary.loading .v { color: var(--fg-3); }
   .artifact-preview .evidence-summary.error .v { color: var(--failed); }
+  .artifact-preview .surface-nodes {
+    margin: 12px 16px 0;
+    padding: 10px 12px;
+    border: 1px solid var(--shell-line);
+    border-radius: 4px;
+    background: rgba(0, 196, 210, 0.05);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .artifact-preview .surface-nodes-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+  }
+  .artifact-preview .surface-nodes-head .k {
+    color: var(--fg-3);
+    font-family: var(--font-ui);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
+  }
+  .artifact-preview .surface-nodes-head .v {
+    color: var(--brand-soft);
+    text-align: right;
+    word-break: break-word;
+  }
+  .artifact-preview .surface-node-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .artifact-preview .surface-node {
+    border-top: 1px solid var(--shell-line);
+    padding-top: 8px;
+  }
+  .artifact-preview .surface-node:first-child {
+    border-top: 0;
+    padding-top: 0;
+  }
+  .artifact-preview .surface-node-title {
+    color: var(--brand-soft);
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+  }
+  .artifact-preview .surface-node-meta {
+    color: var(--fg-3);
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    word-break: break-word;
+  }
+  .artifact-preview .surface-node.more {
+    color: var(--fg-3);
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    padding-top: 8px;
+    border-top: 1px solid var(--shell-line);
+  }
   .artifact-preview .surface pre {
     margin: 0; padding: 14px;
     color: var(--fg-2);
@@ -1163,6 +1225,76 @@
     return grid;
   }
 
+  function parseJsonObject(text) {
+    try {
+      const value = JSON.parse(text);
+      return value && typeof value === "object" && !Array.isArray(value) ? value : null;
+    } catch (err) {
+      return null;
+    }
+  }
+
+  function isSurfaceNodeLike(value) {
+    return !!value
+      && typeof value === "object"
+      && !!value.node_ref
+      && !!value.box;
+  }
+
+  function surfaceNodeLabel(node) {
+    if (!node) return "surface node";
+    if (node.label) return node.label;
+    if (node.kind) return node.kind;
+    const ref = node.node_ref || {};
+    return ref.node_id || "surface node";
+  }
+
+  function surfaceNodeMeta(node) {
+    if (!node) return "";
+    const ref = node.node_ref || {};
+    const parts = [];
+    if (ref.node_id) parts.push("node_id=" + ref.node_id);
+    if (node.kind) parts.push("kind=" + node.kind);
+    if (node.recognition_id) parts.push("recognition_id=" + node.recognition_id);
+    if (node.recognition_source) parts.push("source=" + node.recognition_source);
+    if (node.recognized_item_id) parts.push("item=" + node.recognized_item_id);
+    if (node.provider_score != null) {
+      parts.push("score=" + Number(node.provider_score).toFixed(2));
+    }
+    if (node.box) {
+      parts.push(
+        "box=" + node.box.x + "," + node.box.y + " "
+          + node.box.width + "x" + node.box.height
+      );
+    }
+    return parts.join(" · ");
+  }
+
+  function renderSurfaceNodeRow(node) {
+    return el("div", { className: "surface-node" }, [
+      el("div", { className: "surface-node-title" }, [surfaceNodeLabel(node)]),
+      el("div", { className: "surface-node-meta" }, [surfaceNodeMeta(node)]),
+    ]);
+  }
+
+  function renderSurfaceNodesPanel(artifact, nodes) {
+    const panel = el("div", { className: "surface-nodes" }, []);
+    const previewNodes = nodes.slice(0, 4);
+    const remaining = nodes.length - previewNodes.length;
+    panel.appendChild(el("div", { className: "surface-nodes-head" }, [
+      el("span", { className: "k" }, ["nodes"]),
+      el("span", { className: "v" }, [
+        nodes.length + " node" + (nodes.length === 1 ? "" : "s")
+          + " in " + (artifact.role || "artifact"),
+      ]),
+    ]));
+    panel.appendChild(el("div", { className: "surface-node-list" }, [
+      ...previewNodes.map(renderSurfaceNodeRow),
+      remaining > 0 ? el("div", { className: "surface-node more" }, ["+" + remaining + " more"]) : null,
+    ]));
+    return panel;
+  }
+
   function renderEvidenceSummaryContainer() {
     return el("div", { className: "evidence-summary loading" }, [
       el("span", { className: "k" }, ["evidence"]),
@@ -1297,7 +1429,14 @@
         })
         .then(function (text) {
           if (state.activeArtifactKey !== expectedArtifactKey) return;
+          const parsed = parseJsonObject(text);
           surface.innerHTML = "";
+          if (parsed && Array.isArray(parsed.nodes)) {
+            const nodes = parsed.nodes.filter(isSurfaceNodeLike);
+            if (nodes.length) {
+              preview.insertBefore(renderSurfaceNodesPanel(artifact, nodes), surface);
+            }
+          }
           surface.appendChild(el("pre", null, [text]));
         })
         .catch(function (err) {

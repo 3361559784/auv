@@ -2038,6 +2038,42 @@ mod tests {
   }
 
   #[tokio::test]
+  async fn root_payload_includes_surface_node_preview_markers() {
+    let root = temp_dir("inspect-server-viewer-surface-nodes");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let app = router(store, Arc::new(BroadcastRunRecorder::new(16)));
+
+    let response = app
+      .oneshot(
+        Request::builder()
+          .uri("/")
+          .body(Body::empty())
+          .expect("request should build"),
+      )
+      .await
+      .expect("route should respond");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX)
+      .await
+      .expect("body should read");
+    let html = std::str::from_utf8(&body).expect("viewer payload should be utf-8");
+
+    assert!(
+      html.contains("surface-nodes"),
+      "viewer payload should include the lightweight surface-node preview shell"
+    );
+    assert!(
+      html.contains("renderSurfaceNodesPanel")
+        && html.contains("surface-node-meta")
+        && html.contains("node_ref"),
+      "viewer payload should include the surface-node preview helper and shape accessors"
+    );
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
   async fn assets_route_serves_known_design_svgs_with_svg_mime() {
     let root = temp_dir("inspect-server-assets-route");
     let store = LocalStore::new(root.clone()).expect("store should initialize");

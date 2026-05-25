@@ -669,12 +669,23 @@ fn max_pages_for_policy(policy: &StopPolicy) -> usize {
 
 fn observe_request(options: &ScanWindowRegionOptions, page_index: usize) -> InvokeRequest {
   let mut inputs = region_inputs(&options.target);
-  inputs.insert("label".to_string(), format!("scan-page-{:04}", page_index + 1));
-  inputs.insert("min_confidence".to_string(), format!("{:.3}", options.min_confidence));
-  inputs.insert("max_observations".to_string(), options.max_observations.to_string());
+  inputs.insert(
+    "label".to_string(),
+    format!("scan-page-{:04}", page_index + 1),
+  );
+  inputs.insert(
+    "min_confidence".to_string(),
+    format!("{:.3}", options.min_confidence),
+  );
+  inputs.insert(
+    "max_observations".to_string(),
+    options.max_observations.to_string(),
+  );
   InvokeRequest {
     command_id: "debug.observeWindowRegion".to_string(),
-    target: ExecutionTarget { application_id: options.target.application_id.clone() },
+    target: ExecutionTarget {
+      application_id: options.target.application_id.clone(),
+    },
     inputs,
   }
 }
@@ -682,21 +693,38 @@ fn observe_request(options: &ScanWindowRegionOptions, page_index: usize) -> Invo
 fn scroll_request(options: &ScanWindowRegionOptions) -> InvokeRequest {
   let mut inputs = region_inputs(&options.target);
   inputs.insert("direction".to_string(), options.direction.clone());
-  inputs.insert("amount".to_string(), format!("{:.3}", options.scroll_amount));
+  inputs.insert(
+    "amount".to_string(),
+    format!("{:.3}", options.scroll_amount),
+  );
   inputs.insert("settle_ms".to_string(), options.settle_ms.to_string());
   InvokeRequest {
     command_id: "debug.scrollWindowRegion".to_string(),
-    target: ExecutionTarget { application_id: options.target.application_id.clone() },
+    target: ExecutionTarget {
+      application_id: options.target.application_id.clone(),
+    },
     inputs,
   }
 }
 
 fn region_inputs(target: &ScanTarget) -> BTreeMap<String, String> {
   let mut inputs = BTreeMap::from([
-    ("region_left_ratio".to_string(), target.region.left_ratio.to_string()),
-    ("region_top_ratio".to_string(), target.region.top_ratio.to_string()),
-    ("region_right_ratio".to_string(), target.region.right_ratio.to_string()),
-    ("region_bottom_ratio".to_string(), target.region.bottom_ratio.to_string()),
+    (
+      "region_left_ratio".to_string(),
+      target.region.left_ratio.to_string(),
+    ),
+    (
+      "region_top_ratio".to_string(),
+      target.region.top_ratio.to_string(),
+    ),
+    (
+      "region_right_ratio".to_string(),
+      target.region.right_ratio.to_string(),
+    ),
+    (
+      "region_bottom_ratio".to_string(),
+      target.region.bottom_ratio.to_string(),
+    ),
   ]);
   if let Some(title) = &target.window_title {
     inputs.insert("title".to_string(), title.clone());

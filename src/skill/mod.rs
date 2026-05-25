@@ -1,8 +1,8 @@
 mod case_matrix;
 mod validate;
 
-pub use case_matrix::{render_skill_case_matrix_report, run_skill_case_matrix};
 pub(crate) use case_matrix::run_skill_case_matrix_into_run;
+pub use case_matrix::{render_skill_case_matrix_report, run_skill_case_matrix};
 pub(crate) use validate::{
   build_inline_scan_hook_manifest, parse_step_max, validate_case_matrix_against_skill,
   validate_case_matrix_manifest, validate_disturbance_policy, validate_skill_manifest,

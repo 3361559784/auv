@@ -374,4 +374,3 @@ fn json_i64(bounds: &Value, key: &str, row_index: usize) -> AuvResult<i64> {
     format!("malformed observe JSON: row {row_index} bounds.{key} must be an integer")
   })
 }
-

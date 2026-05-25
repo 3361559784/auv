@@ -160,6 +160,10 @@ provenance so later actions can refer to a node instead of raw coordinates.
 Surface nodes sit between recognition results and later node-aware actions.
 They are inspectable records, not app-specific semantic objects.
 
+The inspect viewer may surface `ScrollScanArtifact.nodes` as a lightweight
+preview for review, but that preview is still evidence, not a node-action
+contract.
+
 ## Node Ref
 
 A node ref is the stable handle for a surface node inside a run. It is the

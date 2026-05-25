@@ -14,8 +14,12 @@ use infra::{
   resolve_analysis_path, resolve_app_identity, resolve_distillation_path, resolve_probe_path,
   stage_app_artifact, write_pretty_json,
 };
-use recipe::{candidate_slug, recipe_app_slug, render_candidate_case_matrix, render_candidate_recipe};
-use report::{render_app_analysis_report, render_app_distillation_report, render_app_validation_report};
+use recipe::{
+  candidate_slug, recipe_app_slug, render_candidate_case_matrix, render_candidate_recipe,
+};
+use report::{
+  render_app_analysis_report, render_app_distillation_report, render_app_validation_report,
+};
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -28,9 +32,8 @@ use crate::model::{AuvResult, now_millis};
 use crate::recording::{RecordingRun, RunFinish, RunSpec, SpanFinish, SpanRef};
 use crate::runtime::Runtime;
 use crate::skill::{
-  SkillCaseMatrix, SkillCaseRunOptions, SkillManifest,
-  run_skill_case_matrix_into_run, validate_case_matrix_against_skill,
-  validate_case_matrix_manifest, validate_skill_manifest,
+  SkillCaseMatrix, SkillCaseRunOptions, SkillManifest, run_skill_case_matrix_into_run,
+  validate_case_matrix_against_skill, validate_case_matrix_manifest, validate_skill_manifest,
 };
 use crate::trace::{RunType, TraceStatusCode, string_attr};
 
@@ -1100,26 +1103,30 @@ fn default_distill_output_dir(analysis_path: &Path, analysis: &AppAnalysis) -> P
   ))
 }
 
-
 #[cfg(test)]
 mod tests {
-  use super::*;
-  use super::infra::{invoke_probe_step, read_json, resolve_distillation_path, resolve_probe_path, write_pretty_json};
-  use super::analysis::{apply_candidate_grounding, build_app_analysis, build_distilled_candidate_shape, candidate_compatibility, recommended_strategy};
-  use crate::model::RunStatus;
-  use serde_json::Value;
+  use super::analysis::{
+    apply_candidate_grounding, build_app_analysis, build_distilled_candidate_shape,
+    candidate_compatibility, recommended_strategy,
+  };
+  use super::infra::{
+    invoke_probe_step, read_json, resolve_distillation_path, resolve_probe_path, write_pretty_json,
+  };
   use super::recipe::{
     render_native_text_candidate_cases, render_native_text_candidate_recipe,
-    render_search_entry_candidate_cases,
-    render_window_action_candidate_cases, render_window_action_candidate_recipe,
+    render_search_entry_candidate_cases, render_window_action_candidate_cases,
+    render_window_action_candidate_recipe,
   };
+  use super::*;
   use crate::catalog::CommandCatalog;
   use crate::driver::{Driver, DriverRegistry};
+  use crate::model::RunStatus;
   use crate::model::{CommandSpec, DisturbanceClass, DriverCall, DriverDescriptor, DriverResponse};
   use crate::recording::RunSpec;
   use crate::run_recording::{MemoryRunRecorder, RunUpdate};
   use crate::store::LocalStore;
   use crate::trace::RunType;
+  use serde_json::Value;
   use std::sync::Arc;
 
   struct TestProbeDriver;

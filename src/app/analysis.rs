@@ -12,6 +12,8 @@ use crate::driver::{
 use crate::model::{AuvResult, RunStatus, now_millis};
 use crate::skill::{SkillCaseMatrix, SkillStrategy};
 
+use super::infra::first_non_empty_string;
+use super::recipe::recipe_app_slug;
 use super::{
   APP_ANALYSIS_VERSION, AppAnalysis, AppAvailableSurfaces, AppCandidateCompatibility,
   AppCandidateGroundingTaxonomy, AppControlAssessment, AppDistilledCandidateShape,
@@ -19,8 +21,6 @@ use super::{
   AppProbe, AppProbeStep, AppRecommendedStrategy, AppRect, AppSurfaceCandidate,
   AppVerificationAssessment, AppVerificationMode, AppWindowContext, AssessmentStatus,
 };
-use super::infra::first_non_empty_string;
-use super::recipe::recipe_app_slug;
 
 #[derive(Clone, Debug)]
 struct CoordinateReadinessReport {
@@ -383,7 +383,6 @@ pub(crate) fn summarize_failed_probe_steps(probe: &AppProbe) -> Vec<String> {
     })
     .collect()
 }
-
 
 pub(crate) fn apply_distilled_candidate_shape_inputs(
   candidate_shape: &AppDistilledCandidateShape,
@@ -815,7 +814,9 @@ pub(crate) fn build_distilled_candidate_shape(
   }
 }
 
-pub(crate) fn verification_mode_for_strategy(strategy: &SkillStrategy) -> AuvResult<AppVerificationMode> {
+pub(crate) fn verification_mode_for_strategy(
+  strategy: &SkillStrategy,
+) -> AuvResult<AppVerificationMode> {
   match strategy.verification_contract.trim() {
     "captureEvidence" => Ok(AppVerificationMode::EvidenceOnly),
     "verifyImageText" | "verifyNowPlayingTitle" | "verifyAxText" => {
@@ -1416,5 +1417,3 @@ pub(crate) fn recommended_strategy(
     rationale: rationale.to_string(),
   })
 }
-
-

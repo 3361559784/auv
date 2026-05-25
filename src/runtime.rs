@@ -91,6 +91,15 @@ impl Runtime {
     let run_id = new_run_id();
     let root_span_id = new_span_id();
     let started = now_millis();
+    let mut run_attributes = spec.attributes.clone();
+    run_attributes.insert(
+      crate::trace::RUN_ATTR_DEVICE_ID.to_string(),
+      serde_json::Value::String(spec.device_id.as_str().to_string()),
+    );
+    run_attributes.insert(
+      crate::trace::RUN_ATTR_SESSION_ID.to_string(),
+      serde_json::Value::String(spec.session_id.as_str().to_string()),
+    );
     let run = RunRecordV1Alpha1 {
       api_version: RUN_API_VERSION.to_string(),
       run_id: run_id.clone(),
@@ -101,7 +110,7 @@ impl Runtime {
       started_at_millis: started,
       finished_at_millis: None,
       root_span_id: root_span_id.clone(),
-      attributes: spec.attributes.clone(),
+      attributes: run_attributes,
       summary: None,
       failure: None,
     };
@@ -267,6 +276,8 @@ impl Runtime {
       run_context: DriverRunContext {
         run_id: run.id().to_string(),
         span_id: driver_span.id().to_string(),
+        device_id: run.device_id().as_str().to_string(),
+        session_id: run.session_id().as_str().to_string(),
       },
     };
 
@@ -1011,6 +1022,191 @@ mod tests {
     let _ = fs::remove_dir_all(&path);
     fs::create_dir_all(&path).expect("temp dir should be creatable");
     path
+  }
+
+  /// Driver that stashes the run context of every call so tests can assert
+  /// what the runtime actually threaded through `DriverRunContext`.
+  struct ContextCapturingDriver {
+    contexts: Arc<std::sync::Mutex<Vec<crate::model::DriverRunContext>>>,
+  }
+
+  impl Driver for ContextCapturingDriver {
+    fn descriptor(&self) -> DriverDescriptor {
+      DriverDescriptor {
+        id: "test.driver",
+        summary: "Captures the driver run context",
+        capabilities: &["test.capture"],
+        donor_boundary: "test-only",
+      }
+    }
+
+    fn invoke(&self, call: &DriverCall) -> AuvResult<DriverResponse> {
+      self
+        .contexts
+        .lock()
+        .expect("context capture lock")
+        .push(call.run_context.clone());
+      Ok(DriverResponse {
+        summary: "captured".to_string(),
+        backend: None,
+        signals: BTreeMap::new(),
+        notes: vec![],
+        artifacts: vec![],
+      })
+    }
+  }
+
+  fn runtime_with_context_capture(
+    project_root: PathBuf,
+    store_root: PathBuf,
+    contexts: Arc<std::sync::Mutex<Vec<crate::model::DriverRunContext>>>,
+  ) -> Runtime {
+    Runtime::new(
+      project_root,
+      CommandCatalog::new(vec![CommandSpec {
+        id: "test.invoke",
+        summary: "Test invoke",
+        driver_id: "test.driver",
+        operation: "test_operation",
+        disturbance_classes: &[crate::model::DisturbanceClass::None],
+        max_disturbance: crate::model::DisturbanceClass::None,
+      }]),
+      DriverRegistry::new(vec![Box::new(ContextCapturingDriver { contexts })]),
+      LocalStore::new(store_root).expect("store should initialize"),
+    )
+  }
+
+  #[test]
+  fn start_run_with_default_spec_stamps_local_default_attributes() {
+    let project_root = temp_dir("runtime-default-device-project");
+    let store_root = temp_dir("runtime-default-device-store");
+    let runtime = runtime_with_success_driver(project_root.clone(), store_root.clone());
+
+    let run = runtime
+      .start_run(crate::run_builder::RunSpec::new(
+        crate::trace::RunType::Command,
+        "auv.command",
+      ))
+      .expect("default-spec run should start");
+    assert_eq!(run.device_id().as_str(), "local");
+    assert_eq!(run.session_id().as_str(), "default");
+
+    runtime
+      .finish_run(
+        run,
+        crate::run_builder::RunFinish {
+          status_code: crate::trace::TraceStatusCode::Ok,
+          summary: Some("default".to_string()),
+          failure: None,
+        },
+      )
+      .expect("default-spec run should finish");
+
+    let _ = fs::remove_dir_all(project_root);
+    let _ = fs::remove_dir_all(store_root);
+  }
+
+  #[test]
+  fn start_run_with_explicit_device_session_overrides_defaults() {
+    let project_root = temp_dir("runtime-explicit-device-project");
+    let store_root = temp_dir("runtime-explicit-device-store");
+    let runtime = runtime_with_success_driver(project_root.clone(), store_root.clone());
+
+    let spec = crate::run_builder::RunSpec::new(crate::trace::RunType::Command, "auv.command")
+      .with_device(crate::trace::DeviceId::new("remote-mac"))
+      .with_session(crate::trace::SessionId::new("music"));
+    let run = runtime
+      .start_run(spec)
+      .expect("explicit-device run should start");
+    assert_eq!(run.device_id().as_str(), "remote-mac");
+    assert_eq!(run.session_id().as_str(), "music");
+
+    runtime
+      .finish_run(
+        run,
+        crate::run_builder::RunFinish {
+          status_code: crate::trace::TraceStatusCode::Ok,
+          summary: Some("explicit".to_string()),
+          failure: None,
+        },
+      )
+      .expect("explicit-device run should finish");
+
+    let _ = fs::remove_dir_all(project_root);
+    let _ = fs::remove_dir_all(store_root);
+  }
+
+  #[test]
+  fn invoke_threads_device_session_into_driver_run_context() {
+    let project_root = temp_dir("runtime-driver-ctx-project");
+    let store_root = temp_dir("runtime-driver-ctx-store");
+    let contexts = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let runtime = runtime_with_context_capture(
+      project_root.clone(),
+      store_root.clone(),
+      contexts.clone(),
+    );
+
+    runtime
+      .invoke(InvokeRequest {
+        command_id: "test.invoke".to_string(),
+        target: ExecutionTarget::default(),
+        inputs: BTreeMap::new(),
+      })
+      .expect("default-target invoke should succeed");
+
+    let captured = contexts.lock().expect("context capture lock").clone();
+    assert_eq!(captured.len(), 1, "driver should be called exactly once");
+    let ctx = &captured[0];
+    assert_eq!(ctx.device_id, "local");
+    assert_eq!(ctx.session_id, "default");
+    assert!(!ctx.run_id.is_empty(), "run_id should be set");
+    assert!(!ctx.span_id.is_empty(), "span_id should be set");
+
+    let _ = fs::remove_dir_all(project_root);
+    let _ = fs::remove_dir_all(store_root);
+  }
+
+  #[test]
+  fn run_snapshot_stores_device_session_in_attributes() {
+    let project_root = temp_dir("runtime-attr-roundtrip-project");
+    let store_root = temp_dir("runtime-attr-roundtrip-store");
+    let runtime = runtime_with_success_driver(project_root.clone(), store_root.clone());
+
+    let spec = crate::run_builder::RunSpec::new(crate::trace::RunType::Command, "auv.command")
+      .with_device(crate::trace::DeviceId::new("local"))
+      .with_session(crate::trace::SessionId::new("scan"));
+    let run = runtime.start_run(spec).expect("run should start");
+    let run_id = run.id().as_str().to_string();
+    runtime
+      .finish_run(
+        run,
+        crate::run_builder::RunFinish {
+          status_code: crate::trace::TraceStatusCode::Ok,
+          summary: Some("attr".to_string()),
+          failure: None,
+        },
+      )
+      .expect("run should finish");
+
+    let canonical = runtime.read_run(&run_id).expect("run snapshot should read");
+    let attrs = &canonical.run.attributes;
+    assert_eq!(
+      attrs.get(crate::trace::RUN_ATTR_DEVICE_ID),
+      Some(&json!("local"))
+    );
+    assert_eq!(
+      attrs.get(crate::trace::RUN_ATTR_SESSION_ID),
+      Some(&json!("scan"))
+    );
+
+    // Old on-disk layout invariant: `.auv/runs/{run_id}/` directory, no
+    // per-device or per-session subdir inserted.
+    let run_dir = store_root.join("runs").join(&run_id);
+    assert!(run_dir.exists(), "run dir must remain at runs/{{run_id}}");
+
+    let _ = fs::remove_dir_all(project_root);
+    let _ = fs::remove_dir_all(store_root);
   }
 
   fn runtime_with_success_driver(project_root: PathBuf, store_root: PathBuf) -> Runtime {

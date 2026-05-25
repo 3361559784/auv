@@ -1639,6 +1639,8 @@ mod tests {
       run_context: DriverRunContext {
         run_id: "run_music_test".to_string(),
         span_id: "span_music_test".to_string(),
+        device_id: "local".to_string(),
+        session_id: "default".to_string(),
       },
     }
   }

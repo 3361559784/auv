@@ -21,6 +21,25 @@ pub const SPAN_API_VERSION: &str = "auv.span.v1alpha1";
 pub const EVENT_API_VERSION: &str = "auv.event.v1alpha1";
 pub const ARTIFACT_API_VERSION: &str = "auv.artifact.v1alpha1";
 
+/// Default device id used when callers don't explicitly target a device.
+/// AUV currently runs only on the local macOS host; remote/VM/container devices
+/// are a planned protocol direction, not implemented.
+pub const DEFAULT_DEVICE_ID: &str = "local";
+
+/// Default session id used when callers don't explicitly create a session.
+/// A session is the automation context on a device — app/window defaults,
+/// cursor identity, observation cache. Today there is one implicit session
+/// per CLI invocation; the type exists so future RPC/JS-SDK frontends can
+/// scope state without changing the protocol again.
+pub const DEFAULT_SESSION_ID: &str = "default";
+
+/// Run attribute key carrying the device id. Stamped onto every run record's
+/// attributes so historical runs remain identifiable after multi-device lands.
+pub const RUN_ATTR_DEVICE_ID: &str = "auv.device.id";
+
+/// Run attribute key carrying the session id. Pairs with `RUN_ATTR_DEVICE_ID`.
+pub const RUN_ATTR_SESSION_ID: &str = "auv.session.id";
+
 static TRACE_COUNTER: AtomicU64 = AtomicU64::new(0);
 static RUN_COUNTER: AtomicU64 = AtomicU64::new(0);
 static SPAN_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -61,6 +80,20 @@ id_type!(TraceId);
 id_type!(SpanId);
 id_type!(EventId);
 id_type!(ArtifactId);
+id_type!(DeviceId);
+id_type!(SessionId);
+
+impl DeviceId {
+  pub fn default_local() -> Self {
+    Self::new(DEFAULT_DEVICE_ID)
+  }
+}
+
+impl SessionId {
+  pub fn default_session() -> Self {
+    Self::new(DEFAULT_SESSION_ID)
+  }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

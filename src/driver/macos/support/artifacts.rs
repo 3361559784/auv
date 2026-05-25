@@ -263,6 +263,8 @@ mod tests {
     let ctx = DriverRunContext {
       run_id: "run_42".to_string(),
       span_id: "span_7".to_string(),
+      device_id: "local".to_string(),
+      session_id: "default".to_string(),
     };
     let mut builder = DriverArtifactBuilder::new(&ctx);
     let first = builder.push(ProducedArtifact {

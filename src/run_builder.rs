@@ -25,6 +25,8 @@ pub struct RunSpec {
   pub run_type: RunType,
   pub root_span_name: String,
   pub attributes: Attributes,
+  pub device_id: crate::trace::DeviceId,
+  pub session_id: crate::trace::SessionId,
 }
 
 #[cfg(test)]
@@ -187,11 +189,23 @@ impl RunSpec {
       run_type,
       root_span_name: root_span_name.into(),
       attributes: Attributes::new(),
+      device_id: crate::trace::DeviceId::default_local(),
+      session_id: crate::trace::SessionId::default_session(),
     }
   }
 
   pub fn with_attributes(mut self, attributes: Attributes) -> Self {
     self.attributes = attributes;
+    self
+  }
+
+  pub fn with_device(mut self, device_id: crate::trace::DeviceId) -> Self {
+    self.device_id = device_id;
+    self
+  }
+
+  pub fn with_session(mut self, session_id: crate::trace::SessionId) -> Self {
+    self.session_id = session_id;
     self
   }
 }
@@ -272,6 +286,32 @@ impl RecordingRun {
 
   pub fn recording_errors(&self) -> &[String] {
     &self.recording_errors
+  }
+
+  /// Device id this run is scoped to. Read from the run record's attributes
+  /// (set by `Runtime::start_run` via `RunSpec`). Falls back to
+  /// `DEFAULT_DEVICE_ID` if the record was constructed without one — that path
+  /// is reachable from tests/mocks that build `RecordingRun::new` directly.
+  pub fn device_id(&self) -> crate::trace::DeviceId {
+    self
+      .run
+      .attributes
+      .get(crate::trace::RUN_ATTR_DEVICE_ID)
+      .and_then(|value| value.as_str())
+      .map(crate::trace::DeviceId::new)
+      .unwrap_or_else(crate::trace::DeviceId::default_local)
+  }
+
+  /// Session id this run is scoped to. See [`Self::device_id`] for the fallback
+  /// rationale.
+  pub fn session_id(&self) -> crate::trace::SessionId {
+    self
+      .run
+      .attributes
+      .get(crate::trace::RUN_ATTR_SESSION_ID)
+      .and_then(|value| value.as_str())
+      .map(crate::trace::SessionId::new)
+      .unwrap_or_else(crate::trace::SessionId::default_session)
   }
 
   pub fn start_span(

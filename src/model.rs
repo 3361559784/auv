@@ -104,10 +104,18 @@ pub struct DriverDescriptor {
 /// Control-plane metadata the runtime injects into every `DriverCall` so drivers can
 /// build evidence `ArtifactRef`s and emit `OperationResult`s tied to the active run/span
 /// without smuggling identifiers through the user-facing `inputs` map.
+///
+/// `device_id` / `session_id` identify the automation target and namespace. Today
+/// they default to `"local"` / `"default"` since AUV runs only on the local
+/// macOS host with one implicit session — drivers can ignore them. The fields
+/// exist so future RPC/JS-SDK frontends can route to remote/VM devices and
+/// scope state per session without changing the driver contract again.
 #[derive(Clone, Debug, Default)]
 pub struct DriverRunContext {
   pub run_id: String,
   pub span_id: String,
+  pub device_id: String,
+  pub session_id: String,
 }
 
 #[derive(Clone, Debug)]

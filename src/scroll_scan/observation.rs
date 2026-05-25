@@ -5,13 +5,13 @@ use std::path::Path;
 use serde_json::Value;
 
 use crate::contract::{
-  NodeRef, RecognitionBox, RecognitionResult, RecognitionSource, RecognitionSurface,
-  RecognizedItem, SurfaceNode,
+  NodeRef, ObservationSnapshot, ObservationSource, RatioRegion, RecognitionBox, RecognitionResult,
+  RecognitionScope, RecognitionSource, RecognitionSurface, RecognizedItem, SurfaceNode,
 };
-use crate::model::AuvResult;
+use crate::model::{AuvResult, now_millis};
 use crate::trace::{RunId, SpanId};
 
-use super::{CollectionObservation, ObservationCluster, ScanRect};
+use super::{CollectionObservation, ObservationCluster, ScanRect, ScanTarget};
 
 pub fn normalize_observation_text(raw: &str) -> String {
   raw
@@ -230,6 +230,86 @@ pub(crate) fn surface_nodes_from_observations(
     .iter()
     .map(|observation| surface_node_from_observation(run_id, span_id, observation))
     .collect()
+}
+
+/// Build a v0 `ObservationSnapshot` envelope for one scanned page. The
+/// `nodes` field projects this page's observations into the unified UI layer;
+/// the snapshot context captures who, what, when, and where.
+///
+/// Provenance limitations: scroll scan currently has access to screenshot
+/// paths (not `ArtifactRef`s with stable artifact ids), so the snapshot's
+/// `evidence` vector is empty and the path is reported through `detail` plus
+/// the per-node `source_artifacts`. The limit is recorded in `known_limits`
+/// so consumers don't mistake it for "no evidence captured".
+pub(crate) fn build_page_observation_snapshot(
+  run_id: &RunId,
+  span_id: &SpanId,
+  page_index: usize,
+  target: &ScanTarget,
+  page_observations: &[CollectionObservation],
+  screenshot_artifact: Option<&Path>,
+  new_observation_count: usize,
+) -> ObservationSnapshot {
+  let nodes = surface_nodes_from_observations(run_id, span_id, page_observations);
+  let screenshot_path = screenshot_artifact.map(|path| path.display().to_string());
+  let observation_count = page_observations.len();
+  let mut detail = serde_json::Map::new();
+  detail.insert(
+    "page_index".to_string(),
+    serde_json::Value::from(page_index),
+  );
+  detail.insert(
+    "observation_count".to_string(),
+    serde_json::Value::from(observation_count),
+  );
+  detail.insert(
+    "new_observation_count".to_string(),
+    serde_json::Value::from(new_observation_count),
+  );
+  if let Some(path) = &screenshot_path {
+    detail.insert(
+      "screenshot_artifact".to_string(),
+      serde_json::Value::from(path.clone()),
+    );
+  }
+
+  let mut known_limits = vec![
+    "scroll_scan v0: evidence ArtifactRefs not threaded yet; see source_artifacts on each node for paths"
+      .to_string(),
+  ];
+  if screenshot_artifact.is_none() {
+    known_limits
+      .push("scroll_scan: observe response did not include a png artifact for this page".to_string());
+  }
+
+  ObservationSnapshot {
+    snapshot_id: format!("snapshot_{}_{:04}", run_id, page_index + 1),
+    run_id: run_id.clone(),
+    span_id: span_id.clone(),
+    captured_at_millis: now_millis(),
+    source: ObservationSource::Ocr,
+    scope: RecognitionScope {
+      surface: RecognitionSurface::Region,
+      display_ref: None,
+      native_display_id: None,
+      app_bundle_id: target.application_id.clone(),
+      window_title: target.window_title.clone(),
+      window_number: None,
+      region_hint: Some(RatioRegion {
+        left: target.region.left_ratio,
+        top: target.region.top_ratio,
+        right: target.region.right_ratio,
+        bottom: target.region.bottom_ratio,
+      }),
+      capture_artifact: None,
+      capture_contract_artifact: None,
+    },
+    capture_contract_ref: None,
+    evidence: Vec::new(),
+    nodes,
+    detail: serde_json::Value::Object(detail),
+    known_limits,
+  }
 }
 
 fn surface_node_from_observation(

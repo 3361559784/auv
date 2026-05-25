@@ -13,15 +13,16 @@
 mod observation;
 
 use observation::{
-  conservative_merge_observations, normalize_observation_text, observation_from_recognized_item,
-  observation_from_row, should_merge_adjacent_observations, surface_nodes_from_observations,
+  build_page_observation_snapshot, conservative_merge_observations, normalize_observation_text,
+  observation_from_recognized_item, observation_from_row, should_merge_adjacent_observations,
+  surface_nodes_from_observations,
 };
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::contract::{RecognitionResult, SurfaceNode};
+use crate::contract::{ObservationSnapshot, RecognitionResult, SurfaceNode};
 use crate::model::{
   AuvResult, DisturbanceClass, ExecutionTarget, InvokeRequest, InvokeResult, RunStatus,
 };
@@ -302,6 +303,13 @@ pub struct ScrollScanArtifact {
   pub observations: Vec<CollectionObservation>,
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   pub nodes: Vec<SurfaceNode>,
+  /// Per-page projection of the scan into the v0 `ObservationSnapshot` shape.
+  /// Each page's observations are wrapped in one snapshot envelope so future
+  /// consumers can read evidence through the unified observed-UI-layer
+  /// contract without knowing scroll_scan internals. Empty if a partial scan
+  /// failed before producing any pages.
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub snapshots: Vec<ObservationSnapshot>,
   pub clusters: Vec<ObservationCluster>,
   pub section_candidates: Vec<SectionCandidate>,
   pub scroll_boundary_candidates: Vec<ScrollBoundaryCandidate>,
@@ -663,6 +671,7 @@ fn observations_from_recognition_result(
 struct ScanWindowRegionState {
   pages: Vec<ScanPageRecord>,
   observations: Vec<CollectionObservation>,
+  snapshots: Vec<ObservationSnapshot>,
   known_observation_signatures: BTreeSet<String>,
   scroll_boundary_candidates: Vec<ScrollBoundaryCandidate>,
   hook_decisions: Vec<HookDecisionRecord>,
@@ -693,6 +702,7 @@ impl ScanWindowRegionState {
       pages: self.pages,
       observations: self.observations,
       nodes,
+      snapshots: self.snapshots,
       clusters,
       section_candidates: Vec::new(),
       scroll_boundary_candidates: self.scroll_boundary_candidates,
@@ -823,6 +833,7 @@ fn scan_window_region_page(
   let observation_count = page_observations.len();
   state.observations.extend(page_observations.clone());
 
+  let snapshot_screenshot = screenshot_artifact.clone();
   state.pages.push(ScanPageRecord {
     page_index,
     observe_run_id: None,
@@ -833,6 +844,15 @@ fn scan_window_region_page(
       "observed {observation_count} row(s); {new_observation_count} new page-local signature(s); observe command recorded inside the scan run"
     ),
   });
+  state.snapshots.push(build_page_observation_snapshot(
+    run.id(),
+    root.id(),
+    page_index,
+    &options.target,
+    &page_observations,
+    snapshot_screenshot.as_deref(),
+    new_observation_count,
+  ));
 
   if let Some(decision) = run_optional_scan_hook(
     runtime,
@@ -2298,6 +2318,7 @@ mod tests {
         attributes: BTreeMap::new(),
       }],
       nodes: Vec::new(),
+      snapshots: Vec::new(),
       clusters: vec![ObservationCluster {
         cluster_id: "cluster_0001".to_string(),
         observation_ids: vec!["obs_0001".to_string()],
@@ -3264,6 +3285,7 @@ mod tests {
       }],
       observations,
       nodes,
+      snapshots: Vec::new(),
       clusters: vec![],
       section_candidates: Vec::new(),
       scroll_boundary_candidates: Vec::new(),
@@ -3372,6 +3394,84 @@ mod tests {
       "test.inline-hook.parent.hook.per_list_item_candidate"
     );
     assert_eq!(hook.invocation.stage, "per_list_item_candidate");
+  }
+
+  #[test]
+  fn scan_window_region_emits_observation_snapshot_per_page() {
+    let project_root = temp_dir("scroll-scan-snapshot-project");
+    let store_root = temp_dir("scroll-scan-snapshot-store");
+    let runtime = scroll_scan_test_runtime(project_root.clone(), store_root.clone());
+    let options = bounded_scan_options();
+    let target_for_assertion = options.target.clone();
+    let max_pages = max_pages_for_policy(&options.stop_policy);
+
+    let run_id = scan_window_region(&runtime, options).expect("scan should succeed");
+    let canonical = runtime.read_run(run_id.as_str()).expect("run should read");
+
+    let artifact_record = canonical
+      .artifacts
+      .iter()
+      .find(|artifact| artifact.role == "scroll-scan")
+      .expect("scroll-scan artifact should be staged");
+    let artifact_path = store_root
+      .join("runs")
+      .join(run_id.as_str())
+      .join(&artifact_record.path);
+    let raw = fs::read_to_string(&artifact_path).expect("artifact file should exist");
+    let scroll_artifact: ScrollScanArtifact =
+      serde_json::from_str(&raw).expect("scroll-scan artifact should deserialize");
+
+    assert!(
+      !scroll_artifact.snapshots.is_empty(),
+      "scan must emit at least one ObservationSnapshot"
+    );
+    assert!(
+      scroll_artifact.snapshots.len() <= max_pages,
+      "snapshot count {} must not exceed max_pages {}",
+      scroll_artifact.snapshots.len(),
+      max_pages
+    );
+    assert_eq!(
+      scroll_artifact.snapshots.len(),
+      scroll_artifact.pages.len(),
+      "every page must produce one snapshot"
+    );
+
+    let first = &scroll_artifact.snapshots[0];
+    assert_eq!(first.source, crate::contract::ObservationSource::Ocr);
+    assert_eq!(
+      first.scope.surface,
+      crate::contract::RecognitionSurface::Region
+    );
+    assert_eq!(
+      first.scope.app_bundle_id.as_deref(),
+      target_for_assertion.application_id.as_deref()
+    );
+    assert_eq!(
+      first.scope.region_hint.as_ref().map(|r| r.left),
+      Some(target_for_assertion.region.left_ratio)
+    );
+    assert_eq!(first.run_id.as_str(), run_id.as_str());
+    assert!(
+      first.snapshot_id.starts_with("snapshot_"),
+      "snapshot id should follow snapshot_{{run}}_{{page}} format, got {}",
+      first.snapshot_id
+    );
+    // v0 provenance carve-out: evidence ArtifactRefs not threaded yet.
+    assert!(
+      first.evidence.is_empty(),
+      "evidence remains empty in v0; paths surface via detail and per-node source_artifacts"
+    );
+    assert!(
+      first
+        .known_limits
+        .iter()
+        .any(|limit| limit.contains("ArtifactRefs not threaded")),
+      "snapshot must document the evidence ArtifactRef gap"
+    );
+
+    let _ = fs::remove_dir_all(project_root);
+    let _ = fs::remove_dir_all(store_root);
   }
 
   #[test]

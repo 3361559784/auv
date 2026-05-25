@@ -564,6 +564,70 @@
     flex-direction: column;
     gap: 8px;
   }
+  .artifact-preview .surface-node-detail {
+    border: 1px solid var(--shell-line);
+    border-radius: 4px;
+    background: rgba(0, 196, 210, 0.04);
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .artifact-preview .surface-node-detail.empty {
+    color: var(--fg-3);
+    font-family: var(--font-mono);
+    font-size: 11px;
+  }
+  .artifact-preview .surface-node-detail-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: baseline;
+  }
+  .artifact-preview .surface-node-detail-head .k {
+    color: var(--fg-3);
+    font-family: var(--font-ui);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
+  }
+  .artifact-preview .surface-node-detail-head .v {
+    color: var(--brand-soft);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    word-break: break-word;
+    text-align: right;
+  }
+  .artifact-preview .surface-node-detail-grid {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 4px 10px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+  }
+  .artifact-preview .surface-node-detail-grid .k {
+    color: var(--fg-3);
+  }
+  .artifact-preview .surface-node-detail-grid .v {
+    color: var(--fg);
+    word-break: break-word;
+  }
+  .artifact-preview .surface-node-detail-json {
+    margin: 0;
+    max-height: 160px;
+    overflow: auto;
+    border: 1px solid var(--shell-line);
+    border-radius: 3px;
+    background: var(--shell-3);
+    padding: 10px;
+    color: var(--fg-2);
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    line-height: 1.45;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
   .artifact-preview .surface-node {
     border-top: 1px solid var(--shell-line);
     padding-top: 8px;
@@ -572,8 +636,22 @@
     border-top: 0;
     padding-top: 0;
   }
-  .artifact-preview .surface-node-title {
+  .artifact-preview .surface-node-button {
+    width: 100%;
+    text-align: left;
+    border: 0;
+    padding: 0;
+    margin: 0;
+    background: transparent;
+    color: var(--fg);
+    cursor: pointer;
+    font: inherit;
+  }
+  .artifact-preview .surface-node-button.active .surface-node-title {
     color: var(--brand-soft);
+  }
+  .artifact-preview .surface-node-title {
+    color: var(--fg);
     font-family: var(--font-mono);
     font-size: 11.5px;
   }
@@ -815,6 +893,8 @@
     artifacts: [],
     activeSpanId: null,
     activeArtifactKey: null,
+    activeSurfaceNodeArtifactKey: null,
+    activeSurfaceNodeKey: null,
     activeEvidenceRequestId: 0,
     fetchedAt: null,
     // C.4: WebSocket live stream state. ws is the open socket (or
@@ -867,6 +947,8 @@
     state.artifacts = [];
     state.activeSpanId = null;
     state.activeArtifactKey = null;
+    state.activeSurfaceNodeArtifactKey = null;
+    state.activeSurfaceNodeKey = null;
     const active = state.runs.find(function (r) { return r.run_id === runId; });
     setMainHeader(active, true);
     if (active) {
@@ -1241,6 +1323,15 @@
       && !!value.box;
   }
 
+  function surfaceNodeKey(node) {
+    if (!node || !node.node_ref) return "";
+    return String(node.node_ref.node_id || "");
+  }
+
+  function surfaceNodeSelectionKey(artifactKey, node) {
+    return artifactKey + "::" + surfaceNodeKey(node);
+  }
+
   function surfaceNodeLabel(node) {
     if (!node) return "surface node";
     if (node.label) return node.label;
@@ -1270,17 +1361,91 @@
     return parts.join(" · ");
   }
 
-  function renderSurfaceNodeRow(node) {
-    return el("div", { className: "surface-node" }, [
+  function renderSurfaceNodeDetail(node) {
+    const detail = el("div", { className: "surface-node-detail" }, []);
+    if (!node) {
+      detail.className = "surface-node-detail empty";
+      detail.textContent = "select a node to inspect its provenance.";
+      return detail;
+    }
+
+    const nodeRef = node.node_ref || {};
+    const entries = [
+      ["node_ref", nodeRef.node_id ? JSON.stringify(nodeRef) : ""],
+      ["kind", node.kind || ""],
+      ["label", node.label || ""],
+      ["box", node.box ? JSON.stringify(node.box) : ""],
+      ["recognition_id", node.recognition_id || ""],
+      ["recognition_source", node.recognition_source || ""],
+      ["recognition_surface", node.recognition_surface || ""],
+      ["recognized_item_id", node.recognized_item_id || ""],
+      ["recognized_item_kind", node.recognized_item_kind || ""],
+      ["provider_score", node.provider_score == null ? "" : String(Number(node.provider_score).toFixed(2))],
+      ["source_artifacts", Array.isArray(node.source_artifacts) ? node.source_artifacts.join(" · ") : ""],
+    ];
+    detail.appendChild(el("div", { className: "surface-node-detail-head" }, [
+      el("span", { className: "k" }, ["selected node"]),
+      el("span", { className: "v" }, [surfaceNodeLabel(node)]),
+    ]));
+    const grid = el("div", { className: "surface-node-detail-grid" }, []);
+    for (const [k, v] of entries) {
+      if (!v) continue;
+      grid.appendChild(el("span", { className: "k" }, [k]));
+      grid.appendChild(el("span", { className: "v" }, [String(v)]));
+    }
+    if (grid.childNodes.length) detail.appendChild(grid);
+    if (node.detail != null) {
+      detail.appendChild(el("pre", { className: "surface-node-detail-json" }, [
+        stringifyJsonPretty(node.detail),
+      ]));
+    }
+    return detail;
+  }
+
+  function stringifyJsonPretty(value) {
+    try {
+      return JSON.stringify(value, null, 2);
+    } catch (err) {
+      return String(value);
+    }
+  }
+
+  function renderSurfaceNodeRow(node, artifactKey, nodes, detailNode, buttonMap) {
+    const button = el("button", { className: "surface-node-button" }, [
       el("div", { className: "surface-node-title" }, [surfaceNodeLabel(node)]),
       el("div", { className: "surface-node-meta" }, [surfaceNodeMeta(node)]),
     ]);
+    button.addEventListener("click", function () {
+      const selectedKey = surfaceNodeKey(node);
+      state.activeSurfaceNodeArtifactKey = artifactKey;
+      state.activeSurfaceNodeKey = selectedKey;
+      detailNode.innerHTML = "";
+      detailNode.appendChild(renderSurfaceNodeDetail(node));
+      for (const key in buttonMap) {
+        buttonMap[key].classList.toggle("active", key === selectedKey);
+      }
+    });
+    buttonMap[surfaceNodeKey(node)] = button;
+    return button;
   }
 
   function renderSurfaceNodesPanel(artifact, nodes) {
     const panel = el("div", { className: "surface-nodes" }, []);
+    const artifactKey = artifactKeyFn(artifact);
     const previewNodes = nodes.slice(0, 4);
     const remaining = nodes.length - previewNodes.length;
+    const nodeMap = {};
+    let selectedNode = null;
+    if (state.activeSurfaceNodeArtifactKey === artifactKey && state.activeSurfaceNodeKey) {
+      selectedNode = nodes.find(function (node) {
+        return surfaceNodeKey(node) === state.activeSurfaceNodeKey;
+      }) || null;
+    }
+    if (!selectedNode) {
+      selectedNode = nodes[0] || null;
+      state.activeSurfaceNodeArtifactKey = artifactKey;
+      state.activeSurfaceNodeKey = selectedNode ? surfaceNodeKey(selectedNode) : null;
+    }
     panel.appendChild(el("div", { className: "surface-nodes-head" }, [
       el("span", { className: "k" }, ["nodes"]),
       el("span", { className: "v" }, [
@@ -1288,10 +1453,20 @@
           + " in " + (artifact.role || "artifact"),
       ]),
     ]));
-    panel.appendChild(el("div", { className: "surface-node-list" }, [
-      ...previewNodes.map(renderSurfaceNodeRow),
-      remaining > 0 ? el("div", { className: "surface-node more" }, ["+" + remaining + " more"]) : null,
-    ]));
+    const detailNode = renderSurfaceNodeDetail(selectedNode);
+    panel.appendChild(detailNode);
+    const list = el("div", { className: "surface-node-list" }, []);
+    for (const node of previewNodes) {
+      const button = renderSurfaceNodeRow(node, artifactKey, nodes, detailNode, nodeMap);
+      if (surfaceNodeKey(node) === state.activeSurfaceNodeKey) {
+        button.classList.add("active");
+      }
+      list.appendChild(el("div", { className: "surface-node" }, [button]));
+    }
+    if (remaining > 0) {
+      list.appendChild(el("div", { className: "surface-node more" }, ["+" + remaining + " more"]));
+    }
+    panel.appendChild(list);
     return panel;
   }
 

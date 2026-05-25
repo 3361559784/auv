@@ -9,10 +9,18 @@
 //! automation (drivers do), and they are not a high-level planner.
 
 mod case_matrix;
+mod recipe;
 mod validate;
 
 pub(crate) use case_matrix::run_skill_case_matrix_into_run;
 pub use case_matrix::{render_skill_case_matrix_report, run_skill_case_matrix};
+pub use recipe::{
+  SkillRecipe, SkillRecipeOrigin, SkillRecipeRunner,
+  observer::{
+    ConsoleRecipeRunReporter, NoopRecipeRunReporter, RecipeRunReporter, RecipeStartedReport,
+    RecipeStepReport,
+  },
+};
 pub(crate) use validate::{
   build_inline_scan_hook_manifest, parse_step_max, validate_case_matrix_against_skill,
   validate_case_matrix_manifest, validate_disturbance_policy, validate_skill_manifest,
@@ -674,48 +682,34 @@ pub fn run_skill(
   entry: &SkillCatalogEntry,
   options: SkillRunOptions,
 ) -> AuvResult<()> {
-  run_skill_manifest(runtime, &entry.manifest, options)
+  let recipe = SkillRecipe::from_manifest(
+    entry.manifest.clone(),
+    SkillRecipeOrigin::CatalogPath(entry.path.clone()),
+  );
+  if options.quiet {
+    SkillRecipeRunner::new(runtime)
+      .run(&recipe, options)
+      .map(|_| ())
+  } else {
+    SkillRecipeRunner::new(runtime)
+      .with_reporter(Box::new(ConsoleRecipeRunReporter))
+      .run(&recipe, options)
+      .map(|_| ())
+  }
 }
 
-pub(crate) fn run_skill_manifest(
-  runtime: &Runtime,
-  manifest: &SkillManifest,
-  options: SkillRunOptions,
-) -> AuvResult<()> {
-  run_skill_manifest_recorded(runtime, manifest, options).map(|_| ())
-}
-
+#[cfg(test)]
 pub(crate) fn run_skill_manifest_recorded(
   runtime: &Runtime,
   manifest: &SkillManifest,
   options: SkillRunOptions,
 ) -> AuvResult<RunId> {
-  let mut attributes = crate::recording::Attributes::new();
-  attributes.insert(
-    "auv.recipe.id".to_string(),
-    string_attr(manifest.recipe_id.clone()),
-  );
-  let mut run = runtime.start_run(
-    crate::recording::RunSpec::new(crate::trace::RunType::Execute, "auv.execute")
-      .with_attributes(attributes),
-  )?;
-  let root = run.root_span();
-
-  match run_skill_manifest_into_run(runtime, &mut run, &root, manifest, options) {
-    Ok(_summary) => runtime.finish_run(
-      run,
-      crate::recording::RunFinish {
-        status_code: TraceStatusCode::Ok,
-        summary: Some(format!("Executed skill {}", manifest.recipe_id)),
-        failure: None,
-      },
-    ),
-    Err(error) => finish_failed_recorded_run(
-      runtime,
-      run,
-      error,
-      format!("Skill {} failed", manifest.recipe_id),
-    ),
+  if options.quiet {
+    SkillRecipeRunner::new(runtime).run_manifest(manifest, options)
+  } else {
+    SkillRecipeRunner::new(runtime)
+      .with_reporter(Box::new(ConsoleRecipeRunReporter))
+      .run_manifest(manifest, options)
   }
 }
 
@@ -725,6 +719,22 @@ pub(crate) fn run_skill_manifest_into_run(
   parent: &crate::recording::SpanRef,
   manifest: &SkillManifest,
   options: SkillRunOptions,
+) -> AuvResult<SkillRunSummary> {
+  let reporter: &dyn RecipeRunReporter = if options.quiet {
+    &NoopRecipeRunReporter
+  } else {
+    &ConsoleRecipeRunReporter
+  };
+  run_skill_manifest_into_run_with_reporter(runtime, run, parent, manifest, options, reporter)
+}
+
+pub(super) fn run_skill_manifest_into_run_with_reporter(
+  runtime: &Runtime,
+  run: &mut crate::recording::RecordingRun,
+  parent: &crate::recording::SpanRef,
+  manifest: &SkillManifest,
+  options: SkillRunOptions,
+  reporter: &dyn RecipeRunReporter,
 ) -> AuvResult<SkillRunSummary> {
   validate_skill_manifest_with_commands(manifest, runtime.list_commands())?;
   let mut variables = default_inputs(manifest)?;
@@ -736,80 +746,36 @@ pub(crate) fn run_skill_manifest_into_run(
   let active_max = validate_disturbance_policy(manifest, options.max_disturbance)?;
   let _lock = maybe_acquire_live_app_lock(manifest, &variables, options.dry_run)?;
 
-  if !options.quiet {
-    println!("skill: {}", manifest.recipe_id);
-    println!("version: {}", manifest.version);
-    println!("objective: {}", manifest.objective);
-    println!(
-      "target: {}",
-      render_template(&manifest.target_app.bundle_id, &variables)
-    );
-    println!("max disturbance: {}", active_max.as_str());
-  }
+  report_recipe_started(reporter, manifest, &variables, active_max);
 
+  let mut context = SkillManifestRuntime {
+    runtime,
+    run,
+    parent,
+    manifest,
+    dry_run: options.dry_run,
+    reporter,
+    variables: &mut variables,
+    top_level_signal_exports: &mut top_level_signal_exports,
+  };
   for (index, step) in manifest.steps.iter().enumerate() {
-    let step_id = step_id(step, index);
-    let step_span = run.start_span(
-      parent,
-      span_record(
-        "auv.recipe.step",
-        BTreeMap::from([
-          ("auv.recipe.step_id".to_string(), string_attr(&step_id)),
-          ("auv.step.id".to_string(), string_attr(&step_id)),
-          ("auv.step.index".to_string(), serde_json::json!(index)),
-          ("auv.step.kind".to_string(), string_attr("recipe")),
-          (
-            "auv.recipe.id".to_string(),
-            string_attr(manifest.recipe_id.clone()),
-          ),
-        ]),
-      ),
-    )?;
-
-    let step_result = {
-      let mut step_context = SkillStepRuntime {
-        runtime,
-        run,
-        step_span: &step_span,
-        manifest,
-        dry_run: options.dry_run,
-        quiet: options.quiet,
-        variables: &mut variables,
-        top_level_signal_exports: &mut top_level_signal_exports,
-      };
-      run_skill_step_into_span(&mut step_context, step, index, &step_id)
-    };
-
-    match step_result {
-      Ok(()) => run.finish_span(
-        &step_span,
-        crate::recording::SpanFinish {
-          status_code: TraceStatusCode::Ok,
-          summary: Some(format!("Completed recipe step {step_id}")),
-          failure: None,
-        },
-      )?,
-      Err(error) => {
-        if let Err(finish_error) = run.finish_span(
-          &step_span,
-          crate::recording::SpanFinish {
-            status_code: TraceStatusCode::Error,
-            summary: Some(format!("Recipe step {step_id} failed")),
-            failure: Some(error.clone()),
-          },
-        ) {
-          return Err(format!(
-            "{error}; additionally failed to finish failed step span: {finish_error}"
-          ));
-        }
-        return Err(error);
-      }
-    }
+    run_skill_step_recorded(&mut context, step, index)?;
   }
 
   Ok(SkillRunSummary {
     exported_variables: variables,
   })
+}
+
+struct SkillManifestRuntime<'a> {
+  runtime: &'a Runtime,
+  run: &'a mut crate::recording::RecordingRun,
+  parent: &'a crate::recording::SpanRef,
+  manifest: &'a SkillManifest,
+  dry_run: bool,
+  reporter: &'a dyn RecipeRunReporter,
+  variables: &'a mut BTreeMap<String, String>,
+  top_level_signal_exports: &'a mut BTreeSet<String>,
 }
 
 struct SkillStepRuntime<'a> {
@@ -818,9 +784,112 @@ struct SkillStepRuntime<'a> {
   step_span: &'a crate::recording::SpanRef,
   manifest: &'a SkillManifest,
   dry_run: bool,
-  quiet: bool,
+  reporter: &'a dyn RecipeRunReporter,
   variables: &'a mut BTreeMap<String, String>,
   top_level_signal_exports: &'a mut BTreeSet<String>,
+}
+
+fn report_recipe_started(
+  reporter: &dyn RecipeRunReporter,
+  manifest: &SkillManifest,
+  variables: &BTreeMap<String, String>,
+  active_max: DisturbanceClass,
+) {
+  reporter.recipe_started(RecipeStartedReport {
+    recipe_id: manifest.recipe_id.clone(),
+    version: manifest.version.clone(),
+    objective: manifest.objective.clone(),
+    target: render_template(&manifest.target_app.bundle_id, variables),
+    max_disturbance: active_max,
+  });
+}
+
+fn run_skill_step_recorded(
+  context: &mut SkillManifestRuntime<'_>,
+  step: &SkillStep,
+  index: usize,
+) -> AuvResult<()> {
+  let step_id = step_id(step, index);
+  let step_span = start_recipe_step_span(
+    context.run,
+    context.parent,
+    context.manifest,
+    &step_id,
+    index,
+  )?;
+  let step_result = {
+    let mut step_context = SkillStepRuntime {
+      runtime: context.runtime,
+      run: context.run,
+      step_span: &step_span,
+      manifest: context.manifest,
+      dry_run: context.dry_run,
+      reporter: context.reporter,
+      variables: context.variables,
+      top_level_signal_exports: context.top_level_signal_exports,
+    };
+    run_skill_step_into_span(&mut step_context, step, index, &step_id)
+  };
+
+  finish_recipe_step_span(context.run, &step_span, &step_id, step_result)
+}
+
+fn start_recipe_step_span(
+  run: &mut crate::recording::RecordingRun,
+  parent: &crate::recording::SpanRef,
+  manifest: &SkillManifest,
+  step_id: &str,
+  index: usize,
+) -> AuvResult<crate::recording::SpanRef> {
+  run.start_span(
+    parent,
+    span_record(
+      "auv.recipe.step",
+      BTreeMap::from([
+        ("auv.recipe.step_id".to_string(), string_attr(step_id)),
+        ("auv.step.id".to_string(), string_attr(step_id)),
+        ("auv.step.index".to_string(), serde_json::json!(index)),
+        ("auv.step.kind".to_string(), string_attr("recipe")),
+        (
+          "auv.recipe.id".to_string(),
+          string_attr(manifest.recipe_id.clone()),
+        ),
+      ]),
+    ),
+  )
+}
+
+fn finish_recipe_step_span(
+  run: &mut crate::recording::RecordingRun,
+  step_span: &crate::recording::SpanRef,
+  step_id: &str,
+  step_result: AuvResult<()>,
+) -> AuvResult<()> {
+  match step_result {
+    Ok(()) => run.finish_span(
+      step_span,
+      crate::recording::SpanFinish {
+        status_code: TraceStatusCode::Ok,
+        summary: Some(format!("Completed recipe step {step_id}")),
+        failure: None,
+      },
+    ),
+    Err(error) => {
+      if let Err(finish_error) = run.finish_span(
+        step_span,
+        crate::recording::SpanFinish {
+          status_code: TraceStatusCode::Error,
+          summary: Some(format!("Recipe step {step_id} failed")),
+          failure: Some(error.clone()),
+        },
+      ) {
+        return Err(format!(
+          "{error}; additionally failed to finish failed step span: {finish_error}"
+        ));
+      }
+      Err(error)
+    }
+  }
 }
 
 fn run_skill_step_into_span(
@@ -836,16 +905,16 @@ fn run_skill_step_into_span(
   } else {
     step.disturbance.classes.join(", ")
   };
-  if !context.quiet {
-    print_step_preview(
-      index + 1,
-      context.manifest.steps.len(),
-      step_id,
-      &request,
-      step_max,
-      &step_classes,
-    );
-  }
+  context.reporter.step_started(
+    step_id,
+    &request,
+    RecipeStepReport {
+      index,
+      total: context.manifest.steps.len(),
+      max_disturbance: step_max,
+      disturbance_classes: step_classes,
+    },
+  );
 
   if context.dry_run {
     return Ok(());
@@ -854,9 +923,7 @@ fn run_skill_step_into_span(
   let result = context
     .runtime
     .invoke_in_span(context.run, context.step_span, request)?;
-  if !context.quiet {
-    print_invoke_result(&result);
-  }
+  context.reporter.step_finished(step_id, &result);
   enforce_step_expectations(step_id, step, &result, context.variables)?;
   export_step_variables(
     step_id,
@@ -1098,43 +1165,6 @@ fn render_template(raw: &str, variables: &BTreeMap<String, String>) -> String {
   rendered
 }
 
-fn print_step_preview(
-  index: usize,
-  total: usize,
-  step_id: &str,
-  request: &InvokeRequest,
-  step_max: DisturbanceClass,
-  step_classes: &str,
-) {
-  let mut command = vec![
-    "auv-cli".to_string(),
-    "invoke".to_string(),
-    request.command_id.clone(),
-  ];
-  if let Some(target) = &request.target.application_id {
-    command.push("--target".to_string());
-    command.push(target.clone());
-  }
-  for (key, value) in &request.inputs {
-    command.push(format!("--{key}"));
-    command.push(value.clone());
-  }
-  println!(
-    "[{index}/{total}] {step_id} (disturbance max={}; classes={step_classes}) -> {}",
-    step_max.as_str(),
-    command.join(" ")
-  );
-}
-
-fn print_invoke_result(result: &InvokeResult) {
-  println!("runId: {}", result.run_id);
-  println!("status: {}", result.status.as_str());
-  println!("output: {}", result.output_summary);
-  for artifact in &result.artifact_paths {
-    println!("artifact: {}", artifact.display());
-  }
-}
-
 fn export_step_variables(
   step_id: &str,
   result: &InvokeResult,
@@ -1350,20 +1380,23 @@ mod tests {
 
   use super::case_matrix::run_skill_case_matrix_recorded;
   use super::{
-    SkillCaseMatrix, SkillCaseMatrixCatalog, SkillCatalog, SkillManifest, SkillRunOptions,
-    SkillRunSummary, SkillStep, build_inline_scan_hook_manifest, default_inputs,
-    enforce_step_expectations, export_step_variables, is_image_artifact, render_template,
-    render_value, run_skill_manifest_into_run, run_skill_manifest_recorded,
-    sanitize_lock_component, validate_case_matrix_against_skill, validate_case_matrix_manifest,
-    validate_skill_manifest, validate_skill_manifest_with_commands,
+    RecipeRunReporter, RecipeStartedReport, RecipeStepReport, SkillCaseMatrix,
+    SkillCaseMatrixCatalog, SkillCatalog, SkillManifest, SkillRecipe, SkillRecipeOrigin,
+    SkillRecipeRunner, SkillRunOptions, SkillRunSummary, SkillStep,
+    build_inline_scan_hook_manifest, default_inputs, enforce_step_expectations,
+    export_step_variables, is_image_artifact, render_template, render_value,
+    run_skill_manifest_into_run, run_skill_manifest_recorded, sanitize_lock_component,
+    validate_case_matrix_against_skill, validate_case_matrix_manifest, validate_skill_manifest,
+    validate_skill_manifest_with_commands,
   };
   use crate::catalog::{CommandCatalog, default_command_catalog};
   use crate::driver::{Driver, DriverRegistry};
   use crate::model::{
-    AuvResult, CommandSpec, DriverCall, DriverDescriptor, DriverResponse, InvokeResult, RunStatus,
-    now_millis,
+    AuvResult, CommandSpec, DriverCall, DriverDescriptor, DriverResponse, InvokeRequest,
+    InvokeResult, RunStatus, now_millis,
   };
   use crate::store::LocalStore;
+  use crate::trace::RunId;
 
   struct SkillSuccessDriver;
 
@@ -1409,6 +1442,55 @@ mod tests {
         notes: vec!["outcome=ok".to_string()],
         artifacts: vec![],
       })
+    }
+  }
+
+  #[derive(Clone, Default)]
+  struct CapturingRecipeRunReporter {
+    events: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+  }
+
+  impl CapturingRecipeRunReporter {
+    fn events(&self) -> Vec<String> {
+      self
+        .events
+        .lock()
+        .expect("events lock should not be poisoned")
+        .clone()
+    }
+  }
+
+  impl RecipeRunReporter for CapturingRecipeRunReporter {
+    fn recipe_started(&self, event: RecipeStartedReport) {
+      self
+        .events
+        .lock()
+        .expect("events lock should not be poisoned")
+        .push(format!("recipe_started:{}", event.recipe_id));
+    }
+
+    fn step_started(&self, step_id: &str, _request: &InvokeRequest, _step: RecipeStepReport) {
+      self
+        .events
+        .lock()
+        .expect("events lock should not be poisoned")
+        .push(format!("step_started:{step_id}"));
+    }
+
+    fn step_finished(&self, step_id: &str, _result: &InvokeResult) {
+      self
+        .events
+        .lock()
+        .expect("events lock should not be poisoned")
+        .push(format!("step_finished:{step_id}"));
+    }
+
+    fn recipe_finished(&self, recipe_id: &str, _run_id: &RunId) {
+      self
+        .events
+        .lock()
+        .expect("events lock should not be poisoned")
+        .push(format!("recipe_finished:{recipe_id}"));
     }
   }
 
@@ -1709,8 +1791,7 @@ mod tests {
     assert!(
       summary
         .exported_variables
-        .get("last.scan.hook.decision")
-        .is_some()
+        .contains_key("last.scan.hook.decision")
     );
     assert_eq!(
       summary.exported_variables.get("query"),
@@ -1733,8 +1814,7 @@ mod tests {
     assert!(
       summary
         .exported_variables
-        .get("step_first_signal_last_scan_hook_decision")
-        .is_some()
+        .contains_key("step_first_signal_last_scan_hook_decision")
     );
 
     let _ = runtime.finish_run(
@@ -1899,6 +1979,137 @@ mod tests {
     .expect_err("missing signal should fail");
 
     assert!(error.contains("ax.node_found"));
+  }
+
+  #[test]
+  fn failed_recipe_step_finishes_step_span_with_error() {
+    let project_root = temp_dir("failed-step-project");
+    let store_root = temp_dir("failed-step-store");
+    let runtime = skill_test_runtime(project_root.clone(), store_root.clone());
+    let mut manifest = two_step_manifest();
+    manifest.steps[0].expect.output_must_contain = vec!["missing-marker".to_string()];
+    let mut run = runtime
+      .start_run(crate::recording::RunSpec::new(
+        crate::trace::RunType::Execute,
+        "auv.execute",
+      ))
+      .expect("run should start");
+    let root = run.root_span();
+
+    let error = run_skill_manifest_into_run(
+      &runtime,
+      &mut run,
+      &root,
+      &manifest,
+      SkillRunOptions {
+        dry_run: false,
+        max_disturbance: None,
+        overrides: BTreeMap::new(),
+        quiet: true,
+      },
+    )
+    .expect_err("missing marker should fail the step");
+
+    assert!(error.contains("missing-marker"));
+    let run_id = runtime
+      .finish_run(
+        run,
+        crate::recording::RunFinish {
+          status_code: crate::trace::TraceStatusCode::Error,
+          summary: Some("test failed as expected".to_string()),
+          failure: Some(error),
+        },
+      )
+      .expect("run should finish");
+    let canonical = runtime.read_run(run_id.as_str()).expect("run should read");
+    let step_span = canonical
+      .spans
+      .iter()
+      .find(|span| span.name == "auv.recipe.step")
+      .expect("step span should exist");
+    assert_eq!(step_span.status_code, crate::trace::TraceStatusCode::Error);
+    assert!(step_span.failure.is_some());
+
+    let _ = fs::remove_dir_all(project_root);
+    let _ = fs::remove_dir_all(store_root);
+  }
+
+  #[test]
+  fn skill_recipe_runs_with_runner_from_any_manifest_source() {
+    let project_root = temp_dir("recipe-object-project");
+    let store_root = temp_dir("recipe-object-store");
+    let runtime = skill_test_runtime(project_root.clone(), store_root.clone());
+    let recipe = SkillRecipe::from_manifest(two_step_manifest(), SkillRecipeOrigin::Inline);
+
+    let run_id = recipe
+      .run_with(
+        &SkillRecipeRunner::new(&runtime),
+        SkillRunOptions {
+          dry_run: false,
+          max_disturbance: None,
+          overrides: BTreeMap::new(),
+          quiet: true,
+        },
+      )
+      .expect("recipe object should run");
+
+    let canonical = runtime.read_run(run_id.as_str()).expect("run should read");
+    assert_eq!(
+      canonical.run.attributes.get("auv.recipe.id"),
+      Some(&json!("test.recorded.skill"))
+    );
+
+    let _ = fs::remove_dir_all(project_root);
+    let _ = fs::remove_dir_all(store_root);
+  }
+
+  #[test]
+  fn skill_recipe_runner_reports_recipe_lifecycle_and_records_trace() {
+    let project_root = temp_dir("runner-skill-project");
+    let store_root = temp_dir("runner-skill-store");
+    let runtime = skill_test_runtime(project_root.clone(), store_root.clone());
+    let manifest = two_step_manifest();
+    let reporter = CapturingRecipeRunReporter::default();
+
+    let run_id = SkillRecipeRunner::new(&runtime)
+      .with_reporter(Box::new(reporter.clone()))
+      .run_manifest(
+        &manifest,
+        SkillRunOptions {
+          dry_run: false,
+          max_disturbance: None,
+          overrides: BTreeMap::new(),
+          quiet: true,
+        },
+      )
+      .expect("runner should execute recipe");
+
+    assert_eq!(
+      reporter.events(),
+      vec![
+        "recipe_started:test.recorded.skill",
+        "step_started:first",
+        "step_finished:first",
+        "step_started:second",
+        "step_finished:second",
+        "recipe_finished:test.recorded.skill",
+      ]
+    );
+
+    let canonical = runtime.read_run(run_id.as_str()).expect("run should read");
+    assert_eq!(canonical.run.run_type, crate::trace::RunType::Execute);
+    assert_eq!(canonical.spans[0].name, "auv.execute");
+    assert_eq!(
+      canonical
+        .spans
+        .iter()
+        .filter(|span| span.name == "auv.recipe.step")
+        .count(),
+      2
+    );
+
+    let _ = fs::remove_dir_all(project_root);
+    let _ = fs::remove_dir_all(store_root);
   }
 
   #[test]

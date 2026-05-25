@@ -14,12 +14,54 @@ A trace is the unit that inspection tools load as a whole. It should contain
 enough structure to reconstruct what AUV attempted, what happened, what state
 was observed, and which captured materials support that account.
 
+## Device
+
+A device is the controllable/observable computer target a run executes
+against. Examples include the local macOS host, a remote macOS host, a macOS
+or Windows VM, a container desktop, and future browser-like sandboxes.
+
+Every run carries a `device_id`. When callers do not specify one, the runtime
+uses the default device id `local`. The id is recorded on each run's
+attributes under `auv.device.id` and is threaded into every `DriverRunContext`
+so drivers, evidence artifacts, and future RPC frontends can route correctly
+once remote devices land.
+
+The current AUV release only executes on the local macOS host. Remote, VM,
+and container devices are a planned protocol direction; they are not
+implemented yet.
+
+## Session
+
+A session is the automation context on a device. It groups target app/window
+defaults, observation cache, run recording state, and per-session
+permission/capability profile.
+
+Every run carries a `session_id`. When callers do not specify one, the
+runtime uses the default session id `default`. The id is recorded on each
+run's attributes under `auv.session.id` and is threaded into every
+`DriverRunContext`. The id exists so future RPC/JS-SDK/REPL frontends can
+scope cache, namespaces, and action locks per session without changing the
+recording contract again.
+
+Today there is one implicit session per CLI invocation. Multi-session
+semantics, session-scoped artifact namespaces, and device-level action locks
+are planned, not implemented.
+
 ## Run
 
 A run is the user-visible top-level record for a trace. The `run_id` is the
 stable handle used by CLI commands, storage paths, and viewer APIs.
 
-For local storage, a run is expected to live under `.auv/runs/{run_id}/`.
+A run is scoped to one `device_id` and one `session_id`. Both identifiers are
+recorded on the run's attributes (`auv.device.id`, `auv.session.id`) so
+historical runs remain self-describing once multi-device and multi-session
+land. Runs from different devices or sessions never share local state.
+
+For local storage, a run is expected to live under `.auv/runs/{run_id}/`. The
+on-disk layout is independent of device/session — those are run-record
+attributes, not path components — so existing run directories remain readable
+across the protocol skeleton expansion.
+
 Internally, a run may also carry an OpenTelemetry-compatible trace identifier so
 the recorded data can later be exported to OTLP without treating the human
 readable `run_id` as the telemetry trace id.

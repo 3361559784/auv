@@ -1,3 +1,13 @@
+//! Skill (recipe) loading, validation, and execution.
+//!
+//! A skill manifest is a declarative recipe: inputs + ordered steps (commands)
+//! with disturbance budgets and verification expectations. This module validates
+//! manifests/case matrices, then executes them by calling into `Runtime` while
+//! recording a structured run tree.
+//!
+//! Boundary: skills orchestrate commands; they do not implement platform UI
+//! automation (drivers do), and they are not a high-level planner.
+
 mod case_matrix;
 mod validate;
 

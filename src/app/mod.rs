@@ -1,3 +1,13 @@
+//! App-centric workflows: probe → analyze → distill → validate.
+//!
+//! This module is a tooling pipeline that turns observed runs/artifacts into:
+//! (1) an app probe snapshot, (2) analysis reports, (3) distilled candidate
+//! shapes and recipe scaffolding, and (4) validation runs against case matrices.
+//!
+//! Boundary: this is not the core `Runtime` executor and does not implement
+//! macOS automation primitives (drivers do). It exists to make the "how do we
+//! author/refresh recipes" path inspectable and reproducible.
+
 mod analysis;
 mod infra;
 mod recipe;

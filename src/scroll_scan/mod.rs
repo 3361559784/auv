@@ -1,3 +1,14 @@
+//! Scroll-scan orchestration for window/region list-like content.
+//!
+//! `scroll_scan` produces *bounded observation evidence* (pages, row-like
+//! observations, stop reasons, and corroborating artifacts). It is not a proof
+//! of full UI coverage: completeness is inferred heuristically (overlap across
+//! adjacent pages + screenshot stability), and callers must treat outputs as
+//! inspectable evidence rather than a guarantee.
+//!
+//! This module owns the scan loop + artifact shaping. Low-level capture/OCR/AX
+//! and action semantics live in drivers + commands.
+
 mod observation;
 
 use observation::{

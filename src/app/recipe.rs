@@ -1,3 +1,9 @@
+//! Recipe scaffolding renderers.
+//!
+//! Renders starter recipe manifests + case matrices from `AppAnalysis` and
+//! distilled candidate shapes. The output is intended as human-reviewable
+//! scaffolding (not a guaranteed correct automation plan).
+
 use serde_json::{Value, json};
 
 use crate::model::AuvResult;

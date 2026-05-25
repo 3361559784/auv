@@ -1,3 +1,12 @@
+//! macOS observation + verification helpers.
+//!
+//! This module is part of the `macos.desktop` driver implementation. It shapes
+//! signals/notes and builds artifacts for observation-style operations
+//! (OCR/row detection, AX snapshot probing, simple verification reads).
+//!
+//! Boundary: these are evidence-producing primitives and heuristics, not a
+//! generic UI model. Higher-level meaning lives in recipes and typed consumers.
+
 use std::fs;
 use std::path::PathBuf;
 use std::thread;

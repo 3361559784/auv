@@ -1,3 +1,13 @@
+//! App probe analysis.
+//!
+//! Turns a collected `AppProbe` (probe runs + artifacts) into a structured
+//! `AppAnalysis`: capability/permission assessments, surface candidates,
+//! strategy recommendations, and explicit "known boundaries" when probe data is
+//! partial.
+//!
+//! Boundary: analysis is inference + reporting over evidence; it does not run
+//! automation itself (drivers/runtime do).
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};

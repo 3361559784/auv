@@ -1,3 +1,13 @@
+//! Typed consumer operations for the macOS music demo workflow.
+//!
+//! This file implements end-to-end commands that *produce* typed candidates
+//! (`music.search.results` -> `OperationResult`) and *consume* them
+//! (`music.result.play` -> `VerificationResult`) with explicit liveness
+//! re-checks.
+//!
+//! Boundary: this is intentionally workflow/app-scoped; it is not a generic
+//! cross-app "music automation" layer.
+
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader};
 

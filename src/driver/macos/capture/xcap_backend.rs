@@ -1,3 +1,12 @@
+//! xcap-based screen/window capture backend.
+//!
+//! This module interfaces with `xcap` to list displays/windows and capture
+//! screenshots, while producing AUV's normalized coordinate contracts
+//! (logical/pixel transforms and capture-source descriptors).
+//!
+//! Boundary: this is about coordinate correctness + capture provenance, not UI
+//! interpretation (OCR/AX) or action semantics.
+
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::path::PathBuf;

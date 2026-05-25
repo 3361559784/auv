@@ -1,3 +1,12 @@
+//! Run update delivery backends.
+//!
+//! This module defines `RunUpdate` plus the `RunRecorder` abstraction used to
+//! stream run/span/event/artifact updates to different sinks (in-memory,
+//! broadcast, inspect-server HTTP write, composite fan-out, etc.).
+//!
+//! Boundary: recorders deliver/replicate trace data; they do not execute
+//! commands or interpret automation semantics.
+
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};

@@ -1,3 +1,13 @@
+//! Built-in command catalog.
+//!
+//! The catalog is the *registry* of command IDs -> driver operations, including
+//! disturbance gates (`DisturbanceClass`) used by skill planning/validation.
+//! It does not execute anything: execution lives in `runtime` + drivers.
+//!
+//! Note: some entries (e.g. `music.search.results` -> `music.result.play`) are
+//! intentionally "typed consumer" paths that demonstrate consuming
+//! `OperationResult`/`CandidateRef` evidence instead of only dumping artifacts.
+
 use crate::model::{CommandSpec, DisturbanceClass};
 
 const NONE: &[DisturbanceClass] = &[DisturbanceClass::None];

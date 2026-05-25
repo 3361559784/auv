@@ -1,3 +1,13 @@
+//! Shared observation + verification contracts used across AUV.
+//!
+//! This module defines typed evidence objects (e.g. `RecognitionResult`,
+//! `CandidateRef`, `SurfaceNode`, `NodeRef`, `VerificationResult`) that can be
+//! persisted as artifacts and consumed by higher-level recipes.
+//!
+//! Intentionally data-only: these structs describe what was observed or
+//! verified, but do not execute actions. A `NodeRef` existing here does *not*
+//! mean AUV has a generic node-aware action runtime.
+
 use serde::{Deserialize, Serialize};
 
 use crate::trace::{ArtifactId, EventId, RunId, SpanId};

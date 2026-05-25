@@ -1,3 +1,13 @@
+//! Runtime execution engine.
+//!
+//! `Runtime` is the shared core used by CLI and other frontends: it resolves
+//! command IDs via the catalog, invokes drivers, and records runs/spans/events
+//! plus staged artifacts into the store.
+//!
+//! Boundary: this layer executes *given* requests. It is not a planner/LLM
+//! agent, and it does not choose strategies beyond what the request/cmd
+//! specifies.
+
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 

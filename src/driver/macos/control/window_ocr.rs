@@ -1,3 +1,12 @@
+//! Window-scoped OCR observation + click primitives.
+//!
+//! Implements commands that capture a resolved window, run Vision OCR (text or
+//! row detection), and optionally click resolved anchors/rows in projected
+//! logical coordinates.
+//!
+//! Boundary: OCR anchors are heuristic evidence in pixel space; callers should
+//! pair with verification/liveness checks when using the results for actions.
+
 use std::fs;
 use std::thread;
 use std::time::{Duration, Instant};

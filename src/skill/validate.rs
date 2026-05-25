@@ -1,3 +1,12 @@
+//! Skill manifest + case matrix validation.
+//!
+//! Performs static checks over skill recipes: identity/target, strategy taxonomy
+//! parsing, declared inputs, step references to the command catalog, disturbance
+//! budgets, and verification expectations.
+//!
+//! Also synthesizes inline scroll-scan hook manifests (sub-recipes) so they can
+//! be validated/executed using the same machinery.
+
 use std::collections::BTreeMap;
 
 use serde_json::Value;

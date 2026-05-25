@@ -1,3 +1,12 @@
+//! Versioned trace record contracts.
+//!
+//! Defines the stable, serializable data model for run/span/event/artifact
+//! records (`v1alpha1`) and their IDs. The shape is intentionally close to
+//! OpenTelemetry concepts so runs can be inspected and replayed consistently.
+//!
+//! Boundary: this is a contract/data module — it does not perform persistence
+//! (`store`) or execution (`runtime`).
+
 use std::collections::BTreeMap;
 use std::process;
 use std::sync::atomic::{AtomicU64, Ordering};

@@ -1,3 +1,12 @@
+//! In-process run recording (canonical snapshot builder).
+//!
+//! `RecordingRun` constructs an in-memory `CanonicalRun` (run + spans + events
+//! + artifacts) while also emitting `RunUpdate` notifications to a configured
+//! `RunRecorder` (for live inspection or tests).
+//!
+//! Boundary: this module does not persist snapshots (`store` does) and does not
+//! execute commands (`runtime` + drivers do).
+
 use std::collections::BTreeMap;
 use std::sync::Arc;
 

@@ -1,3 +1,12 @@
+//! Bundle export (package builder).
+//!
+//! Exports a `bundles/*.json` manifest into a self-contained package directory
+//! containing member recipes, case matrices, coverage reports, and referenced
+//! evidence artifacts.
+//!
+//! Boundary: export is packaging + validation over existing manifests/evidence;
+//! it does not execute automation.
+
 use std::fs;
 use std::path::{Path, PathBuf};
 

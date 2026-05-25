@@ -1,3 +1,12 @@
+//! Experimental visual-only overlay cursor support.
+//!
+//! Overlay operations render an AUV cursor (and variants) for preview/replay
+//! evidence while actions run. They are debug/inspection tooling and do not
+//! change the underlying automation semantics.
+//!
+//! Boundary: overlays are in-process and best-effort; do not assume cross-run
+//! or cross-process persistence.
+
 use std::collections::BTreeMap;
 
 use serde::Deserialize;

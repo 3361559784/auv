@@ -1,3 +1,12 @@
+//! AX-tree driven actions for the macOS driver.
+//!
+//! Implements action commands that locate targets via an observed AX snapshot
+//! and then interact via pointer clicks or AX actions (with optional overlay
+//! evidence).
+//!
+//! Boundary: this is "query AX -> act now" glue. It does not introduce a
+//! generic retained UI node runtime; any references are re-resolved per action.
+
 use super::super::overlay::with_overlay_cursor;
 use super::super::*;
 use super::common::{

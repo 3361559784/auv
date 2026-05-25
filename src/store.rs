@@ -1,3 +1,12 @@
+//! Local run store (canonical snapshots + artifact files).
+//!
+//! The store persists a run as `run.json` plus `spans.jsonl`, `events.jsonl`,
+//! and `artifacts.jsonl` under `runs/<run_id>/`, and manages the associated
+//! `artifacts/` directory.
+//!
+//! Boundary: storage only. Viewer/server code lives in `inspect_server`, and
+//! execution/orchestration lives in `runtime`/`recording`.
+
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};

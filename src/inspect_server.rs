@@ -1,3 +1,13 @@
+//! HTTP/WebSocket inspection server for recorded runs.
+//!
+//! The inspect server serves a single-page HTML viewer plus JSON endpoints for
+//! runs/spans/events/artifacts, and a WebSocket stream for live updates.
+//! Optionally it can accept *write* updates/artifacts (guarded by config/token)
+//! to support remote run recording.
+//!
+//! Boundary: this is a viewer-facing storage API. It does not execute commands
+//! or perform UI automation; those live in `runtime`, drivers, and recipes.
+
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;

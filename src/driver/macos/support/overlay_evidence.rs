@@ -1,3 +1,12 @@
+//! Overlay evidence rendering.
+//!
+//! Builds "what happened" PNG + JSON annotation artifacts by compositing
+//! cursors, target boxes (OCR/row/AX), and decision panels on top of captured
+//! screenshots.
+//!
+//! Boundary: this module renders evidence only; capture lives in `capture::*`
+//! and control logic lives in `control::*`.
+
 use std::fs;
 
 use image::{Rgba, RgbaImage};

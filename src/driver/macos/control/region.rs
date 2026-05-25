@@ -1,3 +1,12 @@
+//! Region-scoped observation primitives for the macOS driver.
+//!
+//! Implements operations like `debug.observeWindowRegion`: capture a resolved
+//! window, constrain an OCR region, detect row-like candidates, and emit
+//! machine-readable artifacts (legacy rows JSON + `RecognitionResult`).
+//!
+//! Boundary: produces observation evidence; it does not imply generic list
+//! understanding or a complete segmentation/scroll model.
+
 use std::collections::BTreeMap;
 
 use super::super::*;

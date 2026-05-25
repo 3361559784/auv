@@ -1,3 +1,9 @@
+//! Human-readable run inspection helpers.
+//!
+//! This module renders stored run snapshots (`CanonicalRun`) into a simple text
+//! form (useful for CLI/debug output). It does not provide a live viewer or any
+//! runtime execution logic; see `inspect_server` for the HTTP/WebSocket UI.
+
 use crate::store::CanonicalRun;
 
 pub fn render_text(run: &CanonicalRun) -> String {

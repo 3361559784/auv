@@ -1,3 +1,8 @@
+//! Bundle export renderers.
+//!
+//! Pure rendering helpers for bundle export: JSON manifests plus human-readable
+//! summaries and coverage reports.
+
 use std::path::Path;
 
 use crate::skill::{SkillCaseMatrixCatalog, SkillCatalog, SkillStrategy};

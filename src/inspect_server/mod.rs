@@ -32,7 +32,7 @@ use tokio::sync::broadcast;
 use tokio::sync::{Mutex, OwnedMutexGuard};
 
 use crate::model::AuvResult;
-use crate::recording::{ApiRunUpdate, BroadcastRunRecorder, RunRecorder, RunUpdate};
+use crate::recording::{BroadcastRunRecorder, RunRecorder, RunUpdate, WireUpdate};
 use crate::store::{CanonicalRun, LocalStore};
 use crate::trace::{RunId, TraceState};
 
@@ -383,7 +383,7 @@ async fn stream_run(
 #[derive(Debug, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct WriteUpdatesRequest {
-  updates: Vec<ApiRunUpdate>,
+  updates: Vec<WireUpdate>,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -421,7 +421,7 @@ async fn write_updates(
   let updates = request
     .updates
     .into_iter()
-    .map(RunUpdate::from)
+    .map(|wire| wire.0)
     .collect::<Vec<_>>();
 
   for update in &updates {
@@ -723,7 +723,7 @@ async fn next_stream_payload(
   loop {
     match receiver.recv().await {
       Ok(update) if update.run_id().as_str() == run_id => {
-        match serde_json::to_string(&RunStreamEvent::from(update)) {
+        match serde_json::to_string(&update) {
           Ok(payload) => return Some(payload),
           Err(_) => continue,
         }
@@ -731,66 +731,6 @@ async fn next_stream_payload(
       Ok(_) => {}
       Err(broadcast::error::RecvError::Lagged(_)) => {}
       Err(broadcast::error::RecvError::Closed) => return None,
-    }
-  }
-}
-
-#[derive(Debug, serde::Serialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-enum RunStreamEvent {
-  RunStarted {
-    run_id: RunId,
-    run: crate::recording::ApiRunRecord,
-  },
-  SpanStarted {
-    run_id: RunId,
-    span: crate::recording::ApiSpanRecord,
-  },
-  EventAppended {
-    run_id: RunId,
-    event: crate::recording::ApiEventRecord,
-  },
-  ArtifactCreated {
-    run_id: RunId,
-    artifact: crate::recording::ApiArtifactRecord,
-  },
-  SpanFinished {
-    run_id: RunId,
-    span: crate::recording::ApiSpanRecord,
-  },
-  RunFinished {
-    run_id: RunId,
-    run: crate::recording::ApiRunRecord,
-  },
-}
-
-impl From<RunUpdate> for RunStreamEvent {
-  fn from(update: RunUpdate) -> Self {
-    match update {
-      RunUpdate::RunStarted { run_id, run } => Self::RunStarted {
-        run_id,
-        run: run.into(),
-      },
-      RunUpdate::SpanStarted { run_id, span } => Self::SpanStarted {
-        run_id,
-        span: span.into(),
-      },
-      RunUpdate::EventAppended { run_id, event } => Self::EventAppended {
-        run_id,
-        event: event.into(),
-      },
-      RunUpdate::ArtifactCreated { run_id, artifact } => Self::ArtifactCreated {
-        run_id,
-        artifact: artifact.into(),
-      },
-      RunUpdate::SpanFinished { run_id, span } => Self::SpanFinished {
-        run_id,
-        span: span.into(),
-      },
-      RunUpdate::RunFinished { run_id, run } => Self::RunFinished {
-        run_id,
-        run: run.into(),
-      },
     }
   }
 }
@@ -1350,11 +1290,11 @@ mod tests {
     run["state"] = serde_json::Value::from("ended");
     run["statusCode"] = serde_json::Value::from("ok");
     run["finishedAtMillis"] = serde_json::Value::from(200);
+    let mut canonical_run = run.clone();
+    crate::recording::wire::camel_case_keys_to_snake(&mut canonical_run);
     store
       .write_run_snapshot(&CanonicalRun {
-        run: serde_json::from_value::<crate::recording::ApiRunRecord>(run.clone())
-          .expect("api run should decode")
-          .into(),
+        run: serde_json::from_value(canonical_run).expect("run record should decode"),
         spans: Vec::new(),
         events: Vec::new(),
         artifacts: Vec::new(),

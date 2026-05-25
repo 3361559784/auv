@@ -3,7 +3,9 @@
 //! This module owns the data + machinery for streaming run/span/event/artifact
 //! updates from runtime to recording sinks:
 //!
-//! - [`update`]: `RunUpdate` event enum + camelCase HTTP wire shapes.
+//! - [`update`]: `RunUpdate` event enum (canonical snake_case serialization).
+//! - [`wire`]: `WireUpdate` newtype that re-serializes `RunUpdate` as camelCase
+//!   for the inspect server HTTP write API.
 //! - [`recorder`]: `RunRecorder` trait and concrete backends (Noop, Memory,
 //!   Broadcast, Composite, InspectServer HTTP).
 //! - [`backend`]: `RunRecordingBackend` façade combining one store with one
@@ -16,12 +18,12 @@
 pub mod backend;
 pub mod recorder;
 pub mod update;
+pub mod wire;
 
 pub use backend::RunRecordingBackend;
 pub use recorder::{
   BroadcastRunRecorder, CompositeRunRecorder, InspectServerRunRecorder, MemoryRunRecorder,
   NoopRunRecorder, RunRecorder,
 };
-pub use update::{
-  ApiArtifactRecord, ApiEventRecord, ApiRunRecord, ApiRunUpdate, ApiSpanRecord, RunUpdate,
-};
+pub use update::RunUpdate;
+pub use wire::WireUpdate;

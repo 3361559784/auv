@@ -13,7 +13,8 @@ use tokio::sync::broadcast;
 use crate::model::AuvResult;
 use crate::trace::{ArtifactRecordV1Alpha1, RunId};
 
-use super::update::{ApiRunUpdate, RunUpdate};
+use super::update::RunUpdate;
+use super::wire::WireUpdate;
 
 const INSPECT_SERVER_WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -133,7 +134,7 @@ impl RunRecorder for InspectServerRunRecorder {
     let base_url = self.base_url.clone();
     let token = self.token.clone();
     let run_id = update.run_id().as_str().to_string();
-    let api_update = ApiRunUpdate::from(update);
+    let api_update = WireUpdate(update);
     let result = std::thread::spawn(move || {
       let url = format!("{base_url}/write/runs/{run_id}/updates");
       let client = reqwest::blocking::Client::builder()

@@ -2,10 +2,14 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::contract::{RecognitionResult, RecognitionSource, RecognitionSurface, RecognizedItem};
+use crate::contract::{
+  NodeRef, RecognitionBox, RecognitionResult, RecognitionSource, RecognitionSurface,
+  RecognizedItem, SurfaceNode,
+};
 use crate::model::{
   AuvResult, DisturbanceClass, ExecutionTarget, InvokeRequest, InvokeResult, RunStatus,
 };
+use crate::trace::{RunId, SpanId};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -257,6 +261,8 @@ pub struct ScrollScanArtifact {
   pub stop_policy: StopPolicy,
   pub pages: Vec<ScanPageRecord>,
   pub observations: Vec<CollectionObservation>,
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub nodes: Vec<SurfaceNode>,
   pub clusters: Vec<ObservationCluster>,
   pub section_candidates: Vec<SectionCandidate>,
   pub scroll_boundary_candidates: Vec<ScrollBoundaryCandidate>,
@@ -510,6 +516,8 @@ fn scan_window_region_into_run(
       .push("scan ended with an error; artifact is partial".to_string());
   }
   let artifact = state.into_artifact(
+    run.id(),
+    root.id(),
     run.id().to_string(),
     options.target,
     options.stop_policy,
@@ -619,18 +627,22 @@ struct PageScanOutcome {
 impl ScanWindowRegionState {
   fn into_artifact(
     self,
+    run_id: &RunId,
+    span_id: &SpanId,
     scan_id: String,
     target: ScanTarget,
     stop_policy: StopPolicy,
     final_decision: StopDecision,
   ) -> ScrollScanArtifact {
     let clusters = conservative_merge_observations(&self.observations);
+    let nodes = surface_nodes_from_observations(run_id, span_id, &self.observations);
     ScrollScanArtifact {
       scan_id,
       target,
       stop_policy,
       pages: self.pages,
       observations: self.observations,
+      nodes,
       clusters,
       section_candidates: Vec::new(),
       scroll_boundary_candidates: self.scroll_boundary_candidates,
@@ -1365,6 +1377,107 @@ fn observation_attributes_from_recognized_item(
     }
   }
   attributes
+}
+
+fn surface_nodes_from_observations(
+  run_id: &RunId,
+  span_id: &SpanId,
+  observations: &[CollectionObservation],
+) -> Vec<SurfaceNode> {
+  observations
+    .iter()
+    .map(|observation| surface_node_from_observation(run_id, span_id, observation))
+    .collect()
+}
+
+fn surface_node_from_observation(
+  run_id: &RunId,
+  span_id: &SpanId,
+  observation: &CollectionObservation,
+) -> SurfaceNode {
+  let source_artifacts = observation
+    .source_artifacts
+    .iter()
+    .map(|path| path.display().to_string())
+    .collect::<Vec<_>>();
+  let recognition_id = observation.attributes.get("recognition_id").cloned();
+  let recognition_source = observation
+    .attributes
+    .get("recognition_source")
+    .and_then(|value| parse_recognition_source_name(value));
+  let recognition_surface = observation
+    .attributes
+    .get("recognition_surface")
+    .and_then(|value| parse_recognition_surface_name(value));
+  let recognized_item_id = observation.attributes.get("recognized_item_id").cloned();
+  let recognized_item_kind = observation.attributes.get("recognized_item_kind").cloned();
+  let provider_score = observation
+    .attributes
+    .get("provider_score")
+    .and_then(|value| value.parse::<f64>().ok());
+  let kind = recognized_item_kind
+    .clone()
+    .or_else(|| observation.attributes.get("segmented_region_role").cloned())
+    .or_else(|| observation.attributes.get("source").cloned())
+    .unwrap_or_else(|| "observation".to_string());
+  let label = if observation.raw_text.trim().is_empty() {
+    None
+  } else {
+    Some(observation.raw_text.clone())
+  };
+
+  SurfaceNode {
+    node_ref: NodeRef {
+      run_id: run_id.clone(),
+      span_id: span_id.clone(),
+      node_id: observation.observation_id.clone(),
+    },
+    kind,
+    label,
+    box_: RecognitionBox {
+      x: observation.bounds.x,
+      y: observation.bounds.y,
+      width: observation.bounds.width,
+      height: observation.bounds.height,
+    },
+    source_artifacts: source_artifacts.clone(),
+    recognition_id,
+    recognition_source,
+    recognition_surface,
+    recognized_item_id,
+    recognized_item_kind,
+    provider_score,
+    detail: serde_json::json!({
+      "observation_id": observation.observation_id.clone(),
+      "page_index": observation.page_index,
+      "normalized_text_key": observation.normalized_text_key.clone(),
+      "section_context": observation.section_context.clone(),
+      "source_artifacts": source_artifacts,
+      "attributes": observation.attributes.clone(),
+    }),
+  }
+}
+
+fn parse_recognition_source_name(value: &str) -> Option<RecognitionSource> {
+  match value {
+    "ocr_text" => Some(RecognitionSource::OcrText),
+    "ocr_row" => Some(RecognitionSource::OcrRow),
+    "visual_row" => Some(RecognitionSource::VisualRow),
+    "segmented_region" => Some(RecognitionSource::SegmentedRegion),
+    "icon_match" => Some(RecognitionSource::IconMatch),
+    "custom" => Some(RecognitionSource::Custom),
+    _ => None,
+  }
+}
+
+fn parse_recognition_surface_name(value: &str) -> Option<RecognitionSurface> {
+  match value {
+    "screen" => Some(RecognitionSurface::Screen),
+    "display" => Some(RecognitionSurface::Display),
+    "window" => Some(RecognitionSurface::Window),
+    "region" => Some(RecognitionSurface::Region),
+    _ => None,
+  }
 }
 
 fn recognized_item_text(item: &RecognizedItem) -> String {
@@ -2399,6 +2512,7 @@ mod tests {
         source_artifacts: vec![PathBuf::from("artifacts/page.png")],
         attributes: BTreeMap::new(),
       }],
+      nodes: Vec::new(),
       clusters: vec![ObservationCluster {
         cluster_id: "cluster_0001".to_string(),
         observation_ids: vec!["obs_0001".to_string()],
@@ -3252,6 +3366,11 @@ mod tests {
 
     let observations = observations_from_observe_json(0, raw, PathBuf::from("artifacts/page.png"))
       .expect("parse recognition observations");
+    let nodes = surface_nodes_from_observations(
+      &RunId::new("run_scan"),
+      &SpanId::new("span_scan"),
+      &observations,
+    );
 
     let artifact = ScrollScanArtifact {
       scan_id: "scan_test".to_string(),
@@ -3278,6 +3397,7 @@ mod tests {
         summary: "observed recognition rows".to_string(),
       }],
       observations,
+      nodes,
       clusters: vec![],
       section_candidates: Vec::new(),
       scroll_boundary_candidates: Vec::new(),
@@ -3298,6 +3418,10 @@ mod tests {
     assert!(rendered.contains("\"provider_score\": \"0.84\""));
     assert!(rendered.contains("\"provider_score\": \"0.31\""));
     assert!(rendered.contains("\"recognition_source\": \"visual_row\""));
+    assert!(rendered.contains("\"nodes\": ["));
+    assert!(rendered.contains("\"node_id\": \"obs_0001_0001\""));
+    assert!(rendered.contains("\"node_id\": \"obs_0001_0002\""));
+    assert!(rendered.contains("\"provider_score\": 0.84"));
     assert!(rendered.contains("\"source_artifacts\": ["));
     assert!(rendered.contains("artifacts/page.png"));
   }

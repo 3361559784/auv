@@ -151,6 +151,23 @@ candidates. OCR rows, visual row bands, segmented regions, icon matches, and
 future detector outputs should be able to project into this shape before an
 action consumes them.
 
+## Surface Node
+
+A surface node is a provisional structured projection of an observation or
+recognition item. It carries a stable node ref, kind, label, geometry, and
+provenance so later actions can refer to a node instead of raw coordinates.
+
+Surface nodes sit between recognition results and later node-aware actions.
+They are inspectable records, not app-specific semantic objects.
+
+## Node Ref
+
+A node ref is the stable handle for a surface node inside a run. It is the
+intended input shape for later node-aware actions and verifiers.
+
+Node refs are provisional and may gain more provenance fields later, but they
+should always identify one surface node unambiguously within the recorded run.
+
 ## Anchor
 
 An anchor is a visible or native UI signal used to locate another observation or

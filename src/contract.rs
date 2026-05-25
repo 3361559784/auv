@@ -65,6 +65,30 @@ pub struct RecognitionResult {
   pub known_limits: Vec<String>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NodeRef {
+  pub run_id: RunId,
+  pub span_id: SpanId,
+  pub node_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SurfaceNode {
+  pub node_ref: NodeRef,
+  pub kind: String,
+  pub label: Option<String>,
+  #[serde(rename = "box")]
+  pub box_: RecognitionBox,
+  pub source_artifacts: Vec<String>,
+  pub recognition_id: Option<String>,
+  pub recognition_source: Option<RecognitionSource>,
+  pub recognition_surface: Option<RecognitionSurface>,
+  pub recognized_item_id: Option<String>,
+  pub recognized_item_kind: Option<String>,
+  pub provider_score: Option<f64>,
+  pub detail: serde_json::Value,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RecognizedItem {
   pub item_id: String,
@@ -515,6 +539,66 @@ mod tests {
     let parsed: RecognitionResult =
       serde_json::from_value(value).expect("empty recognition result should deserialize");
     assert_eq!(parsed, result);
+  }
+
+  #[test]
+  fn node_ref_round_trips_as_stable_scan_handle() {
+    let reference = NodeRef {
+      run_id: RunId::new("run_scan"),
+      span_id: SpanId::new("span_scan"),
+      node_id: "obs_0001_0001".to_string(),
+    };
+
+    let value = serde_json::to_value(&reference).expect("node ref should serialize");
+    assert_eq!(value["run_id"], json!("run_scan"));
+    assert_eq!(value["span_id"], json!("span_scan"));
+    assert_eq!(value["node_id"], json!("obs_0001_0001"));
+
+    let parsed: NodeRef = serde_json::from_value(value).expect("node ref should deserialize");
+    assert_eq!(parsed, reference);
+  }
+
+  #[test]
+  fn surface_node_round_trips_with_recognition_provenance() {
+    let node = SurfaceNode {
+      node_ref: NodeRef {
+        run_id: RunId::new("run_scan"),
+        span_id: SpanId::new("span_scan"),
+        node_id: "obs_0001_0001".to_string(),
+      },
+      kind: "search_result_row".to_string(),
+      label: Some("Cure For Me".to_string()),
+      box_: RecognitionBox {
+        x: 2155,
+        y: 1402,
+        width: 170,
+        height: 24,
+      },
+      source_artifacts: vec!["artifacts/page.png".to_string()],
+      recognition_id: Some("recognition_window_rows_01".to_string()),
+      recognition_source: Some(RecognitionSource::OcrRow),
+      recognition_surface: Some(RecognitionSurface::Window),
+      recognized_item_id: Some("row#1".to_string()),
+      recognized_item_kind: Some("ocr_text".to_string()),
+      provider_score: Some(0.97),
+      detail: json!({
+        "raw_text": "Cure For Me",
+        "page_index": 0,
+        "text_fragments": ["Cure", "For", "Me"],
+      }),
+    };
+
+    let value = serde_json::to_value(&node).expect("surface node should serialize");
+    assert_eq!(value["node_ref"]["node_id"], json!("obs_0001_0001"));
+    assert_eq!(value["kind"], json!("search_result_row"));
+    assert_eq!(value["box"]["width"], json!(170));
+    assert_eq!(value["recognition_source"], json!("ocr_row"));
+    assert_eq!(value["recognized_item_id"], json!("row#1"));
+    assert_eq!(value["provider_score"], json!(0.97));
+
+    let parsed: SurfaceNode =
+      serde_json::from_value(value).expect("surface node should deserialize");
+    assert_eq!(parsed, node);
   }
 
   #[test]

@@ -894,7 +894,7 @@ fn validate_app_distillation_into_run(
           candidate.recipe_id
         )
       })?;
-    let mut resolved_inputs = BTreeMap::new();
+    let mut resolved_inputs: BTreeMap<String, String> = BTreeMap::new();
     let mut used_annotation_ids = if candidate.candidate_shape.provided_inputs.is_empty() {
       Vec::new()
     } else {

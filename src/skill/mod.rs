@@ -1412,34 +1412,39 @@ mod tests {
     }
 
     fn invoke(&self, call: &DriverCall) -> AuvResult<DriverResponse> {
+      let mut signals = BTreeMap::from([
+        ("outcome".to_string(), "ok".to_string()),
+        ("query".to_string(), "driver query".to_string()),
+        (
+          "step_first_run_id".to_string(),
+          "driver overwritten run id".to_string(),
+        ),
+        ("last.scan.hook.action".to_string(), "continue".to_string()),
+        (
+          "last.scan.hook.reason".to_string(),
+          "test driver signal".to_string(),
+        ),
+        (
+          "last.scan.hook.decision".to_string(),
+          serde_json::json!({
+            "hook_name": "per_list_item_candidate",
+            "page_index": 0,
+            "action": "continue",
+            "reason": "test driver structured signal",
+            "annotations": ["structured fixture annotation"],
+            "evidence": ["artifacts/fixture-overlay.json"]
+          })
+          .to_string(),
+        ),
+      ]);
+      if let Some(context) = call.inputs.get("context") {
+        signals.insert("echo.context".to_string(), context.clone());
+      }
+
       Ok(DriverResponse {
         summary: format!("ok {}", call.operation),
         backend: Some("test.backend".to_string()),
-        signals: BTreeMap::from([
-          ("outcome".to_string(), "ok".to_string()),
-          ("query".to_string(), "driver query".to_string()),
-          (
-            "step_first_run_id".to_string(),
-            "driver overwritten run id".to_string(),
-          ),
-          ("last.scan.hook.action".to_string(), "continue".to_string()),
-          (
-            "last.scan.hook.reason".to_string(),
-            "test driver signal".to_string(),
-          ),
-          (
-            "last.scan.hook.decision".to_string(),
-            serde_json::json!({
-              "hook_name": "per_list_item_candidate",
-              "page_index": 0,
-              "action": "continue",
-              "reason": "test driver structured signal",
-              "annotations": ["structured fixture annotation"],
-              "evidence": ["artifacts/fixture-overlay.json"]
-            })
-            .to_string(),
-          ),
-        ]),
+        signals,
         notes: vec!["outcome=ok".to_string()],
         artifacts: vec![],
       })
@@ -1828,6 +1833,107 @@ mod tests {
     );
     let _ = fs::remove_dir_all(project_root);
     let _ = fs::remove_dir_all(store_root);
+  }
+
+  #[test]
+  fn later_step_can_consume_exported_signal_template_variable() {
+    let project_root = temp_dir("signal-template-project");
+    let store_root = temp_dir("signal-template-store");
+    let runtime = skill_test_runtime(project_root.clone(), store_root.clone());
+    let manifest: SkillManifest = serde_json::from_value(json!({
+      "recipe_id": "test.signal.template.flow",
+      "version": "0.1.0",
+      "status": "experimental-recipe",
+      "platform": "macOS",
+      "target_app": { "bundle_id": "fixture.app", "display_mode": "fixture" },
+      "strategy": {
+        "family": "native-text",
+        "grounding": "ax-text",
+        "activation": "pointer-focus-clipboard-paste",
+        "verificationContract": "verifyAxText"
+      },
+      "objective": "prove step signal export can be consumed by later args",
+      "disturbance_policy": {
+        "max_disturbance": "none",
+        "declared_classes": ["none"]
+      },
+      "steps": [{
+        "id": "first",
+        "command_id": "test.skill.invoke",
+        "disturbance": {
+          "classes": ["none"],
+          "max": "none"
+        }
+      }, {
+        "id": "second",
+        "command_id": "test.skill.invoke",
+        "disturbance": {
+          "classes": ["none"],
+          "max": "none"
+        },
+        "args": {
+          "context": "${step_first_signal_last_scan_hook_decision}"
+        },
+        "expect": {
+          "signal_contains": {
+            "echo.context": "\"hook_name\":\"per_list_item_candidate\""
+          }
+        }
+      }],
+      "verification": {
+        "expected_signals": ["signal"],
+        "success_criteria": ["criteria"]
+      }
+    }))
+    .expect("manifest should deserialize");
+    let mut run = runtime
+      .start_run(crate::recording::RunSpec::new(
+        crate::trace::RunType::Execute,
+        "auv.execute",
+      ))
+      .expect("run should start");
+    let root = run.root_span();
+
+    let summary = run_skill_manifest_into_run(
+      &runtime,
+      &mut run,
+      &root,
+      &manifest,
+      SkillRunOptions {
+        dry_run: false,
+        max_disturbance: None,
+        overrides: BTreeMap::new(),
+        quiet: false,
+      },
+    )
+    .expect("skill should run");
+
+    assert!(
+      summary
+        .exported_variables
+        .contains_key("step_first_signal_last_scan_hook_decision")
+    );
+
+    let _ = runtime.finish_run(
+      run,
+      crate::recording::RunFinish {
+        status_code: crate::trace::TraceStatusCode::Ok,
+        summary: Some("test finished".to_string()),
+        failure: None,
+      },
+    );
+    let _ = fs::remove_dir_all(project_root);
+    let _ = fs::remove_dir_all(store_root);
+  }
+
+  #[test]
+  fn qqmusic_play_search_result_candidate_recipe_validates() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+      .join("recipes/macos/qqmusic/play-search-result-candidate.v0.json");
+    let raw = fs::read_to_string(&path).expect("recipe file should read");
+    let manifest: SkillManifest = serde_json::from_str(&raw).expect("recipe should parse");
+
+    validate_skill_manifest(&manifest).expect("recipe should validate");
   }
 
   #[test]

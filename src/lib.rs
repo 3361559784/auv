@@ -7,6 +7,7 @@ pub mod driver;
 pub mod inspect;
 pub mod inspect_server;
 pub mod model;
+pub mod recorded_operation;
 pub mod recording;
 pub mod run_builder;
 pub mod runtime;

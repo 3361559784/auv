@@ -2,9 +2,9 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use auv_cli::run_builder::{Attributes, RecordingRun, RunFinish, RunSpec, SpanRef};
-use auv_cli::runtime::Runtime;
-use auv_cli::trace::{RunType, TraceStatusCode, string_attr};
+use auv_cli::recorded_operation::RecordedOperationContext;
+use auv_cli::run_builder::{Attributes, RunSpec};
+use auv_cli::trace::{RunType, string_attr};
 use auv_driver::capture::{Activation, Capture, CaptureOptions};
 use auv_driver::input::{Click, PasteTextOptions, TextSubmit};
 use auv_driver::selector::{App, Window};
@@ -143,55 +143,18 @@ fn run_recorded(inputs: Inputs) -> Result<(), Box<dyn std::error::Error>> {
     string_attr(inputs.query.clone()),
   );
 
-  let mut run = runtime.start_run(
+  let recorded = runtime.run_recorded_operation(
     RunSpec::new(RunType::Execute, "auv.example.netease_play_visible_anchor")
       .with_attributes(attributes),
+    "NetEase visible anchor example",
+    |context| run_steps(context, inputs),
   )?;
-  let root = run.root_span();
-  let run_id = run.id().to_string();
-  let run_dir = project_root.join(".auv").join("runs").join(&run_id);
-
-  // TODO: replace this manual example-side recording wrapper with a typed
-  // operation runtime so Rust-native driver API calls and CLI/RPC operations
-  // share the same span, event, artifact, and local-write behavior.
-  let result = run_steps(&runtime, &mut run, &root, inputs);
-  match result {
-    Ok(()) => {
-      runtime.finish_run(
-        run,
-        RunFinish {
-          status_code: TraceStatusCode::Ok,
-          summary: Some("NetEase visible anchor example completed".to_string()),
-          failure: None,
-        },
-      )?;
-      println!("recorded run: {}", run_dir.display());
-      Ok(())
-    }
-    Err(error) => {
-      let finish_result = runtime.finish_run(
-        run,
-        RunFinish {
-          status_code: TraceStatusCode::Error,
-          summary: Some("NetEase visible anchor example failed".to_string()),
-          failure: Some(error.to_string()),
-        },
-      );
-      if let Err(finish_error) = finish_result {
-        return Err(
-          format!("{error}; additionally failed to persist recorded run {run_id}: {finish_error}")
-            .into(),
-        );
-      }
-      Err(format!("{error}; recorded run: {}", run_dir.display()).into())
-    }
-  }
+  println!("recorded run: {}", recorded.run_dir.display());
+  Ok(())
 }
 
 fn run_steps(
-  runtime: &Runtime,
-  run: &mut RecordingRun,
-  root: &SpanRef,
+  context: &mut RecordedOperationContext<'_>,
   inputs: Inputs,
 ) -> Result<(), Box<dyn std::error::Error>> {
   let driver = MacosDriver::new();
@@ -222,7 +185,7 @@ fn run_steps(
     std::thread::sleep(Duration::from_millis(500));
     before = session.window().capture(&window)?;
   }
-  record_capture(runtime, run, root, "before-search", &before)?;
+  record_capture(context, "before-search", &before)?;
 
   let mut focus_capture = before;
   let marker_matches = session.vision().find_text_in_capture(
@@ -239,7 +202,7 @@ fn run_steps(
     session.input().click_at(collapse_point, Click::Single)?;
     std::thread::sleep(Duration::from_millis(500));
     focus_capture = session.window().capture(&window)?;
-    record_capture(runtime, run, root, "after-collapse-to-main", &focus_capture)?;
+    record_capture(context, "after-collapse-to-main", &focus_capture)?;
   }
 
   let search_point =
@@ -248,13 +211,7 @@ fn run_steps(
   session.input().click_at(search_point, Click::Single)?;
   std::thread::sleep(Duration::from_millis(500));
   let after_search_click = session.window().capture(&window)?;
-  record_capture(
-    runtime,
-    run,
-    root,
-    "after-search-click",
-    &after_search_click,
-  )?;
+  record_capture(context, "after-search-click", &after_search_click)?;
 
   session.input().paste_text(PasteTextOptions {
     text: inputs.query.clone(),
@@ -264,7 +221,7 @@ fn run_steps(
   })?;
 
   let after_search = session.window().capture(&window)?;
-  record_capture(runtime, run, root, "after-search", &after_search)?;
+  record_capture(context, "after-search", &after_search)?;
   let search_text = session
     .vision()
     .recognize_text_in_capture(&after_search, inputs.result_region)?;
@@ -303,7 +260,7 @@ fn run_steps(
       ..CaptureOptions::default()
     },
   )?;
-  record_capture(runtime, run, root, "after-play", &after_play)?;
+  record_capture(context, "after-play", &after_play)?;
   let player_text = session
     .vision()
     .recognize_text_in_capture(&after_play, inputs.player_region)?;
@@ -314,17 +271,13 @@ fn run_steps(
 }
 
 fn record_capture(
-  runtime: &Runtime,
-  run: &mut RecordingRun,
-  root: &SpanRef,
+  context: &mut RecordedOperationContext<'_>,
   label: &str,
   capture: &Capture,
 ) -> Result<PathBuf, Box<dyn std::error::Error>> {
   let path = temp_png_path(label);
   capture.image.save(&path)?;
-  let staged = runtime.stage_artifact_file(
-    run,
-    root,
+  let staged = context.stage_artifact_file(
     "screenshot",
     &path,
     format!("{label}.png"),

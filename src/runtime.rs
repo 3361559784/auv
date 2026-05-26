@@ -69,6 +69,10 @@ impl Runtime {
     self.recording.read_run(run_id)
   }
 
+  pub fn run_dir(&self, run_id: impl AsRef<str>) -> AuvResult<PathBuf> {
+    self.recording.run_dir(run_id)
+  }
+
   pub fn recorder(&self) -> Arc<dyn RunRecorder> {
     self.recording.recorder()
   }

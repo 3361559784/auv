@@ -1692,8 +1692,7 @@ mod tests {
     let matched = sample_matched_node();
     let evidence = vec![sample_report_ref()];
 
-    let verification =
-      build_verify_now_playing_title_verification(&matched, evidence.clone());
+    let verification = build_verify_now_playing_title_verification(&matched, evidence.clone());
 
     assert_eq!(verification.method, VerificationMethod::SemanticMatch);
     assert!(verification.executed);
@@ -1735,8 +1734,7 @@ mod tests {
       vec![sample_report_ref()],
     );
 
-    let result =
-      build_verify_now_playing_title_operation_result(&call, verification.clone());
+    let result = build_verify_now_playing_title_operation_result(&call, verification.clone());
 
     assert_eq!(result.operation_id, VERIFY_MUSIC_NOW_PLAYING_OPERATION_ID);
     assert_eq!(result.status, OperationStatus::Completed);

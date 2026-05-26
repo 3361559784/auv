@@ -30,14 +30,42 @@ pub(crate) mod observe {
 pub(crate) mod session {
   use super::*;
 
-  pub(crate) fn try_paste_text_preserve_clipboard(
+  #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+  pub(crate) enum PasteTextBridgeOutcome {
+    UsedTypedSession,
+    NeedsLegacyFallback { reason: &'static str },
+  }
+
+  impl PasteTextBridgeOutcome {
+    pub(crate) fn input_bridge(self) -> &'static str {
+      match self {
+        Self::UsedTypedSession => "typed-session",
+        Self::NeedsLegacyFallback { .. } => "legacy-clipboard",
+      }
+    }
+
+    pub(crate) fn reason(self) -> &'static str {
+      match self {
+        Self::UsedTypedSession => "typed-submit-supported",
+        Self::NeedsLegacyFallback { reason } => reason,
+      }
+    }
+
+    pub(crate) fn needs_legacy_fallback(self) -> bool {
+      matches!(self, Self::NeedsLegacyFallback { .. })
+    }
+  }
+
+  pub(crate) fn paste_text_preserve_clipboard_bridge(
     text: &str,
     replace_existing: bool,
     submit: Option<TextSubmit>,
     submit_settle_ms: u64,
-  ) -> AuvResult<bool> {
+  ) -> AuvResult<PasteTextBridgeOutcome> {
     let Some(submit) = submit else {
-      return Ok(false);
+      return Ok(PasteTextBridgeOutcome::NeedsLegacyFallback {
+        reason: "unsupported-submit-key",
+      });
     };
     let driver = auv_driver_macos::MacosDriver::new();
     let session = driver
@@ -52,6 +80,26 @@ pub(crate) mod session {
         settle: Duration::from_millis(submit_settle_ms),
       })
       .map_err(|error| format!("typed macOS paste_text adapter failed: {error}"))?;
-    Ok(true)
+    Ok(PasteTextBridgeOutcome::UsedTypedSession)
+  }
+
+  #[cfg(test)]
+  mod tests {
+    use super::PasteTextBridgeOutcome;
+
+    #[test]
+    fn paste_text_bridge_outcome_exposes_signal_values() {
+      let typed = PasteTextBridgeOutcome::UsedTypedSession;
+      assert_eq!(typed.input_bridge(), "typed-session");
+      assert_eq!(typed.reason(), "typed-submit-supported");
+      assert!(!typed.needs_legacy_fallback());
+
+      let fallback = PasteTextBridgeOutcome::NeedsLegacyFallback {
+        reason: "unsupported-submit-key",
+      };
+      assert_eq!(fallback.input_bridge(), "legacy-clipboard");
+      assert_eq!(fallback.reason(), "unsupported-submit-key");
+      assert!(fallback.needs_legacy_fallback());
+    }
   }
 }

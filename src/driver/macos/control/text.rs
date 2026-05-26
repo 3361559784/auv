@@ -4,9 +4,6 @@ use auv_driver::TextSubmit;
 use super::super::*;
 use super::common::activate_app_if_needed;
 
-const PASTE_TEXT_BRIDGE_TYPED_SESSION: &str = "typed-session";
-const PASTE_TEXT_BRIDGE_LEGACY_CLIPBOARD: &str = "legacy-clipboard";
-
 pub(super) fn clipboard_restore_signals(
   restored: bool,
 ) -> std::collections::BTreeMap<String, String> {
@@ -16,9 +13,14 @@ pub(super) fn clipboard_restore_signals(
 fn paste_text_signals(
   restored: bool,
   input_bridge: &str,
+  input_bridge_reason: &str,
 ) -> std::collections::BTreeMap<String, String> {
   let mut signals = clipboard_restore_signals(restored);
   signals.insert("input.bridge".to_string(), input_bridge.to_string());
+  signals.insert(
+    "input.bridge.reason".to_string(),
+    input_bridge_reason.to_string(),
+  );
   signals
 }
 
@@ -105,22 +107,22 @@ pub(crate) fn paste_text_preserve_clipboard(call: &DriverCall) -> AuvResult<Driv
   if activate {
     activate_app_if_needed(&app)?;
   }
-  let input_bridge = if super::super::typed::session::try_paste_text_preserve_clipboard(
+  let bridge_outcome = super::super::typed::session::paste_text_preserve_clipboard_bridge(
     &text,
     replace_existing,
     typed_submit_for_legacy_submit_key(submit_key.as_deref()),
     submit_settle_ms,
-  )? {
-    PASTE_TEXT_BRIDGE_TYPED_SESSION
-  } else {
+  )?;
+  if bridge_outcome.needs_legacy_fallback() {
     paste_text_preserving_clipboard(
       &text,
       replace_existing,
       submit_key.as_deref(),
       submit_settle_ms,
     )?;
-    PASTE_TEXT_BRIDGE_LEGACY_CLIPBOARD
-  };
+  }
+  let input_bridge = bridge_outcome.input_bridge();
+  let input_bridge_reason = bridge_outcome.reason();
 
   let artifact = build_text_artifact(
     "paste-text-preserve-clipboard",
@@ -139,6 +141,7 @@ pub(crate) fn paste_text_preserve_clipboard(call: &DriverCall) -> AuvResult<Driv
       format!("submitSettleMs={submit_settle_ms}"),
       format!("activatedApp={activate}"),
       format!("inputBridge={input_bridge}"),
+      format!("inputBridgeReason={input_bridge_reason}"),
       "clipboardRestored=true".to_string(),
     ]
     .join("\n"),
@@ -151,6 +154,7 @@ pub(crate) fn paste_text_preserve_clipboard(call: &DriverCall) -> AuvResult<Driv
     format!("replaceExisting={replace_existing}"),
     format!("activatedApp={activate}"),
     format!("inputBridge={input_bridge}"),
+    format!("inputBridgeReason={input_bridge_reason}"),
     "clipboardRestored=true".to_string(),
   ];
   if !app.is_empty() {
@@ -188,7 +192,7 @@ pub(crate) fn paste_text_preserve_clipboard(call: &DriverCall) -> AuvResult<Driv
     backend: Some(format!(
       "macos.input.paste-text-preserve-clipboard.{input_bridge}"
     )),
-    signals: paste_text_signals(true, input_bridge),
+    signals: paste_text_signals(true, input_bridge, input_bridge_reason),
     notes,
     artifacts: vec![artifact],
   })
@@ -259,8 +263,8 @@ mod tests {
   use auv_driver::TextSubmit;
 
   use super::{
-    PASTE_TEXT_BRIDGE_TYPED_SESSION, clipboard_restore_signals, paste_text_signals,
-    should_activate_text_input, typed_submit_for_legacy_submit_key,
+    clipboard_restore_signals, paste_text_signals, should_activate_text_input,
+    typed_submit_for_legacy_submit_key,
   };
   use crate::model::{DriverCall, ExecutionTarget};
   use std::collections::BTreeMap;
@@ -275,12 +279,16 @@ mod tests {
 
   #[test]
   fn paste_text_signals_include_input_bridge() {
-    let signals = paste_text_signals(true, PASTE_TEXT_BRIDGE_TYPED_SESSION);
+    let signals = paste_text_signals(true, "typed-session", "typed-submit-supported");
 
     assert_eq!(signals.get("clipboard.restored"), Some(&"true".to_string()));
     assert_eq!(
       signals.get("input.bridge"),
-      Some(&PASTE_TEXT_BRIDGE_TYPED_SESSION.to_string())
+      Some(&"typed-session".to_string())
+    );
+    assert_eq!(
+      signals.get("input.bridge.reason"),
+      Some(&"typed-submit-supported".to_string())
     );
   }
 

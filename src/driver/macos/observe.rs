@@ -263,90 +263,191 @@ pub(super) fn verify_now_playing_title(call: &DriverCall) -> AuvResult<DriverRes
   let snapshot =
     crate::driver::macos::native::ax_tree::capture_ax_tree_snapshot(&app, max_depth, max_children)?
       .snapshot;
-  let matched = find_now_playing_ax_node(
-    &snapshot,
-    &expected_title,
-    expected_artist.as_deref(),
-    scope_path_prefix.as_deref(),
-  )
-  .ok_or_else(|| {
-    let mut detail = format!(
-      "no matching now-playing node found for target_title {}",
-      expected_title
-    );
-    if let Some(artist) = expected_artist.as_deref() {
-      detail.push_str(&format!(" and target_artist {}", artist));
-    }
-    detail
-  })?;
 
   // Reserve slots up front so the OperationResult evidence list can cite the
   // text report by its forward `ArtifactRef` before the artifact is staged.
+  // Both branches stage the report into slot 0 and the OperationResult into
+  // slot 1 so downstream tooling can index match and no-match identically.
   let mut artifacts = DriverArtifactBuilder::new(&call.run_context);
   let report_ref = artifacts.ref_at(0);
   let _operation_result_ref = artifacts.ref_at(1);
 
-  let report = render_ax_interaction_report(
-    "verify-now-playing-title",
+  match find_now_playing_ax_node(
     &snapshot,
-    matched,
     &expected_title,
-  );
-  artifacts.push(build_text_artifact(
-    "verify-now-playing-title",
-    "txt",
-    &format!(
-      "verify-now-playing-title-{}",
-      sanitize_file_component(&expected_title)
-    ),
-    report,
-    "Captured an AX tree snapshot and matched the current now-playing title without relying on screenshot OCR.",
-  )?);
+    expected_artist.as_deref(),
+    scope_path_prefix.as_deref(),
+  ) {
+    Some(matched) => {
+      let report = render_ax_interaction_report(
+        "verify-now-playing-title",
+        &snapshot,
+        matched,
+        &expected_title,
+      );
+      artifacts.push(build_text_artifact(
+        "verify-now-playing-title",
+        "txt",
+        &format!(
+          "verify-now-playing-title-{}",
+          sanitize_file_component(&expected_title)
+        ),
+        report,
+        "Captured an AX tree snapshot and matched the current now-playing title without relying on screenshot OCR.",
+      )?);
 
-  let verification = build_verify_now_playing_title_verification(matched, vec![report_ref]);
-  let operation_result = build_verify_now_playing_title_operation_result(call, verification);
-  artifacts.push(build_verify_now_playing_title_operation_result_artifact(
-    &operation_result,
-    &expected_title,
-  )?);
+      let verification = build_verify_now_playing_title_verification(matched, vec![report_ref]);
+      let operation_result = build_verify_now_playing_title_operation_result(
+        call,
+        OperationStatus::Completed,
+        verification,
+      );
+      artifacts.push(build_verify_now_playing_title_operation_result_artifact(
+        &operation_result,
+        &expected_title,
+      )?);
 
-  let mut notes = vec![
-    format!("targetTitle={expected_title}"),
-    format!("matchedPath={}", matched.path),
-    format!("matchedRole={}", matched.role),
-    format!("matchedBounds={}", render_rect_compact(&matched.bounds)),
-  ];
-  if let Some(artist) = expected_artist.as_deref() {
-    notes.push(format!("targetArtist={artist}"));
-  }
-  if let Some(scope) = scope_path_prefix.as_deref() {
-    notes.push(format!("scopePathPrefix={scope}"));
-  }
-  if !matched.title.is_empty() {
-    notes.push(format!("matchedTitle={}", matched.title));
-  }
-  if !matched.description.is_empty() {
-    notes.push(format!("matchedDescription={}", matched.description));
-  }
-  if !matched.value.is_empty() {
-    notes.push(format!("matchedValue={}", matched.value));
-  }
-
-  Ok(DriverResponse {
-    summary: format!(
-      "Verified now-playing title {} in {} through the AX tree.",
-      expected_title,
-      if snapshot.app_name.is_empty() {
-        "target app"
-      } else {
-        &snapshot.app_name
+      let mut notes = vec![
+        format!("targetTitle={expected_title}"),
+        format!("matchedPath={}", matched.path),
+        format!("matchedRole={}", matched.role),
+        format!("matchedBounds={}", render_rect_compact(&matched.bounds)),
+      ];
+      if let Some(artist) = expected_artist.as_deref() {
+        notes.push(format!("targetArtist={artist}"));
       }
-    ),
-    backend: Some("macos.desktop.verify-now-playing-title".to_string()),
-    signals: verify_now_playing_title_signals(&matched.title),
-    notes,
-    artifacts: artifacts.into_vec(),
-  })
+      if let Some(scope) = scope_path_prefix.as_deref() {
+        notes.push(format!("scopePathPrefix={scope}"));
+      }
+      if !matched.title.is_empty() {
+        notes.push(format!("matchedTitle={}", matched.title));
+      }
+      if !matched.description.is_empty() {
+        notes.push(format!("matchedDescription={}", matched.description));
+      }
+      if !matched.value.is_empty() {
+        notes.push(format!("matchedValue={}", matched.value));
+      }
+
+      Ok(DriverResponse {
+        summary: format!(
+          "Verified now-playing title {} in {} through the AX tree.",
+          expected_title,
+          if snapshot.app_name.is_empty() {
+            "target app"
+          } else {
+            &snapshot.app_name
+          }
+        ),
+        backend: Some("macos.desktop.verify-now-playing-title".to_string()),
+        signals: verify_now_playing_title_signals(&matched.title),
+        notes,
+        artifacts: artifacts.into_vec(),
+      })
+    }
+    None => {
+      let mut detail = format!(
+        "no matching now-playing node found for target_title {}",
+        expected_title
+      );
+      if let Some(artist) = expected_artist.as_deref() {
+        detail.push_str(&format!(" and target_artist {}", artist));
+      }
+
+      let report = render_verify_now_playing_title_no_match_report(
+        &snapshot,
+        &expected_title,
+        expected_artist.as_deref(),
+        scope_path_prefix.as_deref(),
+        &detail,
+      );
+      artifacts.push(build_text_artifact(
+        "verify-now-playing-title-no-match",
+        "txt",
+        &format!(
+          "verify-now-playing-title-{}-no-match",
+          sanitize_file_component(&expected_title)
+        ),
+        report,
+        "Captured an AX tree snapshot but found no node matching the target now-playing title.",
+      )?);
+
+      let verification = build_verify_now_playing_title_no_match_verification(vec![report_ref]);
+      let operation_result = build_verify_now_playing_title_operation_result(
+        call,
+        OperationStatus::Failed,
+        verification,
+      );
+      artifacts.push(build_verify_now_playing_title_operation_result_artifact(
+        &operation_result,
+        &expected_title,
+      )?);
+
+      let mut notes = vec![
+        format!("targetTitle={expected_title}"),
+        "result=no-match".to_string(),
+        format!("detail={detail}"),
+      ];
+      if let Some(artist) = expected_artist.as_deref() {
+        notes.push(format!("targetArtist={artist}"));
+      }
+      if let Some(scope) = scope_path_prefix.as_deref() {
+        notes.push(format!("scopePathPrefix={scope}"));
+      }
+
+      let mut signals = std::collections::BTreeMap::from([(
+        "ax.node_found".to_string(),
+        "false".to_string(),
+      )]);
+      signals.insert("ax.target_title".to_string(), expected_title.clone());
+      if let Some(artist) = expected_artist.as_deref() {
+        signals.insert("ax.target_artist".to_string(), artist.to_string());
+      }
+
+      Ok(DriverResponse {
+        summary: format!(
+          "Verification failed: now-playing title {} not present in {} (semantic mismatch).",
+          expected_title,
+          if snapshot.app_name.is_empty() {
+            "target app"
+          } else {
+            &snapshot.app_name
+          }
+        ),
+        backend: Some("macos.desktop.verify-now-playing-title".to_string()),
+        signals,
+        notes,
+        artifacts: artifacts.into_vec(),
+      })
+    }
+  }
+}
+
+fn render_verify_now_playing_title_no_match_report(
+  snapshot: &auv_driver_macos::types::ObservedAxTreeSnapshot,
+  expected_title: &str,
+  expected_artist: Option<&str>,
+  scope_path_prefix: Option<&str>,
+  detail: &str,
+) -> String {
+  let mut lines = vec![
+    "kind=verify-now-playing-title-no-match".to_string(),
+    format!("observedAt={}", snapshot.observed_at),
+    format!("appName={}", snapshot.app_name),
+    format!("bundleId={}", snapshot.bundle_id),
+    format!("windowTitle={}", snapshot.window_title),
+    format!("queryTitle={expected_title}"),
+  ];
+  if let Some(artist) = expected_artist {
+    lines.push(format!("queryArtist={artist}"));
+  }
+  if let Some(scope) = scope_path_prefix {
+    lines.push(format!("queryScopePathPrefix={scope}"));
+  }
+  lines.push(format!("nodeCount={}", snapshot.nodes.len()));
+  lines.push("result=no-match".to_string());
+  lines.push(format!("detail={detail}"));
+  lines.join("\n") + "\n"
 }
 
 /// Build the typed [`VerificationResult`] for `verify.musicNowPlaying`.
@@ -385,18 +486,48 @@ fn build_verify_now_playing_title_verification(
 
 fn build_verify_now_playing_title_operation_result(
   call: &DriverCall,
+  status: OperationStatus,
   verification: VerificationResult,
 ) -> OperationResult {
   let evidence = verification.evidence.clone();
   OperationResult {
     run_id: RunId::new(call.run_context.run_id.as_str()),
-    status: OperationStatus::Completed,
+    status,
     operation_id: VERIFY_MUSIC_NOW_PLAYING_OPERATION_ID.to_string(),
     evidence_artifacts: evidence,
     output: OperationOutput::Acknowledged { message: None },
     verifications: vec![verification],
     freshness_basis: None,
     known_limits: Vec::new(),
+  }
+}
+
+/// Build the typed [`VerificationResult`] for a `verify.musicNowPlaying`
+/// no-match.
+///
+/// Mirrors [`build_verify_now_playing_title_verification`] but flips the
+/// outcome: `executed=true` (the AX tree was probed), `state_changed=
+/// false` (observed now-playing state does not satisfy the target),
+/// `semantic_matched=Some(false)`, and `failure_layer=Some(
+/// SemanticMismatch)`. No `observed_label` because there is no matched
+/// node — the field intentionally stays `None`, distinguishing this
+/// from a match with an empty preferred signal text.
+fn build_verify_now_playing_title_no_match_verification(
+  evidence: Vec<ArtifactRef>,
+) -> VerificationResult {
+  VerificationResult {
+    method: VerificationMethod::SemanticMatch,
+    executed: true,
+    state_changed: false,
+    semantic_matched: Some(false),
+    failure_layer: Some(FailureLayer::SemanticMismatch),
+    evidence,
+    consumed_candidate_ref: None,
+    consumed_node_ref: None,
+    consumed_recognition_artifact_ref: None,
+    consumed_recognition_id: None,
+    consumed_recognized_item_id: None,
+    observed_label: None,
   }
 }
 
@@ -1592,6 +1723,7 @@ mod tests {
     ObservedAxNode, ObservedRect, VERIFY_AX_TEXT_OPERATION_ID,
     VERIFY_MUSIC_NOW_PLAYING_OPERATION_ID, build_verify_ax_text_no_match_verification,
     build_verify_ax_text_operation_result, build_verify_ax_text_verification,
+    build_verify_now_playing_title_no_match_verification,
     build_verify_now_playing_title_operation_result, build_verify_now_playing_title_verification,
     ocr_detection_signals, permission_probe_report, preferred_ax_signal_text,
     row_detection_signals, verify_ax_text_signals, verify_now_playing_title_signals,
@@ -1963,7 +2095,11 @@ mod tests {
       vec![sample_report_ref()],
     );
 
-    let result = build_verify_now_playing_title_operation_result(&call, verification.clone());
+    let result = build_verify_now_playing_title_operation_result(
+      &call,
+      OperationStatus::Completed,
+      verification.clone(),
+    );
 
     assert_eq!(result.operation_id, VERIFY_MUSIC_NOW_PLAYING_OPERATION_ID);
     assert_eq!(result.status, OperationStatus::Completed);
@@ -1975,6 +2111,74 @@ mod tests {
       result.verifications,
       vec![verification.clone()],
       "verify.musicNowPlaying must populate the first-class verifications field"
+    );
+    assert_eq!(
+      result.evidence_artifacts, verification.evidence,
+      "evidence_artifacts must mirror the verification's evidence list"
+    );
+  }
+
+  #[test]
+  fn verify_now_playing_title_no_match_verification_records_failed_semantic_match() {
+    let evidence = vec![sample_report_ref()];
+
+    let verification = build_verify_now_playing_title_no_match_verification(evidence.clone());
+
+    assert_eq!(verification.method, VerificationMethod::SemanticMatch);
+    assert!(
+      verification.executed,
+      "the AX probe still ran — only the assertion came back false"
+    );
+    assert!(
+      !verification.state_changed,
+      "now-playing state does not satisfy the target, so state_changed must be false"
+    );
+    assert_eq!(verification.semantic_matched, Some(false));
+    assert_eq!(
+      verification.failure_layer,
+      Some(FailureLayer::SemanticMismatch),
+      "no-match is a semantic mismatch, not an unreliable measurement"
+    );
+    assert_eq!(verification.evidence, evidence);
+  }
+
+  #[test]
+  fn verify_now_playing_title_no_match_verification_has_no_observed_label() {
+    let verification = build_verify_now_playing_title_no_match_verification(Vec::new());
+
+    assert!(
+      verification.observed_label.is_none(),
+      "no matched node means no observed label"
+    );
+  }
+
+  #[test]
+  fn verify_now_playing_title_failed_operation_result_carries_no_match_claim_with_failed_status() {
+    let call = sample_driver_call();
+    let verification =
+      build_verify_now_playing_title_no_match_verification(vec![sample_report_ref()]);
+
+    let result = build_verify_now_playing_title_operation_result(
+      &call,
+      OperationStatus::Failed,
+      verification.clone(),
+    );
+
+    assert_eq!(result.operation_id, VERIFY_MUSIC_NOW_PLAYING_OPERATION_ID);
+    assert_eq!(
+      result.status,
+      OperationStatus::Failed,
+      "no-match must produce a Failed OperationResult so the run-level claim reflects the verification outcome"
+    );
+    assert_eq!(
+      result.verifications,
+      vec![verification.clone()],
+      "the failed claim must reach the first-class verifications field"
+    );
+    assert_eq!(
+      result.verifications[0].semantic_matched,
+      Some(false),
+      "the carried claim must read as semantic_matched=false"
     );
     assert_eq!(
       result.evidence_artifacts, verification.evidence,

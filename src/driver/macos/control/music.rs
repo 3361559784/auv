@@ -588,11 +588,15 @@ pub(crate) fn music_result_play(call: &DriverCall) -> AuvResult<DriverResponse> 
   {
     Ok(response) => response,
     Err(error) => {
+      // After verify.musicNowPlaying restructured no-match into Ok+Failed,
+      // this arm only fires on infrastructure errors (AX tree capture, app
+      // activation, etc.) — VerificationUnreliable is the honest layer
+      // since the verification itself could not be completed.
       return music_result_play_failure_response(
         call,
         MusicResultPlayFailure {
           summary: format!(
-            "Candidate {} was activated, but now-playing verification failed: {error}",
+            "Candidate {} was activated, but now-playing verification could not complete: {error}",
             candidate_input.candidate_local_id
           ),
           failure_layer: FailureLayer::VerificationUnreliable,
@@ -612,14 +616,45 @@ pub(crate) fn music_result_play(call: &DriverCall) -> AuvResult<DriverResponse> 
       );
     }
   };
+  notes.push(format!("verifySummary={}", verify_response.summary));
+  notes.extend(prefix_notes("verify", &verify_response.notes));
+  artifacts.extend(verify_response.artifacts);
+
+  // verify.musicNowPlaying now reports no-match as Ok+Failed with
+  // `ax.node_found=false` in signals. Treat that as a semantic mismatch
+  // failure at this layer so the music.result.play outcome distinguishes
+  // "verification could not run" (VerificationUnreliable, above) from
+  // "verification ran and reported the wrong song" (SemanticMismatch).
+  let now_playing_found = verify_response
+    .signals
+    .get("ax.node_found")
+    .is_some_and(|value| value == "true");
+  if !now_playing_found {
+    return music_result_play_failure_response(
+      call,
+      MusicResultPlayFailure {
+        summary: format!(
+          "Candidate {} was activated, but now-playing verification reported a semantic mismatch with target_title {target_title}.",
+          candidate_input.candidate_local_id
+        ),
+        failure_layer: FailureLayer::SemanticMismatch,
+        resolved: true,
+        executed: true,
+        state_changed: false,
+        observed_label: None,
+        evidence: candidate_evidence,
+        notes,
+        artifacts,
+        provenance: Some(provenance.clone()),
+      },
+    );
+  }
+
   let observed_label = verify_response
     .signals
     .get("ax.now_playing_title")
     .cloned()
     .or_else(|| Some(target_title.clone()));
-  notes.push(format!("verifySummary={}", verify_response.summary));
-  notes.extend(prefix_notes("verify", &verify_response.notes));
-  artifacts.extend(verify_response.artifacts);
 
   let verification = VerificationResult {
     method: VerificationMethod::SemanticMatch,

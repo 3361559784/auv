@@ -1410,12 +1410,18 @@ pub(super) fn identify_point(call: &DriverCall) -> AuvResult<DriverResponse> {
 pub(super) fn probe_permissions(_call: &DriverCall) -> AuvResult<DriverResponse> {
   let native_permissions = crate::driver::macos::native::permission::probe_native_permissions()?;
   let screen_recording = native_permissions.screen_recording.to_string();
+  let screen_capture_kit = native_permissions.screen_capture_kit.to_string();
   let accessibility = native_permissions.accessibility.to_string();
   let automation = probe_automation_to_system_events();
   let launch_host = launch_host_process();
 
-  let report =
-    permission_probe_report(&screen_recording, &accessibility, &automation, &launch_host);
+  let report = permission_probe_report(
+    &screen_recording,
+    &screen_capture_kit,
+    &accessibility,
+    &automation,
+    &launch_host,
+  );
 
   let artifact = build_text_artifact(
     "probe-permissions",
@@ -1427,8 +1433,8 @@ pub(super) fn probe_permissions(_call: &DriverCall) -> AuvResult<DriverResponse>
 
   Ok(DriverResponse {
     summary: format!(
-      "Permission probe: screenRecording={}, accessibility={}, automationToSystemEvents={}.",
-      screen_recording, accessibility, automation
+      "Permission probe: screenRecording={}, screenCaptureKit={}, accessibility={}, automationToSystemEvents={}.",
+      screen_recording, screen_capture_kit, accessibility, automation
     ),
     backend: Some("macos.swift-and-osascript".to_string()),
     signals: std::collections::BTreeMap::new(),
@@ -1480,11 +1486,17 @@ mod tests {
 
   #[test]
   fn permission_probe_report_preserves_contract_fields() {
-    let report = permission_probe_report("granted", "missing", "granted", "current-process");
+    let report = permission_probe_report(
+      "granted",
+      "granted",
+      "missing",
+      "granted",
+      "current-process",
+    );
 
     assert_eq!(
       report,
-      "screenRecording=granted\naccessibility=missing\nautomationToSystemEvents=granted\nlaunchHostProcess=current-process\n"
+      "screenRecording=granted\nscreenCaptureKit=granted\naccessibility=missing\nautomationToSystemEvents=granted\nlaunchHostProcess=current-process\n"
     );
   }
 

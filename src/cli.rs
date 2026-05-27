@@ -59,6 +59,9 @@ pub struct InspectServeWriteOptions {
 #[derive(Debug)]
 pub enum CliCommand {
   Help,
+  PermissionCheck {
+    json: bool,
+  },
   ListCommands,
   ListDrivers,
   AppProbe {
@@ -157,6 +160,8 @@ pub fn parse_cli(arguments: &[String]) -> AuvResult<CliCommand> {
 
   match arguments[0].as_str() {
     "help" | "--help" | "-h" => Ok(CliCommand::Help),
+    "doctor" => parse_permission_check(arguments),
+    "permissions" => parse_permissions(arguments),
     "--xtask" => parse_xtask(arguments),
     "list-commands" => Ok(CliCommand::ListCommands),
     "list-drivers" => Ok(CliCommand::ListDrivers),
@@ -192,6 +197,8 @@ auv-cli prototype
 USAGE
   auv-cli list-commands
   auv-cli list-drivers
+  auv-cli doctor [--json]
+  auv-cli permissions check [--json]
   auv-cli app probe <bundle-id> [--output-dir <dir>]
   auv-cli app analyze <probe-dir-or-probe-json>
   auv-cli app distill <analysis-dir-or-analysis-json> [--output-dir <dir>]
@@ -239,6 +246,39 @@ NOTES
   - `app validate` turns one distillation directory into `validation.json` and `validation-report.md`; `validated` means the generated case matrix ran live, while `verification_mode=evidence-only` still means human review is required.
 ",
   )
+}
+
+fn parse_permission_check(arguments: &[String]) -> AuvResult<CliCommand> {
+  let mut json = false;
+  for argument in arguments.iter().skip(1) {
+    match argument.as_str() {
+      "--json" => json = true,
+      other => {
+        return Err(format!(
+          "unknown doctor option {other}; usage: auv-cli doctor [--json]"
+        ));
+      }
+    }
+  }
+
+  Ok(CliCommand::PermissionCheck { json })
+}
+
+fn parse_permissions(arguments: &[String]) -> AuvResult<CliCommand> {
+  if arguments.len() < 2 {
+    return Err("usage: auv-cli permissions check [--json]".to_string());
+  }
+
+  match arguments[1].as_str() {
+    "check" => {
+      let mut normalized = vec!["doctor".to_string()];
+      normalized.extend(arguments.iter().skip(2).cloned());
+      parse_permission_check(&normalized)
+    }
+    other => Err(format!(
+      "unknown permissions subcommand {other}; usage: auv-cli permissions check [--json]"
+    )),
+  }
 }
 
 fn parse_app(arguments: &[String]) -> AuvResult<CliCommand> {
@@ -1208,6 +1248,32 @@ mod tests {
 
     match command {
       CliCommand::XtaskGenerateSwiftBridge => {}
+      other => panic!("unexpected command: {other:?}"),
+    }
+  }
+
+  #[test]
+  fn parse_doctor_permission_check_command() {
+    let command =
+      parse_cli(&["doctor".to_string(), "--json".to_string()]).expect("doctor should parse");
+
+    match command {
+      CliCommand::PermissionCheck { json } => assert!(json),
+      other => panic!("unexpected command: {other:?}"),
+    }
+  }
+
+  #[test]
+  fn parse_permissions_check_command() {
+    let command = parse_cli(&[
+      "permissions".to_string(),
+      "check".to_string(),
+      "--json".to_string(),
+    ])
+    .expect("permissions check should parse");
+
+    match command {
+      CliCommand::PermissionCheck { json } => assert!(json),
       other => panic!("unexpected command: {other:?}"),
     }
   }

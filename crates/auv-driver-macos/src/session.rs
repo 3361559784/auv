@@ -1,9 +1,8 @@
 use std::io::{ErrorKind, Write};
 use std::path::PathBuf;
 use std::process::Command;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use auv_driver::capture::{Activation, Capture, CaptureOptions};
 use auv_driver::error::{DriverError, DriverResult};
@@ -19,8 +18,6 @@ use crate::native::ocr::NativeOcrTextCapture;
 use crate::native::types::{ObservedRect, ObservedWindow, ObservedWindowSnapshot};
 use crate::support::{build_window_candidates, parse_app_selector, resolve_app_ref};
 use crate::types::{WindowRef as NativeWindowRef, WindowSelection};
-
-static TEMP_CAPTURE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct OcrMatch {
@@ -67,6 +64,10 @@ pub struct VisionApi<'a> {
 }
 
 impl MacosDriverSession {
+  // Session APIs are grouped by automation target, not by native backend
+  // mechanism. Window operations are relative to an application window;
+  // input remains a lower-level escape hatch for raw pointer, keyboard, and
+  // paste primitives that are not tied to one target domain.
   pub fn window(&self) -> WindowApi<'_> {
     WindowApi { session: self }
   }
@@ -280,18 +281,18 @@ impl VisionApi<'_> {
     region: RatioRect,
   ) -> DriverResult<TextRecognition> {
     let _ = self.session;
-    let path = write_temp_capture_png(capture)?;
     let crop = ratio_rect_to_observed(capture, region);
-    let native_result =
-      crate::native::ocr::find_text(&path, "", false, false, 256, Some(&crop)).map_err(backend);
-    let remove_result = std::fs::remove_file(&path);
-    let native = native_result?;
-    if let Err(error) = remove_result {
-      return Err(backend(format!(
-        "OCR succeeded but failed to remove temporary image {}: {error}",
-        path.display()
-      )));
-    }
+    let native = crate::native::ocr::find_text_in_rgba(
+      capture.image.clone().into_raw(),
+      i64::from(capture.image.width()),
+      i64::from(capture.image.height()),
+      "",
+      false,
+      false,
+      256,
+      Some(&crop),
+    )
+    .map_err(backend)?;
     Ok(text_recognition_from_native(&native, capture))
   }
 
@@ -513,6 +514,67 @@ fn activate_app_for_window(window: &Window) -> DriverResult<()> {
 
 #[cfg(target_os = "macos")]
 fn capture_window(window: &Window) -> DriverResult<Capture> {
+  // Prefer the Swift FFI ScreenCaptureKit path for typed window capture.
+  //
+  // Why this path exists instead of shelling out to `screencapture` or using
+  // the Rust `xcap` crate as the primary backend:
+  //
+  // | Backend | Capture + OCR wall time observed locally | Runtime shape |
+  // |---|---:|---|
+  // | Swift FFI ScreenCaptureKit + Vision | ~1.28-1.60s | in-process, typed RGBA frame, no required PNG temp file |
+  // | `screencapture` CLI + Vision | ~1.10-1.20s | subprocess + filesystem PNG handoff |
+  // | `xcap` window/display capture + Vision | ~6-7s | in-process Rust API, but slow on this macOS target |
+  //
+  // `screencapture` can be slightly faster in the narrow benchmark, but it
+  // forces process spawning and file handoff into the operation path. The FFI
+  // path keeps capture and OCR composable in memory, avoids making artifact
+  // writes part of primitive execution, and gives us a place to expose native
+  // permission/error details. `xcap` stays as a fallback while the new native
+  // path is still being proven across app/window states.
+  match capture_window_swift(window) {
+    Ok(capture) => Ok(capture),
+    Err(swift_error) => {
+      let fallback_reason = swift_error.to_string();
+      capture_window_xcap(window, Some(fallback_reason.clone())).map_err(|xcap_error| {
+        backend(format!(
+          "native Swift window capture failed before xcap fallback: {fallback_reason}; xcap fallback also failed: {xcap_error}"
+        ))
+      })
+    }
+  }
+}
+
+#[cfg(target_os = "macos")]
+fn capture_window_swift(window: &Window) -> DriverResult<Capture> {
+  let native_window_id = window.reference.id.parse::<i64>().map_err(|error| {
+    invalid_input(format!(
+      "window ref {} was not a native macOS window id: {error}",
+      window.reference.id
+    ))
+  })?;
+  let capture = crate::native::capture::capture_window_rgba(native_window_id).map_err(backend)?;
+  let width = u32::try_from(capture.image_width)
+    .map_err(|error| backend(format!("native capture returned invalid width: {error}")))?;
+  let height = u32::try_from(capture.image_height)
+    .map_err(|error| backend(format!("native capture returned invalid height: {error}")))?;
+  let image = RgbaImage::from_raw(width, height, capture.rgba_bytes)
+    .ok_or_else(|| backend("failed to decode native captured window RGBA image"))?;
+  let scale_factor = if window.frame.size.width > 0.0 {
+    f64::from(width) / window.frame.size.width
+  } else {
+    1.0
+  };
+  Ok(Capture {
+    image,
+    bounds: window.frame,
+    scale_factor,
+    backend: "macos.screencapturekit.ffi".to_string(),
+    fallback_reason: None,
+  })
+}
+
+#[cfg(target_os = "macos")]
+fn capture_window_xcap(window: &Window, fallback_reason: Option<String>) -> DriverResult<Capture> {
   let native_window_id = window.reference.id.parse::<u32>().map_err(|error| {
     invalid_input(format!(
       "window ref {} was not a native macOS window id: {error}",
@@ -544,6 +606,8 @@ fn capture_window(window: &Window) -> DriverResult<Capture> {
     image,
     bounds: window.frame,
     scale_factor,
+    backend: "xcap.macos".to_string(),
+    fallback_reason,
   })
 }
 
@@ -614,29 +678,6 @@ fn text_recognition_from_native(
     text,
     regions: matches,
   }
-}
-
-fn write_temp_capture_png(capture: &Capture) -> DriverResult<PathBuf> {
-  let path = temp_png_path("auv-driver-macos-capture");
-  capture.image.save(&path).map_err(|error| {
-    backend(format!(
-      "failed to write temporary OCR image {}: {error}",
-      path.display()
-    ))
-  })?;
-  Ok(path)
-}
-
-fn temp_png_path(label: &str) -> PathBuf {
-  let millis = SystemTime::now()
-    .duration_since(UNIX_EPOCH)
-    .unwrap_or_default()
-    .as_millis();
-  let sequence = TEMP_CAPTURE_COUNTER.fetch_add(1, Ordering::Relaxed);
-  std::env::temp_dir().join(format!(
-    "{label}-{}-{millis}-{sequence}.png",
-    std::process::id()
-  ))
 }
 
 fn duration_millis(duration: Duration) -> DriverResult<u64> {

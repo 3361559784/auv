@@ -20,6 +20,14 @@ func nativeStringVec(_ values: [String]) -> RustVec<RustString> {
   return vector
 }
 
+func nativeByteVec(_ values: [UInt8]) -> RustVec<UInt8> {
+  let vector = RustVec<UInt8>()
+  for value in values {
+    vector.push(value: value)
+  }
+  return vector
+}
+
 func nativeSanitize(_ raw: String?) -> String {
   guard let raw else { return "" }
   return raw

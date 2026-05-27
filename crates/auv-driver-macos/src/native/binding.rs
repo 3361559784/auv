@@ -13,6 +13,7 @@ pub(crate) mod ffi {
   #[swift_bridge(swift_repr = "struct")]
   struct NativePermissionProbeResponse {
     screen_recording: NativePermissionStatus,
+    screen_capture_kit: NativePermissionStatus,
     accessibility: NativePermissionStatus,
   }
 
@@ -170,6 +171,22 @@ pub(crate) mod ffi {
   }
 
   #[swift_bridge(swift_repr = "struct")]
+  struct NativeOcrRgbaRequest {
+    image_width: i64,
+    image_height: i64,
+    rgba_bytes: Vec<u8>,
+    query: String,
+    exact: bool,
+    case_sensitive: bool,
+    max_observations: i64,
+    crop_enabled: bool,
+    crop_x: i64,
+    crop_y: i64,
+    crop_width: i64,
+    crop_height: i64,
+  }
+
+  #[swift_bridge(swift_repr = "struct")]
   struct NativeOcrTextResponse {
     recognized_at: String,
     image_path: String,
@@ -192,6 +209,20 @@ pub(crate) mod ffi {
     y_values: Vec<i64>,
     width_values: Vec<i64>,
     height_values: Vec<i64>,
+    error_message: Option<String>,
+    recovery_hint: Option<String>,
+  }
+
+  #[swift_bridge(swift_repr = "struct")]
+  struct NativeWindowCaptureRequest {
+    window_id: i64,
+  }
+
+  #[swift_bridge(swift_repr = "struct")]
+  struct NativeWindowCaptureResponse {
+    image_width: i64,
+    image_height: i64,
+    rgba_bytes: Vec<u8>,
     error_message: Option<String>,
     recovery_hint: Option<String>,
   }
@@ -262,6 +293,8 @@ pub(crate) mod ffi {
     fn perform_ax_action(request: NativeAxActionRequest) -> NativeAxActionResponse;
     fn set_ax_focused(request: NativeAxFocusRequest) -> NativeAxFocusResponse;
     fn find_ocr_text(request: NativeOcrTextRequest) -> NativeOcrTextResponse;
+    fn find_ocr_text_rgba(request: NativeOcrRgbaRequest) -> NativeOcrTextResponse;
+    fn capture_window_image(request: NativeWindowCaptureRequest) -> NativeWindowCaptureResponse;
     fn find_visual_rows(request: NativeVisualRowsRequest) -> NativeVisualRowsResponse;
     fn click_point(
       x: f64,

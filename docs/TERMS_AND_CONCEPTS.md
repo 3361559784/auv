@@ -193,6 +193,54 @@ candidates. OCR rows, visual row bands, segmented regions, icon matches, and
 future detector outputs should be able to project into this shape before an
 action consumes them.
 
+## Capture Frame
+
+Capture frame is a provisional term for an in-memory screenshot or cropped
+image result before it is persisted as an artifact. A capture frame should carry
+image data plus coordinate metadata, capture source, backend, scale, and timing
+information.
+
+Driver crates may produce capture frames. The runtime or recorder decides
+whether to persist them into `.auv/runs` artifacts. This keeps the operation
+path from requiring synchronous filename allocation or image writes when the
+caller only needs pixels for OCR, recognition, or immediate interaction logic.
+
+## Input Mode
+
+Input mode is a provisional term for the caller's allowed input disturbance
+level. It describes constraints such as background-only operation, preferring
+background operation, or allowing foreground fallback. The exact type name is
+still under review.
+
+Input mode is not the same as the selected native input method. For example,
+a background-only click might be delivered through an AX action, a pid-targeted
+CGEvent, a browser protocol command, or an ADB input path depending on the
+target and driver capabilities.
+
+## Prepare For Input Options
+
+Prepare for input options is a provisional term for how an action may prepare a
+target application, window, page, or device before input delivery. Examples include
+keeping the current foreground app, synthetic focus, background activation,
+focus-without-raise, and explicit foreground activation.
+
+Preparation behavior should be recorded in action results and traces because it
+is central to whether an operation can run without disrupting the user's current
+work. When preparation creates temporary state, the API should return an input
+preparation lease that can be passed back to restore the previous state.
+
+## Action Executor
+
+Action executor is a provisional term for the layer that performs one concrete
+input action, such as click, type text, press key, paste, or scroll, against a
+target. It selects an input delivery path subject to the caller's delivery and
+activation constraints, records attempted fallbacks, and returns an action
+report.
+
+The action executor is below reusable interactions such as scroll scan or
+pagination. It should not own high-level workflow control; it should make one
+action explainable and bounded.
+
 ## Interaction Pipeline
 
 Interaction pipeline is a provisional term for the layer above driver

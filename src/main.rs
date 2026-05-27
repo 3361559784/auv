@@ -45,6 +45,10 @@ async fn run() -> Result<(), String> {
     return Ok(());
   }
 
+  if let CliCommand::PermissionCheck { json } = &command {
+    return run_permission_check(*json);
+  }
+
   if let CliCommand::InspectServe {
     host,
     port,
@@ -78,6 +82,9 @@ async fn run() -> Result<(), String> {
   match command {
     CliCommand::Help => {
       print!("{}", help_text());
+    }
+    CliCommand::PermissionCheck { .. } => {
+      unreachable!("permission check is handled before runtime setup")
     }
     CliCommand::XtaskGenerateSwiftBridge => unreachable!("xtask is handled before runtime setup"),
     CliCommand::ListCommands => {
@@ -442,6 +449,123 @@ fn parse_scan_region_arg(raw: &str) -> Result<ScanRegion, String> {
     right_ratio: values[2],
     bottom_ratio: values[3],
   })
+}
+
+#[derive(serde::Serialize)]
+struct PermissionCheckReport {
+  platform: &'static str,
+  process_id: u32,
+  executable: Option<String>,
+  accessibility: &'static str,
+  screen_recording_preflight: &'static str,
+  screen_capture_kit: &'static str,
+  all_ok: bool,
+  warnings: Vec<String>,
+  recommendation: String,
+}
+
+fn run_permission_check(json: bool) -> Result<(), String> {
+  let report = collect_permission_check()?;
+
+  if json {
+    println!(
+      "{}",
+      serde_json::to_string_pretty(&report)
+        .map_err(|error| format!("failed to encode permission report: {error}"))?
+    );
+  } else {
+    print_permission_check_report(&report);
+  }
+
+  Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn collect_permission_check() -> Result<PermissionCheckReport, String> {
+  let native = auv_driver_macos::native::permission::probe_native_permissions()?;
+  let all_ok = native.accessibility == "granted" && native.screen_capture_kit == "granted";
+  let mut warnings = Vec::new();
+
+  if native.screen_recording == "missing" && native.screen_capture_kit == "granted" {
+    warnings.push(
+      "CGPreflightScreenCaptureAccess reports missing, but the ScreenCaptureKit probe works; this can happen when the launch host owns TCC attribution."
+        .to_string(),
+    );
+  }
+
+  Ok(PermissionCheckReport {
+    platform: "macos",
+    process_id: process::id(),
+    executable: env::current_exe()
+      .ok()
+      .map(|path| path.display().to_string()),
+    accessibility: native.accessibility,
+    screen_recording_preflight: native.screen_recording,
+    screen_capture_kit: native.screen_capture_kit,
+    all_ok,
+    warnings,
+    recommendation: permission_recommendation(native.accessibility, native.screen_capture_kit),
+  })
+}
+
+#[cfg(not(target_os = "macos"))]
+fn collect_permission_check() -> Result<PermissionCheckReport, String> {
+  Err("permission check is currently implemented only for macOS".to_string())
+}
+
+fn permission_recommendation(accessibility: &str, screen_capture_kit: &str) -> String {
+  match (accessibility, screen_capture_kit) {
+    ("granted", "granted") => {
+      "AUV has the macOS permissions needed for capture and AX-backed automation.".to_string()
+    }
+    ("missing", "missing") => {
+      "Grant Accessibility and Screen Recording to the terminal or app that launches auv-cli, then rerun this check."
+        .to_string()
+    }
+    ("missing", _) => {
+      "Grant Accessibility to the terminal or app that launches auv-cli, then rerun this check."
+        .to_string()
+    }
+    (_, "missing") => {
+      "Grant Screen Recording to the terminal or app that launches auv-cli, then rerun this check."
+        .to_string()
+    }
+    _ => "Review the permission statuses above before running desktop automation.".to_string(),
+  }
+}
+
+fn print_permission_check_report(report: &PermissionCheckReport) {
+  println!("AUV permission check");
+  println!("platform: {}", report.platform);
+  println!("process: {}", report.process_id);
+  if let Some(executable) = &report.executable {
+    println!("executable: {executable}");
+  }
+  println!(
+    "accessibility: {}",
+    permission_status_line(report.accessibility)
+  );
+  println!(
+    "screen recording preflight: {}",
+    permission_status_line(report.screen_recording_preflight)
+  );
+  println!(
+    "screen capture kit probe: {}",
+    permission_status_line(report.screen_capture_kit)
+  );
+  for warning in &report.warnings {
+    println!("warning: {warning}");
+  }
+  println!("all ok: {}", report.all_ok);
+  println!("recommendation: {}", report.recommendation);
+}
+
+fn permission_status_line(status: &str) -> String {
+  match status {
+    "granted" => "[ok] granted".to_string(),
+    "missing" => "[missing] missing".to_string(),
+    other => format!("[unknown] {other}"),
+  }
 }
 
 fn resolve_store_root(project_root: &Path, explicit: Option<&String>) -> PathBuf {

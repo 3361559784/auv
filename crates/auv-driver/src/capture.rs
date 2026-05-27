@@ -32,4 +32,6 @@ pub struct Capture {
   pub image: RgbaImage,
   pub bounds: Rect,
   pub scale_factor: f64,
+  pub backend: String,
+  pub fallback_reason: Option<String>,
 }

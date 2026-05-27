@@ -122,12 +122,14 @@ pub fn find_ax_text_node<'a>(
 
 pub fn permission_probe_report(
   screen_recording: &str,
+  screen_capture_kit: &str,
   accessibility: &str,
   automation: &str,
   launch_host: &str,
 ) -> String {
   [
     format!("screenRecording={screen_recording}"),
+    format!("screenCaptureKit={screen_capture_kit}"),
     format!("accessibility={accessibility}"),
     format!("automationToSystemEvents={automation}"),
     format!("launchHostProcess={launch_host}"),

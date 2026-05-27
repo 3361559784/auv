@@ -18,6 +18,7 @@ pub fn probe_native_permissions() -> AuvResult<NativePermissionProbe> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NativePermissionProbe {
   pub screen_recording: &'static str,
+  pub screen_capture_kit: &'static str,
   pub accessibility: &'static str,
 }
 
@@ -26,6 +27,7 @@ impl From<NativePermissionProbeResponse> for NativePermissionProbe {
   fn from(value: NativePermissionProbeResponse) -> Self {
     Self {
       screen_recording: permission_status_label(value.screen_recording),
+      screen_capture_kit: permission_status_label(value.screen_capture_kit),
       accessibility: permission_status_label(value.accessibility),
     }
   }

@@ -112,6 +112,15 @@ IDE. Do not commit the generated directories; regenerate them after changing
 `crates/auv-driver-macos/src/native/binding.rs` or
 `crates/auv-overlay-macos/src/native/binding.rs`.
 
+When a change touches either Rust/Swift FFI declarations or Swift native source
+files, rerun `hack/generate-swift-bridge` before validating. Then run the
+SwiftPM build for every touched Swift package, for example
+`cd crates/auv-driver-macos/native/swift && swift build` or
+`cd crates/auv-overlay-macos/native/swift && swift build`. Treat SwiftPM and
+SourceKit errors as real compatibility issues even when `cargo check` succeeds;
+availability guards, generated bridge types, and IDE-visible imports must all be
+kept current.
+
 ## Documentation Workflow
 
 During active design or implementation, write specs, plans, and working notes in

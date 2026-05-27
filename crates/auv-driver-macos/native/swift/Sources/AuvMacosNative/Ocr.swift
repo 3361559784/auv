@@ -268,6 +268,197 @@ func find_ocr_text(request: NativeOcrTextRequest) -> NativeOcrTextResponse {
   )
 }
 
+private func emptyOcrTextRgbaResponse(
+  request: NativeOcrRgbaRequest,
+  message: String,
+  recovery: String
+) -> NativeOcrTextResponse {
+  NativeOcrTextResponse(
+    recognized_at: nativeNowIso8601(),
+    image_path: "memory://rgba".intoRustString(),
+    image_width: request.image_width,
+    image_height: request.image_height,
+    query: request.query,
+    exact: request.exact,
+    case_sensitive: request.case_sensitive,
+    normalized_query: "".intoRustString(),
+    crop_enabled: request.crop_enabled,
+    crop_x: request.crop_x,
+    crop_y: request.crop_y,
+    crop_width: request.crop_width,
+    crop_height: request.crop_height,
+    ocr_scale_factor: 1.0,
+    match_indices: RustVec<Int64>(),
+    texts: RustVec<RustString>(),
+    confidences: RustVec<Double>(),
+    x_values: RustVec<Int64>(),
+    y_values: RustVec<Int64>(),
+    width_values: RustVec<Int64>(),
+    height_values: RustVec<Int64>(),
+    error_message: message.intoRustString(),
+    recovery_hint: recovery.intoRustString()
+  )
+}
+
+func find_ocr_text_rgba(request: NativeOcrRgbaRequest) -> NativeOcrTextResponse {
+  let rawQuery = request.query.toString()
+  let bytes = Array(request.rgba_bytes)
+  guard
+    let image = nativeImageFromRgbaBytes(
+      width: Int(request.image_width),
+      height: Int(request.image_height),
+      bytes: bytes
+    )
+  else {
+    return emptyOcrTextRgbaResponse(
+      request: request,
+      message: "could not build image for OCR from RGBA bytes",
+      recovery: "verify RGBA byte length matches image_width * image_height * 4"
+    )
+  }
+
+  var workingImage = image
+  var cropOffsetX: Int64 = 0
+  var cropOffsetY: Int64 = 0
+  var ocrScaleFactor: CGFloat = 1.0
+
+  if request.crop_enabled {
+    let cropRect = CGRect(
+      x: Int(request.crop_x),
+      y: Int(request.crop_y),
+      width: Int(request.crop_width),
+      height: Int(request.crop_height)
+    ).integral
+    guard cropRect.width > 0, cropRect.height > 0 else {
+      return emptyOcrTextRgbaResponse(
+        request: request,
+        message: "invalid OCR crop rect \(cropRect)",
+        recovery: "pass a positive crop region inside the image bounds"
+      )
+    }
+    guard let croppedImage = image.cropping(to: cropRect) else {
+      return emptyOcrTextRgbaResponse(
+        request: request,
+        message: "could not crop OCR image to \(cropRect)",
+        recovery: "pass a crop region inside the image bounds"
+      )
+    }
+    cropOffsetX = Int64(cropRect.origin.x.rounded())
+    cropOffsetY = Int64(cropRect.origin.y.rounded())
+    if let upscaledImage = upscale(croppedImage, factor: 2.0) {
+      workingImage = upscaledImage
+      ocrScaleFactor = 2.0
+    } else {
+      workingImage = croppedImage
+    }
+  }
+
+  let normalizedQuery = request.case_sensitive ? rawQuery : rawQuery.lowercased()
+  let normalizedAnchorQuery = normalizeForAnchorMatch(rawQuery, caseSensitive: request.case_sensitive)
+
+  func matches(_ text: String) -> Bool {
+    if rawQuery.isEmpty {
+      return true
+    }
+    let normalizedText = request.case_sensitive ? text : text.lowercased()
+    let normalizedAnchorText = normalizeForAnchorMatch(text, caseSensitive: request.case_sensitive)
+    if request.exact {
+      return normalizedText == normalizedQuery || normalizedAnchorText == normalizedAnchorQuery
+    }
+    return normalizedText.contains(normalizedQuery)
+      || normalizedAnchorText.contains(normalizedAnchorQuery)
+  }
+
+  let visionRequest = VNRecognizeTextRequest()
+  visionRequest.recognitionLevel = .accurate
+  visionRequest.usesLanguageCorrection = true
+  visionRequest.recognitionLanguages = ["zh-Hans", "zh-Hant", "en-US"]
+  if !rawQuery.isEmpty {
+    visionRequest.customWords = [rawQuery]
+  }
+  if #available(macOS 26.0, *) {
+    visionRequest.automaticallyDetectsLanguage = true
+  }
+
+  let handler = VNImageRequestHandler(cgImage: workingImage, options: [:])
+  do {
+    try handler.perform([visionRequest])
+  } catch {
+    return emptyOcrTextRgbaResponse(
+      request: request,
+      message: "vision OCR failed: \(error)",
+      recovery: "verify Screen Recording/capture output and retry"
+    )
+  }
+
+  let observations = (visionRequest.results as? [VNRecognizedTextObservation]) ?? []
+  let maxObservations = max(Int(request.max_observations), 1)
+
+  var matchIndices: [Int64] = []
+  var texts: [String] = []
+  var confidences: [Double] = []
+  var xValues: [Int64] = []
+  var yValues: [Int64] = []
+  var widthValues: [Int64] = []
+  var heightValues: [Int64] = []
+
+  for observation in observations.prefix(maxObservations) {
+    let candidates = observation.topCandidates(5)
+    guard
+      let candidate = candidates.first(where: { candidate in
+        let text = nativeSanitize(candidate.string)
+        return !text.isEmpty && matches(text)
+      })
+    else { continue }
+    let text = nativeSanitize(candidate.string)
+
+    let boundingBox = observation.boundingBox
+    let workingX = Int64((boundingBox.minX * CGFloat(workingImage.width)).rounded())
+    let workingY = Int64(((1.0 - boundingBox.maxY) * CGFloat(workingImage.height)).rounded())
+    let workingWidth = Int64((boundingBox.width * CGFloat(workingImage.width)).rounded())
+    let workingHeight = Int64((boundingBox.height * CGFloat(workingImage.height)).rounded())
+
+    let x = cropOffsetX + Int64((CGFloat(workingX) / ocrScaleFactor).rounded())
+    let y = cropOffsetY + Int64((CGFloat(workingY) / ocrScaleFactor).rounded())
+    let width = Int64((CGFloat(workingWidth) / ocrScaleFactor).rounded())
+    let height = Int64((CGFloat(workingHeight) / ocrScaleFactor).rounded())
+
+    matchIndices.append(Int64(matchIndices.count))
+    texts.append(text)
+    confidences.append(Double(candidate.confidence))
+    xValues.append(x)
+    yValues.append(y)
+    widthValues.append(width)
+    heightValues.append(height)
+  }
+
+  return NativeOcrTextResponse(
+    recognized_at: nativeNowIso8601(),
+    image_path: "memory://rgba".intoRustString(),
+    image_width: request.image_width,
+    image_height: request.image_height,
+    query: nativeSanitize(rawQuery).intoRustString(),
+    exact: request.exact,
+    case_sensitive: request.case_sensitive,
+    normalized_query: normalizedAnchorQuery.intoRustString(),
+    crop_enabled: request.crop_enabled,
+    crop_x: cropOffsetX,
+    crop_y: cropOffsetY,
+    crop_width: request.crop_width,
+    crop_height: request.crop_height,
+    ocr_scale_factor: Double(ocrScaleFactor),
+    match_indices: nativeVec(matchIndices),
+    texts: nativeStringVec(texts),
+    confidences: nativeVec(confidences),
+    x_values: nativeVec(xValues),
+    y_values: nativeVec(yValues),
+    width_values: nativeVec(widthValues),
+    height_values: nativeVec(heightValues),
+    error_message: nil,
+    recovery_hint: nil
+  )
+}
+
 func find_visual_rows(request: NativeVisualRowsRequest) -> NativeVisualRowsResponse {
   let imagePath = request.image_path.toString()
   guard let image = loadImage(path: imagePath) else {

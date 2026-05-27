@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 
 #[cfg(target_os = "macos")]
 use super::binding::ffi::{
-  NativeOcrTextRequest, NativeOcrTextResponse, NativeVisualRowsRequest, NativeVisualRowsResponse,
-  find_ocr_text, find_visual_rows,
+  NativeOcrRgbaRequest, NativeOcrTextRequest, NativeOcrTextResponse, NativeVisualRowsRequest,
+  NativeVisualRowsResponse, find_ocr_text, find_ocr_text_rgba, find_visual_rows,
 };
 use super::types::{
   AuvResult, DetectedScreenRows, ObservedOcrRow, ObservedRect, OcrTextMatch, OcrTextSnapshot,
@@ -59,6 +59,57 @@ pub fn find_text(
       crop_height: crop.height,
     },
   )))
+}
+
+#[cfg(target_os = "macos")]
+#[allow(clippy::too_many_arguments)]
+pub fn find_text_in_rgba(
+  rgba_bytes: Vec<u8>,
+  image_width: i64,
+  image_height: i64,
+  query: &str,
+  exact: bool,
+  case_sensitive: bool,
+  max_observations: i64,
+  crop_region: Option<&ObservedRect>,
+) -> AuvResult<NativeOcrTextCapture> {
+  let crop = crop_region.cloned().unwrap_or(ObservedRect {
+    x: 0,
+    y: 0,
+    width: 0,
+    height: 0,
+  });
+  decode_ocr_text_response(DecodedOcrTextResponse::from(find_ocr_text_rgba(
+    NativeOcrRgbaRequest {
+      image_width,
+      image_height,
+      rgba_bytes,
+      query: query.to_string(),
+      exact,
+      case_sensitive,
+      max_observations,
+      crop_enabled: crop_region.is_some(),
+      crop_x: crop.x,
+      crop_y: crop.y,
+      crop_width: crop.width,
+      crop_height: crop.height,
+    },
+  )))
+}
+
+#[cfg(not(target_os = "macos"))]
+#[allow(clippy::too_many_arguments)]
+pub fn find_text_in_rgba(
+  _rgba_bytes: Vec<u8>,
+  _image_width: i64,
+  _image_height: i64,
+  _query: &str,
+  _exact: bool,
+  _case_sensitive: bool,
+  _max_observations: i64,
+  _crop_region: Option<&ObservedRect>,
+) -> AuvResult<NativeOcrTextCapture> {
+  Err("macOS native OCR text detection is unsupported on this target".to_string())
 }
 
 #[cfg(not(target_os = "macos"))]

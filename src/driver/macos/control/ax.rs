@@ -10,6 +10,7 @@
 
 use super::super::overlay::with_overlay_cursor;
 use super::super::*;
+use super::action_resolver::{ActionResolverDecision, ResolvedActionMethod};
 use super::common::{
   DEFAULT_CLICK_INTERVAL_MS, activate_app_if_needed, build_ax_click_notes,
   send_reveal_shortcut_if_needed,
@@ -892,7 +893,13 @@ pub(crate) fn smart_press(call: &DriverCall) -> AuvResult<DriverResponse> {
   }
 
   match ax_click_window_text(&smart_call) {
-    Ok(response) => mark_smart_press_response(response, &query, "ax-action", false, None),
+    Ok(response) => mark_smart_press_response(
+      response,
+      &query,
+      ResolvedActionMethod::AxAction,
+      allow_pointer_fallback,
+      None,
+    ),
     Err(primary_error) => {
       if !allow_pointer_fallback {
         return Err(format!(
@@ -901,9 +908,13 @@ pub(crate) fn smart_press(call: &DriverCall) -> AuvResult<DriverResponse> {
       }
 
       match click_window_text(&smart_call) {
-        Ok(response) => {
-          mark_smart_press_response(response, &query, "pointer-click", true, Some(primary_error))
-        }
+        Ok(response) => mark_smart_press_response(
+          response,
+          &query,
+          ResolvedActionMethod::PointerClick,
+          allow_pointer_fallback,
+          Some(primary_error),
+        ),
         Err(fallback_error) => Err(format!(
           "smartPress AX strategy failed: {primary_error}; pointer fallback also failed: {fallback_error}"
         )),
@@ -994,10 +1005,18 @@ fn best_effort_ax_overlay_artifacts(
 fn mark_smart_press_response(
   mut response: DriverResponse,
   query: &str,
-  strategy: &str,
-  fallback_used: bool,
+  selected_method: ResolvedActionMethod,
+  fallback_allowed: bool,
   primary_error: Option<String>,
 ) -> AuvResult<DriverResponse> {
+  let decision = ActionResolverDecision::smart_press(
+    query,
+    selected_method,
+    fallback_allowed,
+    primary_error.as_deref(),
+  );
+  let strategy = decision.selected_method;
+  let fallback_used = decision.fallback_used;
   augment_smart_press_overlay_annotation(
     &mut response,
     strategy,
@@ -1018,6 +1037,10 @@ fn mark_smart_press_response(
   response
     .notes
     .push(format!("smartPressFallbackUsed={fallback_used}"));
+  response.notes.extend(decision.notes());
+  for (key, value) in decision.signals() {
+    response.signals.insert(key, value);
+  }
   if let Some(error) = primary_error.as_deref() {
     response
       .notes
@@ -1041,6 +1064,7 @@ fn mark_smart_press_response(
     "Recorded the selected smartPress strategy and fallback decision.",
   )?;
   response.artifacts.push(artifact);
+  response.artifacts.push(decision.artifact()?);
 
   response.backend = Some(format!("macos.smart-press.{strategy}"));
   response.summary = format!("Smart press used {strategy}: {}", response.summary);
@@ -1111,6 +1135,7 @@ fn report_value(raw: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+  use super::super::action_resolver::ACTION_RESOLVER_VERSION;
   use super::*;
   use crate::driver::macos::support::temp_file_path;
   use crate::model::ProducedArtifact;
@@ -1167,5 +1192,69 @@ mod tests {
     );
 
     let _ = fs::remove_file(annotation_path);
+  }
+
+  #[test]
+  fn mark_smart_press_response_adds_action_resolver_contract() {
+    let response = DriverResponse {
+      summary: "pressed".to_string(),
+      backend: None,
+      signals: std::collections::BTreeMap::new(),
+      notes: Vec::new(),
+      artifacts: Vec::new(),
+    };
+
+    let response = mark_smart_press_response(
+      response,
+      "播放",
+      ResolvedActionMethod::PointerClick,
+      true,
+      Some("AX target had no matching action".to_string()),
+    )
+    .expect("smart press marker should be applied");
+
+    assert_eq!(
+      response.signals.get("smartPress.strategy"),
+      Some(&"pointer-click".to_string())
+    );
+    assert_eq!(
+      response.signals.get("smartPress.fallbackUsed"),
+      Some(&"true".to_string())
+    );
+    assert_eq!(
+      response.signals.get("actionResolver.version"),
+      Some(&ACTION_RESOLVER_VERSION.to_string())
+    );
+    assert_eq!(
+      response.signals.get("actionResolver.selectedMethod"),
+      Some(&"pointer-click".to_string())
+    );
+    assert_eq!(
+      response.signals.get("actionResolver.fallbackReason"),
+      Some(&"AX target had no matching action".to_string())
+    );
+    assert_eq!(
+      response.signals.get("actionResolver.cursorDisturbance"),
+      Some(&"warp-visible".to_string())
+    );
+    assert!(
+      response
+        .notes
+        .contains(&"actionResolverSelectedMethod=pointer-click".to_string())
+    );
+    assert!(
+      response
+        .artifacts
+        .iter()
+        .any(|artifact| artifact.kind == "action.resolver.decision")
+    );
+    assert_eq!(
+      response.backend.as_deref(),
+      Some("macos.smart-press.pointer-click")
+    );
+
+    for artifact in response.artifacts {
+      let _ = fs::remove_file(artifact.source_path);
+    }
   }
 }

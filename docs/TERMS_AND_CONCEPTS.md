@@ -500,6 +500,23 @@ command-like constraints, but a backend may support only a subset.
 Surface selectors do not execute UI actions. They resolve to candidates with
 evidence; actions consume those candidates and verify their own results.
 
+## Action Resolver
+
+An action resolver is the policy layer that chooses how AUV will act on a
+target after that target has been grounded. It does not discover the target
+from scratch; it consumes a query, candidate, or surface node and selects an
+execution method such as AX action, AX focus, keyboard/menu command, or pointer
+fallback.
+
+The resolver must record the selected method, fallback policy, fallback reason,
+disturbance class, and evidence artifacts. A successful dispatch is not the
+same thing as semantic success; recipes still need verification results for
+the expected state.
+
+Status: provisional. The first implementation scope is `debug.smartPress`
+(`ax-action` first, optional `pointer-click` fallback). It is a discovery and
+debug contract, not a production default for validated recipe cases.
+
 ## Verification Method
 
 A verification method is the typed taxonomy of an assertion carried by a

@@ -1,4 +1,5 @@
 // File: src/driver/macos/control/mod.rs
+mod action_resolver;
 mod app;
 mod ax;
 pub(crate) mod common;

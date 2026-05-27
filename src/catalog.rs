@@ -344,7 +344,7 @@ pub fn default_command_catalog() -> CommandCatalog {
     CommandSpec {
       id: "debug.smartPress",
       namespace: ACTION,
-      summary: "Try OCR-to-AX press first; if it fails and --allow_pointer_fallback is not false, fall back to pointer click. Overlay defaults on for this debug command so the target is visible before either strategy acts.",
+      summary: "ActionResolver v0 debug press: try OCR-to-AX press first; if it fails and --allow_pointer_fallback is not false, fall back to pointer click. Records actionResolver.* signals plus the selected method, fallback reason, and disturbance metadata.",
       driver_id: "macos.desktop",
       operation: "smart_press",
       disturbance_classes: POINTER_WITH_FOREGROUND,

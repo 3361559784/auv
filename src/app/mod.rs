@@ -3193,6 +3193,61 @@ mod tests {
   }
 
   #[test]
+  fn validation_report_keeps_row_context_failures_review_only() {
+    let validation = AppValidation {
+      validate_version: APP_VALIDATE_VERSION.to_string(),
+      created_at_millis: 0,
+      source_distillation_path: PathBuf::from("/tmp/distillation.json"),
+      source_analysis_path: PathBuf::from("/tmp/analysis.json"),
+      app_identity: AppIdentity {
+        bundle_id: "com.example.App".to_string(),
+        app_name: "Example".to_string(),
+        app_path: Some(PathBuf::from("/Applications/Example.app")),
+        main_executable_path: None,
+        version: "1.0".to_string(),
+        build_version: "100".to_string(),
+        url_schemes: vec![],
+        apple_script_addressable: false,
+        launch_services_resolved: true,
+        resolution_notes: vec![],
+      },
+      candidates: vec![AppValidatedCandidate {
+        recipe_id: "test.recorded.skill".to_string(),
+        taxonomy_id: "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text"
+          .to_string(),
+        status: AppValidationStatus::Rejected,
+        verification_mode: AppVerificationMode::MachineAsserted,
+        rationale: "row context-only suggestions must not become executable".to_string(),
+        selected_case_count: 1,
+        recipe_path: PathBuf::from("/tmp/native-text.recipe.json"),
+        case_matrix_path: PathBuf::from("/tmp/native-text.cases.json"),
+        used_annotation_ids: Vec::new(),
+        resolved_inputs: BTreeMap::new(),
+        unresolved_inputs: vec!["focus_query".to_string()],
+        failure_message: Some(
+          "Validation could not execute test.recorded.skill because grounding left unresolved inputs: focus_query."
+            .to_string(),
+        ),
+      }],
+      known_boundaries: vec![
+        "Grouped visible rows remain surface candidates until a row action exists."
+          .to_string(),
+      ],
+    };
+
+    let report = render_app_validation_report(&validation);
+
+    assert!(report.contains("manual review required: `no`"));
+    assert!(report.contains("- unresolved inputs:"));
+    assert!(report.contains("`focus_query`"));
+    assert!(report.contains("- failure:"));
+    assert!(report.contains("grounding left unresolved inputs"));
+    assert!(report.contains("Grouped visible rows remain surface candidates"));
+    assert!(!report.contains("- used annotations:"));
+    assert!(!report.contains("`visible-row-1`"));
+  }
+
+  #[test]
   fn build_annotation_candidates_keeps_raw_ocr_as_visible_text_and_adds_selectors() {
     let app = AppIdentity {
       bundle_id: "com.example.music".to_string(),

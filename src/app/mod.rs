@@ -3606,6 +3606,90 @@ mod tests {
   }
 
   #[test]
+  fn app_distillation_json_round_trip_preserves_row_review_only_fields() {
+    let root = temp_dir("app-distillation-round-trip");
+    let distillation_path = root.join("distillation.json");
+    let distillation = AppDistillation {
+      distill_version: APP_DISTILL_VERSION.to_string(),
+      created_at_millis: 0,
+      source_analysis_path: PathBuf::from("/tmp/analysis.json"),
+      app_identity: AppIdentity {
+        bundle_id: "com.example.App".to_string(),
+        app_name: "Example".to_string(),
+        app_path: Some(PathBuf::from("/Applications/Example.app")),
+        main_executable_path: None,
+        version: "1.0".to_string(),
+        build_version: "100".to_string(),
+        url_schemes: vec![],
+        apple_script_addressable: false,
+        launch_services_resolved: true,
+        resolution_notes: vec![],
+      },
+      candidates: vec![AppDistilledCandidate {
+        recipe_id: "test.result.selection".to_string(),
+        taxonomy_id: "result-selection.ocr-anchor.pointer-click.capture-evidence".to_string(),
+        status: AssessmentStatus::Candidate,
+        rationale: "row suggestions stay review-only".to_string(),
+        suggested_annotation_ids: vec!["visible-row-1".to_string()],
+        candidate_shape: AppDistilledCandidateShape {
+          direct_candidate_ids: Vec::new(),
+          context_candidate_ids: vec!["visible-row-1".to_string()],
+          provided_inputs: BTreeMap::new(),
+          notes: vec![
+            "No direct candidate shape was available for taxonomy result-selection.ocr-anchor.pointer-click.capture-evidence during distill.".to_string(),
+            "Context-only candidates were recorded for later review, but they did not project directly into recipe inputs.".to_string(),
+          ],
+        },
+        recipe_path: PathBuf::from("/tmp/result-selection.recipe.json"),
+        case_matrix_path: PathBuf::from("/tmp/result-selection.cases.json"),
+      }],
+      known_boundaries: vec![
+        "Grouped visible rows remain surface candidates until a row action exists."
+          .to_string(),
+      ],
+    };
+
+    write_pretty_json(&distillation_path, &distillation).expect("distillation should write");
+
+    let reloaded: AppDistillation =
+      read_json(&distillation_path).expect("distillation should read");
+    let candidate = &reloaded.candidates[0];
+
+    assert_eq!(
+      candidate.suggested_annotation_ids,
+      vec!["visible-row-1".to_string()]
+    );
+    assert!(candidate.candidate_shape.direct_candidate_ids.is_empty());
+    assert_eq!(
+      candidate.candidate_shape.context_candidate_ids,
+      vec!["visible-row-1".to_string()]
+    );
+    assert!(candidate.candidate_shape.provided_inputs.is_empty());
+    assert!(
+      candidate
+        .candidate_shape
+        .notes
+        .iter()
+        .any(|note| note.contains("No direct candidate shape was available"))
+    );
+    assert!(
+      candidate
+        .candidate_shape
+        .notes
+        .iter()
+        .any(|note| note.contains("Context-only candidates were recorded"))
+    );
+    assert!(
+      reloaded
+        .known_boundaries
+        .iter()
+        .any(|note| note.contains("Grouped visible rows remain surface candidates"))
+    );
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
   fn build_probe_evidence_refs_resolves_artifact_records_from_probe_steps() {
     let root = temp_dir("probe-evidence-refs");
     let run_dir = root.join(".auv").join("runs").join("run_fixture");

@@ -1152,7 +1152,7 @@ mod tests {
   use super::analysis::{
     apply_candidate_grounding, build_annotation_candidates, build_app_analysis,
     build_distilled_candidate_shape, build_probe_evidence_refs, candidate_compatibility,
-    recommended_strategy,
+    recommended_strategy, suggested_annotation_ids_for_candidate_shape,
   };
   use super::infra::{
     invoke_probe_step, read_json, resolve_distillation_path, resolve_probe_path, write_pretty_json,
@@ -1726,6 +1726,28 @@ mod tests {
     );
     assert!(candidate_shape.context_candidate_ids.is_empty());
     assert!(candidate_shape.notes.is_empty());
+  }
+
+  #[test]
+  fn suggested_annotation_ids_preserve_direct_then_context_candidates() {
+    let candidate_shape = AppDistilledCandidateShape {
+      direct_candidate_ids: vec![
+        "window-primary-region".to_string(),
+        "search-entry-focus-ax".to_string(),
+      ],
+      context_candidate_ids: vec!["visible-row-1".to_string()],
+      provided_inputs: BTreeMap::new(),
+      notes: vec![],
+    };
+
+    assert_eq!(
+      suggested_annotation_ids_for_candidate_shape(&candidate_shape),
+      vec![
+        "window-primary-region".to_string(),
+        "search-entry-focus-ax".to_string(),
+        "visible-row-1".to_string(),
+      ]
+    );
   }
 
   #[test]

@@ -2402,6 +2402,82 @@ mod tests {
   }
 
   #[test]
+  fn conservative_merge_does_not_join_adjacent_pages_with_different_recognized_items() {
+    let mut left = observation("obs_0001", 0, "Repeat", 120);
+    left.attributes.insert(
+      "recognized_item_id".to_string(),
+      "recognized-row-1".to_string(),
+    );
+    left.attributes.insert(
+      "recognition_id".to_string(),
+      "window_region_demo".to_string(),
+    );
+    left
+      .attributes
+      .insert("row_candidate_index".to_string(), "2".to_string());
+
+    let mut right = observation("obs_0002", 1, "Repeat", 118);
+    right.attributes.insert(
+      "recognized_item_id".to_string(),
+      "recognized-row-2".to_string(),
+    );
+    right.attributes.insert(
+      "recognition_id".to_string(),
+      "window_region_demo".to_string(),
+    );
+    right
+      .attributes
+      .insert("row_candidate_index".to_string(), "3".to_string());
+
+    let clusters = conservative_merge_observations(&[left, right]);
+
+    assert_eq!(clusters.len(), 2);
+    assert_eq!(clusters[0].merge_reason, "single_observation");
+    assert_eq!(clusters[1].merge_reason, "single_observation");
+  }
+
+  #[test]
+  fn conservative_merge_prefers_recognized_item_identity_over_text_y_heuristic() {
+    let mut left = observation("obs_0001", 0, "Repeat", 120);
+    left.attributes.insert(
+      "recognized_item_id".to_string(),
+      "recognized-row-1".to_string(),
+    );
+    left.attributes.insert(
+      "recognition_id".to_string(),
+      "window_region_demo".to_string(),
+    );
+    left
+      .attributes
+      .insert("row_candidate_index".to_string(), "2".to_string());
+
+    let mut right = observation("obs_0002", 1, "Repeat", 152);
+    right.attributes.insert(
+      "recognized_item_id".to_string(),
+      "recognized-row-1".to_string(),
+    );
+    right.attributes.insert(
+      "recognition_id".to_string(),
+      "window_region_demo".to_string(),
+    );
+    right
+      .attributes
+      .insert("row_candidate_index".to_string(), "2".to_string());
+
+    let clusters = conservative_merge_observations(&[left, right]);
+
+    assert_eq!(clusters.len(), 1);
+    assert_eq!(
+      clusters[0].observation_ids,
+      vec!["obs_0001".to_string(), "obs_0002".to_string()]
+    );
+    assert_eq!(
+      clusters[0].merge_reason,
+      "same_recognized_item_adjacent_page"
+    );
+  }
+
+  #[test]
   fn bounded_policy_stops_at_max_pages() {
     let decision = evaluate_stop_policy(
       &StopPolicy::Bounded {

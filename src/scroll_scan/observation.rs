@@ -46,8 +46,10 @@ pub fn conservative_merge_observations(
       if should_merge_adjacent_observations(observation, candidate) {
         ids.push(candidate.observation_id.clone());
         assigned[candidate_index] = true;
-        merge_reason = "same_text_adjacent_page_near_y".to_string();
-        confidence = 0.72;
+        let decision = merge_decision(observation, candidate)
+          .expect("merge decision should exist when adjacent observations merge");
+        merge_reason = decision.reason.to_string();
+        confidence = decision.confidence;
       }
     }
 
@@ -70,16 +72,101 @@ pub(crate) fn should_merge_adjacent_observations(
   left: &CollectionObservation,
   right: &CollectionObservation,
 ) -> bool {
-  if left.normalized_text_key.is_empty() || left.normalized_text_key != right.normalized_text_key {
-    return false;
-  }
+  merge_decision(left, right).is_some()
+}
+
+struct MergeDecision {
+  reason: &'static str,
+  confidence: f64,
+}
+
+fn merge_decision(
+  left: &CollectionObservation,
+  right: &CollectionObservation,
+) -> Option<MergeDecision> {
   if left.section_context != right.section_context {
-    return false;
+    return None;
   }
   if left.page_index.abs_diff(right.page_index) != 1 {
-    return false;
+    return None;
   }
-  (left.bounds.y - right.bounds.y).abs() <= 8
+
+  if attribute_values_conflict(left, right, "recognized_item_id") {
+    return None;
+  }
+  if let Some(recognized_item_id) = shared_attribute(left, right, "recognized_item_id") {
+    if !recognized_item_id.is_empty() {
+      return Some(MergeDecision {
+        reason: "same_recognized_item_adjacent_page",
+        confidence: 0.94,
+      });
+    }
+  }
+
+  let left_slot_identity = recognition_slot_identity(left);
+  let right_slot_identity = recognition_slot_identity(right);
+  if left_slot_identity.is_some()
+    && right_slot_identity.is_some()
+    && left_slot_identity != right_slot_identity
+  {
+    return None;
+  }
+  if left_slot_identity == right_slot_identity && left_slot_identity.is_some() {
+    return Some(MergeDecision {
+      reason: "same_recognition_slot_adjacent_page",
+      confidence: 0.84,
+    });
+  }
+
+  if left.normalized_text_key.is_empty() || left.normalized_text_key != right.normalized_text_key {
+    return None;
+  }
+  if (left.bounds.y - right.bounds.y).abs() > 8 {
+    return None;
+  }
+
+  Some(MergeDecision {
+    reason: "same_text_adjacent_page_near_y",
+    confidence: 0.72,
+  })
+}
+
+fn shared_attribute<'a>(
+  left: &'a CollectionObservation,
+  right: &'a CollectionObservation,
+  key: &str,
+) -> Option<&'a str> {
+  let left_value = left.attributes.get(key)?;
+  let right_value = right.attributes.get(key)?;
+  if left_value == right_value {
+    Some(left_value.as_str())
+  } else {
+    None
+  }
+}
+
+fn attribute_values_conflict(
+  left: &CollectionObservation,
+  right: &CollectionObservation,
+  key: &str,
+) -> bool {
+  match (left.attributes.get(key), right.attributes.get(key)) {
+    (Some(left_value), Some(right_value)) => left_value != right_value,
+    _ => false,
+  }
+}
+
+fn recognition_slot_identity(observation: &CollectionObservation) -> Option<(&str, &str, &str)> {
+  let recognition_id = observation.attributes.get("recognition_id")?.as_str();
+  let slot_key = if observation.attributes.contains_key("row_candidate_index") {
+    "row_candidate_index"
+  } else if observation.attributes.contains_key("row_index") {
+    "row_index"
+  } else {
+    return None;
+  };
+  let slot_value = observation.attributes.get(slot_key)?.as_str();
+  Some((recognition_id, slot_key, slot_value))
 }
 
 pub(crate) fn observation_from_row(

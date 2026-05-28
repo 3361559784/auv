@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
+use crate::contract::{CandidateQuery, SelectorScope, SurfaceSelector, SurfaceSelectorClause};
 use crate::driver::{
   ObservedAxTreeSnapshot, ObservedDisplay, ObservedDisplaySnapshot, ObservedOcrRow, ObservedRect,
   ObservedWindow, OcrTextSnapshot, compute_combined_bounds, group_ocr_matches_into_rows,
@@ -323,15 +324,11 @@ pub(crate) fn build_app_analysis(probe_path: &Path, probe: &AppProbe) -> AuvResu
       "The sampled AX tree contains visible text-bearing nodes, which makes AX-based verification and native-text flows plausible candidates.",
     )?);
   }
-  if !ocr_snapshot.matches.is_empty() && has_collection_like_surface(&ax_snapshot) {
-    recommended_strategies.push(recommended_strategy(
-      "result-selection",
-      "ocr-anchor",
-      "pointer-click",
-      "captureEvidence",
-      AssessmentStatus::Candidate,
-      "The sample OCR query produced filtered matches on the captured image, so OCR-anchor result selection is a candidate grounding strategy.",
-    )?);
+  let grouped_result_rows = grouped_result_row_count(&annotation_candidates);
+  if has_collection_like_surface(&ax_snapshot) && grouped_result_rows >= 2 {
+    known_boundaries.push(format!(
+      "The sample surface produced {grouped_result_rows} grouped visible-row candidates. Analyze records them as surface candidates, but does not promote them to a recipe strategy until a row-selection action and verification contract are validated."
+    ));
   }
   if primary_window_bounds.is_some()
     && pointer_fallback_surface == AssessmentStatus::Likely
@@ -578,6 +575,7 @@ pub(crate) fn build_annotation_candidates(
       bounds: Some(bounds),
       confidence: None,
       evidence_step_id: evidence_step_id.to_string(),
+      candidate_query: None,
       input_bindings,
       compatibility: candidate_compatibility(
         &["window-action.window-point.pointer-click.capture-evidence"],
@@ -625,15 +623,17 @@ pub(crate) fn build_annotation_candidates(
 
   for matched in ocr_snapshot.matches.iter().take(8) {
     let bounds = AppRect::from_observed(&matched.bounds);
-    let area = if has_collection_surface && ocr_snapshot.matches.len() >= 2 {
-      "result-selection"
-    } else {
-      "ocr-visible-text"
-    };
+    let area = "ocr-visible-text";
     let mut notes =
       vec!["Visible OCR text candidate from the sampled screenshot artifact.".to_string()];
     if matched.text == ocr_snapshot.query {
       notes.push("This match equals the sampled OCR query.".to_string());
+    }
+    if has_collection_surface && ocr_snapshot.matches.len() >= 2 {
+      notes.push(
+        "Collection-like surface was present, but OCR text alone is title-level evidence until grouped rows or semantic result evidence corroborate it."
+          .to_string(),
+      );
     }
     candidates.push(AppSurfaceCandidate {
       candidate_id: format!("ocr-anchor-{}", matched.match_index),
@@ -653,15 +653,13 @@ pub(crate) fn build_annotation_candidates(
       bounds: Some(bounds),
       confidence: Some(matched.confidence),
       evidence_step_id: "ocr-sample".to_string(),
+      candidate_query: Some(ocr_candidate_query(
+        &format!("ocr-anchor-{}", matched.match_index),
+        &matched.text,
+        Some(matched.confidence),
+      )),
       input_bindings: BTreeMap::from([("anchor_text".to_string(), matched.text.clone())]),
-      compatibility: if area == "result-selection" {
-        candidate_compatibility(
-          &["result-selection.ocr-anchor.pointer-click.capture-evidence"],
-          &[],
-        )
-      } else {
-        AppCandidateCompatibility::default()
-      },
+      compatibility: AppCandidateCompatibility::default(),
       notes,
     });
   }
@@ -709,12 +707,13 @@ fn ax_focus_candidate(
     status: AssessmentStatus::Candidate,
     primary_text: summarize_ax_node_text(node),
     secondary_text: format!("role={} path={}", node.role, node.path),
-    query_value,
+    query_value: query_value.clone(),
     coordinate_space: "global-logical".to_string(),
     click_point: Some(bounds.center_point()),
     bounds: Some(bounds),
     confidence: None,
     evidence_step_id: evidence_step_id.to_string(),
+    candidate_query: Some(ax_candidate_query(candidate_id, node, &query_value, kind)),
     input_bindings: BTreeMap::from([("focus_query".to_string(), focus_query)]),
     compatibility,
     notes: vec![note.to_string()],
@@ -742,6 +741,11 @@ fn row_candidate(row: ObservedOcrRow) -> AppSurfaceCandidate {
     bounds: Some(bounds),
     confidence: None,
     evidence_step_id: "ocr-sample".to_string(),
+    candidate_query: Some(row_candidate_query(
+      &format!("visible-row-{}", row.row_index + 1),
+      row.row_index + 1,
+      &row.text_fragments.join(" "),
+    )),
     input_bindings: BTreeMap::from([("row_index".to_string(), format!("{}", row.row_index + 1))]),
     compatibility: candidate_compatibility(
       &[],
@@ -767,6 +771,87 @@ pub(crate) fn candidate_compatibility(
       .iter()
       .map(|value| value.to_string())
       .collect(),
+  }
+}
+
+fn grouped_result_row_count(candidates: &[AppSurfaceCandidate]) -> usize {
+  candidates
+    .iter()
+    .filter(|candidate| candidate.area == "result-selection" && candidate.kind == "row")
+    .count()
+}
+
+fn ax_candidate_query(
+  candidate_id: &str,
+  node: &crate::driver::ObservedAxNode,
+  label: &str,
+  output_kind: &str,
+) -> CandidateQuery {
+  CandidateQuery {
+    query_id: candidate_id.to_string(),
+    selector: SurfaceSelector {
+      any_of: vec![SurfaceSelectorClause::Ax {
+        role: non_empty_trimmed(&node.role),
+        label: non_empty_trimmed(label),
+        path: non_empty_trimmed(&node.path),
+        enabled: None,
+        visible: Some(true),
+      }],
+      within: SelectorScope::TargetWindow,
+      require_visible: true,
+    },
+    output_kind: Some(output_kind.to_string()),
+    known_limits: vec![
+      "Generated from app analyze AX snapshot; validate liveness before action.".to_string(),
+    ],
+  }
+}
+
+fn ocr_candidate_query(
+  candidate_id: &str,
+  text: &str,
+  provider_score: Option<f64>,
+) -> CandidateQuery {
+  CandidateQuery {
+    query_id: candidate_id.to_string(),
+    selector: SurfaceSelector {
+      any_of: vec![SurfaceSelectorClause::Ocr {
+        text: text.to_string(),
+        region_hint: None,
+        min_provider_score: provider_score,
+      }],
+      within: SelectorScope::TargetWindow,
+      require_visible: true,
+    },
+    output_kind: Some("anchor-text".to_string()),
+    known_limits: vec![
+      "OCR text from app analyze is visible-text evidence, not semantic result evidence."
+        .to_string(),
+    ],
+  }
+}
+
+fn row_candidate_query(
+  candidate_id: &str,
+  row_index: usize,
+  contains_text: &str,
+) -> CandidateQuery {
+  CandidateQuery {
+    query_id: candidate_id.to_string(),
+    selector: SurfaceSelector {
+      any_of: vec![SurfaceSelectorClause::Row {
+        row_index: Some(row_index),
+        contains_text: non_empty_trimmed(contains_text),
+        region_hint: None,
+      }],
+      within: SelectorScope::TargetWindow,
+      require_visible: true,
+    },
+    output_kind: Some("row".to_string()),
+    known_limits: vec![
+      "Grouped visible row is structural evidence; semantic identity requires later verification."
+        .to_string(),
+    ],
   }
 }
 

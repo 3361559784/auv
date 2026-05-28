@@ -373,6 +373,8 @@ pub struct AppSurfaceCandidate {
   pub click_point: Option<AppPoint>,
   pub confidence: Option<f64>,
   pub evidence_step_id: String,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub candidate_query: Option<crate::contract::CandidateQuery>,
   #[serde(default)]
   pub input_bindings: BTreeMap<String, String>,
   #[serde(default)]
@@ -1117,8 +1119,8 @@ fn default_distill_output_dir(analysis_path: &Path, analysis: &AppAnalysis) -> P
 #[cfg(test)]
 mod tests {
   use super::analysis::{
-    apply_candidate_grounding, build_app_analysis, build_distilled_candidate_shape,
-    candidate_compatibility, recommended_strategy,
+    apply_candidate_grounding, build_annotation_candidates, build_app_analysis,
+    build_distilled_candidate_shape, candidate_compatibility, recommended_strategy,
   };
   use super::infra::{
     invoke_probe_step, read_json, resolve_distillation_path, resolve_probe_path, write_pretty_json,
@@ -1130,13 +1132,16 @@ mod tests {
   };
   use super::*;
   use crate::catalog::CommandCatalog;
+  use crate::contract::{CandidateQuery, SelectorScope, SurfaceSelector, SurfaceSelectorClause};
   use crate::driver::{Driver, DriverRegistry};
+  use crate::driver::{ObservedAxNode, ObservedAxTreeSnapshot, ObservedRect, OcrTextSnapshot};
   use crate::model::RunStatus;
   use crate::model::{CommandSpec, DisturbanceClass, DriverCall, DriverDescriptor, DriverResponse};
   use crate::recording::{MemoryRunRecorder, RunUpdate};
   use crate::run_builder::RunSpec;
   use crate::store::LocalStore;
   use crate::trace::RunType;
+  use auv_driver_macos::types::OcrTextMatch;
   use serde_json::Value;
   use std::sync::Arc;
 
@@ -1426,6 +1431,22 @@ mod tests {
         click_point: Some(AppPoint { x: 50, y: 20 }),
         confidence: None,
         evidence_step_id: "capture-ax-tree".to_string(),
+        candidate_query: Some(CandidateQuery {
+          query_id: "search-entry-focus-ax".to_string(),
+          selector: SurfaceSelector {
+            any_of: vec![SurfaceSelectorClause::Ax {
+              role: Some("AXTextField".to_string()),
+              label: Some("Search".to_string()),
+              path: Some("0.1".to_string()),
+              enabled: None,
+              visible: Some(true),
+            }],
+            within: SelectorScope::TargetWindow,
+            require_visible: true,
+          },
+          output_kind: Some("focus-query".to_string()),
+          known_limits: vec!["test query".to_string()],
+        }),
         input_bindings: BTreeMap::from([("focus_query".to_string(), "Search".to_string())]),
         compatibility: candidate_compatibility(
           &["search-entry.ax-text-input.clipboard-submit.capture-evidence"],
@@ -1453,6 +1474,8 @@ mod tests {
     assert!(report.contains("## 3. Grounding Assessment"));
     assert!(report.contains("## 4. Candidate / Annotation Layer"));
     assert!(report.contains("coordinateSpace"));
+    assert!(report.contains("candidateQuery"));
+    assert!(report.contains("sources=`ax`"));
     assert!(report.contains("inputBindings"));
     assert!(report.contains("## 5. Control Strategy"));
     assert!(report.contains("## 6. Verification Assessment"));
@@ -1544,6 +1567,7 @@ mod tests {
       click_point: Some(AppPoint { x: 500, y: 500 }),
       confidence: None,
       evidence_step_id: "observe-window-tree".to_string(),
+      candidate_query: None,
       input_bindings: BTreeMap::from([
         ("window_bounds".to_string(), "100,200,800,600".to_string()),
         ("relative_x".to_string(), "0.500000".to_string()),
@@ -1621,6 +1645,7 @@ mod tests {
       click_point: Some(AppPoint { x: 500, y: 500 }),
       confidence: None,
       evidence_step_id: "capture-ax-tree".to_string(),
+      candidate_query: None,
       input_bindings: BTreeMap::from([
         ("window_bounds".to_string(), "100,200,800,600".to_string()),
         ("relative_x".to_string(), "0.500000".to_string()),
@@ -1865,6 +1890,7 @@ mod tests {
       click_point: Some(AppPoint { x: 500, y: 500 }),
       confidence: None,
       evidence_step_id: "capture-ax-tree".to_string(),
+      candidate_query: None,
       input_bindings: BTreeMap::from([
         ("window_bounds".to_string(), "100,200,800,600".to_string()),
         ("relative_x".to_string(), "0.500000".to_string()),
@@ -2098,6 +2124,162 @@ mod tests {
     );
 
     let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn build_annotation_candidates_keeps_raw_ocr_as_visible_text_and_adds_selectors() {
+    let app = AppIdentity {
+      bundle_id: "com.example.music".to_string(),
+      app_name: "ExampleMusic".to_string(),
+      app_path: None,
+      main_executable_path: None,
+      version: "1.0".to_string(),
+      build_version: "100".to_string(),
+      url_schemes: Vec::new(),
+      apple_script_addressable: false,
+      launch_services_resolved: true,
+      resolution_notes: Vec::new(),
+    };
+    let ax_snapshot = ObservedAxTreeSnapshot {
+      observed_at: "2026-05-28T00:00:00Z".to_string(),
+      app_name: "ExampleMusic".to_string(),
+      bundle_id: "com.example.music".to_string(),
+      pid: 4242,
+      window_title: "Example".to_string(),
+      nodes: vec![
+        ObservedAxNode {
+          depth: 0,
+          path: "0".to_string(),
+          role: "AXWindow".to_string(),
+          subrole: "AXStandardWindow".to_string(),
+          title: String::new(),
+          description: String::new(),
+          help: String::new(),
+          identifier: String::new(),
+          placeholder: String::new(),
+          value: String::new(),
+          bounds: ObservedRect {
+            x: 0,
+            y: 0,
+            width: 1000,
+            height: 800,
+          },
+        },
+        ObservedAxNode {
+          depth: 1,
+          path: "0.0".to_string(),
+          role: "AXRow".to_string(),
+          subrole: String::new(),
+          title: String::new(),
+          description: String::new(),
+          help: String::new(),
+          identifier: String::new(),
+          placeholder: String::new(),
+          value: String::new(),
+          bounds: ObservedRect {
+            x: 100,
+            y: 190,
+            width: 800,
+            height: 44,
+          },
+        },
+        ObservedAxNode {
+          depth: 1,
+          path: "0.1".to_string(),
+          role: "AXRow".to_string(),
+          subrole: String::new(),
+          title: String::new(),
+          description: String::new(),
+          help: String::new(),
+          identifier: String::new(),
+          placeholder: String::new(),
+          value: String::new(),
+          bounds: ObservedRect {
+            x: 100,
+            y: 250,
+            width: 800,
+            height: 44,
+          },
+        },
+      ],
+    };
+    let ocr_snapshot = OcrTextSnapshot {
+      recognized_at: "2026-05-28T00:00:00Z".to_string(),
+      image_path: PathBuf::from("/tmp/example.png"),
+      image_width: 1000,
+      image_height: 800,
+      query: "Cure For Me".to_string(),
+      exact: false,
+      case_sensitive: false,
+      matches: vec![
+        OcrTextMatch {
+          match_index: 0,
+          text: "Cure For Me".to_string(),
+          confidence: 0.97,
+          bounds: ObservedRect {
+            x: 110,
+            y: 200,
+            width: 120,
+            height: 24,
+          },
+        },
+        OcrTextMatch {
+          match_index: 1,
+          text: "AURORA".to_string(),
+          confidence: 0.95,
+          bounds: ObservedRect {
+            x: 245,
+            y: 203,
+            width: 80,
+            height: 22,
+          },
+        },
+      ],
+    };
+
+    let candidates =
+      build_annotation_candidates(&app, None, None, &ax_snapshot, &ocr_snapshot, true);
+    let ocr_candidates = candidates
+      .iter()
+      .filter(|candidate| candidate.source == "ocr" && candidate.kind == "anchor-text")
+      .collect::<Vec<_>>();
+    assert_eq!(ocr_candidates.len(), 2);
+    for candidate in ocr_candidates {
+      assert_eq!(candidate.area, "ocr-visible-text");
+      assert!(candidate.compatibility.direct_taxonomy_ids.is_empty());
+      assert!(
+        candidate
+          .notes
+          .iter()
+          .any(|note| { note.contains("OCR text alone is title-level evidence") })
+      );
+      let query = candidate
+        .candidate_query
+        .as_ref()
+        .expect("OCR candidate should expose selector query");
+      assert_eq!(query.selector.within, SelectorScope::TargetWindow);
+      assert!(matches!(
+        query.selector.any_of.as_slice(),
+        [SurfaceSelectorClause::Ocr { .. }]
+      ));
+    }
+
+    let row_candidates = candidates
+      .iter()
+      .filter(|candidate| candidate.source == "ocr-text" && candidate.kind == "row")
+      .collect::<Vec<_>>();
+    assert_eq!(row_candidates.len(), 1);
+    let row_query = row_candidates[0]
+      .candidate_query
+      .as_ref()
+      .expect("row candidate should expose selector query");
+    assert!(matches!(
+      row_query.selector.any_of.as_slice(),
+      [SurfaceSelectorClause::Row {
+        row_index: Some(1),
+        ..
+      }]
+    ));
   }
 
   #[test]

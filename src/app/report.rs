@@ -189,6 +189,23 @@ pub(crate) fn render_app_analysis_report(analysis: &AppAnalysis) -> String {
       if let Some(confidence) = candidate.confidence {
         lines.push(format!("  - confidence: `{confidence:.3}`"));
       }
+      if let Some(query) = &candidate.candidate_query {
+        let sources = query
+          .selector
+          .any_of
+          .iter()
+          .map(|clause| match clause {
+            crate::contract::SurfaceSelectorClause::Ax { .. } => "ax",
+            crate::contract::SurfaceSelectorClause::Ocr { .. } => "ocr",
+            crate::contract::SurfaceSelectorClause::Row { .. } => "row",
+          })
+          .collect::<Vec<_>>()
+          .join(", ");
+        lines.push(format!(
+          "  - candidateQuery: `{}` sources=`{}`",
+          query.query_id, sources
+        ));
+      }
       lines.push(format!(
         "  - evidenceStep: `{}`",
         candidate.evidence_step_id

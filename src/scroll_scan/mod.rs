@@ -1791,7 +1791,7 @@ fn ocr_list_item_crops_parallel(
     let crop_path = crop_path.clone();
     let observation_index = *observation_index;
     handles.push(std::thread::spawn(move || {
-      crate::driver::ocr_text_fragments_in_image(&crop_path, min_confidence, max_observations)
+      ocr_text_fragments_in_crop_image(&crop_path, min_confidence, max_observations)
         .map(|fragments| (observation_index, fragments))
     }));
   }
@@ -1806,6 +1806,41 @@ fn ocr_list_item_crops_parallel(
     }
   }
   Ok(results)
+}
+
+fn ocr_text_fragments_in_crop_image(
+  image_path: &Path,
+  min_confidence: f64,
+  max_observations: i64,
+) -> AuvResult<Vec<String>> {
+  let capture = auv_driver_macos::native::ocr::find_text(
+    image_path,
+    "",
+    false,
+    false,
+    max_observations.min(64),
+    None,
+  )?;
+  let mut matches = capture
+    .snapshot
+    .matches
+    .into_iter()
+    .filter(|matched| matched.confidence >= min_confidence)
+    .collect::<Vec<_>>();
+  matches.sort_by(|left, right| {
+    left
+      .bounds
+      .y
+      .cmp(&right.bounds.y)
+      .then_with(|| left.bounds.x.cmp(&right.bounds.x))
+  });
+  let mut fragments = Vec::new();
+  for matched in matches {
+    if !fragments.iter().any(|fragment| fragment == &matched.text) {
+      fragments.push(matched.text);
+    }
+  }
+  Ok(fragments)
 }
 
 fn observation_item_index(observation: &CollectionObservation) -> usize {

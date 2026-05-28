@@ -20,7 +20,7 @@ use auv_driver_macos::types::{
 use serde_json::Value;
 
 use crate::contract::{CandidateQuery, SelectorScope, SurfaceSelector, SurfaceSelectorClause};
-use crate::driver::{
+use crate::driver::macos::{
   group_ocr_matches_into_rows, parse_observed_ax_tree, parse_ocr_text_snapshot, parse_window_line,
   report_value,
 };

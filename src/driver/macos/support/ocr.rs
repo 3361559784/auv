@@ -246,36 +246,6 @@ pub(crate) fn detect_screen_rows(
   Ok(visual_detection)
 }
 
-pub(crate) fn ocr_text_fragments_in_image(
-  image_path: &Path,
-  min_confidence: f64,
-  max_observations: i64,
-) -> AuvResult<Vec<String>> {
-  let capture = auv_driver_macos::native::ocr::find_text(
-    image_path,
-    "",
-    false,
-    false,
-    max_observations.min(64),
-    None,
-  )?;
-  let mut matches = filter_ocr_matches(&capture.snapshot.matches, min_confidence, None);
-  matches.sort_by(|left, right| {
-    left
-      .bounds
-      .y
-      .cmp(&right.bounds.y)
-      .then_with(|| left.bounds.x.cmp(&right.bounds.x))
-  });
-  let mut fragments = Vec::new();
-  for matched in matches {
-    if !fragments.iter().any(|fragment| fragment == &matched.text) {
-      fragments.push(matched.text.clone());
-    }
-  }
-  Ok(fragments)
-}
-
 pub(crate) fn group_ocr_matches_into_rows(matches: &[&OcrTextMatch]) -> Vec<ObservedOcrRow> {
   let mut sorted = matches.to_vec();
   sorted.sort_by(|left, right| {

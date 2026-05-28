@@ -6,16 +6,10 @@ use crate::model::{AuvResult, DriverCall, DriverDescriptor, DriverResponse};
 use self::fixture::FixtureObserveDriver;
 #[cfg(target_os = "macos")]
 use self::macos::LegacyMacosCommandDriver;
-#[cfg(target_os = "macos")]
-pub(crate) use self::macos::{
-  clear_stale_lock_file, describe_lock_owner, group_ocr_matches_into_rows,
-  ocr_text_fragments_in_image, parse_observed_ax_tree, parse_ocr_text_snapshot, parse_window_line,
-  report_value,
-};
 
 mod fixture;
 #[cfg(target_os = "macos")]
-mod macos;
+pub(crate) mod macos;
 
 pub trait Driver {
   fn descriptor(&self) -> DriverDescriptor;

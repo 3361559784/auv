@@ -13,6 +13,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use auv_driver_macos::support::{
+  group_ocr_matches_into_rows, parse_observed_ax_tree, parse_ocr_text_snapshot, parse_window_line,
+  report_value,
+};
 use auv_driver_macos::types::{
   ObservedAxNode, ObservedAxTreeSnapshot, ObservedDisplay, ObservedDisplaySnapshot, ObservedOcrRow,
   ObservedRect, ObservedWindow, OcrTextSnapshot, compute_combined_bounds,
@@ -20,10 +24,6 @@ use auv_driver_macos::types::{
 use serde_json::Value;
 
 use crate::contract::{CandidateQuery, SelectorScope, SurfaceSelector, SurfaceSelectorClause};
-use crate::driver::macos::{
-  group_ocr_matches_into_rows, parse_observed_ax_tree, parse_ocr_text_snapshot, parse_window_line,
-  report_value,
-};
 use crate::model::{AuvResult, RunStatus, now_millis};
 use crate::skill::{SkillCaseMatrix, SkillStrategy};
 

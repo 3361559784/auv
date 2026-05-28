@@ -3,10 +3,11 @@ use std::fs;
 use std::io::Read;
 use std::path::Path;
 
+#[cfg(test)]
+use auv_driver_macos::support::{parse_bool_flag, parse_f64, parse_i64, parse_u32, report_value};
+
 use super::super::*;
 use super::{activate_target_app, app_identifier, optional_bool, render_rect_compact};
-#[cfg(test)]
-use super::{parse_bool_flag, parse_f64, parse_i64, parse_u32, report_value};
 
 pub(crate) fn enumerate_displays() -> AuvResult<ObservedDisplaySnapshot> {
   auv_driver_macos::native::window::enumerate_displays()
@@ -100,32 +101,6 @@ pub(crate) fn parse_display_line(line: &str) -> AuvResult<ObservedDisplay> {
     scale_factor: parse_f64(columns[12], "scaleFactor")?,
     pixel_width: parse_i64(columns[13], "pixelWidth")?,
     pixel_height: parse_i64(columns[14], "pixelHeight")?,
-  })
-}
-
-pub(crate) fn parse_window_line(line: &str) -> AuvResult<ObservedWindow> {
-  let columns = line.split('\t').collect::<Vec<_>>();
-  if columns.len() != 11 {
-    return Err(format!(
-      "invalid window report line; expected 11 columns but got {}: {}",
-      columns.len(),
-      line
-    ));
-  }
-
-  Ok(ObservedWindow {
-    window_number: parse_i64(columns[4], "window.number")?,
-    app_name: columns[1].to_string(),
-    owner_pid: parse_i64(columns[2], "window.ownerPid")?,
-    owner_bundle_id: columns[3].to_string(),
-    layer: parse_i64(columns[5], "window.layer")?,
-    title: columns[6].to_string(),
-    bounds: ObservedRect {
-      x: parse_i64(columns[7], "window.bounds.x")?,
-      y: parse_i64(columns[8], "window.bounds.y")?,
-      width: parse_i64(columns[9], "window.bounds.width")?,
-      height: parse_i64(columns[10], "window.bounds.height")?,
-    },
   })
 }
 

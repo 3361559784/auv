@@ -3,6 +3,8 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 
+use auv_driver_macos::types::ObservedWindow;
+
 use super::{
   OcrTextMatch, ScreenshotDimensions,
   control::common::{ClickPointCallOptions, build_click_point_call},
@@ -484,7 +486,7 @@ fn app_contains_window_matches_bundleish_identifiers() {
 
 #[test]
 fn window_area_uses_window_bounds() {
-  let window = super::ObservedWindow {
+  let window = ObservedWindow {
     window_number: 7,
     app_name: "ExampleEditor".to_string(),
     owner_pid: 1,
@@ -574,7 +576,7 @@ fn resolve_app_ref_prefers_exact_bundle_id_matches() {
     frontmost_window_title: "Main Window".to_string(),
     observed_at: "2026-05-18T00:00:00Z".to_string(),
     windows: vec![
-      super::ObservedWindow {
+      ObservedWindow {
         window_number: 2,
         app_name: "StatusIndicator".to_string(),
         owner_pid: 20,
@@ -588,7 +590,7 @@ fn resolve_app_ref_prefers_exact_bundle_id_matches() {
           height: 28,
         },
       },
-      super::ObservedWindow {
+      ObservedWindow {
         window_number: 9,
         app_name: "ExampleMusic".to_string(),
         owner_pid: 30,
@@ -841,7 +843,7 @@ fn filter_windows_for_app_bundle_id_matches_localized_owner_name() {
     frontmost_window_title: "网易云音乐".to_string(),
     observed_at: "2026-05-20T00:00:00Z".to_string(),
     windows: vec![
-      super::ObservedWindow {
+      ObservedWindow {
         window_number: 1,
         app_name: "Dock".to_string(),
         owner_pid: 100,
@@ -856,7 +858,7 @@ fn filter_windows_for_app_bundle_id_matches_localized_owner_name() {
         },
       },
       // Localized owner name — bundle id is what we should match on.
-      super::ObservedWindow {
+      ObservedWindow {
         window_number: 42,
         app_name: "网易云音乐".to_string(),
         owner_pid: 9999,
@@ -901,7 +903,7 @@ fn selector_filtered_report_window_count_equals_matched_windows() {
     frontmost_window_title: "网易云音乐".to_string(),
     observed_at: "2026-05-20T00:00:00Z".to_string(),
     windows: vec![
-      super::ObservedWindow {
+      ObservedWindow {
         window_number: 1,
         app_name: "Dock".to_string(),
         owner_pid: 100,
@@ -915,7 +917,7 @@ fn selector_filtered_report_window_count_equals_matched_windows() {
           height: 80,
         },
       },
-      super::ObservedWindow {
+      ObservedWindow {
         window_number: 42,
         app_name: "网易云音乐".to_string(),
         owner_pid: 9999,
@@ -984,7 +986,7 @@ fn selector_filtered_report_window_count_equals_matched_windows() {
 #[test]
 fn filter_windows_for_app_keeps_resolved_app_subset() {
   let all_windows = vec![
-    super::ObservedWindow {
+    ObservedWindow {
       window_number: 1,
       app_name: "TextEdit".to_string(),
       owner_pid: 10,
@@ -998,7 +1000,7 @@ fn filter_windows_for_app_keeps_resolved_app_subset() {
         height: 600,
       },
     },
-    super::ObservedWindow {
+    ObservedWindow {
       window_number: 2,
       app_name: "Notes".to_string(),
       owner_pid: 20,
@@ -1146,7 +1148,7 @@ fn sample_multi_window_snapshot() -> super::ObservedWindowSnapshot {
     frontmost_window_title: "Main Window".to_string(),
     observed_at: "2026-05-20T00:00:00Z".to_string(),
     windows: vec![
-      super::ObservedWindow {
+      ObservedWindow {
         window_number: 42,
         app_name: "ExampleMusic".to_string(),
         owner_pid: 100,
@@ -1160,7 +1162,7 @@ fn sample_multi_window_snapshot() -> super::ObservedWindowSnapshot {
           height: 800,
         },
       },
-      super::ObservedWindow {
+      ObservedWindow {
         window_number: 43,
         app_name: "ExampleMusic".to_string(),
         owner_pid: 100,

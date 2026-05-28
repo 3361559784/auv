@@ -1,6 +1,6 @@
 use crate::types::{
-  AuvResult, ObservedDisplaySnapshot, ObservedPointResolution, ObservedRect, ObservedWindow,
-  OcrTextMatch,
+  AuvResult, ObservedDisplaySnapshot, ObservedOcrRow, ObservedPointResolution, ObservedRect,
+  ObservedWindow, OcrTextMatch,
 };
 
 pub fn looks_like_bundle_identifier(raw: &str) -> bool {
@@ -31,6 +31,64 @@ pub fn ocr_match_center(matched: &OcrTextMatch) -> (f64, f64) {
     matched.bounds.x as f64 + (matched.bounds.width as f64 / 2.0),
     matched.bounds.y as f64 + (matched.bounds.height as f64 / 2.0),
   )
+}
+
+pub fn group_ocr_matches_into_rows(matches: &[&OcrTextMatch]) -> Vec<ObservedOcrRow> {
+  let mut sorted = matches.to_vec();
+  sorted.sort_by(|left, right| {
+    let (_, left_center_y) = ocr_match_center(left);
+    let (_, right_center_y) = ocr_match_center(right);
+    left_center_y
+      .partial_cmp(&right_center_y)
+      .unwrap_or(std::cmp::Ordering::Equal)
+      .then_with(|| left.bounds.x.cmp(&right.bounds.x))
+  });
+
+  let mut rows = Vec::<ObservedOcrRow>::new();
+  for matched in sorted {
+    let (_, center_y) = ocr_match_center(matched);
+    if let Some(existing) = rows.last_mut() {
+      let existing_center_y = existing.bounds.y as f64 + (existing.bounds.height as f64 / 2.0);
+      let vertical_threshold =
+        ((existing.bounds.height.max(matched.bounds.height)) as f64 * 1.5).max(36.0);
+      if (center_y - existing_center_y).abs() <= vertical_threshold {
+        existing.bounds = union_rects(&existing.bounds, &matched.bounds);
+        if !existing
+          .text_fragments
+          .iter()
+          .any(|value| value == &matched.text)
+        {
+          existing.text_fragments.push(matched.text.clone());
+        }
+        continue;
+      }
+    }
+
+    rows.push(ObservedOcrRow {
+      row_index: rows.len(),
+      source: "ocr-text".to_string(),
+      bounds: matched.bounds.clone(),
+      text_fragments: vec![matched.text.clone()],
+    });
+  }
+
+  for (index, row) in rows.iter_mut().enumerate() {
+    row.row_index = index;
+  }
+  rows
+}
+
+fn union_rects(left: &ObservedRect, right: &ObservedRect) -> ObservedRect {
+  let min_x = left.x.min(right.x);
+  let min_y = left.y.min(right.y);
+  let max_x = (left.x + left.width).max(right.x + right.width);
+  let max_y = (left.y + left.height).max(right.y + right.height);
+  ObservedRect {
+    x: min_x,
+    y: min_y,
+    width: max_x - min_x,
+    height: max_y - min_y,
+  }
 }
 
 pub fn project_main_screenshot_point(

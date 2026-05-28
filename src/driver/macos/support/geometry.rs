@@ -1,6 +1,8 @@
 // File: src/driver/macos/support/geometry.rs
 use super::super::*;
 use super::call::optional_f64;
+#[cfg(test)]
+use auv_driver_macos::types::ObservedWindow;
 
 #[cfg(test)]
 pub(crate) fn app_contains_window(app_identifier: &str, app_name: &str) -> bool {

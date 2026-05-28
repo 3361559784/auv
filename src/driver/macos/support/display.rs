@@ -6,9 +6,7 @@ use std::path::Path;
 use super::super::*;
 use super::{activate_target_app, app_identifier, optional_bool, render_rect_compact};
 #[cfg(test)]
-use super::{
-  compute_combined_bounds, parse_bool_flag, parse_f64, parse_i64, parse_u32, report_value,
-};
+use super::{parse_bool_flag, parse_f64, parse_i64, parse_u32, report_value};
 
 pub(crate) fn enumerate_displays() -> AuvResult<ObservedDisplaySnapshot> {
   auv_driver_macos::native::window::enumerate_displays()
@@ -66,7 +64,7 @@ pub(crate) fn parse_display_snapshot(report: &str) -> AuvResult<ObservedDisplayS
   }
 
   Ok(ObservedDisplaySnapshot {
-    combined_bounds: compute_combined_bounds(&displays),
+    combined_bounds: auv_driver_macos::types::compute_combined_bounds(&displays),
     displays,
     captured_at,
   })

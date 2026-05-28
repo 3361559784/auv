@@ -36,9 +36,10 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use auv_driver_macos::types::ObservedRect;
 use serde::{Deserialize, Serialize};
 
-use crate::driver::{ObservedRect, sanitized_artifact_name};
+use crate::driver::sanitized_artifact_name;
 use crate::model::{AuvResult, now_millis};
 use crate::run_builder::{RecordingRun, RunFinish, RunSpec, SpanFinish, SpanRef};
 use crate::runtime::Runtime;
@@ -1134,14 +1135,15 @@ mod tests {
   use crate::catalog::CommandCatalog;
   use crate::contract::{CandidateQuery, SelectorScope, SurfaceSelector, SurfaceSelectorClause};
   use crate::driver::{Driver, DriverRegistry};
-  use crate::driver::{ObservedAxNode, ObservedAxTreeSnapshot, ObservedRect, OcrTextSnapshot};
   use crate::model::RunStatus;
   use crate::model::{CommandSpec, DisturbanceClass, DriverCall, DriverDescriptor, DriverResponse};
   use crate::recording::{MemoryRunRecorder, RunUpdate};
   use crate::run_builder::RunSpec;
   use crate::store::LocalStore;
   use crate::trace::RunType;
-  use auv_driver_macos::types::OcrTextMatch;
+  use auv_driver_macos::types::{
+    ObservedAxNode, ObservedAxTreeSnapshot, ObservedRect, OcrTextMatch, OcrTextSnapshot,
+  };
   use serde_json::Value;
   use std::sync::Arc;
 

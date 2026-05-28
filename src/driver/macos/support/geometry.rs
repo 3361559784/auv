@@ -2,10 +2,6 @@
 use super::super::*;
 use super::call::optional_f64;
 
-pub(crate) fn compute_combined_bounds(displays: &[ObservedDisplay]) -> ObservedRect {
-  auv_driver_macos::types::compute_combined_bounds(displays)
-}
-
 #[cfg(test)]
 pub(crate) fn app_contains_window(app_identifier: &str, app_name: &str) -> bool {
   let app_identifier = app_identifier.trim().to_ascii_lowercase();

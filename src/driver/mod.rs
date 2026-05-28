@@ -8,11 +8,9 @@ use self::fixture::FixtureObserveDriver;
 use self::macos::LegacyMacosCommandDriver;
 #[cfg(target_os = "macos")]
 pub(crate) use self::macos::{
-  ObservedAxNode, ObservedAxTreeSnapshot, ObservedDisplay, ObservedDisplaySnapshot, ObservedOcrRow,
-  ObservedRect, ObservedWindow, OcrTextSnapshot, clear_stale_lock_file, compute_combined_bounds,
-  copy_file, describe_lock_owner, group_ocr_matches_into_rows, ocr_text_fragments_in_image,
-  parse_observed_ax_tree, parse_ocr_text_snapshot, parse_window_line, report_value,
-  sanitized_artifact_name,
+  clear_stale_lock_file, copy_file, describe_lock_owner, group_ocr_matches_into_rows,
+  ocr_text_fragments_in_image, parse_observed_ax_tree, parse_ocr_text_snapshot, parse_window_line,
+  report_value, sanitized_artifact_name,
 };
 
 mod fixture;

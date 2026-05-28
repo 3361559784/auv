@@ -13,13 +13,16 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use auv_driver_macos::types::{
+  ObservedAxNode, ObservedAxTreeSnapshot, ObservedDisplay, ObservedDisplaySnapshot, ObservedOcrRow,
+  ObservedRect, ObservedWindow, OcrTextSnapshot, compute_combined_bounds,
+};
 use serde_json::Value;
 
 use crate::contract::{CandidateQuery, SelectorScope, SurfaceSelector, SurfaceSelectorClause};
 use crate::driver::{
-  ObservedAxTreeSnapshot, ObservedDisplay, ObservedDisplaySnapshot, ObservedOcrRow, ObservedRect,
-  ObservedWindow, OcrTextSnapshot, compute_combined_bounds, group_ocr_matches_into_rows,
-  parse_observed_ax_tree, parse_ocr_text_snapshot, parse_window_line, report_value,
+  group_ocr_matches_into_rows, parse_observed_ax_tree, parse_ocr_text_snapshot, parse_window_line,
+  report_value,
 };
 use crate::model::{AuvResult, RunStatus, now_millis};
 use crate::skill::{SkillCaseMatrix, SkillStrategy};
@@ -691,7 +694,7 @@ fn ax_focus_candidate(
   candidate_id: &str,
   area: &str,
   kind: &str,
-  node: &crate::driver::ObservedAxNode,
+  node: &ObservedAxNode,
   query_value: String,
   evidence_step_id: &str,
   compatibility: AppCandidateCompatibility,
@@ -783,7 +786,7 @@ fn grouped_result_row_count(candidates: &[AppSurfaceCandidate]) -> usize {
 
 fn ax_candidate_query(
   candidate_id: &str,
-  node: &crate::driver::ObservedAxNode,
+  node: &ObservedAxNode,
   label: &str,
   output_kind: &str,
 ) -> CandidateQuery {
@@ -963,9 +966,7 @@ fn find_annotation_candidate<'a>(
   })
 }
 
-fn find_search_entry_node(
-  snapshot: &ObservedAxTreeSnapshot,
-) -> Option<&crate::driver::ObservedAxNode> {
+fn find_search_entry_node(snapshot: &ObservedAxTreeSnapshot) -> Option<&ObservedAxNode> {
   snapshot.nodes.iter().find(|node| {
     node.subrole == "AXSearchField"
       || node.role == "AXSearchField"
@@ -978,9 +979,7 @@ fn find_search_entry_node(
   })
 }
 
-fn find_native_text_focus_node(
-  snapshot: &ObservedAxTreeSnapshot,
-) -> Option<&crate::driver::ObservedAxNode> {
+fn find_native_text_focus_node(snapshot: &ObservedAxTreeSnapshot) -> Option<&ObservedAxNode> {
   snapshot.nodes.iter().find(|node| {
     let role = node.role.as_str();
     let subrole = node.subrole.as_str();
@@ -1002,7 +1001,7 @@ fn choose_native_text_focus_query(snapshot: Option<&ObservedAxTreeSnapshot>) -> 
   find_native_text_focus_node(snapshot).and_then(preferred_ax_query_text)
 }
 
-fn preferred_ax_query_text(node: &crate::driver::ObservedAxNode) -> Option<String> {
+fn preferred_ax_query_text(node: &ObservedAxNode) -> Option<String> {
   first_non_empty_string(&[
     non_empty_trimmed(&node.placeholder),
     non_empty_trimmed(&node.title),
@@ -1446,16 +1445,14 @@ fn count_text_bearing_nodes(snapshot: &ObservedAxTreeSnapshot) -> usize {
     .count()
 }
 
-fn first_text_bearing_node(
-  snapshot: &ObservedAxTreeSnapshot,
-) -> Option<&crate::driver::ObservedAxNode> {
+fn first_text_bearing_node(snapshot: &ObservedAxTreeSnapshot) -> Option<&ObservedAxNode> {
   snapshot
     .nodes
     .iter()
     .find(|node| !summarize_ax_node_text(node).is_empty())
 }
 
-fn summarize_ax_node_text(node: &crate::driver::ObservedAxNode) -> String {
+fn summarize_ax_node_text(node: &ObservedAxNode) -> String {
   [
     node.title.as_str(),
     node.description.as_str(),

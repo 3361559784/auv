@@ -64,7 +64,9 @@ struct ScanWindowContext {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 struct ViewRegionRecord {
   id: Option<String>,
+  name: Option<String>,
   bounds: Option<ViewBounds>,
+  coordinate_space: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -427,6 +429,87 @@ fn parse_ratio_region(value: String) -> Result<RatioRegion, String> {
   }
 
   Ok(RatioRegion::new(parts[0], parts[1], parts[2], parts[3]))
+}
+
+fn detect_sidebar_region(
+  manual: Option<RatioRegion>,
+  window_size: auv_driver::Size,
+  recognition: &TextRecognition,
+) -> Result<ViewRegionRecord, ParserDiagnostic> {
+  if let Some(region) = manual {
+    return Ok(sidebar_region_record(ratio_to_window_bounds(
+      region,
+      window_size,
+    )));
+  }
+
+  let left_limit = window_size.width * 0.38;
+  let mut marker_right_edges = recognition
+    .regions
+    .iter()
+    .filter(|region| region.bounds.origin.x < left_limit)
+    .filter(|region| is_sidebar_marker(region.text.trim()))
+    .map(|region| region.bounds.origin.x + region.bounds.size.width)
+    .collect::<Vec<_>>();
+
+  if marker_right_edges.is_empty() {
+    return Err(ParserDiagnostic {
+      code: "sidebar_region_not_found".to_string(),
+      message: "sidebar markers could not be identified on the left side".to_string(),
+      node_id: None,
+    });
+  }
+
+  marker_right_edges
+    .sort_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal));
+  let max_x = marker_right_edges
+    .last()
+    .copied()
+    .unwrap_or_default()
+    .max(window_size.width * 0.18)
+    .min(window_size.width * 0.42);
+
+  Ok(sidebar_region_record(ViewBounds::new(
+    0.0,
+    0.0,
+    max_x + 48.0,
+    window_size.height,
+  )))
+}
+
+fn sidebar_region_record(bounds: ViewBounds) -> ViewRegionRecord {
+  ViewRegionRecord {
+    id: None,
+    name: Some("playlist_sidebar".to_string()),
+    bounds: Some(bounds),
+    coordinate_space: Some("window".to_string()),
+  }
+}
+
+fn ratio_to_window_bounds(region: RatioRegion, window_size: auv_driver::Size) -> ViewBounds {
+  ViewBounds::new(
+    region.x * window_size.width,
+    region.y * window_size.height,
+    region.width * window_size.width,
+    region.height * window_size.height,
+  )
+}
+
+fn is_sidebar_marker(label: &str) -> bool {
+  section_kind_from_label(label) != SidebarSectionKind::Unknown
+    || matches!(label, "推荐" | "发现音乐" | "最近播放")
+}
+
+fn detect_blocking_modal(recognition: &TextRecognition) -> Option<ParserDiagnostic> {
+  let has_cancel = recognition.best_contains("取消").is_some();
+  let has_dialog_action =
+    recognition.best_contains("打开").is_some() || recognition.best_contains("存储").is_some();
+
+  (has_cancel && has_dialog_action).then(|| ParserDiagnostic {
+    code: "blocking_modal_dialog".to_string(),
+    message: "blocking open or save dialog markers were detected".to_string(),
+    node_id: None,
+  })
 }
 
 fn parse_sidebar_viewport(
@@ -1130,6 +1213,46 @@ mod tests {
       observation.evidence_nodes[2].source,
       ViewEvidenceSource::OcrText
     );
+  }
+
+  #[test]
+  fn detect_sidebar_region_uses_manual_region_when_provided() {
+    let region = detect_sidebar_region(
+      Some(RatioRegion::new(0.0, 0.1, 0.25, 0.8)),
+      auv_driver::Size::new(1000.0, 800.0),
+      &fake_recognition(Vec::new()),
+    )
+    .expect("manual sidebar region should be accepted");
+
+    assert_eq!(region.name, Some("playlist_sidebar".to_string()));
+    assert_eq!(
+      region.bounds,
+      Some(ViewBounds::new(0.0, 80.0, 250.0, 640.0))
+    );
+    assert_eq!(region.coordinate_space, Some("window".to_string()));
+  }
+
+  #[test]
+  fn detect_sidebar_region_fails_when_sidebar_markers_are_absent() {
+    let error = detect_sidebar_region(
+      None,
+      auv_driver::Size::new(1000.0, 800.0),
+      &fake_recognition(vec![("搜索", 400.0, 20.0, 60.0, 24.0)]),
+    )
+    .expect_err("missing left-side sidebar markers should fail");
+
+    assert_eq!(error.code, "sidebar_region_not_found");
+  }
+
+  #[test]
+  fn detect_blocking_modal_reports_cancel_or_open_dialog_markers() {
+    let diagnostic = detect_blocking_modal(&fake_recognition(vec![
+      ("打开", 760.0, 720.0, 80.0, 32.0),
+      ("取消", 860.0, 720.0, 80.0, 32.0),
+    ]))
+    .expect("open dialog markers should be reported as blocking modal");
+
+    assert_eq!(diagnostic.code, "blocking_modal_dialog");
   }
 
   #[test]

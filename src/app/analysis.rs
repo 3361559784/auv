@@ -561,7 +561,7 @@ pub(crate) fn build_annotation_candidates(
     } else {
       "Primary window bounds inferred from the AX root window because the window snapshot did not expose a visible window."
     };
-    candidates.push(AppSurfaceCandidate {
+    let mut candidate = AppSurfaceCandidate {
       candidate_id: "window-primary-region".to_string(),
       area: "window.primary".to_string(),
       kind: "region".to_string(),
@@ -591,7 +591,9 @@ pub(crate) fn build_annotation_candidates(
         &[],
       ),
       notes: vec![note.to_string()],
-    });
+    };
+    candidate.promotion_gate = Some(promotion_gate_for_candidate(&candidate));
+    candidates.push(candidate);
   }
 
   if let Some(node) = find_search_entry_node(ax_snapshot)
@@ -646,7 +648,7 @@ pub(crate) fn build_annotation_candidates(
           .to_string(),
       );
     }
-    candidates.push(AppSurfaceCandidate {
+    let mut candidate = AppSurfaceCandidate {
       candidate_id: format!("ocr-anchor-{}", matched.match_index),
       area: area.to_string(),
       kind: "anchor-text".to_string(),
@@ -674,7 +676,9 @@ pub(crate) fn build_annotation_candidates(
       input_bindings: BTreeMap::from([("anchor_text".to_string(), matched.text.clone())]),
       compatibility: AppCandidateCompatibility::default(),
       notes,
-    });
+    };
+    candidate.promotion_gate = Some(promotion_gate_for_candidate(&candidate));
+    candidates.push(candidate);
   }
 
   if has_collection_surface && ocr_snapshot.matches.len() >= 2 {
@@ -685,10 +689,6 @@ pub(crate) fn build_annotation_candidates(
         evidence_refs_for_step(evidence_refs_by_step, "ocr-sample"),
       ));
     }
-  }
-
-  for candidate in &mut candidates {
-    candidate.promotion_gate = Some(promotion_gate_for_candidate(candidate));
   }
 
   candidates
@@ -720,7 +720,7 @@ fn ax_focus_candidate(
 ) -> AppSurfaceCandidate {
   let bounds = AppRect::from_observed(&node.bounds);
   let focus_query = query_value.clone();
-  AppSurfaceCandidate {
+  let mut candidate = AppSurfaceCandidate {
     candidate_id: candidate_id.to_string(),
     area: area.to_string(),
     kind: kind.to_string(),
@@ -740,7 +740,9 @@ fn ax_focus_candidate(
     input_bindings: BTreeMap::from([("focus_query".to_string(), focus_query)]),
     compatibility,
     notes: vec![note.to_string()],
-  }
+  };
+  candidate.promotion_gate = Some(promotion_gate_for_candidate(&candidate));
+  candidate
 }
 
 fn group_ocr_rows_from_ocr_snapshot(snapshot: &OcrTextSnapshot) -> Vec<ObservedOcrRow> {
@@ -750,7 +752,7 @@ fn group_ocr_rows_from_ocr_snapshot(snapshot: &OcrTextSnapshot) -> Vec<ObservedO
 
 fn row_candidate(row: ObservedOcrRow, evidence_refs: Vec<ArtifactRef>) -> AppSurfaceCandidate {
   let bounds = AppRect::from_observed(&row.bounds);
-  AppSurfaceCandidate {
+  let mut candidate = AppSurfaceCandidate {
     candidate_id: format!("visible-row-{}", row.row_index + 1),
     area: "result-selection".to_string(),
     kind: "row".to_string(),
@@ -780,7 +782,9 @@ fn row_candidate(row: ObservedOcrRow, evidence_refs: Vec<ArtifactRef>) -> AppSur
       "Visible row candidate grouped from OCR observations; useful for list-like UI targets."
         .to_string(),
     ],
-  }
+  };
+  candidate.promotion_gate = Some(promotion_gate_for_candidate(&candidate));
+  candidate
 }
 
 fn promotion_gate_for_candidate(candidate: &AppSurfaceCandidate) -> AppCandidatePromotionGate {

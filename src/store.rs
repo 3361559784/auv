@@ -9,10 +9,10 @@
 //! execution/orchestration lives in `runtime`/`recording`.
 
 use std::fs;
+use std::io::ErrorKind;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use crate::driver::{copy_file, sanitized_artifact_name};
 use crate::model::{AuvResult, ProducedArtifact, now_millis};
 use crate::trace::{
   ARTIFACT_API_VERSION, ArtifactId, ArtifactRecordV1Alpha1, EVENT_API_VERSION, EventId,
@@ -38,6 +38,49 @@ pub struct ArtifactFileSource {
   pub source_path: PathBuf,
   pub preferred_name: String,
   pub summary: Option<String>,
+}
+
+pub(crate) fn sanitized_artifact_name(raw: &str) -> String {
+  let sanitized = raw
+    .chars()
+    .map(|character| match character {
+      'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' => character,
+      _ => '-',
+    })
+    .collect::<String>()
+    .trim_matches('-')
+    .to_string();
+
+  if sanitized.is_empty() {
+    "artifact".to_string()
+  } else {
+    sanitized
+  }
+}
+
+pub(crate) fn copy_file(source: &PathBuf, destination: &PathBuf) -> AuvResult<()> {
+  if let Some(parent) = destination.parent() {
+    fs::create_dir_all(parent).map_err(|error| {
+      format!(
+        "failed to create artifact directory {}: {error}",
+        parent.display()
+      )
+    })?;
+  }
+
+  fs::copy(source, destination).map_err(|error| {
+    let detail = match error.kind() {
+      ErrorKind::NotFound => "source file not found".to_string(),
+      _ => error.to_string(),
+    };
+    format!(
+      "failed to copy artifact from {} to {}: {detail}",
+      source.display(),
+      destination.display()
+    )
+  })?;
+
+  Ok(())
 }
 
 impl LocalStore {

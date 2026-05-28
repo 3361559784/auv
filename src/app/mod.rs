@@ -39,7 +39,6 @@ use std::path::{Path, PathBuf};
 use auv_driver_macos::types::ObservedRect;
 use serde::{Deserialize, Serialize};
 
-use crate::driver::sanitized_artifact_name;
 use crate::model::{AuvResult, now_millis};
 use crate::run_builder::{RecordingRun, RunFinish, RunSpec, SpanFinish, SpanRef};
 use crate::runtime::Runtime;
@@ -47,6 +46,7 @@ use crate::skill::{
   SkillCaseMatrix, SkillCaseRunOptions, SkillManifest, run_skill_case_matrix_into_run,
   validate_case_matrix_against_skill, validate_case_matrix_manifest, validate_skill_manifest,
 };
+use crate::store::sanitized_artifact_name;
 use crate::trace::{RunType, TraceStatusCode, string_attr};
 
 const APP_PROBE_VERSION: &str = "v0";

@@ -7,10 +7,10 @@ use std::process::Command;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::driver::sanitized_artifact_name;
 use crate::model::{AuvResult, ExecutionTarget, InvokeRequest, RunStatus, now_millis};
 use crate::run_builder::{RecordingRun, RunFinish, SpanFinish, SpanRef};
 use crate::runtime::Runtime;
+use crate::store::sanitized_artifact_name;
 use crate::trace::{
   SPAN_API_VERSION, SpanRecordV1Alpha1, TraceState, TraceStatusCode, new_span_id, string_attr,
 };

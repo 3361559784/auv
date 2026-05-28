@@ -173,31 +173,6 @@ pub(crate) fn sanitize_file_component(raw: &str) -> String {
   }
 }
 
-pub(crate) fn copy_file(source: &PathBuf, destination: &PathBuf) -> AuvResult<()> {
-  if let Some(parent) = destination.parent() {
-    fs::create_dir_all(parent).map_err(|error| {
-      format!(
-        "failed to create artifact directory {}: {error}",
-        parent.display()
-      )
-    })?;
-  }
-
-  fs::copy(source, destination).map_err(|error| {
-    format!(
-      "failed to copy artifact from {} to {}: {error}",
-      source.display(),
-      destination.display()
-    )
-  })?;
-
-  Ok(())
-}
-
-pub(crate) fn sanitized_artifact_name(raw: &str) -> String {
-  sanitize_file_component(raw)
-}
-
 pub(crate) struct CommandOutput {}
 
 /// Builds the `artifacts` vector for a `DriverResponse` while exposing typed

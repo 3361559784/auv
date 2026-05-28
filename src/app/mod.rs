@@ -1616,7 +1616,14 @@ mod tests {
       evidence_step_id: "observe-window-tree".to_string(),
       candidate_query: None,
       evidence_refs: Vec::new(),
-      promotion_gate: None,
+      promotion_gate: Some(AppCandidatePromotionGate {
+        status: AppCandidatePromotionStatus::DistillStrategyOnly,
+        missing_gates: vec!["artifact_ref".to_string()],
+        notes: vec![
+          "Candidate can seed a known distillation strategy, but analyze does not mint action-grade contract::Candidate values.".to_string(),
+          "Candidate has no ArtifactRef; action consumers cannot reconstruct the source evidence chain.".to_string(),
+        ],
+      }),
       input_bindings: BTreeMap::from([
         ("window_bounds".to_string(), "100,200,800,600".to_string()),
         ("relative_x".to_string(), "0.500000".to_string()),
@@ -1646,6 +1653,24 @@ mod tests {
       Some(&"0.500000".to_string())
     );
     assert!(candidate_shape.notes.is_empty());
+    let promotion_gate = analysis
+      .annotation_candidates
+      .iter()
+      .find(|candidate| candidate.candidate_id == "window-primary-region")
+      .expect("window candidate should exist")
+      .promotion_gate
+      .as_ref()
+      .expect("window candidate should expose promotion gate");
+    assert_eq!(
+      promotion_gate.status,
+      AppCandidatePromotionStatus::DistillStrategyOnly
+    );
+    assert!(
+      promotion_gate
+        .missing_gates
+        .iter()
+        .any(|item| item == "artifact_ref")
+    );
   }
 
   #[test]
@@ -1696,7 +1721,14 @@ mod tests {
       evidence_step_id: "capture-ax-tree".to_string(),
       candidate_query: None,
       evidence_refs: Vec::new(),
-      promotion_gate: None,
+      promotion_gate: Some(AppCandidatePromotionGate {
+        status: AppCandidatePromotionStatus::DistillStrategyOnly,
+        missing_gates: vec!["artifact_ref".to_string()],
+        notes: vec![
+          "Candidate can seed a known distillation strategy, but analyze does not mint action-grade contract::Candidate values.".to_string(),
+          "Candidate has no ArtifactRef; action consumers cannot reconstruct the source evidence chain.".to_string(),
+        ],
+      }),
       input_bindings: BTreeMap::from([
         ("window_bounds".to_string(), "100,200,800,600".to_string()),
         ("relative_x".to_string(), "0.500000".to_string()),
@@ -1943,7 +1975,14 @@ mod tests {
       evidence_step_id: "capture-ax-tree".to_string(),
       candidate_query: None,
       evidence_refs: Vec::new(),
-      promotion_gate: None,
+      promotion_gate: Some(AppCandidatePromotionGate {
+        status: AppCandidatePromotionStatus::DistillStrategyOnly,
+        missing_gates: vec!["artifact_ref".to_string()],
+        notes: vec![
+          "Candidate can seed a known distillation strategy, but analyze does not mint action-grade contract::Candidate values.".to_string(),
+          "Candidate has no ArtifactRef; action consumers cannot reconstruct the source evidence chain.".to_string(),
+        ],
+      }),
       input_bindings: BTreeMap::from([
         ("window_bounds".to_string(), "100,200,800,600".to_string()),
         ("relative_x".to_string(), "0.500000".to_string()),

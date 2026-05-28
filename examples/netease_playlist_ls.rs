@@ -763,10 +763,13 @@ fn detect_sidebar_region(
   }
 
   let left_limit = window_size.width * 0.38;
-  let mut markers = recognition
+  let left_regions = recognition
     .regions
     .iter()
     .filter(|region| region.bounds.origin.x < left_limit)
+    .collect::<Vec<_>>();
+  let mut markers = left_regions
+    .iter()
     .filter(|region| is_sidebar_marker(region.text.trim()))
     .map(|region| {
       (
@@ -778,6 +781,9 @@ fn detect_sidebar_region(
     .collect::<Vec<_>>();
 
   if markers.is_empty() {
+    if let Some(region) = infer_visible_playlist_body_region(&left_regions, window_size) {
+      return Ok(sidebar_region_record(region));
+    }
     return Err(ParserDiagnostic {
       code: "sidebar_region_not_found".to_string(),
       message: "sidebar markers could not be identified on the left side".to_string(),
@@ -811,6 +817,45 @@ fn detect_sidebar_region(
     max_x + 48.0,
     window_size.height - y,
   )))
+}
+
+fn infer_visible_playlist_body_region(
+  left_regions: &[&auv_driver::vision::RecognizedText],
+  window_size: auv_driver::Size,
+) -> Option<ViewBounds> {
+  let rows = left_regions
+    .iter()
+    .filter(|region| {
+      let label = region.text.trim();
+      label.chars().count() >= 2
+        && region.bounds.origin.x >= 48.0
+        && region.bounds.origin.x <= window_size.width * 0.24
+        && region.bounds.origin.y >= window_size.height * 0.25
+    })
+    .collect::<Vec<_>>();
+  if rows.len() < 3 {
+    return None;
+  }
+
+  let min_y = (rows
+    .iter()
+    .map(|region| region.bounds.origin.y)
+    .fold(f64::INFINITY, f64::min)
+    - 20.0)
+    .clamp(0.0, window_size.height);
+  let max_x = rows
+    .iter()
+    .map(|region| region.bounds.origin.x + region.bounds.size.width)
+    .fold(0.0, f64::max)
+    .max(window_size.width * 0.18)
+    .min(window_size.width * 0.42);
+
+  Some(ViewBounds::new(
+    0.0,
+    min_y,
+    max_x + 48.0,
+    window_size.height - min_y,
+  ))
 }
 
 fn sidebar_region_record(bounds: ViewBounds) -> ViewRegionRecord {
@@ -1832,6 +1877,47 @@ mod tests {
     .expect("navigation marker should preserve full sidebar fallback");
 
     assert_eq!(region.bounds, Some(ViewBounds::new(0.0, 0.0, 228.0, 800.0)));
+  }
+
+  #[test]
+  fn detect_sidebar_region_infers_visible_playlist_body_without_section_marker() {
+    let region = detect_sidebar_region(
+      None,
+      auv_driver::Size::new(1000.0, 800.0),
+      &fake_recognition(vec![
+        ("Future Garage", 72.0, 320.0, 140.0, 20.0),
+        ("Progressive House", 72.0, 366.0, 170.0, 20.0),
+        ("Trance", 72.0, 412.0, 80.0, 20.0),
+      ]),
+    )
+    .expect("visible playlist rows should infer the scroll body");
+
+    assert_eq!(
+      region.bounds,
+      Some(ViewBounds::new(0.0, 300.0, 290.0, 500.0))
+    );
+  }
+
+  #[test]
+  fn detect_sidebar_region_ignores_main_content_when_inferring_playlist_body() {
+    let region = detect_sidebar_region(
+      None,
+      auv_driver::Size::new(1000.0, 800.0),
+      &fake_recognition(vec![
+        ("网易云音乐", 52.0, 40.0, 100.0, 20.0),
+        ("Future Garage", 72.0, 320.0, 140.0, 20.0),
+        ("Progressive House", 72.0, 366.0, 170.0, 20.0),
+        ("Trance", 72.0, 412.0, 80.0, 20.0),
+        ("每日推荐", 430.0, 300.0, 120.0, 30.0),
+        ("推荐歌单", 520.0, 520.0, 150.0, 30.0),
+      ]),
+    )
+    .expect("visible playlist rows should infer the scroll body");
+
+    assert_eq!(
+      region.bounds,
+      Some(ViewBounds::new(0.0, 300.0, 290.0, 500.0))
+    );
   }
 
   #[test]

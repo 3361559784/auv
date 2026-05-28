@@ -13,6 +13,8 @@ use auv_driver::{Driver, RatioRect, Size};
 use auv_driver_macos::{MacosDriver, MacosDriverSession};
 
 const DEFAULT_APP_ID: &str = "com.netease.163music";
+#[cfg(target_os = "macos")]
+const LIVE_SCROLL_SETTLE_MS: u64 = 500;
 
 #[derive(Clone, Debug, PartialEq)]
 struct Inputs {
@@ -761,15 +763,21 @@ fn detect_sidebar_region(
   }
 
   let left_limit = window_size.width * 0.38;
-  let mut marker_right_edges = recognition
+  let mut markers = recognition
     .regions
     .iter()
     .filter(|region| region.bounds.origin.x < left_limit)
     .filter(|region| is_sidebar_marker(region.text.trim()))
-    .map(|region| region.bounds.origin.x + region.bounds.size.width)
+    .map(|region| {
+      (
+        region.bounds.origin.x + region.bounds.size.width,
+        region.bounds.origin.y,
+        region.text.trim(),
+      )
+    })
     .collect::<Vec<_>>();
 
-  if marker_right_edges.is_empty() {
+  if markers.is_empty() {
     return Err(ParserDiagnostic {
       code: "sidebar_region_not_found".to_string(),
       message: "sidebar markers could not be identified on the left side".to_string(),
@@ -777,20 +785,31 @@ fn detect_sidebar_region(
     });
   }
 
-  marker_right_edges
-    .sort_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal));
-  let max_x = marker_right_edges
+  markers.sort_by(|left, right| {
+    left
+      .0
+      .partial_cmp(&right.0)
+      .unwrap_or(std::cmp::Ordering::Equal)
+  });
+  let max_x = markers
     .last()
-    .copied()
+    .map(|marker| marker.0)
     .unwrap_or_default()
     .max(window_size.width * 0.18)
     .min(window_size.width * 0.42);
+  let y = markers
+    .iter()
+    .filter(|marker| is_playlist_section_marker(marker.2))
+    .map(|marker| marker.1)
+    .min_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal))
+    .unwrap_or(0.0)
+    .clamp(0.0, window_size.height);
 
   Ok(sidebar_region_record(ViewBounds::new(
     0.0,
-    0.0,
+    y,
     max_x + 48.0,
-    window_size.height,
+    window_size.height - y,
   )))
 }
 
@@ -815,6 +834,10 @@ fn ratio_to_window_bounds(region: RatioRegion, window_size: auv_driver::Size) ->
 fn is_sidebar_marker(label: &str) -> bool {
   section_kind_from_label(label) != SidebarSectionKind::Unknown
     || matches!(label, "推荐" | "发现音乐" | "最近播放")
+}
+
+fn is_playlist_section_marker(label: &str) -> bool {
+  label.contains("创建") || label.contains("我的歌单") || label.contains("收藏")
 }
 
 fn detect_blocking_modal(recognition: &TextRecognition) -> Option<ParserDiagnostic> {
@@ -1318,7 +1341,7 @@ impl SidebarObserver for LiveSidebarObserver {
         message: error.to_string(),
         node_id: None,
       })?;
-    std::thread::sleep(std::time::Duration::from_millis(150));
+    std::thread::sleep(std::time::Duration::from_millis(LIVE_SCROLL_SETTLE_MS));
     Ok(())
   }
 }
@@ -1778,6 +1801,37 @@ mod tests {
       Some(ViewBounds::new(0.0, 80.0, 250.0, 640.0))
     );
     assert_eq!(region.coordinate_space, Some("window".to_string()));
+  }
+
+  #[test]
+  fn detect_sidebar_region_starts_at_playlist_marker() {
+    let region = detect_sidebar_region(
+      None,
+      auv_driver::Size::new(1000.0, 800.0),
+      &fake_recognition(vec![
+        ("推荐", 8.0, 20.0, 40.0, 20.0),
+        ("创建的歌单", 8.0, 160.0, 110.0, 20.0),
+        ("Coding BGM", 32.0, 192.0, 120.0, 20.0),
+      ]),
+    )
+    .expect("playlist marker should define the scroll body");
+
+    assert_eq!(
+      region.bounds,
+      Some(ViewBounds::new(0.0, 160.0, 228.0, 640.0))
+    );
+  }
+
+  #[test]
+  fn detect_sidebar_region_falls_back_to_full_sidebar_without_playlist_marker() {
+    let region = detect_sidebar_region(
+      None,
+      auv_driver::Size::new(1000.0, 800.0),
+      &fake_recognition(vec![("推荐", 8.0, 20.0, 40.0, 20.0)]),
+    )
+    .expect("navigation marker should preserve full sidebar fallback");
+
+    assert_eq!(region.bounds, Some(ViewBounds::new(0.0, 0.0, 228.0, 800.0)));
   }
 
   #[test]

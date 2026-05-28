@@ -2477,6 +2477,161 @@ mod tests {
   }
 
   #[test]
+  fn app_analysis_json_round_trip_preserves_surface_contract_fields() {
+    let root = temp_dir("app-analysis-round-trip");
+    let analysis_path = root.join("analysis.json");
+    let analysis = AppAnalysis {
+      analysis_version: APP_ANALYSIS_VERSION.to_string(),
+      created_at_millis: 0,
+      probe_path: PathBuf::from("/tmp/probe.json"),
+      app_identity: AppIdentity {
+        bundle_id: "com.example.App".to_string(),
+        app_name: "Example".to_string(),
+        app_path: Some(PathBuf::from("/Applications/Example.app")),
+        main_executable_path: None,
+        version: "1.0".to_string(),
+        build_version: "100".to_string(),
+        url_schemes: vec![],
+        apple_script_addressable: false,
+        launch_services_resolved: true,
+        resolution_notes: vec![],
+      },
+      window_context: AppWindowContext {
+        observed_window_count: 1,
+        observed_at: "2026-05-18T00:00:00Z".to_string(),
+        frontmost_app_name: "Example".to_string(),
+        frontmost_window_title: "Example".to_string(),
+        primary_window_title: "Example".to_string(),
+        primary_window_bounds: Some(AppRect {
+          x: 0,
+          y: 0,
+          width: 100,
+          height: 100,
+        }),
+        primary_window_display_scale: Some(2.0),
+      },
+      permissions: AppPermissionState {
+        screen_recording: "granted".to_string(),
+        accessibility: "granted".to_string(),
+        automation_to_system_events: "granted".to_string(),
+        launch_host_process: "Atlas".to_string(),
+      },
+      available_surfaces: AppAvailableSurfaces {
+        accessibility_tree: AssessmentStatus::Available,
+        menu_surface: AssessmentStatus::Unknown,
+        shortcut_surface: AssessmentStatus::Candidate,
+        apple_script_surface: AssessmentStatus::Available,
+        url_scheme_surface: AssessmentStatus::Available,
+        keyboard_first_surface: AssessmentStatus::Candidate,
+        pointer_fallback_surface: AssessmentStatus::Likely,
+      },
+      grounding_assessment: AppGroundingAssessment {
+        ocr_sample_query: "Example".to_string(),
+        ocr_sample_status: AssessmentStatus::Candidate,
+        ocr_sample_match_count: 1,
+        stable_anchor_candidates: vec!["appName: Example".to_string()],
+        stable_region_candidates: vec!["primaryWindow=0,0,100,100".to_string()],
+        overlay_debug_artifacts_recommended: false,
+      },
+      control_assessment: AppControlAssessment {
+        preferred_path: "non-pointer first".to_string(),
+        non_pointer_path: AssessmentStatus::Candidate,
+        keyboard_path: AssessmentStatus::Candidate,
+        pointer_fallback: AssessmentStatus::Likely,
+        notes: vec![],
+      },
+      verification_assessment: AppVerificationAssessment {
+        ax_verify: AssessmentStatus::Candidate,
+        image_verify: AssessmentStatus::Candidate,
+        ui_state_verify: AssessmentStatus::Candidate,
+        semantic_success: AssessmentStatus::Unknown,
+        notes: vec![],
+      },
+      disturbance_profile: AppDisturbanceProfile {
+        observation: vec!["none".to_string()],
+        non_pointer_control: vec!["keyboard".to_string()],
+        pointer_fallback: vec!["pointer".to_string()],
+      },
+      annotation_candidates: vec![AppSurfaceCandidate {
+        candidate_id: "search-entry-focus-ax".to_string(),
+        area: "search-entry".to_string(),
+        kind: "focus-query".to_string(),
+        source: "ax".to_string(),
+        status: AssessmentStatus::Candidate,
+        primary_text: "Search".to_string(),
+        secondary_text: "role=AXTextField path=0.1".to_string(),
+        query_value: "Search".to_string(),
+        coordinate_space: "global-logical".to_string(),
+        bounds: Some(AppRect {
+          x: 10,
+          y: 10,
+          width: 80,
+          height: 20,
+        }),
+        click_point: Some(AppPoint { x: 50, y: 20 }),
+        confidence: None,
+        evidence_step_id: "capture-ax-tree".to_string(),
+        candidate_query: Some(CandidateQuery {
+          query_id: "search-entry-focus-ax".to_string(),
+          selector: SurfaceSelector {
+            any_of: vec![SurfaceSelectorClause::Ax {
+              role: Some("AXTextField".to_string()),
+              label: Some("Search".to_string()),
+              path: Some("0.1".to_string()),
+              enabled: None,
+              visible: Some(true),
+            }],
+            within: SelectorScope::TargetWindow,
+            require_visible: true,
+          },
+          output_kind: Some("focus-query".to_string()),
+          known_limits: vec!["test query".to_string()],
+        }),
+        evidence_refs: vec![ArtifactRef {
+          run_id: crate::trace::RunId::new("run_probe"),
+          span_id: crate::trace::SpanId::new("span_probe"),
+          artifact_id: crate::trace::ArtifactId::new("artifact_0001"),
+          captured_event_id: Some(crate::trace::EventId::new("event_probe")),
+        }],
+        promotion_gate: Some(AppCandidatePromotionGate {
+          status: AppCandidatePromotionStatus::DistillStrategyOnly,
+          missing_gates: Vec::new(),
+          notes: vec!["Sample candidate can seed a known distillation strategy.".to_string()],
+        }),
+        input_bindings: BTreeMap::from([("focus_query".to_string(), "Search".to_string())]),
+        compatibility: candidate_compatibility(
+          &["search-entry.ax-text-input.clipboard-submit.capture-evidence"],
+          &[],
+        ),
+        notes: vec!["sample note".to_string()],
+      }],
+      known_boundaries: vec![],
+      recommended_strategies: vec![],
+    };
+
+    write_pretty_json(&analysis_path, &analysis).expect("analysis should write");
+    let loaded: AppAnalysis = read_json(&analysis_path).expect("analysis should read");
+
+    let candidate = loaded
+      .annotation_candidates
+      .first()
+      .expect("sample analysis should carry one candidate");
+    assert!(candidate.candidate_query.is_some());
+    assert_eq!(candidate.evidence_refs.len(), 1);
+    let promotion_gate = candidate
+      .promotion_gate
+      .as_ref()
+      .expect("promotion gate should survive round trip");
+    assert_eq!(
+      promotion_gate.status,
+      AppCandidatePromotionStatus::DistillStrategyOnly
+    );
+    assert!(promotion_gate.missing_gates.is_empty());
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
   fn build_probe_evidence_refs_resolves_artifact_records_from_probe_steps() {
     let root = temp_dir("probe-evidence-refs");
     let run_dir = root.join(".auv").join("runs").join("run_fixture");

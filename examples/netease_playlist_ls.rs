@@ -79,7 +79,7 @@ fn parse_inputs(args: Vec<String>) -> Result<Inputs, String> {
       "--scroll-amount" => {
         inputs.scroll_amount =
           parse_f64("--scroll-amount", next_value(&mut args, "--scroll-amount")?)?;
-        if inputs.scroll_amount <= 0.0 {
+        if !inputs.scroll_amount.is_finite() || inputs.scroll_amount <= 0.0 {
           return Err("--scroll-amount must be greater than 0".to_string());
         }
       }
@@ -100,7 +100,8 @@ fn parse_inputs(args: Vec<String>) -> Result<Inputs, String> {
 }
 
 fn next_value(args: &mut impl Iterator<Item = String>, flag: &str) -> Result<String, String> {
-  args.next()
+  args
+    .next()
     .ok_or_else(|| format!("{flag} requires a value"))
 }
 
@@ -129,6 +130,10 @@ fn parse_ratio_region(value: String) -> Result<RatioRegion, String> {
 
   if parts.len() != 4 {
     return Err("--sidebar-region expects x,y,width,height".to_string());
+  }
+
+  if parts.iter().any(|part| !part.is_finite()) {
+    return Err("--sidebar-region expects finite x,y,width,height".to_string());
   }
 
   if parts[2] <= 0.0 || parts[3] <= 0.0 {
@@ -190,5 +195,24 @@ mod tests {
   fn parse_inputs_rejects_unknown_flag() {
     let error = parse_inputs(vec!["--bogus".to_string()]).expect_err("unknown flag should fail");
     assert!(error.contains("unknown argument --bogus"));
+  }
+
+  #[test]
+  fn parse_inputs_rejects_non_finite_scroll_amount() {
+    let error = parse_inputs(vec!["--scroll-amount".to_string(), "NaN".to_string()])
+      .expect_err("non-finite scroll amount should fail");
+
+    assert!(error.contains("--scroll-amount must be greater than 0"));
+  }
+
+  #[test]
+  fn parse_inputs_rejects_non_finite_sidebar_region_component() {
+    let error = parse_inputs(vec![
+      "--sidebar-region".to_string(),
+      "0.0,NaN,0.25,0.8".to_string(),
+    ])
+    .expect_err("non-finite sidebar region component should fail");
+
+    assert!(error.contains("--sidebar-region expects finite x,y,width,height"));
   }
 }

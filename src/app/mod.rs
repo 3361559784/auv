@@ -2382,6 +2382,62 @@ mod tests {
   }
 
   #[test]
+  fn app_surface_candidate_serializes_promotion_gate_for_machine_consumers() {
+    let candidate = AppSurfaceCandidate {
+      candidate_id: "candidate_ocr_0".to_string(),
+      area: "ocr-visible-text".to_string(),
+      kind: "anchor-text".to_string(),
+      source: "ocr".to_string(),
+      status: AssessmentStatus::Available,
+      primary_text: "AURORA".to_string(),
+      secondary_text: String::new(),
+      query_value: "AURORA".to_string(),
+      coordinate_space: "target-window".to_string(),
+      bounds: Some(AppRect {
+        x: 120,
+        y: 80,
+        width: 90,
+        height: 24,
+      }),
+      click_point: None,
+      confidence: Some(0.95),
+      evidence_step_id: "ocr-sample".to_string(),
+      candidate_query: None,
+      evidence_refs: Vec::new(),
+      compatibility: AppCandidateCompatibility {
+        direct_taxonomy_ids: Vec::new(),
+        context_taxonomy_ids: Vec::new(),
+      },
+      input_bindings: BTreeMap::new(),
+      notes: vec!["visible OCR text only".to_string()],
+      promotion_gate: Some(AppCandidatePromotionGate {
+        status: AppCandidatePromotionStatus::Blocked,
+        missing_gates: vec![
+          "action_contract".to_string(),
+          "semantic_verification_contract".to_string(),
+        ],
+        notes: Vec::new(),
+      }),
+    };
+
+    let value = serde_json::to_value(&candidate).expect("candidate should serialize");
+    let promotion_gate = value
+      .get("promotion_gate")
+      .expect("promotion gate should exist in JSON");
+    assert_eq!(
+      promotion_gate.get("status"),
+      Some(&serde_json::json!("blocked"))
+    );
+    assert_eq!(
+      promotion_gate.get("missing_gates"),
+      Some(&serde_json::json!([
+        "action_contract",
+        "semantic_verification_contract"
+      ]))
+    );
+  }
+
+  #[test]
   fn build_probe_evidence_refs_resolves_artifact_records_from_probe_steps() {
     let root = temp_dir("probe-evidence-refs");
     let run_dir = root.join(".auv").join("runs").join("run_fixture");

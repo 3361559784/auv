@@ -600,7 +600,7 @@ fn reconstruct_playlist_sidebar(
     .collect::<Vec<_>>();
   let mut current_section_index = None;
   let mut section_indices = std::collections::HashMap::new();
-  let mut seen_items = std::collections::HashSet::new();
+  let mut seen_items_by_section = Vec::<std::collections::HashSet<String>>::new();
 
   for observation in &observations {
     for candidate in &observation.candidates {
@@ -633,6 +633,7 @@ fn reconstruct_playlist_sidebar(
               label: Some(label.to_string()),
               items: Vec::new(),
             });
+            seen_items_by_section.push(std::collections::HashSet::new());
             let section_index = section_nodes.len() - 1;
             section_indices.insert(section_key, section_index);
             current_section_index = Some(section_index);
@@ -664,12 +665,13 @@ fn reconstruct_playlist_sidebar(
               label: None,
               items: Vec::new(),
             });
+            seen_items_by_section.push(std::collections::HashSet::new());
             section_nodes.len() - 1
           });
           let section_hint = projection_sections[*section_index].kind;
-          let dedupe_key = (section_hint, normalize_identity(label));
+          let dedupe_key = normalize_identity(label);
 
-          if !seen_items.insert(dedupe_key) {
+          if !seen_items_by_section[*section_index].insert(dedupe_key) {
             diagnostics.push(ParserDiagnostic {
               code: "deduplicated_item".to_string(),
               message: format!(
@@ -1257,6 +1259,60 @@ mod tests {
         .diagnostics
         .iter()
         .any(|diagnostic| diagnostic.code == "deduplicated_item")
+    );
+  }
+
+  #[test]
+  fn reconstruct_sidebar_deduplicates_items_per_actual_section() {
+    let page0 = parse_sidebar_viewport(
+      0,
+      ViewBounds::new(0.0, 0.0, 240.0, 400.0),
+      &fake_recognition(vec![
+        ("创建的歌单", 8.0, 42.0, 110.0, 20.0),
+        ("Coding BGM", 32.0, 74.0, 120.0, 20.0),
+      ]),
+    );
+    let page1 = parse_sidebar_viewport(
+      1,
+      ViewBounds::new(0.0, 0.0, 240.0, 400.0),
+      &fake_recognition(vec![("Coding BGM", 32.0, 42.0, 120.0, 20.0)]),
+    );
+    let page2 = parse_sidebar_viewport(
+      2,
+      ViewBounds::new(0.0, 0.0, 240.0, 400.0),
+      &fake_recognition(vec![
+        ("我的歌单", 8.0, 42.0, 110.0, 20.0),
+        ("Coding BGM", 32.0, 74.0, 120.0, 20.0),
+      ]),
+    );
+
+    let scan = reconstruct_playlist_sidebar(
+      ScanAppContext::default(),
+      ScanWindowContext::default(),
+      ViewRegionRecord::default(),
+      vec![page0, page1, page2],
+    );
+
+    assert_eq!(scan.projection.sections.len(), 2);
+    assert_eq!(
+      scan.projection.sections[0].kind,
+      SidebarSectionKind::MyPlaylists
+    );
+    assert_eq!(scan.projection.sections[0].items.len(), 1);
+    assert_eq!(scan.projection.sections[0].items[0].label, "Coding BGM");
+    assert_eq!(
+      scan.projection.sections[1].kind,
+      SidebarSectionKind::MyPlaylists
+    );
+    assert_eq!(scan.projection.sections[1].items.len(), 1);
+    assert_eq!(scan.projection.sections[1].items[0].label, "Coding BGM");
+    assert_eq!(
+      scan
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == "deduplicated_item")
+        .count(),
+      1
     );
   }
 

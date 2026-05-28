@@ -377,12 +377,41 @@ pub struct AppSurfaceCandidate {
   pub candidate_query: Option<crate::contract::CandidateQuery>,
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   pub evidence_refs: Vec<crate::contract::ArtifactRef>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub promotion_gate: Option<AppCandidatePromotionGate>,
   #[serde(default)]
   pub input_bindings: BTreeMap<String, String>,
   #[serde(default)]
   pub compatibility: AppCandidateCompatibility,
   #[serde(default)]
   pub notes: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AppCandidatePromotionGate {
+  pub status: AppCandidatePromotionStatus,
+  #[serde(default)]
+  pub missing_gates: Vec<String>,
+  #[serde(default)]
+  pub notes: Vec<String>,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AppCandidatePromotionStatus {
+  Blocked,
+  DistillStrategyOnly,
+  ActionGradeCandidate,
+}
+
+impl AppCandidatePromotionStatus {
+  pub(crate) fn as_str(&self) -> &'static str {
+    match self {
+      Self::Blocked => "blocked",
+      Self::DistillStrategyOnly => "distill_strategy_only",
+      Self::ActionGradeCandidate => "action_grade_candidate",
+    }
+  }
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -1458,6 +1487,11 @@ mod tests {
           artifact_id: crate::trace::ArtifactId::new("artifact_0001"),
           captured_event_id: Some(crate::trace::EventId::new("event_probe")),
         }],
+        promotion_gate: Some(AppCandidatePromotionGate {
+          status: AppCandidatePromotionStatus::DistillStrategyOnly,
+          missing_gates: Vec::new(),
+          notes: vec!["Sample candidate can seed a known distillation strategy.".to_string()],
+        }),
         input_bindings: BTreeMap::from([("focus_query".to_string(), "Search".to_string())]),
         compatibility: candidate_compatibility(
           &["search-entry.ax-text-input.clipboard-submit.capture-evidence"],
@@ -1488,6 +1522,7 @@ mod tests {
     assert!(report.contains("candidateQuery"));
     assert!(report.contains("sources=`ax`"));
     assert!(report.contains("evidenceRefs"));
+    assert!(report.contains("promotionGate: `distill_strategy_only`"));
     assert!(report.contains("inputBindings"));
     assert!(report.contains("## 5. Control Strategy"));
     assert!(report.contains("## 6. Verification Assessment"));
@@ -1581,6 +1616,7 @@ mod tests {
       evidence_step_id: "observe-window-tree".to_string(),
       candidate_query: None,
       evidence_refs: Vec::new(),
+      promotion_gate: None,
       input_bindings: BTreeMap::from([
         ("window_bounds".to_string(), "100,200,800,600".to_string()),
         ("relative_x".to_string(), "0.500000".to_string()),
@@ -1660,6 +1696,7 @@ mod tests {
       evidence_step_id: "capture-ax-tree".to_string(),
       candidate_query: None,
       evidence_refs: Vec::new(),
+      promotion_gate: None,
       input_bindings: BTreeMap::from([
         ("window_bounds".to_string(), "100,200,800,600".to_string()),
         ("relative_x".to_string(), "0.500000".to_string()),
@@ -1906,6 +1943,7 @@ mod tests {
       evidence_step_id: "capture-ax-tree".to_string(),
       candidate_query: None,
       evidence_refs: Vec::new(),
+      promotion_gate: None,
       input_bindings: BTreeMap::from([
         ("window_bounds".to_string(), "100,200,800,600".to_string()),
         ("relative_x".to_string(), "0.500000".to_string()),
@@ -2279,6 +2317,23 @@ mod tests {
       assert_eq!(candidate.area, "ocr-visible-text");
       assert!(candidate.compatibility.direct_taxonomy_ids.is_empty());
       assert_eq!(candidate.evidence_refs, evidence_refs["ocr-sample"]);
+      let gate = candidate
+        .promotion_gate
+        .as_ref()
+        .expect("OCR candidate should expose promotion gate");
+      assert_eq!(gate.status, AppCandidatePromotionStatus::Blocked);
+      assert!(
+        gate
+          .missing_gates
+          .iter()
+          .any(|item| item == "action_contract")
+      );
+      assert!(
+        gate
+          .missing_gates
+          .iter()
+          .any(|item| item == "semantic_verification_contract")
+      );
       assert!(
         candidate
           .notes
@@ -2306,6 +2361,17 @@ mod tests {
       .as_ref()
       .expect("row candidate should expose selector query");
     assert_eq!(row_candidates[0].evidence_refs, evidence_refs["ocr-sample"]);
+    let row_gate = row_candidates[0]
+      .promotion_gate
+      .as_ref()
+      .expect("row candidate should expose promotion gate");
+    assert_eq!(row_gate.status, AppCandidatePromotionStatus::Blocked);
+    assert!(
+      row_gate
+        .missing_gates
+        .iter()
+        .any(|item| item == "row_action_contract")
+    );
     assert!(matches!(
       row_query.selector.any_of.as_slice(),
       [SurfaceSelectorClause::Row {
@@ -2594,6 +2660,20 @@ mod tests {
     assert_eq!(
       window_candidate.input_bindings.get("relative_y"),
       Some(&"0.500000".to_string())
+    );
+    let promotion_gate = window_candidate
+      .promotion_gate
+      .as_ref()
+      .expect("window candidate should expose promotion gate");
+    assert_eq!(
+      promotion_gate.status,
+      AppCandidatePromotionStatus::DistillStrategyOnly
+    );
+    assert!(
+      promotion_gate
+        .missing_gates
+        .iter()
+        .any(|item| item == "artifact_ref")
     );
     assert!(analysis.recommended_strategies.iter().any(|strategy| {
       strategy.taxonomy_id == "window-action.window-point.pointer-click.capture-evidence"

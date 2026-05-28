@@ -134,7 +134,9 @@ Promotion is allowed only when all required gates are satisfied:
 | Failure layer | Failure can be classified as grounding, candidate expiration, control, verification, or semantic mismatch. |
 
 If any gate is missing, keep the item as a surface candidate and record the
-missing gate in `known_limits`.
+blocker in `AppSurfaceCandidate.promotion_gate.missing_gates`. Use candidate
+notes or known boundaries for prose context, but do not rely on Markdown-only
+text as the machine-readable gate.
 
 This gate is the seam between `app analyze` and `ActionResolver`. Do not bypass
 it by letting a driver action consume `AppSurfaceCandidate` directly.
@@ -228,6 +230,7 @@ The next code slice should be evidence closure, not new surface kinds:
 2. Keep coordinate and capture context as candidate fields or candidate detail.
 3. Add regression tests showing OCR and row candidates have evidence refs but do
    not auto-promote to semantic result selection.
-4. Only after this should a promotion implementation convert selected analyze
+4. Add `promotion_gate` to the JSON and Markdown report so blocked OCR/row
+   candidates and strategy-only candidates are explicit.
+5. Only after this should a promotion implementation convert selected analyze
    candidates into `contract::Candidate`.
-

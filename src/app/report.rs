@@ -224,6 +224,18 @@ pub(crate) fn render_app_analysis_report(analysis: &AppAnalysis) -> String {
           ));
         }
       }
+      if let Some(gate) = &candidate.promotion_gate {
+        lines.push(format!("  - promotionGate: `{}`", gate.status.as_str()));
+        if !gate.missing_gates.is_empty() {
+          lines.push("    - missing:".to_string());
+          for item in &gate.missing_gates {
+            lines.push(format!("      - `{item}`"));
+          }
+        }
+        for note in &gate.notes {
+          lines.push(format!("    - note: {note}"));
+        }
+      }
       if !candidate.input_bindings.is_empty() {
         lines.push("  - inputBindings:".to_string());
         for (key, value) in &candidate.input_bindings {

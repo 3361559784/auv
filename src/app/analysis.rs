@@ -31,10 +31,11 @@ use super::infra::first_non_empty_string;
 use super::recipe::recipe_app_slug;
 use super::{
   APP_ANALYSIS_VERSION, AppAnalysis, AppAvailableSurfaces, AppCandidateCompatibility,
-  AppCandidateGroundingTaxonomy, AppControlAssessment, AppDistilledCandidateShape,
-  AppDisturbanceProfile, AppGroundingAssessment, AppIdentity, AppPermissionState, AppPoint,
-  AppProbe, AppProbeStep, AppRecommendedStrategy, AppRect, AppSurfaceCandidate,
-  AppVerificationAssessment, AppVerificationMode, AppWindowContext, AssessmentStatus,
+  AppCandidateGroundingTaxonomy, AppCandidatePromotionGate, AppCandidatePromotionStatus,
+  AppControlAssessment, AppDistilledCandidateShape, AppDisturbanceProfile, AppGroundingAssessment,
+  AppIdentity, AppPermissionState, AppPoint, AppProbe, AppProbeStep, AppRecommendedStrategy,
+  AppRect, AppSurfaceCandidate, AppVerificationAssessment, AppVerificationMode, AppWindowContext,
+  AssessmentStatus,
 };
 
 #[derive(Clone, Debug)]
@@ -583,6 +584,7 @@ pub(crate) fn build_annotation_candidates(
       evidence_step_id: evidence_step_id.to_string(),
       candidate_query: None,
       evidence_refs: evidence_refs_for_step(evidence_refs_by_step, evidence_step_id),
+      promotion_gate: None,
       input_bindings,
       compatibility: candidate_compatibility(
         &["window-action.window-point.pointer-click.capture-evidence"],
@@ -668,6 +670,7 @@ pub(crate) fn build_annotation_candidates(
         Some(matched.confidence),
       )),
       evidence_refs: evidence_refs_for_step(evidence_refs_by_step, "ocr-sample"),
+      promotion_gate: None,
       input_bindings: BTreeMap::from([("anchor_text".to_string(), matched.text.clone())]),
       compatibility: AppCandidateCompatibility::default(),
       notes,
@@ -682,6 +685,10 @@ pub(crate) fn build_annotation_candidates(
         evidence_refs_for_step(evidence_refs_by_step, "ocr-sample"),
       ));
     }
+  }
+
+  for candidate in &mut candidates {
+    candidate.promotion_gate = Some(promotion_gate_for_candidate(candidate));
   }
 
   candidates
@@ -729,6 +736,7 @@ fn ax_focus_candidate(
     evidence_step_id: evidence_step_id.to_string(),
     candidate_query: Some(ax_candidate_query(candidate_id, node, &query_value, kind)),
     evidence_refs,
+    promotion_gate: None,
     input_bindings: BTreeMap::from([("focus_query".to_string(), focus_query)]),
     compatibility,
     notes: vec![note.to_string()],
@@ -762,6 +770,7 @@ fn row_candidate(row: ObservedOcrRow, evidence_refs: Vec<ArtifactRef>) -> AppSur
       &row.text_fragments.join(" "),
     )),
     evidence_refs,
+    promotion_gate: None,
     input_bindings: BTreeMap::from([("row_index".to_string(), format!("{}", row.row_index + 1))]),
     compatibility: candidate_compatibility(
       &[],
@@ -771,6 +780,74 @@ fn row_candidate(row: ObservedOcrRow, evidence_refs: Vec<ArtifactRef>) -> AppSur
       "Visible row candidate grouped from OCR observations; useful for list-like UI targets."
         .to_string(),
     ],
+  }
+}
+
+fn promotion_gate_for_candidate(candidate: &AppSurfaceCandidate) -> AppCandidatePromotionGate {
+  let mut missing_gates = Vec::new();
+  let mut notes = Vec::new();
+
+  if candidate.evidence_refs.is_empty() {
+    missing_gates.push("artifact_ref".to_string());
+    notes.push(
+      "Candidate has no ArtifactRef; action consumers cannot reconstruct the source evidence chain."
+        .to_string(),
+    );
+  }
+
+  if candidate.candidate_query.is_none() && candidate.input_bindings.is_empty() {
+    missing_gates.push("relocation_query_or_inputs".to_string());
+    notes.push(
+      "Candidate has neither a surface selector query nor recipe input bindings for re-grounding."
+        .to_string(),
+    );
+  }
+
+  let status = match (candidate.area.as_str(), candidate.kind.as_str()) {
+    ("ocr-visible-text", _) => {
+      push_unique(&mut missing_gates, "semantic_verification_contract");
+      push_unique(&mut missing_gates, "action_contract");
+      notes.push(
+        "OCR visible text remains evidence only; it is not a validated semantic target."
+          .to_string(),
+      );
+      AppCandidatePromotionStatus::Blocked
+    }
+    ("result-selection", "row") => {
+      push_unique(&mut missing_gates, "row_action_contract");
+      push_unique(&mut missing_gates, "semantic_verification_contract");
+      notes.push(
+        "Row/list grouping is a surface candidate; it needs a row action and semantic verifier before action-grade promotion."
+          .to_string(),
+      );
+      AppCandidatePromotionStatus::Blocked
+    }
+    _ if !candidate.compatibility.direct_taxonomy_ids.is_empty() => {
+      notes.push(
+        "Candidate can seed a known distillation strategy, but analyze does not mint action-grade contract::Candidate values."
+          .to_string(),
+      );
+      AppCandidatePromotionStatus::DistillStrategyOnly
+    }
+    _ => {
+      push_unique(&mut missing_gates, "promotion_path");
+      notes.push(
+        "No direct taxonomy or action contract currently consumes this candidate.".to_string(),
+      );
+      AppCandidatePromotionStatus::Blocked
+    }
+  };
+
+  AppCandidatePromotionGate {
+    status,
+    missing_gates,
+    notes,
+  }
+}
+
+fn push_unique(values: &mut Vec<String>, value: &str) {
+  if !values.iter().any(|existing| existing == value) {
+    values.push(value.to_string());
   }
 }
 

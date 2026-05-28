@@ -905,7 +905,7 @@ fn scan_sidebar_with_observer(
       version: None,
     },
     ScanWindowContext {
-      id: Some("fake-sidebar-window".to_string()),
+      id: Some("fake".to_string()),
       title: None,
       bounds: None,
     },
@@ -1556,6 +1556,7 @@ mod tests {
       },
     );
 
+    assert_eq!(scan.window.id, Some("fake".to_string()));
     assert_eq!(scan.observations.len(), 3);
     assert_eq!(scan.boundary.bottom, BoundaryConfidence::Likely);
   }

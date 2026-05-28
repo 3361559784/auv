@@ -1940,6 +1940,7 @@ mod tests {
         .iter()
         .any(|candidate_id| candidate_id == "window-primary-region")
     );
+    assert_eq!(used_annotations.len(), 1);
     assert_eq!(
       matrix.cases[0].inputs.get("relative_x"),
       Some(&"0.500000".to_string())

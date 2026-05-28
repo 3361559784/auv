@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use auv_driver::vision::TextRecognition;
 use serde::{Deserialize, Serialize};
 
 const DEFAULT_APP_ID: &str = "com.netease.163music";
@@ -68,15 +69,20 @@ struct ViewRegionRecord {
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 struct SidebarViewportObservation {
+  observation_index: usize,
   viewport: ViewViewportRecord,
-  evidence: Vec<ViewEvidenceNode>,
+  source_artifacts: Vec<String>,
+  viewport_fingerprint: String,
+  evidence_nodes: Vec<ViewEvidenceNode>,
   candidates: Vec<SidebarViewportCandidate>,
+  parser_notes: Vec<ParserDiagnostic>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 struct ViewViewportRecord {
   page_index: usize,
   bounds: ViewBounds,
+  axis: ViewAxis,
   scroll_offset: Option<f64>,
 }
 
@@ -86,6 +92,7 @@ struct ViewEvidenceNode {
   source: ViewEvidenceSource,
   label: Option<String>,
   bounds: Option<ViewBounds>,
+  confidence: Confidence,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -421,6 +428,152 @@ fn parse_ratio_region(value: String) -> Result<RatioRegion, String> {
   Ok(RatioRegion::new(parts[0], parts[1], parts[2], parts[3]))
 }
 
+fn parse_sidebar_viewport(
+  observation_index: usize,
+  viewport_bounds: ViewBounds,
+  recognition: &TextRecognition,
+) -> SidebarViewportObservation {
+  let mut evidence_nodes = recognition
+    .regions
+    .iter()
+    .enumerate()
+    .map(|(index, region)| ViewEvidenceNode {
+      id: format!("obs{observation_index}.ocr{index}"),
+      source: ViewEvidenceSource::OcrText,
+      label: Some(region.text.trim().to_string()),
+      bounds: Some(ViewBounds::new(
+        region.bounds.origin.x,
+        region.bounds.origin.y,
+        region.bounds.size.width,
+        region.bounds.size.height,
+      )),
+      confidence: confidence_from_ocr(region.confidence),
+    })
+    .collect::<Vec<_>>();
+
+  evidence_nodes.sort_by(|left, right| {
+    let left_bounds = left.bounds.unwrap_or_default();
+    let right_bounds = right.bounds.unwrap_or_default();
+    left_bounds
+      .y
+      .partial_cmp(&right_bounds.y)
+      .unwrap_or(std::cmp::Ordering::Equal)
+      .then_with(|| {
+        left_bounds
+          .x
+          .partial_cmp(&right_bounds.x)
+          .unwrap_or(std::cmp::Ordering::Equal)
+      })
+  });
+
+  let candidates = evidence_nodes
+    .iter()
+    .filter_map(|node| candidate_from_evidence(observation_index, node))
+    .collect::<Vec<_>>();
+  let viewport_fingerprint = viewport_fingerprint(&evidence_nodes);
+
+  SidebarViewportObservation {
+    observation_index,
+    viewport: ViewViewportRecord {
+      page_index: observation_index,
+      bounds: viewport_bounds,
+      axis: ViewAxis::Vertical,
+      scroll_offset: None,
+    },
+    source_artifacts: Vec::new(),
+    viewport_fingerprint,
+    evidence_nodes,
+    candidates,
+    parser_notes: Vec::new(),
+  }
+}
+
+fn confidence_from_ocr(confidence: Option<f32>) -> Confidence {
+  match confidence {
+    Some(value) if value >= 0.85 => Confidence::High,
+    Some(value) if value >= 0.65 => Confidence::Medium,
+    _ => Confidence::Low,
+  }
+}
+
+fn candidate_from_evidence(
+  observation_index: usize,
+  node: &ViewEvidenceNode,
+) -> Option<SidebarViewportCandidate> {
+  let label = node.label.as_deref()?.trim();
+  if label.chars().count() < 2 {
+    return None;
+  }
+  let bounds = node.bounds?;
+  let kind = classify_sidebar_text(label, bounds.x);
+  if kind == SidebarCandidateKind::Unknown {
+    return None;
+  }
+
+  Some(SidebarViewportCandidate {
+    id: format!("obs{observation_index}.candidate.{}", slug(label)),
+    kind,
+    label: Some(label.to_string()),
+    bounds: Some(bounds),
+    evidence_ids: vec![node.id.clone()],
+    confidence: node.confidence,
+  })
+}
+
+fn classify_sidebar_text(label: &str, x: f64) -> SidebarCandidateKind {
+  if section_kind_from_label(label) != SidebarSectionKind::Unknown {
+    SidebarCandidateKind::SectionHeader
+  } else if x >= 24.0 {
+    SidebarCandidateKind::PlaylistItem
+  } else if matches!(
+    label,
+    "推荐" | "发现音乐" | "播客" | "私人漫游" | "最近播放"
+  ) {
+    SidebarCandidateKind::NavigationItem
+  } else {
+    SidebarCandidateKind::Unknown
+  }
+}
+
+fn section_kind_from_label(label: &str) -> SidebarSectionKind {
+  if label.contains("创建") || label.contains("我的歌单") {
+    SidebarSectionKind::MyPlaylists
+  } else if label.contains("收藏") {
+    SidebarSectionKind::FavoritedPlaylists
+  } else if label.contains("歌单") {
+    SidebarSectionKind::PlaylistNav
+  } else if matches!(label, "推荐" | "音乐服务") {
+    SidebarSectionKind::FeatureNav
+  } else {
+    SidebarSectionKind::Unknown
+  }
+}
+
+fn viewport_fingerprint(nodes: &[ViewEvidenceNode]) -> String {
+  nodes
+    .iter()
+    .filter_map(|node| node.label.as_deref())
+    .map(normalize_identity)
+    .collect::<Vec<_>>()
+    .join("|")
+}
+
+fn normalize_identity(value: &str) -> String {
+  value
+    .trim()
+    .to_lowercase()
+    .chars()
+    .filter(|ch| !ch.is_whitespace())
+    .collect()
+}
+
+fn slug(value: &str) -> String {
+  normalize_identity(value)
+    .chars()
+    .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
+    .collect()
+}
+
 fn sample_reconstruction() -> ViewReconstructionRecord {
   let anchor = ViewAnchor {
     id: "anchor.coding".to_string(),
@@ -493,6 +646,7 @@ fn sample_reconstruction() -> ViewReconstructionRecord {
               source: ViewEvidenceSource::OcrText,
               label: Some("Coding BGM".to_string()),
               bounds: Some(ViewBounds::new(30.0, 56.0, 120.0, 20.0)),
+              confidence: Confidence::High,
             }],
             children: Vec::new(),
           }],
@@ -627,5 +781,78 @@ mod tests {
     assert!(json.contains("\"reconstruction\""));
     assert!(json.contains("\"projection\""));
     assert!(json.contains("Coding BGM"));
+  }
+
+  #[test]
+  fn parse_viewport_classifies_sections_and_playlist_items() {
+    let recognition = fake_recognition(vec![
+      ("推荐", 8.0, 10.0, 40.0, 20.0),
+      ("创建的歌单", 8.0, 42.0, 110.0, 20.0),
+      ("Coding BGM", 32.0, 74.0, 120.0, 20.0),
+      ("Jazz", 32.0, 106.0, 80.0, 20.0),
+    ]);
+    let observation =
+      parse_sidebar_viewport(0, ViewBounds::new(0.0, 0.0, 240.0, 400.0), &recognition);
+
+    assert_eq!(observation.candidates.len(), 4);
+    assert_eq!(
+      observation.candidates[1].kind,
+      SidebarCandidateKind::SectionHeader
+    );
+    assert_eq!(
+      observation.candidates[1].label,
+      Some("创建的歌单".to_string())
+    );
+    assert_eq!(
+      observation.candidates[2].kind,
+      SidebarCandidateKind::PlaylistItem
+    );
+    assert_eq!(
+      observation.candidates[2].label,
+      Some("Coding BGM".to_string())
+    );
+    assert_eq!(
+      observation.evidence_nodes[2].source,
+      ViewEvidenceSource::OcrText
+    );
+  }
+
+  #[test]
+  fn parse_viewport_keeps_unknown_short_noise_as_evidence_not_item() {
+    let recognition = fake_recognition(vec![
+      ("创建的歌单", 8.0, 42.0, 110.0, 20.0),
+      ("·", 12.0, 74.0, 8.0, 8.0),
+    ]);
+    let observation =
+      parse_sidebar_viewport(0, ViewBounds::new(0.0, 0.0, 240.0, 400.0), &recognition);
+
+    assert_eq!(observation.evidence_nodes.len(), 2);
+    assert_eq!(observation.candidates.len(), 1);
+    assert_eq!(
+      observation.candidates[0].kind,
+      SidebarCandidateKind::SectionHeader
+    );
+  }
+
+  fn fake_recognition(
+    rows: Vec<(&str, f64, f64, f64, f64)>,
+  ) -> auv_driver::vision::TextRecognition {
+    auv_driver::vision::TextRecognition {
+      text: rows
+        .iter()
+        .map(|(text, _, _, _, _)| *text)
+        .collect::<Vec<_>>()
+        .join("\n"),
+      regions: rows
+        .into_iter()
+        .map(
+          |(text, x, y, width, height)| auv_driver::vision::RecognizedText {
+            text: text.to_string(),
+            bounds: auv_driver::Rect::new(x, y, width, height),
+            confidence: Some(0.92),
+          },
+        )
+        .collect(),
+    }
   }
 }

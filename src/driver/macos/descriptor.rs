@@ -1,5 +1,5 @@
 // File: src/driver/macos/descriptor.rs
-use super::*;
+use crate::model::DriverDescriptor;
 
 pub(crate) fn driver_descriptor() -> DriverDescriptor {
   let metadata = super::typed::descriptor::legacy_descriptor_metadata();

@@ -30,8 +30,11 @@ pub(crate) use auv_driver_macos::support::{
   parse_observed_ax_tree, parse_ocr_text_snapshot,
 };
 
+#[cfg(test)]
 pub(crate) use self::artifacts::*;
+#[cfg(test)]
 pub(crate) use self::call::*;
+#[cfg(test)]
 pub(crate) use self::geometry::*;
 #[cfg(test)]
 pub(crate) use self::ocr::*;

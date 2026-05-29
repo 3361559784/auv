@@ -5,10 +5,12 @@ use std::time::Duration;
 use super::super::{DriverCall, DriverResponse};
 use super::super::support::{
   artifacts::{build_text_artifact, sanitize_file_component},
-  call::{app_identifier, optional_i64, optional_positive_u64, parse_mouse_button, required_f64},
+  call::{
+    app_identifier, optional_i64, optional_positive_u64, parse_mouse_button, required_f64,
+    resolve_scroll_deltas,
+  },
   display::{enumerate_displays, render_display_note},
   geometry::resolve_display_point,
-  resolve_scroll_deltas,
 };
 use super::common::{activate_app_if_needed, resolve_click_interval_ms};
 use crate::model::AuvResult;

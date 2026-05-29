@@ -1,7 +1,7 @@
 // File: src/driver/macos/mod.rs
 use super::Driver;
 use crate::model::{
-  AuvResult, DriverCall, DriverDescriptor, DriverResponse, ProducedArtifact, now_millis,
+  DriverCall, DriverDescriptor, DriverResponse, ProducedArtifact, now_millis,
 };
 
 // Legacy command adapter for the shared runtime/catalog surface.
@@ -26,6 +26,7 @@ pub(crate) mod support;
 #[cfg(test)]
 mod tests;
 mod typed;
+#[cfg(test)]
 pub(crate) use self::support::*;
 pub(crate) use auv_driver_macos::constants::*;
 pub(crate) use auv_driver_macos::types::{

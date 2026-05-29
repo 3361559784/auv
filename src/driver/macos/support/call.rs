@@ -1,5 +1,6 @@
 // File: src/driver/macos/support/call.rs
-use super::super::*;
+use super::super::{DriverCall, WindowSelection};
+use crate::model::AuvResult;
 
 pub(crate) fn app_identifier(call: &DriverCall) -> Option<String> {
   optional_string(call, "app").or_else(|| {

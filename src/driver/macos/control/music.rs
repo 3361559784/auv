@@ -12,7 +12,24 @@
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader};
 
-use super::super::*;
+use super::super::{
+  DriverCall, DriverResponse, ObservedOcrRow, ProducedArtifact,
+};
+use super::super::support::{
+  artifacts::{DriverArtifactBuilder, build_text_artifact, looks_like_bundle_identifier},
+  call::{
+    app_identifier, optional_f64, optional_i64, optional_non_empty_string, optional_string,
+    required_non_empty_string,
+  },
+  display::enumerate_displays,
+  ocr::parse_ocr_region_constraint,
+  ocr_commands::screenshot_artifact,
+  recognition::{
+    RowRecognitionArtifactRequest, observed_rect_to_ratio_region, recognition_source_for_rows,
+    row_recognition_artifact, window_number_from_ref,
+  },
+  parse_app_selector, resolve_app_ref, resolve_window_candidate,
+};
 use super::screen::click_screen_text;
 use super::window_ocr::{
   capture_resolved_window_observation, click_window_row, detect_rows_for_capture,
@@ -24,7 +41,8 @@ use crate::contract::{
   RecognitionSource, RecognitionSurface, SurfaceNode, TargetGrounding, TargetSpec,
   VerificationMethod, VerificationResult, WindowRefPrecondition,
 };
-use crate::model::ExecutionTarget;
+use crate::model::{AuvResult, ExecutionTarget};
+use crate::driver::macos::WindowSelection;
 use crate::trace::{ArtifactId, RunId};
 
 /// Default `source_artifact_id` for callers consuming `music.search.results`

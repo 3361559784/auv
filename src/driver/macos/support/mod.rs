@@ -35,6 +35,5 @@ pub(crate) use self::call::*;
 pub(crate) use self::display::*;
 pub(crate) use self::geometry::*;
 pub(crate) use self::ocr::*;
-pub(crate) use self::ocr_commands::*;
 pub(crate) use self::overlay_evidence::*;
 pub(crate) use self::recognition::*;

@@ -12,7 +12,7 @@ use super::super::support::{
   display::{enumerate_displays, render_display_note},
   geometry::resolve_display_point,
 };
-use super::common::{activate_app_if_needed, resolve_click_interval_ms};
+use super::common::{activate_app_if_needed, parse_input_policy, resolve_click_interval_ms};
 use crate::model::AuvResult;
 
 pub(crate) fn click_point(call: &DriverCall) -> AuvResult<DriverResponse> {
@@ -95,12 +95,22 @@ pub(crate) fn scroll_point(call: &DriverCall) -> AuvResult<DriverResponse> {
   let x = required_f64(call, "x")?;
   let y = required_f64(call, "y")?;
   let (delta_x, delta_y, normalized_scroll) = resolve_scroll_deltas(call)?;
+  let input_policy = parse_input_policy(call)?;
   let snapshot = enumerate_displays()?;
   let resolution = resolve_display_point(&snapshot, x, y)
     .ok_or_else(|| format!("logical point ({x:.3}, {y:.3}) is outside all connected displays"))?;
 
-  activate_app_if_needed(&app_identifier(call).unwrap_or_default())?;
-  auv_driver_macos::native::pointer::scroll_point(x, y, delta_x, delta_y)?;
+  if input_policy == auv_driver::InputPolicy::ForegroundPreferred {
+    activate_app_if_needed(&app_identifier(call).unwrap_or_default())?;
+  }
+  let scroll_outcome = crate::driver::macos::typed::session::scroll_point_bridge(
+    x,
+    y,
+    delta_x,
+    delta_y,
+    input_policy,
+    0,
+  )?;
 
   let report = [
     format!("capturedAt={}", snapshot.captured_at),
@@ -113,6 +123,9 @@ pub(crate) fn scroll_point(call: &DriverCall) -> AuvResult<DriverResponse> {
     format!("deltaX={delta_x:.0}"),
     format!("deltaY={delta_y:.0}"),
     format!("normalizedScroll={normalized_scroll}"),
+    format!("inputPolicy={}", scroll_outcome.input_policy),
+    format!("inputBridge={}", scroll_outcome.input_bridge),
+    format!("selectedPath={}", scroll_outcome.selected_path),
     "coordinateSpace=global-logical".to_string(),
     "cursorAfter=restored-to-original".to_string(),
   ]
@@ -135,13 +148,16 @@ pub(crate) fn scroll_point(call: &DriverCall) -> AuvResult<DriverResponse> {
       "Scrolled at global logical point ({x:.3}, {y:.3}) on display #{} with {}.",
       resolution.display.display_id, normalized_scroll
     ),
-    backend: Some("macos.swift.quartz-scroll".to_string()),
+    backend: Some("macos.typed.input.scroll".to_string()),
     signals: std::collections::BTreeMap::new(),
     notes: vec![
       "coordinateSpace=global-logical".to_string(),
       format!("deltaX={delta_x:.0}"),
       format!("deltaY={delta_y:.0}"),
       format!("normalizedScroll={normalized_scroll}"),
+      format!("inputPolicy={}", scroll_outcome.input_policy),
+      format!("inputBridge={}", scroll_outcome.input_bridge),
+      format!("selectedPath={}", scroll_outcome.selected_path),
       format!(
         "backingPixelPoint={},{}",
         resolution.backing_pixel_x, resolution.backing_pixel_y

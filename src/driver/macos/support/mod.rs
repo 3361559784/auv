@@ -27,7 +27,8 @@ pub(crate) mod ax {
 pub(crate) mod selector {
   pub(crate) use auv_driver_macos::support::{
     build_window_candidates, parse_app_selector, resolve_app_ref, resolve_window_candidate,
-    retry_window_capture_operation, window_capture_readiness_diagnostic,
+    resolve_window_candidate_for_input, retry_window_capture_operation,
+    window_capture_readiness_diagnostic,
   };
 }
 

@@ -3,7 +3,12 @@ use std::thread;
 use std::time::Duration;
 
 use super::super::support::runtime::activate_target_app;
-use super::super::*;
+use super::super::{DriverCall, DriverResponse};
+use super::super::support::{
+  artifacts::{build_text_artifact, render_activate_app_report, sanitize_file_component},
+  call::{app_identifier, optional_positive_u64},
+};
+use crate::model::AuvResult;
 
 pub(crate) fn activate_app(call: &DriverCall) -> AuvResult<DriverResponse> {
   let app = app_identifier(call)

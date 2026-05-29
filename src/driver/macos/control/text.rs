@@ -4,8 +4,16 @@ use auv_driver::TextSubmit;
 use super::super::support::runtime::{
   paste_text_preserving_clipboard, send_key_input, type_text_via_system_events,
 };
-use super::super::*;
+use super::super::{DriverCall, DriverResponse, now_millis};
+use super::super::support::{
+  artifacts::{build_text_artifact, render_type_text_report, sanitize_file_component},
+  call::{
+    app_identifier, optional_bool, optional_non_empty_string, optional_positive_u64,
+    required_non_empty_string,
+  },
+};
 use super::common::activate_app_if_needed;
+use crate::model::AuvResult;
 
 pub(super) fn clipboard_restore_signals(
   restored: bool,

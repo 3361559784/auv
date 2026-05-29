@@ -1,6 +1,9 @@
-use super::super::*;
 use serde::Serialize;
 use std::collections::BTreeMap;
+
+use super::super::ProducedArtifact;
+use super::super::support::artifacts::{build_text_artifact, sanitize_file_component};
+use crate::model::AuvResult;
 
 pub(crate) const ACTION_RESOLVER_VERSION: &str = "v0";
 

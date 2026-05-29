@@ -5,7 +5,7 @@ use super::super::support::{
   artifacts::{build_text_artifact, sanitize_file_component},
   call::{app_identifier, optional_i64, optional_string, parse_window_selection},
   geometry::{render_rect_compact, resolve_window_point},
-  parse_app_selector, resolve_app_ref, resolve_window_candidate,
+  selector::{parse_app_selector, resolve_app_ref, resolve_window_candidate},
 };
 use super::common::{ClickPointCallOptions, build_click_point_call, resolve_click_interval_ms};
 use super::pointer::click_point;

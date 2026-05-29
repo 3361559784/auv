@@ -56,8 +56,8 @@ use crate::contract::{
   VerificationResult,
 };
 use crate::driver::macos::support::{
-  build_window_candidates, find_now_playing_ax_node, parse_app_selector,
-  render_ax_interaction_report, resolve_app_ref,
+  ax::{find_now_playing_ax_node, render_ax_interaction_report},
+  selector::{build_window_candidates, parse_app_selector, resolve_app_ref},
 };
 use crate::model::AuvResult;
 use crate::trace::RunId;

@@ -28,7 +28,7 @@ use super::super::support::{
     RowRecognitionArtifactRequest, observed_rect_to_ratio_region, recognition_source_for_rows,
     row_recognition_artifact, window_number_from_ref,
   },
-  parse_app_selector, resolve_app_ref, resolve_window_candidate,
+  selector::{parse_app_selector, resolve_app_ref, resolve_window_candidate},
 };
 use crate::model::AuvResult;
 

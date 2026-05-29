@@ -9,18 +9,21 @@ use super::{
   OcrTextMatch, ScreenshotDimensions,
   control::common::{ClickPointCallOptions, build_click_point_call},
   observation::DisplaySelection,
+  support::ax::{find_ax_node_at_point, find_now_playing_ax_node},
   support::runtime::{
     parse_shortcut, process_is_alive, push_text_keystroke_lines, read_lock_owner_pid,
     special_key_code,
   },
+  support::selector::{
+    build_window_candidates, parse_app_selector, resolve_app_ref, resolve_window_candidate,
+    window_capture_readiness_diagnostic,
+  },
   support::{
-    app_contains_window, build_window_candidates, filter_ocr_matches, filter_windows_for_app,
-    find_ax_node_at_point, find_now_playing_ax_node, group_ocr_matches_into_rows,
-    optional_bool, optional_f64, parse_app_selector, parse_mouse_button,
-    parse_observed_ax_tree, parse_ocr_region_constraint, parse_ocr_text_snapshot,
-    parse_visual_rows_snapshot, parse_window_selection, project_main_screenshot_point,
-    render_rect_compact, resolve_app_ref, resolve_display_point, resolve_scroll_deltas,
-    resolve_window_candidate, resolve_window_point, sanitize_file_component,
+    app_contains_window, filter_ocr_matches, filter_windows_for_app, group_ocr_matches_into_rows,
+    optional_bool, optional_f64, parse_mouse_button, parse_observed_ax_tree,
+    parse_ocr_region_constraint, parse_ocr_text_snapshot, parse_visual_rows_snapshot,
+    parse_window_selection, project_main_screenshot_point, render_rect_compact,
+    resolve_display_point, resolve_scroll_deltas, resolve_window_point, sanitize_file_component,
     swift_string_literal, temp_file_path, window_area,
   },
   support::display::{assess_coordinate_readiness, parse_display_snapshot, read_png_dimensions},
@@ -783,7 +786,7 @@ fn window_capture_readiness_diagnostic_names_partial_window_and_display_bounds()
     .expect("candidates should build")
     .remove(0);
 
-  let diagnostic = super::support::window_capture_readiness_diagnostic(&candidate, &displays);
+  let diagnostic = window_capture_readiness_diagnostic(&candidate, &displays);
 
   assert!(diagnostic.contains("window_42"));
   assert!(diagnostic.contains("not fully contained"));

@@ -39,6 +39,7 @@ use std::path::{Path, PathBuf};
 use auv_driver_macos::types::ObservedRect;
 use serde::{Deserialize, Serialize};
 
+use crate::contract::ArtifactRef;
 use crate::model::{AuvResult, now_millis};
 use crate::run_builder::{RecordingRun, RunFinish, RunSpec, SpanFinish, SpanRef};
 use crate::runtime::Runtime;
@@ -85,10 +86,24 @@ pub struct AppProbeStep {
   pub target_application_id: Option<String>,
   pub inputs: BTreeMap<String, String>,
   pub run_id: String,
+  #[serde(default)]
+  pub span_id: String,
   pub status: String,
   pub output_summary: String,
   pub artifact_paths: Vec<PathBuf>,
+  #[serde(default)]
+  pub artifacts: Vec<AppProbeArtifact>,
   pub failure_message: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AppProbeArtifact {
+  pub artifact_id: String,
+  pub span_id: String,
+  pub path: PathBuf,
+  pub role: String,
+  #[serde(default)]
+  pub captured_event_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -374,6 +389,8 @@ pub struct AppSurfaceCandidate {
   pub click_point: Option<AppPoint>,
   pub confidence: Option<f64>,
   pub evidence_step_id: String,
+  #[serde(default)]
+  pub evidence_refs: Vec<ArtifactRef>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub candidate_query: Option<crate::contract::CandidateQuery>,
   #[serde(default)]
@@ -1133,14 +1150,18 @@ mod tests {
   };
   use super::*;
   use crate::catalog::CommandCatalog;
-  use crate::contract::{CandidateQuery, SelectorScope, SurfaceSelector, SurfaceSelectorClause};
+  use crate::contract::{
+    ArtifactRef, CandidateQuery, SelectorScope, SurfaceSelector, SurfaceSelectorClause,
+  };
   use crate::driver::{Driver, DriverRegistry};
   use crate::model::RunStatus;
-  use crate::model::{CommandSpec, DisturbanceClass, DriverCall, DriverDescriptor, DriverResponse};
+  use crate::model::{
+    CommandSpec, DisturbanceClass, DriverCall, DriverDescriptor, DriverResponse, ProducedArtifact,
+  };
   use crate::recording::{MemoryRunRecorder, RunUpdate};
   use crate::run_builder::RunSpec;
   use crate::store::LocalStore;
-  use crate::trace::RunType;
+  use crate::trace::{ArtifactId, RunId, RunType, SpanId};
   use auv_driver_macos::types::{
     ObservedAxNode, ObservedAxTreeSnapshot, ObservedRect, OcrTextMatch, OcrTextSnapshot,
   };
@@ -1160,6 +1181,33 @@ mod tests {
     }
 
     fn invoke(&self, call: &DriverCall) -> AuvResult<DriverResponse> {
+      if call.operation == "artifact" {
+        let first_path = call.working_directory.join("probe-first-artifact.txt");
+        let second_path = call.working_directory.join("probe-second-artifact.txt");
+        fs::write(&first_path, "first artifact").expect("first artifact should write");
+        fs::write(&second_path, "second artifact").expect("second artifact should write");
+        return Ok(DriverResponse {
+          summary: "artifact ok".to_string(),
+          artifacts: vec![
+            ProducedArtifact {
+              kind: "text".to_string(),
+              source_path: first_path,
+              preferred_name: "first.txt".to_string(),
+              note: Some("first".to_string()),
+            },
+            ProducedArtifact {
+              kind: "text".to_string(),
+              source_path: second_path,
+              preferred_name: "second.txt".to_string(),
+              note: Some("second".to_string()),
+            },
+          ],
+          notes: Vec::new(),
+          signals: BTreeMap::from([("outcome".to_string(), "ok".to_string())]),
+          backend: None,
+        });
+      }
+
       Ok(DriverResponse {
         summary: format!("{} ok", call.operation),
         artifacts: Vec::new(),
@@ -1271,6 +1319,51 @@ mod tests {
     );
     assert!(!first_probe_span.attributes.contains_key("auv.step.index"));
 
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn invoke_probe_step_preserves_artifact_metadata_order() {
+    let root = temp_dir("probe-step-artifact-metadata");
+    let runtime = test_runtime(root.clone());
+    let mut run = runtime
+      .start_run(RunSpec::new(RunType::Probe, "auv.probe"))
+      .expect("probe run should start");
+    let root_span = run.root_span();
+
+    let step = invoke_probe_step(
+      &runtime,
+      &mut run,
+      &root_span,
+      "artifact-step",
+      "test.artifact",
+      None,
+      BTreeMap::new(),
+      false,
+    )
+    .expect("artifact step should complete");
+
+    assert_eq!(step.artifact_paths.len(), 2);
+    assert_eq!(step.artifacts.len(), 2);
+    assert_eq!(step.artifacts[0].artifact_id, "artifact_0001");
+    assert_eq!(step.artifacts[1].artifact_id, "artifact_0002");
+    assert_eq!(step.artifacts[0].path, step.artifact_paths[0]);
+    assert_eq!(step.artifacts[1].path, step.artifact_paths[1]);
+    assert_eq!(step.artifacts[0].role, "text");
+    assert_eq!(step.artifacts[1].role, "text");
+    assert_eq!(step.artifacts[0].span_id, step.artifacts[1].span_id);
+    assert_ne!(step.artifacts[0].span_id, step.span_id);
+
+    let _ = runtime
+      .finish_run(
+        run,
+        RunFinish {
+          status_code: TraceStatusCode::Ok,
+          summary: Some("probe complete".to_string()),
+          failure: None,
+        },
+      )
+      .expect("probe run should finish");
     let _ = fs::remove_dir_all(root);
   }
 
@@ -1433,6 +1526,7 @@ mod tests {
         click_point: Some(AppPoint { x: 50, y: 20 }),
         confidence: None,
         evidence_step_id: "capture-ax-tree".to_string(),
+        evidence_refs: vec![artifact_ref("run_fixture", "span_fixture", "artifact_0001")],
         candidate_query: Some(CandidateQuery {
           query_id: "search-entry-focus-ax".to_string(),
           selector: SurfaceSelector {
@@ -1569,6 +1663,7 @@ mod tests {
       click_point: Some(AppPoint { x: 500, y: 500 }),
       confidence: None,
       evidence_step_id: "observe-window-tree".to_string(),
+      evidence_refs: vec![artifact_ref("run_fixture", "span_fixture", "artifact_0001")],
       candidate_query: None,
       input_bindings: BTreeMap::from([
         ("window_bounds".to_string(), "100,200,800,600".to_string()),
@@ -1647,6 +1742,7 @@ mod tests {
       click_point: Some(AppPoint { x: 500, y: 500 }),
       confidence: None,
       evidence_step_id: "capture-ax-tree".to_string(),
+      evidence_refs: vec![artifact_ref("run_fixture", "span_fixture", "artifact_0001")],
       candidate_query: None,
       input_bindings: BTreeMap::from([
         ("window_bounds".to_string(), "100,200,800,600".to_string()),
@@ -1892,6 +1988,7 @@ mod tests {
       click_point: Some(AppPoint { x: 500, y: 500 }),
       confidence: None,
       evidence_step_id: "capture-ax-tree".to_string(),
+      evidence_refs: vec![artifact_ref("run_fixture", "span_fixture", "artifact_0001")],
       candidate_query: None,
       input_bindings: BTreeMap::from([
         ("window_bounds".to_string(), "100,200,800,600".to_string()),
@@ -2239,8 +2336,27 @@ mod tests {
       ],
     };
 
-    let candidates =
-      build_annotation_candidates(&app, None, None, &ax_snapshot, &ocr_snapshot, true);
+    let probe_steps = vec![
+      probe_step_fixture(
+        "capture-ax-tree",
+        "debug.captureAxTree",
+        vec![PathBuf::from("/tmp/ax.txt")],
+      ),
+      probe_step_fixture(
+        "ocr-sample",
+        "debug.findImageText",
+        vec![PathBuf::from("/tmp/ocr.txt")],
+      ),
+    ];
+    let candidates = build_annotation_candidates(
+      &app,
+      None,
+      None,
+      &ax_snapshot,
+      &ocr_snapshot,
+      &probe_steps,
+      true,
+    );
     let ocr_candidates = candidates
       .iter()
       .filter(|candidate| candidate.source == "ocr" && candidate.kind == "anchor-text")
@@ -2264,6 +2380,11 @@ mod tests {
         query.selector.any_of.as_slice(),
         [SurfaceSelectorClause::Ocr { .. }]
       ));
+      assert_eq!(candidate.evidence_refs.len(), 1);
+      assert_eq!(
+        candidate.evidence_refs[0].artifact_id.as_str(),
+        "artifact_0001"
+      );
     }
 
     let row_candidates = candidates
@@ -2282,6 +2403,11 @@ mod tests {
         ..
       }]
     ));
+    assert_eq!(row_candidates[0].evidence_refs.len(), 1);
+    assert_eq!(
+      row_candidates[0].evidence_refs[0].artifact_id.as_str(),
+      "artifact_0001"
+    );
   }
 
   #[test]
@@ -2486,6 +2612,11 @@ mod tests {
       .expect("window candidate should exist");
     assert_eq!(window_candidate.source, "ax");
     assert_eq!(window_candidate.evidence_step_id, "capture-ax-tree");
+    assert_eq!(window_candidate.evidence_refs.len(), 1);
+    assert_eq!(
+      window_candidate.evidence_refs[0].artifact_id.as_str(),
+      "artifact_0001"
+    );
     assert_eq!(
       window_candidate.input_bindings.get("relative_x"),
       Some(&"0.500000".to_string())
@@ -2593,8 +2724,24 @@ mod tests {
       target_application_id: None,
       inputs: BTreeMap::new(),
       run_id: "run_fixture".to_string(),
+      span_id: "span_fixture".to_string(),
       status: RunStatus::Completed.as_str().to_string(),
       output_summary: "ok".to_string(),
+      artifacts: artifact_paths
+        .iter()
+        .enumerate()
+        .map(|(index, path)| AppProbeArtifact {
+          artifact_id: format!("artifact_{:04}", index + 1),
+          span_id: "span_fixture".to_string(),
+          path: path.clone(),
+          role: path
+            .extension()
+            .and_then(|value| value.to_str())
+            .map(|extension| format!("fixture-{extension}"))
+            .unwrap_or_else(|| "fixture".to_string()),
+          captured_event_id: None,
+        })
+        .collect(),
       artifact_paths,
       failure_message: None,
     }
@@ -2607,10 +2754,21 @@ mod tests {
       target_application_id: None,
       inputs: BTreeMap::new(),
       run_id: "run_fixture".to_string(),
+      span_id: "span_fixture".to_string(),
       status: RunStatus::Failed.as_str().to_string(),
       output_summary: format!("Probe step {id} failed"),
       artifact_paths: Vec::new(),
+      artifacts: Vec::new(),
       failure_message: Some(error.to_string()),
+    }
+  }
+
+  fn artifact_ref(run_id: &str, span_id: &str, artifact_id: &str) -> ArtifactRef {
+    ArtifactRef {
+      run_id: RunId::new(run_id),
+      artifact_id: ArtifactId::new(artifact_id),
+      span_id: SpanId::new(span_id),
+      captured_event_id: None,
     }
   }
 
@@ -2640,6 +2798,15 @@ mod tests {
         summary: "Test skill command",
         driver_id: "test.probe",
         operation: "test_operation",
+        disturbance_classes: &[DisturbanceClass::None],
+        max_disturbance: DisturbanceClass::None,
+      },
+      CommandSpec {
+        id: "test.artifact",
+        namespace: crate::model::CommandNamespace::Test,
+        summary: "Test artifact command",
+        driver_id: "test.probe",
+        operation: "artifact",
         disturbance_classes: &[DisturbanceClass::None],
         max_disturbance: DisturbanceClass::None,
       },

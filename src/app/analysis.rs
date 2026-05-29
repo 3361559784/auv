@@ -26,6 +26,7 @@ use serde_json::Value;
 use crate::contract::{CandidateQuery, SelectorScope, SurfaceSelector, SurfaceSelectorClause};
 use crate::model::{AuvResult, RunStatus, now_millis};
 use crate::skill::{SkillCaseMatrix, SkillStrategy};
+use crate::trace::{ArtifactId, EventId, RunId, SpanId};
 
 use super::infra::first_non_empty_string;
 use super::recipe::recipe_app_slug;
@@ -33,7 +34,7 @@ use super::{
   APP_ANALYSIS_VERSION, AppAnalysis, AppAvailableSurfaces, AppCandidateCompatibility,
   AppCandidateGroundingTaxonomy, AppControlAssessment, AppDistilledCandidateShape,
   AppDisturbanceProfile, AppGroundingAssessment, AppIdentity, AppPermissionState, AppPoint,
-  AppProbe, AppProbeStep, AppRecommendedStrategy, AppRect, AppSurfaceCandidate,
+  AppProbe, AppProbeArtifact, AppProbeStep, AppRecommendedStrategy, AppRect, AppSurfaceCandidate,
   AppVerificationAssessment, AppVerificationMode, AppWindowContext, AssessmentStatus,
 };
 
@@ -193,6 +194,7 @@ pub(crate) fn build_app_analysis(probe_path: &Path, probe: &AppProbe) -> AuvResu
     primary_window_bounds.as_ref(),
     &ax_snapshot,
     &ocr_snapshot,
+    &probe.steps,
     has_collection_like_surface(&ax_snapshot),
   );
 
@@ -539,6 +541,7 @@ pub(crate) fn build_annotation_candidates(
   primary_window_bounds: Option<&AppRect>,
   ax_snapshot: &ObservedAxTreeSnapshot,
   ocr_snapshot: &OcrTextSnapshot,
+  probe_steps: &[AppProbeStep],
   has_collection_surface: bool,
 ) -> Vec<AppSurfaceCandidate> {
   let mut candidates = Vec::new();
@@ -552,6 +555,7 @@ pub(crate) fn build_annotation_candidates(
     } else {
       "capture-ax-tree"
     };
+    let evidence_refs = artifact_refs_for_probe_step(probe_steps, evidence_step_id);
     let note = if primary_window.is_some() {
       "Primary visible window bounds from the window snapshot."
     } else {
@@ -578,6 +582,7 @@ pub(crate) fn build_annotation_candidates(
       bounds: Some(bounds),
       confidence: None,
       evidence_step_id: evidence_step_id.to_string(),
+      evidence_refs,
       candidate_query: None,
       input_bindings,
       compatibility: candidate_compatibility(
@@ -598,6 +603,7 @@ pub(crate) fn build_annotation_candidates(
       node,
       query_value,
       "capture-ax-tree",
+      artifact_refs_for_probe_step(probe_steps, "capture-ax-tree"),
       candidate_compatibility(
         &["search-entry.ax-text-input.clipboard-submit.capture-evidence"],
         &[],
@@ -616,6 +622,7 @@ pub(crate) fn build_annotation_candidates(
       node,
       query_value,
       "capture-ax-tree",
+      artifact_refs_for_probe_step(probe_steps, "capture-ax-tree"),
       candidate_compatibility(
         &["native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text"],
         &[],
@@ -656,6 +663,7 @@ pub(crate) fn build_annotation_candidates(
       bounds: Some(bounds),
       confidence: Some(matched.confidence),
       evidence_step_id: "ocr-sample".to_string(),
+      evidence_refs: artifact_refs_for_probe_step(probe_steps, "ocr-sample"),
       candidate_query: Some(ocr_candidate_query(
         &format!("ocr-anchor-{}", matched.match_index),
         &matched.text,
@@ -670,7 +678,10 @@ pub(crate) fn build_annotation_candidates(
   if has_collection_surface && ocr_snapshot.matches.len() >= 2 {
     let rows = group_ocr_rows_from_ocr_snapshot(ocr_snapshot);
     for row in rows.into_iter().take(8) {
-      candidates.push(row_candidate(row));
+      candidates.push(row_candidate(
+        row,
+        artifact_refs_for_probe_step(probe_steps, "ocr-sample"),
+      ));
     }
   }
 
@@ -697,6 +708,7 @@ fn ax_focus_candidate(
   node: &ObservedAxNode,
   query_value: String,
   evidence_step_id: &str,
+  evidence_refs: Vec<crate::contract::ArtifactRef>,
   compatibility: AppCandidateCompatibility,
   note: &str,
 ) -> AppSurfaceCandidate {
@@ -716,6 +728,7 @@ fn ax_focus_candidate(
     bounds: Some(bounds),
     confidence: None,
     evidence_step_id: evidence_step_id.to_string(),
+    evidence_refs,
     candidate_query: Some(ax_candidate_query(candidate_id, node, &query_value, kind)),
     input_bindings: BTreeMap::from([("focus_query".to_string(), focus_query)]),
     compatibility,
@@ -728,7 +741,10 @@ fn group_ocr_rows_from_ocr_snapshot(snapshot: &OcrTextSnapshot) -> Vec<ObservedO
   group_ocr_matches_into_rows(&matches)
 }
 
-fn row_candidate(row: ObservedOcrRow) -> AppSurfaceCandidate {
+fn row_candidate(
+  row: ObservedOcrRow,
+  evidence_refs: Vec<crate::contract::ArtifactRef>,
+) -> AppSurfaceCandidate {
   let bounds = AppRect::from_observed(&row.bounds);
   AppSurfaceCandidate {
     candidate_id: format!("visible-row-{}", row.row_index + 1),
@@ -744,6 +760,7 @@ fn row_candidate(row: ObservedOcrRow) -> AppSurfaceCandidate {
     bounds: Some(bounds),
     confidence: None,
     evidence_step_id: "ocr-sample".to_string(),
+    evidence_refs,
     candidate_query: Some(row_candidate_query(
       &format!("visible-row-{}", row.row_index + 1),
       row.row_index + 1,
@@ -758,6 +775,38 @@ fn row_candidate(row: ObservedOcrRow) -> AppSurfaceCandidate {
       "Visible row candidate grouped from OCR observations; useful for list-like UI targets."
         .to_string(),
     ],
+  }
+}
+
+fn artifact_refs_for_probe_step(
+  steps: &[AppProbeStep],
+  step_id: &str,
+) -> Vec<crate::contract::ArtifactRef> {
+  steps
+    .iter()
+    .find(|step| step.id == step_id)
+    .map(|step| {
+      step
+        .artifacts
+        .iter()
+        .map(|artifact| app_probe_artifact_ref(step, artifact))
+        .collect()
+    })
+    .unwrap_or_default()
+}
+
+fn app_probe_artifact_ref(
+  step: &AppProbeStep,
+  artifact: &AppProbeArtifact,
+) -> crate::contract::ArtifactRef {
+  crate::contract::ArtifactRef {
+    run_id: RunId::new(step.run_id.clone()),
+    artifact_id: ArtifactId::new(artifact.artifact_id.clone()),
+    span_id: SpanId::new(artifact.span_id.clone()),
+    captured_event_id: artifact
+      .captured_event_id
+      .as_ref()
+      .map(|event_id| EventId::new(event_id.clone())),
   }
 }
 

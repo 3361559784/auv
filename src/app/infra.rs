@@ -15,7 +15,7 @@ use crate::trace::{
   SPAN_API_VERSION, SpanRecordV1Alpha1, TraceState, TraceStatusCode, new_span_id, string_attr,
 };
 
-use super::{AppIdentity, AppProbeStep};
+use super::{AppIdentity, AppProbeArtifact, AppProbeStep};
 
 pub(crate) fn resolve_app_identity(bundle_id: &str) -> AuvResult<AppIdentity> {
   let escaped_bundle_id = bundle_id.replace('"', "\\\"");
@@ -214,9 +214,11 @@ pub(crate) fn invoke_probe_step(
         target_application_id,
         inputs,
         run_id: run.id().to_string(),
+        span_id: step_span.id().to_string(),
         status: RunStatus::Failed.as_str().to_string(),
         output_summary: format!("Probe step {step_id} failed"),
         artifact_paths: Vec::new(),
+        artifacts: Vec::new(),
         failure_message: Some(error),
       });
     }
@@ -245,15 +247,32 @@ pub(crate) fn invoke_probe_step(
         .unwrap_or_else(|| result.output_summary.clone())
     ));
   }
+  let artifact_paths = result.artifact_paths.clone();
   Ok(AppProbeStep {
     id: step_id.to_string(),
     command_id: command_id.to_string(),
     target_application_id,
     inputs,
     run_id: run.id().to_string(),
+    span_id: step_span.id().to_string(),
     status: result.status.as_str().to_string(),
     output_summary: result.output_summary,
-    artifact_paths: result.artifact_paths,
+    artifact_paths: artifact_paths.clone(),
+    artifacts: result
+      .artifacts
+      .iter()
+      .zip(artifact_paths.iter())
+      .map(|(artifact, path)| AppProbeArtifact {
+        artifact_id: artifact.artifact_id.as_str().to_string(),
+        span_id: artifact.span_id.as_str().to_string(),
+        path: path.clone(),
+        role: artifact.role.clone(),
+        captured_event_id: artifact
+          .event_id
+          .as_ref()
+          .map(|event_id| event_id.as_str().to_string()),
+      })
+      .collect(),
     failure_message: result.failure_message,
   })
 }

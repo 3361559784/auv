@@ -206,6 +206,15 @@ pub(crate) fn render_app_analysis_report(analysis: &AppAnalysis) -> String {
           query.query_id, sources
         ));
       }
+      if !candidate.evidence_refs.is_empty() {
+        lines.push("  - evidenceRefs:".to_string());
+        for reference in &candidate.evidence_refs {
+          lines.push(format!(
+            "    - run=`{}` span=`{}` artifact=`{}`",
+            reference.run_id, reference.span_id, reference.artifact_id
+          ));
+        }
+      }
       lines.push(format!(
         "  - evidenceStep: `{}`",
         candidate.evidence_step_id

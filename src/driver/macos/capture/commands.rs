@@ -5,11 +5,13 @@ use super::types::{
   Scale2D, capture_error,
 };
 use super::xcap_backend;
-use crate::driver::macos::{
-  DriverCall, DriverResponse, build_text_artifact, capture_window_with_typed_session,
-  maybe_activate_target_app_for_observation, optional_bool, optional_string, required_f64,
-  sanitize_file_component, screenshot_temp_path,
+use crate::driver::macos::support::{
+  artifacts::{build_text_artifact, sanitize_file_component, screenshot_temp_path},
+  call::{optional_bool, optional_string, required_f64},
+  display::maybe_activate_target_app_for_observation,
+  typed_capture::capture_window_with_typed_session,
 };
+use crate::driver::macos::{DriverCall, DriverResponse};
 use crate::model::{AuvResult, ProducedArtifact, now_millis};
 
 pub(crate) fn capture_display(call: &DriverCall) -> AuvResult<DriverResponse> {

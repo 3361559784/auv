@@ -1,8 +1,8 @@
 // TODO(driver-crates): temporary root compatibility while command handlers
 // still depend on root `DriverCall`, `DriverResponse`, and artifact models.
-mod artifacts;
-mod call;
-mod display;
+pub(crate) mod artifacts;
+pub(crate) mod call;
+pub(crate) mod display;
 mod geometry;
 mod observation;
 mod ocr;
@@ -11,7 +11,7 @@ mod overlay_evidence;
 mod recognition;
 pub(crate) mod runtime;
 mod scripts;
-mod typed_capture;
+pub(crate) mod typed_capture;
 
 pub(crate) mod template_match {
   pub(crate) use auv_driver_macos::support::template_match::*;

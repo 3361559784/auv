@@ -13,6 +13,16 @@ use serde::{Deserialize, Serialize};
 
 use crate::trace::{ArtifactId, EventId, RunId, SpanId};
 
+// NOTICE(contract-api-version-reader-check): producer-side stamping landed
+// in commit be0aab7 but the reader side does not yet reject artifacts
+// whose api_version is unknown. `run_read::extract_*` deserializes any
+// shape that satisfies `serde(default = "...")`, which means a future
+// `auv.*.v1alpha2` artifact would currently parse as v1alpha1 by accident
+// instead of being skipped. The check is deferred until either (a) a
+// non-additive v1alpha2 actually needs to land, or (b) the owner asks
+// for the reader-side discriminator as its own slice. Adding it now
+// without a real second version would be untestable.
+
 /// Wire-shape version of [`OperationResult`] JSON artifacts. Stamped onto
 /// every produced record so readers can reject artifacts whose shape they do
 /// not understand. Historical artifacts without the field deserialize as this

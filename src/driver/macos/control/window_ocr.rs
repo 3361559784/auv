@@ -13,9 +13,37 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use super::super::overlay::overlay_click_point;
-use super::super::*;
+use super::super::support::{
+  artifacts::{
+    DriverArtifactBuilder, build_text_artifact, looks_like_bundle_identifier,
+    sanitize_file_component, screenshot_temp_path,
+  },
+  call::{
+    app_identifier, optional_bool, optional_f64, optional_i64, optional_non_empty_string,
+    optional_positive_u64, optional_string, required_non_empty_string,
+  },
+  geometry::{ocr_match_center, render_rect_compact},
+  ocr::{detect_screen_rows, parse_ocr_region_constraint, render_ocr_row_note},
+  ocr_commands::{
+    CapturedObservation, render_text_match_command_json, run_text_match_on_capture,
+    screenshot_artifact,
+  },
+  overlay_evidence::{
+    OverlayEvidenceMatch, OverlayEvidenceRequest, OverlayEvidenceRow,
+    build_overlay_evidence_artifacts, capture_pixel_to_logical, logical_to_capture_pixel,
+  },
+  recognition::{
+    RowRecognitionArtifactRequest, observed_rect_to_ratio_region, recognition_source_for_rows,
+    row_recognition_artifact, window_number_from_ref,
+  },
+  typed_capture::capture_window_with_typed_session,
+};
+use super::super::{
+  DetectedScreenRows, DriverCall, DriverResponse, ObservedOcrRow, OcrTextMatch, OcrTextSnapshot,
+};
 use super::common::{ClickPointCallOptions, build_click_point_call, resolve_click_interval_ms};
 use super::pointer::click_point;
+use crate::model::AuvResult;
 
 pub(super) fn click_window_text_signals(text: &str) -> std::collections::BTreeMap<String, String> {
   std::collections::BTreeMap::from([("click.resolved_text".to_string(), text.to_string())])

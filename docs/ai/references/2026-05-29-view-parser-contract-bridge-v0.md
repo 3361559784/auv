@@ -139,7 +139,7 @@ A view parser run produces these durable artifacts through existing
 | `ViewObservation` (per pass)  | one artifact, role `view-observation`                            |
 | `ViewReconstruction`          | one artifact, role `view-reconstruction`                         |
 | `ViewProjection` (per domain) | one artifact, role `view-projection-<domain>` (e.g. `netease`)   |
-| `ViewMemory`                  | out of scope for v0 (deferred by view parser design doc)         |
+| `ViewMemory`                  | one per clean parse run when enabled (see view-memory-v0)        |
 | Boundary / scroll evidence    | embedded in the observation or reconstruction artifact           |
 
 Each of these artifacts receives an `ArtifactRef` like any other artifact

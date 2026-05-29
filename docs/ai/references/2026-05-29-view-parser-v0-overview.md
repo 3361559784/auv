@@ -10,13 +10,15 @@ opening the view parser docs for the first time.
 
 ## What this is
 
-The view parser v0 is defined by **14 documents** in `docs/ai/references/`,
+The view parser v0 is defined by **16 documents** in `docs/ai/references/`,
 written between 2026-05-28 and 2026-05-29. This overview is the entry
 point. It does **not** restate the specs; it tells you which to read
 in which order for the task at hand.
 
-> This overview was revised on 2026-05-29 after the three algorithm
-> specs (region detection, item parsing, scroll loop) landed.
+> This overview was revised on 2026-05-29 — first after the three
+> algorithm specs (region detection, item parsing, scroll loop)
+> landed, then again after ViewMemory persistence and anchor
+> reacquisition landed.
 
 ## The corpus
 
@@ -36,6 +38,8 @@ in which order for the task at hand.
 | 12 | `2026-05-29-netease-sidebar-region-detection-v0.md` | NetEase sidebar detection cascade (AX → OCR anchor → geometry) with `REVIEW(...)` markers on every threshold |
 | 13 | `2026-05-29-netease-playlist-item-parsing-v0.md` | NetEase playlist row grouping, section taxonomy, section assignment, clip detection, confidence mapping |
 | 14 | `2026-05-29-view-parser-scroll-loop-v0.md` | Observation loop control flow, scroll step policy, hard / soft / repeat boundary detection, 5 stop conditions |
+| 15 | `2026-05-29-view-parser-view-memory-v0.md` | `ViewMemory` persistence shape (memory_id keying, freshness rules, eviction, owning span `view.parse.memory_write`) |
+| 16 | `2026-05-29-view-parser-anchor-reacquisition-v0.md` | 6-stage cascade for re-finding a node from `ViewMemory` with bounded scroll / wall-clock budgets and `view.reacquire.*` trace namespace |
 
 ## Dependency map
 
@@ -73,6 +77,14 @@ their definitions:
                        12. region    13. item    14. scroll
                         detection    parsing       loop
                        (NetEase)    (NetEase)    (algorithm)
+                                            │
+                                            ▼
+                                    15. ViewMemory
+                                        persistence
+                                            │
+                                            ▼
+                                    16. anchor
+                                       reacquisition
 ```
 
 Doc 1 is the rationale; 2 is the consumed surface model. 3 sets the
@@ -80,8 +92,10 @@ no-parallel-schemas rule. 4 defines the IR types every later doc
 references. 5, 6, 7 are siblings that pin behavior, tests, and trace
 respectively. 8 → 9 → 10 are the implementation-near specs that
 require everything above. 12, 13, 14 are the algorithm specs that
-fill in `RegionParser`, `ItemParser`, and the `ViewParser` loop with
-v0 defaults whose every threshold is marked `REVIEW(...)`.
+fill in `RegionParser`, `ItemParser`, and the `ViewParser` loop
+with v0 defaults whose every threshold is marked `REVIEW(...)`.
+15 → 16 close the persistence + read-side reacquisition loop that
+turns single-parse `playlist ls` into follow-up-able `playlist get`.
 
 ## Reading order by task
 
@@ -132,6 +146,24 @@ Read in this order:
 You can skim 2, 3, 9 unless you change framework-side code. Docs 12,
 13, 14 are the meat of the example's parser implementation work; their
 `REVIEW(...)` markers are the v0 tuning surface.
+
+### "I'm implementing `playlist get` or any follow-up command"
+
+Read in this order:
+
+1. `view-parser-view-memory-v0.md` (15) — what the previous parse
+   stored and how freshness is checked
+2. `view-parser-anchor-reacquisition-v0.md` (16) — the 6-stage
+   cascade you call, its bounded budget, and the
+   `view.reacquire.*` trace namespace
+3. `view-parser-layer-contracts-v0.md` (9) — region / item parser
+   traits the cascade reuses
+4. `view-parser-diagnostic-policy-v0.md` (5) — diagnostic kinds the
+   cascade emits (no new kinds invented for reacquisition)
+5. `view-parser-cli-rendering-v0.md` (10) — for the read-side
+   command's own CLI surface
+
+Skip 1, 4, 6–8 unless you are also changing parse-side behavior.
 
 ### "I'm writing tests"
 
@@ -197,8 +229,8 @@ forbidden lists.
 The single source of truth for each deferral is the spec where it is
 listed. Consolidated below for one-glance review:
 
-- `ViewMemory` persistence (4, 7)
-- Anchor reacquisition algorithm (4, 13)
+- (`ViewMemory` persistence — moved into v0 via doc 15)
+- (Anchor reacquisition algorithm — moved into v0 via doc 16)
 - DOM / CDP / CV / YOLO backends (2, 4)
 - Inspect viewer panels (3, 7, 9)
 - Cross-app reconstruction (3, 9)

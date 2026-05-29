@@ -120,7 +120,7 @@ Each view parser artifact role attaches to exactly one span kind:
 | `view-observation` | `view.parse.observe.<index>` | one per observation span |
 | `view-reconstruction` | `view.parse.reconstruct` | exactly one per parse run |
 | `view-projection-<domain>` | `view.parse.project.<domain>` | one per projection span; multiple projections = multiple spans |
-| `view-memory` (reserved) | TBD (deferred per IR shapes) | — |
+| `view-memory` | `view.parse.memory_write` (see view-memory-v0) | one per clean parse run when memory is enabled |
 
 Existing driver-produced artifacts (capture, OCR result, AX dump) stay
 under whichever span produced them, per the driver's existing

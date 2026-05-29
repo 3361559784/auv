@@ -14,6 +14,7 @@ use std::thread;
 use std::time::Duration;
 use std::time::Instant;
 
+use super::support::runtime::activate_target_app;
 pub(super) use super::typed::observe::{
   find_ax_text_node, ocr_detection_signals, permission_probe_report, preferred_ax_signal_text,
   render_window_list_json, render_window_snapshot_report, row_detection_signals,
@@ -21,7 +22,6 @@ pub(super) use super::typed::observe::{
   wait_row_detection_signals,
 };
 use super::*;
-use super::support::runtime::activate_target_app;
 use crate::contract::{
   ArtifactRef, FailureLayer, OperationOutput, OperationResult, OperationStatus, VerificationMethod,
   VerificationResult,

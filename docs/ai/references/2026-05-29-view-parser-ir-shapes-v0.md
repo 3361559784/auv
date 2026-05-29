@@ -317,11 +317,11 @@ pub enum ReacquireStrategy {
   AxPath,
   Mixed,
 }
-// TODO(reacquisition-algorithm-v1): the matching algorithm behind each
-// strategy is deferred. v0 IR carries only the enum tag + hint fields;
-// runtime reacquisition logic is a separate slice. Do not embed
-// selection heuristics in the IR types — keep the IR descriptive, not
-// procedural.
+// NOTICE(reacquisition-algorithm-v0): the IR carries only the enum tag
+// and hint fields. The matching algorithm lives in
+// `2026-05-29-view-parser-anchor-reacquisition-v0.md` (a 6-stage cascade
+// with bounded budgets). Do not embed selection heuristics in the IR
+// types — keep the IR descriptive; the algorithm consumes these fields.
 
 pub struct ViewLandmark {
   pub landmark_id: String,
@@ -483,16 +483,17 @@ right by `observation_index`.
 | `ViewObservation` | `view-observation` | observation pass |
 | `ViewReconstruction` | `view-reconstruction` | parse run |
 | `ViewProjection<P>` | `view-projection-<domain>` | domain projection |
-| `ViewMemory` (deferred) | `view-memory` (reserved) | — |
+| `ViewMemory` | `view-memory` | one per clean parse run (see view-memory-v0) |
 
 ```rust
-// TODO(view-memory-v1): ViewMemory persistence is reserved, not
-// implemented. No struct is defined in v0; the `view-memory` artifact
-// role is reserved here so downstream readers do not collide with it.
-// A separate, owner-approved spec must cover reacquisition algorithm,
-// eviction policy, cross-run identity, and on-disk vs in-process
-// scope before any ViewMemory type lands. Until then there is no
-// type and no migration path.
+// NOTICE(view-memory-v0): ViewMemory persistence is now defined in
+// `2026-05-29-view-parser-view-memory-v0.md`. The shape, lifecycle,
+// freshness rules, eviction policy, and owning span
+// `view.parse.memory_write` live there. The IR exposes the type slot
+// here; the persistence spec owns the shape.
+//
+// Reacquisition that consumes ViewMemory is defined in
+// `2026-05-29-view-parser-anchor-reacquisition-v0.md`.
 ```
 
 Serialization rules:

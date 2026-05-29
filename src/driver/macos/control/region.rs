@@ -29,8 +29,7 @@ use super::super::support::{
     row_recognition_artifact, window_number_from_ref,
   },
   selector::{
-    parse_app_selector, resolve_app_ref, resolve_window_candidate,
-    resolve_window_candidate_for_input,
+    parse_app_selector, resolve_app_ref, resolve_window_candidate_for_input,
   },
 };
 use crate::model::AuvResult;

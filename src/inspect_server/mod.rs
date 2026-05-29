@@ -865,8 +865,9 @@ mod tests {
 
   use super::{ensure_stream_run_exists, next_stream_payload, router, router_with_config};
   use crate::contract::{
-    ObservationSnapshot, ObservationSource, OperationOutput, OperationResult, OperationStatus,
-    RecognitionScope, RecognitionSurface, VerificationMethod, VerificationResult,
+    OBSERVATION_SNAPSHOT_API_VERSION, OPERATION_RESULT_API_VERSION, ObservationSnapshot,
+    ObservationSource, OperationOutput, OperationResult, OperationStatus, RecognitionScope,
+    RecognitionSurface, VERIFICATION_RESULT_API_VERSION, VerificationMethod, VerificationResult,
   };
   use crate::model::now_millis;
   use crate::recording::{BroadcastRunRecorder, RunRecorder, RunUpdate};
@@ -2538,6 +2539,7 @@ mod tests {
       failure: None,
     };
     let verification = VerificationResult {
+      api_version: VERIFICATION_RESULT_API_VERSION.to_string(),
       method: VerificationMethod::SemanticMatch,
       executed: true,
       state_changed: true,
@@ -2552,6 +2554,7 @@ mod tests {
       observed_label: Some("Now Playing".to_string()),
     };
     let operation_result = OperationResult {
+      api_version: OPERATION_RESULT_API_VERSION.to_string(),
       run_id: run_id.clone(),
       status: OperationStatus::Completed,
       operation_id: "music.result.play".to_string(),
@@ -2564,6 +2567,7 @@ mod tests {
       known_limits: Vec::new(),
     };
     let observation_snapshot = ObservationSnapshot {
+      api_version: OBSERVATION_SNAPSHOT_API_VERSION.to_string(),
       snapshot_id: "snapshot_server_test".to_string(),
       run_id: run_id.clone(),
       span_id: span_id.clone(),

@@ -37,9 +37,9 @@ use super::window_ocr::{
 use crate::contract::{
   AnchorRecheckPrecondition, ArtifactRef, Candidate, CandidateEvidence, CandidateLiveness,
   CandidateRef, ControlRequirements, FailureLayer, FreshnessBasis, LivenessPreconditions, NodeRef,
-  OperationOutput, OperationResult, OperationStatus, RatioRegion, RecognitionBox,
-  RecognitionSource, RecognitionSurface, SurfaceNode, TargetGrounding, TargetSpec,
-  VerificationMethod, VerificationResult, WindowRefPrecondition,
+  OPERATION_RESULT_API_VERSION, OperationOutput, OperationResult, OperationStatus, RatioRegion,
+  RecognitionBox, RecognitionSource, RecognitionSurface, SurfaceNode, TargetGrounding, TargetSpec,
+  VERIFICATION_RESULT_API_VERSION, VerificationMethod, VerificationResult, WindowRefPrecondition,
 };
 use crate::model::{AuvResult, ExecutionTarget};
 use crate::driver::macos::WindowSelection;
@@ -209,6 +209,7 @@ pub(crate) fn music_search_results(call: &DriverCall) -> AuvResult<DriverRespons
     .collect();
 
   let operation_result = OperationResult {
+    api_version: OPERATION_RESULT_API_VERSION.to_string(),
     run_id: RunId::new(call.run_context.run_id.as_str()),
     status: OperationStatus::Completed,
     operation_id: "music.search.results".to_string(),
@@ -675,6 +676,7 @@ pub(crate) fn music_result_play(call: &DriverCall) -> AuvResult<DriverResponse> 
     .or_else(|| Some(target_title.clone()));
 
   let verification = VerificationResult {
+    api_version: VERIFICATION_RESULT_API_VERSION.to_string(),
     method: VerificationMethod::SemanticMatch,
     executed: true,
     state_changed: true,
@@ -1410,6 +1412,7 @@ fn music_result_play_failure_response(
   failure: MusicResultPlayFailure,
 ) -> AuvResult<DriverResponse> {
   let verification = VerificationResult {
+    api_version: VERIFICATION_RESULT_API_VERSION.to_string(),
     method: VerificationMethod::SemanticMatch,
     executed: failure.executed,
     state_changed: failure.state_changed,
@@ -1491,6 +1494,7 @@ fn music_result_play_operation_result(
   evidence_artifacts: Vec<ArtifactRef>,
 ) -> OperationResult {
   OperationResult {
+    api_version: OPERATION_RESULT_API_VERSION.to_string(),
     run_id: RunId::new(call.run_context.run_id.as_str()),
     status,
     operation_id: MUSIC_RESULT_PLAY_OPERATION_ID.to_string(),
@@ -1706,6 +1710,7 @@ mod tests {
 
   fn sample_operation_result(candidates: Vec<Candidate>) -> OperationResult {
     OperationResult {
+      api_version: OPERATION_RESULT_API_VERSION.to_string(),
       run_id: RunId::new("run_test"),
       status: OperationStatus::Completed,
       operation_id: MUSIC_SEARCH_RESULTS_OPERATION_ID.to_string(),
@@ -1995,6 +2000,7 @@ mod tests {
       resolved_candidate_provenance(&candidate_input, &source_operation_result, &candidate)
         .expect("provenance");
     let verification = VerificationResult {
+      api_version: VERIFICATION_RESULT_API_VERSION.to_string(),
       method: VerificationMethod::SemanticMatch,
       executed: true,
       state_changed: true,

@@ -13,6 +13,32 @@ use serde::{Deserialize, Serialize};
 
 use crate::trace::{ArtifactId, EventId, RunId, SpanId};
 
+/// Wire-shape version of [`OperationResult`] JSON artifacts. Stamped onto
+/// every produced record so readers can reject artifacts whose shape they do
+/// not understand. Historical artifacts without the field deserialize as this
+/// version because the shape was already `v1alpha1` before the field existed.
+pub const OPERATION_RESULT_API_VERSION: &str = "auv.operation_result.v1alpha1";
+
+/// Wire-shape version of [`VerificationResult`] JSON artifacts. Same semantics
+/// as [`OPERATION_RESULT_API_VERSION`].
+pub const VERIFICATION_RESULT_API_VERSION: &str = "auv.verification_result.v1alpha1";
+
+/// Wire-shape version of [`ObservationSnapshot`] JSON artifacts. Same
+/// semantics as [`OPERATION_RESULT_API_VERSION`].
+pub const OBSERVATION_SNAPSHOT_API_VERSION: &str = "auv.observation_snapshot.v1alpha1";
+
+fn default_operation_result_api_version() -> String {
+  OPERATION_RESULT_API_VERSION.to_string()
+}
+
+fn default_verification_result_api_version() -> String {
+  VERIFICATION_RESULT_API_VERSION.to_string()
+}
+
+fn default_observation_snapshot_api_version() -> String {
+  OBSERVATION_SNAPSHOT_API_VERSION.to_string()
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ArtifactRef {
   pub run_id: RunId,
@@ -39,6 +65,10 @@ pub enum OperationStatus {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct OperationResult {
+  /// Wire-shape version. See [`OPERATION_RESULT_API_VERSION`]. Defaults so
+  /// historical artifacts without the field still parse as the current shape.
+  #[serde(default = "default_operation_result_api_version")]
+  pub api_version: String,
   pub run_id: RunId,
   pub status: OperationStatus,
   pub operation_id: String,
@@ -289,6 +319,10 @@ pub struct ControlRequirements {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct VerificationResult {
+  /// Wire-shape version. See [`VERIFICATION_RESULT_API_VERSION`]. Defaults so
+  /// historical artifacts without the field still parse as the current shape.
+  #[serde(default = "default_verification_result_api_version")]
+  pub api_version: String,
   /// Taxonomy of the assertion. Lets downstream tooling reason about coverage
   /// without parsing the producing command id. See [`VerificationMethod`].
   #[serde(default = "VerificationMethod::default_legacy")]
@@ -408,6 +442,10 @@ pub enum ObservationSource {
 /// this is marked stable.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ObservationSnapshot {
+  /// Wire-shape version. See [`OBSERVATION_SNAPSHOT_API_VERSION`]. Defaults so
+  /// historical artifacts without the field still parse as the current shape.
+  #[serde(default = "default_observation_snapshot_api_version")]
+  pub api_version: String,
   /// Stable identifier for this snapshot. Producers should use a deterministic
   /// format such as `snapshot_{run_id}_{span_id}_{seq}` so events and
   /// artifacts can reference snapshots after the fact.
@@ -761,6 +799,7 @@ mod tests {
   fn operation_result_with_candidate_round_trips() {
     let artifact = artifact_ref();
     let result = OperationResult {
+      api_version: OPERATION_RESULT_API_VERSION.to_string(),
       run_id: RunId::new("run_123"),
       status: OperationStatus::Completed,
       operation_id: "music.search.results".to_string(),
@@ -892,6 +931,7 @@ mod tests {
   #[test]
   fn verification_result_failure_layer_uses_snake_case_contract() {
     let result = VerificationResult {
+      api_version: VERIFICATION_RESULT_API_VERSION.to_string(),
       method: VerificationMethod::SemanticMatch,
       executed: true,
       state_changed: true,
@@ -1069,6 +1109,7 @@ mod tests {
   #[test]
   fn observation_snapshot_round_trips_with_unified_projection() {
     let snapshot = ObservationSnapshot {
+      api_version: OBSERVATION_SNAPSHOT_API_VERSION.to_string(),
       snapshot_id: "snapshot_run_001_span_001_0001".to_string(),
       run_id: RunId::new("run_001"),
       span_id: SpanId::new("span_001"),
@@ -1116,6 +1157,7 @@ mod tests {
   #[test]
   fn observation_snapshot_allows_empty_nodes_for_negative_evidence() {
     let snapshot = ObservationSnapshot {
+      api_version: OBSERVATION_SNAPSHOT_API_VERSION.to_string(),
       snapshot_id: "snapshot_negative".to_string(),
       run_id: RunId::new("run_002"),
       span_id: SpanId::new("span_002"),
@@ -1139,6 +1181,7 @@ mod tests {
   #[test]
   fn observation_snapshot_ax_source_can_omit_capture_contract() {
     let snapshot = ObservationSnapshot {
+      api_version: OBSERVATION_SNAPSHOT_API_VERSION.to_string(),
       snapshot_id: "snapshot_ax_only".to_string(),
       run_id: RunId::new("run_003"),
       span_id: SpanId::new("span_003"),
@@ -1166,6 +1209,7 @@ mod tests {
 
   fn sample_verification(method: VerificationMethod) -> VerificationResult {
     VerificationResult {
+      api_version: VERIFICATION_RESULT_API_VERSION.to_string(),
       method,
       executed: true,
       state_changed: true,
@@ -1185,6 +1229,7 @@ mod tests {
   fn operation_result_carries_first_class_verifications_alongside_acknowledged_output() {
     let verification = sample_verification(VerificationMethod::StateChanged);
     let result = OperationResult {
+      api_version: OPERATION_RESULT_API_VERSION.to_string(),
       run_id: RunId::new("run_action"),
       status: OperationStatus::Completed,
       operation_id: "music.result.play".to_string(),
@@ -1238,6 +1283,7 @@ mod tests {
   #[test]
   fn operation_result_supports_multiple_verification_claims() {
     let result = OperationResult {
+      api_version: OPERATION_RESULT_API_VERSION.to_string(),
       run_id: RunId::new("run_multi"),
       status: OperationStatus::Completed,
       operation_id: "music.result.play".to_string(),

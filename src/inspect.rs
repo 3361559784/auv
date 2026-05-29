@@ -155,8 +155,8 @@ mod tests {
 
   use super::render_text;
   use crate::contract::{
-    ObservationSnapshot, ObservationSource, RecognitionScope, RecognitionSurface,
-    VerificationMethod, VerificationResult,
+    OBSERVATION_SNAPSHOT_API_VERSION, ObservationSnapshot, ObservationSource, RecognitionScope,
+    RecognitionSurface, VERIFICATION_RESULT_API_VERSION, VerificationMethod, VerificationResult,
   };
   use crate::store::CanonicalRun;
   use crate::trace::{
@@ -223,6 +223,7 @@ mod tests {
       }],
     };
     let verifications = vec![VerificationResult {
+      api_version: VERIFICATION_RESULT_API_VERSION.to_string(),
       method: VerificationMethod::SemanticMatch,
       executed: true,
       state_changed: true,
@@ -237,6 +238,7 @@ mod tests {
       observed_label: Some("Now Playing".to_string()),
     }];
     let observation_snapshots = vec![ObservationSnapshot {
+      api_version: OBSERVATION_SNAPSHOT_API_VERSION.to_string(),
       snapshot_id: "snapshot_1".to_string(),
       run_id: run_id.clone(),
       span_id: SpanId::new("span_root"),

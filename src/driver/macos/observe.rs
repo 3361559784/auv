@@ -52,8 +52,8 @@ pub(super) use super::typed::observe::{
 };
 use super::{DriverCall, DriverResponse, ObservedAxNode, ObservedWindowSnapshot, ProducedArtifact};
 use crate::contract::{
-  ArtifactRef, FailureLayer, OperationOutput, OperationResult, OperationStatus, VerificationMethod,
-  VerificationResult,
+  ArtifactRef, FailureLayer, OPERATION_RESULT_API_VERSION, OperationOutput, OperationResult,
+  OperationStatus, VERIFICATION_RESULT_API_VERSION, VerificationMethod, VerificationResult,
 };
 use crate::driver::macos::support::{
   ax::{find_now_playing_ax_node, render_ax_interaction_report},
@@ -498,6 +498,7 @@ fn build_verify_now_playing_title_verification(
 ) -> VerificationResult {
   let observed_label = preferred_ax_signal_text(matched);
   VerificationResult {
+    api_version: VERIFICATION_RESULT_API_VERSION.to_string(),
     method: VerificationMethod::SemanticMatch,
     executed: true,
     state_changed: true,
@@ -524,6 +525,7 @@ fn build_verify_now_playing_title_operation_result(
 ) -> OperationResult {
   let evidence = verification.evidence.clone();
   OperationResult {
+    api_version: OPERATION_RESULT_API_VERSION.to_string(),
     run_id: RunId::new(call.run_context.run_id.as_str()),
     status,
     operation_id: VERIFY_MUSIC_NOW_PLAYING_OPERATION_ID.to_string(),
@@ -549,6 +551,7 @@ fn build_verify_now_playing_title_no_match_verification(
   evidence: Vec<ArtifactRef>,
 ) -> VerificationResult {
   VerificationResult {
+    api_version: VERIFICATION_RESULT_API_VERSION.to_string(),
     method: VerificationMethod::SemanticMatch,
     executed: true,
     state_changed: false,
@@ -811,6 +814,7 @@ fn build_verify_ax_text_verification(
 ) -> VerificationResult {
   let observed_label = preferred_ax_signal_text(matched);
   VerificationResult {
+    api_version: VERIFICATION_RESULT_API_VERSION.to_string(),
     method: VerificationMethod::AxText,
     executed: true,
     state_changed: true,
@@ -837,6 +841,7 @@ fn build_verify_ax_text_operation_result(
 ) -> OperationResult {
   let evidence = verification.evidence.clone();
   OperationResult {
+    api_version: OPERATION_RESULT_API_VERSION.to_string(),
     run_id: RunId::new(call.run_context.run_id.as_str()),
     status,
     operation_id: VERIFY_AX_TEXT_OPERATION_ID.to_string(),
@@ -858,6 +863,7 @@ fn build_verify_ax_text_operation_result(
 /// doesn't match. No `observed_label` because there is no matched node.
 fn build_verify_ax_text_no_match_verification(evidence: Vec<ArtifactRef>) -> VerificationResult {
   VerificationResult {
+    api_version: VERIFICATION_RESULT_API_VERSION.to_string(),
     method: VerificationMethod::AxText,
     executed: true,
     state_changed: false,

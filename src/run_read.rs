@@ -118,8 +118,9 @@ mod tests {
     list_verifications,
   };
   use crate::contract::{
-    ObservationSnapshot, ObservationSource, OperationOutput, OperationResult, OperationStatus,
-    RecognitionScope, RecognitionSurface, VerificationMethod, VerificationResult,
+    OBSERVATION_SNAPSHOT_API_VERSION, OPERATION_RESULT_API_VERSION, ObservationSnapshot,
+    ObservationSource, OperationOutput, OperationResult, OperationStatus, RecognitionScope,
+    RecognitionSurface, VERIFICATION_RESULT_API_VERSION, VerificationMethod, VerificationResult,
   };
   use crate::scroll_scan::{
     CollectionObservation, CompletenessClaim, HookDecisionRecord, ObservationCluster,
@@ -154,6 +155,7 @@ mod tests {
     let observation_snapshot = dummy_observation_snapshot(&run.run_id, &span.span_id);
 
     let operation_legacy = OperationResult {
+      api_version: OPERATION_RESULT_API_VERSION.to_string(),
       run_id: run.run_id.clone(),
       status: OperationStatus::Completed,
       operation_id: "verify.legacy".to_string(),
@@ -166,6 +168,7 @@ mod tests {
       known_limits: Vec::new(),
     };
     let operation_top_level = OperationResult {
+      api_version: OPERATION_RESULT_API_VERSION.to_string(),
       run_id: run.run_id.clone(),
       status: OperationStatus::Completed,
       operation_id: "music.result.play".to_string(),
@@ -322,6 +325,7 @@ mod tests {
     observed_label: Option<String>,
   ) -> VerificationResult {
     VerificationResult {
+      api_version: VERIFICATION_RESULT_API_VERSION.to_string(),
       method,
       executed: true,
       state_changed: true,
@@ -339,6 +343,7 @@ mod tests {
 
   fn dummy_observation_snapshot(run_id: &RunId, span_id: &SpanId) -> ObservationSnapshot {
     ObservationSnapshot {
+      api_version: OBSERVATION_SNAPSHOT_API_VERSION.to_string(),
       snapshot_id: "snapshot_contracts".to_string(),
       run_id: run_id.clone(),
       span_id: span_id.clone(),

@@ -5,9 +5,9 @@ use std::path::Path;
 use serde_json::Value;
 
 use crate::contract::{
-  ArtifactRef, NodeRef, ObservationSnapshot, ObservationSource, RatioRegion, RecognitionBox,
-  RecognitionResult, RecognitionScope, RecognitionSource, RecognitionSurface, RecognizedItem,
-  SurfaceNode,
+  ArtifactRef, NodeRef, OBSERVATION_SNAPSHOT_API_VERSION, ObservationSnapshot, ObservationSource,
+  RatioRegion, RecognitionBox, RecognitionResult, RecognitionScope, RecognitionSource,
+  RecognitionSurface, RecognizedItem, SurfaceNode,
 };
 use crate::model::{AuvResult, now_millis};
 use crate::trace::{ArtifactRecordV1Alpha1, RunId, SpanId};
@@ -382,6 +382,7 @@ pub(crate) fn build_page_observation_snapshot(
   }
 
   ObservationSnapshot {
+    api_version: OBSERVATION_SNAPSHOT_API_VERSION.to_string(),
     snapshot_id: format!("snapshot_{}_{:04}", run_id, page_index + 1),
     run_id: run_id.clone(),
     span_id: span_id.clone(),

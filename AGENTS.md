@@ -85,6 +85,42 @@ When a good idea appears mid-task, do not implement it inline. Record it as a
 candidate next slice with one sentence explaining why it matters, then finish
 the current slice.
 
+When you decide *not* to implement something that a reader could plausibly
+expect — a field, an enum variant, a branch, an algorithm stage, an API
+surface, a fallback path, or any other surface that has been considered and
+intentionally left out for the current slice — leave a `TODO:` or `NOTICE:`
+marker at the type or call site where the deferral lives. The goal is to
+make intent visible: a future reader (Codex, Claude, the owner, a reviewer)
+must be able to tell *not yet, on purpose* apart from *forgot to write it*.
+A missing marker forces the next reader to guess and frequently produces
+unwanted scope expansion when an agent treats the absence as a gap.
+
+A useful deferral marker names three things in one short comment: the gap
+(what was considered but omitted), the reason it is deferred (why it does
+not belong in this slice), and the trigger that would unlock it (what
+condition or owner approval would re-open the decision). When the deferral
+is already covered by a reference doc, the inline marker may simply cite
+that doc instead of restating the rationale — for example,
+`// TODO(view-memory-v1): persistence deferred, see view-parser-view-memory-v0.md`.
+The rule is that *something at the code site* must point a reader to the
+intentional gap.
+
+Apply this discipline to:
+
+- Enum variants you considered but chose not to add.
+- Struct fields you considered but did not add.
+- Algorithm stages, fallback paths, or recovery branches you reserved but
+  did not implement.
+- API surfaces you chose to keep private, omit, or stub for the current
+  slice.
+- Reader-side checks that mirror a producer-side guarantee (such as
+  version rejection on a wire-shape field) when only the producer side
+  has landed.
+
+A deferral marker is not approval to implement the deferred work later
+without owner involvement. It is documentation of an existing decision so
+the decision survives the next read of the code.
+
 ## Current Contract Seam
 
 The active macOS automation seam is:

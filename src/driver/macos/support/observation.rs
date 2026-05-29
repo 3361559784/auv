@@ -1,6 +1,8 @@
 // File: src/driver/macos/support/observation.rs
-use super::super::*;
+use super::super::{DriverCall, WindowCandidate};
+use super::call::{optional_bool, optional_non_empty_string};
 use crate::driver::macos::capture::types::DisplayDescriptor;
+use crate::model::AuvResult;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct DisplaySelection {

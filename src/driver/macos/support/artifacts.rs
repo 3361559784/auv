@@ -5,9 +5,9 @@ use std::io::ErrorKind;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use super::super::*;
+use super::super::{ProducedArtifact, now_millis};
 use crate::contract::ArtifactRef;
-use crate::model::DriverRunContext;
+use crate::model::{AuvResult, DriverRunContext};
 use crate::trace::{ArtifactId, RunId, SpanId};
 
 static TEMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);

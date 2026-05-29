@@ -1,6 +1,6 @@
 // File: src/driver/macos/support/scripts.rs
-use super::super::*;
 use super::artifacts::run_command;
+use super::super::OSASCRIPT_BINARY;
 
 pub(crate) fn probe_automation_to_system_events() -> String {
   let args = vec![

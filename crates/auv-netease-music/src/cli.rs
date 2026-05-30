@@ -75,6 +75,7 @@ fn parse_playlist(args: Vec<String>) -> Result<Command, String> {
       "--json" => json = true,
       "--json-out" => json_out = Some(PathBuf::from(next(&mut iter, "--json-out")?)),
       "--app-id" => inputs.app_id = next(&mut iter, "--app-id")?,
+      "--artifact-dir" => inputs.artifact_dir = PathBuf::from(next(&mut iter, "--artifact-dir")?),
       "--max-pages" => {
         inputs.max_pages = parse_pos(next(&mut iter, "--max-pages")?, "--max-pages")?
       }
@@ -120,8 +121,9 @@ fn print_usage() {
      \n\
      USAGE:\n\
      \x20 auv-netease-music playlist [ls] [<keyword>] [--json | --json-out <path>]\n\
-     \x20   [--app-id <bundle>] [--max-pages <n>] [--max-scrolls <n>]\n\
-     \x20   [--scroll-amount <f>] [--sidebar-region x,y,width,height]\n\
+     \x20   [--app-id <bundle>] [--artifact-dir <path>] [--max-pages <n>]\n\
+     \x20   [--max-scrolls <n>] [--scroll-amount <f>]\n\
+     \x20   [--sidebar-region x,y,width,height]\n\
      \n\
      Exit: 0 ok (even with 0 matches); 1 scan/IO failure; 2 usage error."
   );
@@ -264,5 +266,15 @@ mod tests {
       panic!("expected playlist command");
     };
     assert_eq!(cmd.keyword.as_deref(), Some("daily"));
+  }
+
+  #[test]
+  fn artifact_dir_override() {
+    let Command::Playlist(cmd) =
+      parse_command(args(&["playlist", "--artifact-dir", "/tmp/foo"])).unwrap()
+    else {
+      panic!("expected playlist command");
+    };
+    assert_eq!(cmd.inputs.artifact_dir, PathBuf::from("/tmp/foo"));
   }
 }

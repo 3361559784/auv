@@ -47,7 +47,7 @@ impl Inputs {
       artifact_dir: std::path::PathBuf::from(DEFAULT_ARTIFACT_DIR),
       max_pages: 24,
       max_scrolls: 48,
-      scroll_amount: 6.0,
+      scroll_amount: 300.0,
       sidebar_region: None,
       print_json: false,
     }
@@ -1958,7 +1958,7 @@ mod tests {
     assert_eq!(inputs.artifact_dir, PathBuf::from(DEFAULT_ARTIFACT_DIR));
     assert_eq!(inputs.max_pages, 24);
     assert_eq!(inputs.max_scrolls, 48);
-    assert_eq!(inputs.scroll_amount, 6.0);
+    assert_eq!(inputs.scroll_amount, 300.0);
     assert_eq!(inputs.sidebar_region, None);
     assert!(!inputs.print_json);
   }

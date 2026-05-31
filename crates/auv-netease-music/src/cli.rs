@@ -2,7 +2,7 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use crate::output::build_playlist_envelope;
+use crate::output::build_playlist_json_output;
 use crate::{Inputs, render_human_summary, run_live_scan};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -197,14 +197,14 @@ fn run_playlist(cmd: PlaylistCommand) -> ExitCode {
     }
   };
   let filter = cmd.filter.as_deref().or(cmd.keyword.as_deref());
-  let envelope = build_playlist_envelope(&scan, filter);
+  let output = build_playlist_json_output(&scan, filter);
 
   match &cmd.output {
     OutputMode::Human => {
       println!("{}", render_human_summary(&scan));
       ExitCode::SUCCESS
     }
-    OutputMode::Json => match serde_json::to_string_pretty(&envelope) {
+    OutputMode::Json => match serde_json::to_string_pretty(&output) {
       Ok(json) => {
         println!("{json}");
         ExitCode::SUCCESS
@@ -215,7 +215,7 @@ fn run_playlist(cmd: PlaylistCommand) -> ExitCode {
       }
     },
     OutputMode::JsonFile(path) => {
-      let json = match serde_json::to_string_pretty(&envelope) {
+      let json = match serde_json::to_string_pretty(&output) {
         Ok(json) => json,
         Err(error) => {
           eprintln!("encode failed: {error}");

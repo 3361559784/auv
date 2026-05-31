@@ -13,11 +13,11 @@ pub struct MatchRef {
   pub anchor_id: Option<String>,
 }
 
-/// Agent-facing JSON envelope for the `playlist` command. Embeds the raw
+/// Agent-facing JSON output for the `playlist` command. Embeds the raw
 /// scan artifact (which carries `schema_version` and `ScrollBoundarySummary`)
 /// so an agent can distinguish "not found" from "scan not exhaustive".
 #[derive(Clone, Debug, Serialize)]
-pub struct PlaylistEnvelope<'a> {
+pub struct PlaylistJsonOutput<'a> {
   pub command: &'static str,
   pub query: Option<String>,
   pub item_count: usize,
@@ -26,14 +26,14 @@ pub struct PlaylistEnvelope<'a> {
   pub scan: &'a PlaylistSidebarScan,
 }
 
-/// Build the agent-facing envelope without performing any live scan work.
-pub fn build_playlist_envelope<'a>(
+/// Build the agent-facing JSON output without performing any live scan work.
+pub fn build_playlist_json_output<'a>(
   scan: &'a PlaylistSidebarScan,
   keyword: Option<&str>,
-) -> PlaylistEnvelope<'a> {
+) -> PlaylistJsonOutput<'a> {
   let matches = collect_matches(scan.projection(), keyword);
   let item_count = collect_matches(scan.projection(), None).len();
-  PlaylistEnvelope {
+  PlaylistJsonOutput {
     command: "playlist",
     query: keyword.map(str::to_string),
     item_count,
@@ -126,16 +126,16 @@ mod tests {
   }
 
   #[test]
-  fn build_playlist_envelope_counts_all_items_and_matches() {
+  fn build_playlist_json_output_counts_all_items_and_matches() {
     let scan = PlaylistSidebarScan::from_projection_for_tests(projection());
 
-    let envelope = build_playlist_envelope(&scan, Some("daily"));
+    let output = build_playlist_json_output(&scan, Some("daily"));
 
-    assert_eq!(envelope.command, "playlist");
-    assert_eq!(envelope.query.as_deref(), Some("daily"));
-    assert_eq!(envelope.item_count, 2);
-    assert_eq!(envelope.match_count, 1);
-    assert_eq!(envelope.matches[0].item_id, "i1");
-    assert!(std::ptr::eq(envelope.scan, &scan));
+    assert_eq!(output.command, "playlist");
+    assert_eq!(output.query.as_deref(), Some("daily"));
+    assert_eq!(output.item_count, 2);
+    assert_eq!(output.match_count, 1);
+    assert_eq!(output.matches[0].item_id, "i1");
+    assert!(std::ptr::eq(output.scan, &scan));
   }
 }

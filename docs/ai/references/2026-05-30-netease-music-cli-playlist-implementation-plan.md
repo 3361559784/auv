@@ -4,7 +4,7 @@
 
 **Goal:** Ship a compiled product CLI (`auv-netease-music`, alias `auv-wyy`) whose `playlist [<keyword>]` subcommand runs the existing NetEase sidebar scan and emits agent-callable JSON, by extracting the example's procedures into a reusable crate library — no behavior change to the scan.
 
-**Architecture:** New workspace crate `crates/auv-netease-music/`. The whole of `examples/netease_playlist_ls.rs` moves into the crate library (visibility widened where the CLI needs it); the example becomes a thin wrapper. A `cli` module adds subcommand parsing, a keyword filter over the scan projection, a stable JSON envelope, and exit codes. Two `[[bin]]` targets delegate to one `cli::run()`. The crate depends *down* the tree (`auv-driver`, `auv-driver-macos`) and **never** on the root `auv-cli` crate.
+**Architecture:** New workspace crate `crates/auv-netease-music/`. The whole of `examples/netease_playlist_ls.rs` moves into the crate library (visibility widened where the CLI needs it); the example becomes a thin wrapper. A `cli` module adds subcommand parsing, a keyword filter over the scan projection, a stable JSON output object, and exit codes. Two `[[bin]]` targets delegate to one `cli::run()`. The crate depends *down* the tree (`auv-driver`, `auv-driver-macos`) and **never** on the root `auv-cli` crate.
 
 **Tech Stack:** Rust (edition 2024, rust-version 1.91), `serde`/`serde_json`, `image`, `auv-driver`, `auv-driver-macos`. Arg parsing is hand-rolled (matches the repo's existing style; no new `clap` dependency). macOS-gated live scan, same as the example.
 
@@ -19,7 +19,7 @@
 | `Cargo.toml` (root) | add `crates/auv-netease-music` to `[workspace].members` |
 | `crates/auv-netease-music/Cargo.toml` | crate manifest, two `[[bin]]` targets, deps |
 | `crates/auv-netease-music/src/lib.rs` | the moved scan procedures + IR types (from the example), visibility widened |
-| `crates/auv-netease-music/src/output.rs` | `MatchRef`, `PlaylistEnvelope`, `collect_matches` (pure, tested) |
+| `crates/auv-netease-music/src/output.rs` | `MatchRef`, `PlaylistJsonOutput`, `collect_matches` (pure, tested) |
 | `crates/auv-netease-music/src/cli.rs` | argv → `Command`, `run()`/`run_playlist()`, usage, exit codes (parsing tested) |
 | `crates/auv-netease-music/src/bin/auv-netease-music.rs` | thin `main` → `cli::run()` |
 | `crates/auv-netease-music/src/bin/auv-wyy.rs` | thin `main` → `cli::run()` (alias binary) |
@@ -294,7 +294,7 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 ---
 
-## Task 4: Keyword filter + JSON envelope (`output.rs`)
+## Task 4: Keyword filter + JSON output (`output.rs`)
 
 `collect_matches` is pure and testable without a driver — TDD it.
 
@@ -330,11 +330,11 @@ pub struct MatchRef {
   pub anchor_id: Option<String>,
 }
 
-/// Agent-facing JSON envelope for the `playlist` command. Embeds the raw
+/// Agent-facing JSON output for the `playlist` command. Embeds the raw
 /// scan artifact (which carries `schema_version` and `ScrollBoundarySummary`)
 /// so an agent can distinguish "not found" from "scan not exhaustive".
 #[derive(Clone, Debug, Serialize)]
-pub struct PlaylistEnvelope<'a> {
+pub struct PlaylistJsonOutput<'a> {
   pub command: &'static str,
   pub query: Option<String>,
   pub item_count: usize,
@@ -454,7 +454,7 @@ Expected: PASS (3 tests).
 
 ```bash
 git add crates/auv-netease-music/src/lib.rs crates/auv-netease-music/src/output.rs
-git commit -m "feat(netease-music): add keyword filter and JSON envelope
+git commit -m "feat(netease-music): add keyword filter and JSON output
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
@@ -486,7 +486,7 @@ Create `crates/auv-netease-music/src/cli.rs`:
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use crate::output::{PlaylistEnvelope, collect_matches};
+use crate::output::{PlaylistJsonOutput, collect_matches};
 use crate::{Inputs, render_human_summary, run_live_scan};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -679,7 +679,7 @@ fn run_playlist(cmd: PlaylistCommand) -> ExitCode {
   };
   let matches = collect_matches(&scan.projection, cmd.keyword.as_deref());
   let item_count = collect_matches(&scan.projection, None).len();
-  let envelope = PlaylistEnvelope {
+  let output = PlaylistJsonOutput {
     command: "playlist",
     query: cmd.keyword.clone(),
     item_count,
@@ -693,7 +693,7 @@ fn run_playlist(cmd: PlaylistCommand) -> ExitCode {
       println!("{}", render_human_summary(&scan));
       ExitCode::SUCCESS
     }
-    OutputMode::Json => match serde_json::to_string_pretty(&envelope) {
+    OutputMode::Json => match serde_json::to_string_pretty(&output) {
       Ok(json) => {
         println!("{json}");
         ExitCode::SUCCESS
@@ -704,7 +704,7 @@ fn run_playlist(cmd: PlaylistCommand) -> ExitCode {
       }
     },
     OutputMode::JsonFile(path) => {
-      let json = match serde_json::to_string_pretty(&envelope) {
+      let json = match serde_json::to_string_pretty(&output) {
         Ok(json) => json,
         Err(error) => {
           eprintln!("encode failed: {error}");
@@ -824,9 +824,9 @@ Expected: error / empty — `auv-netease-music` does **not** depend on `auv-cli`
 
 ## Self-Review
 
-- **Spec coverage:** crate placement (Task 1) ✓; extract procedures, examples thin (Tasks 2-3) ✓; `playlist [<keyword>]` with full-scan-always + matches (Tasks 4-5) ✓; JSON envelope embedding the `schema_version`-tagged scan + exit codes (Tasks 4-6) ✓; two real bins (Task 6) ✓; no `auv-cli`/`music.rs` dependency (Task 7 Step 5) ✓; `playlist play` / `song` excluded ✓.
+- **Spec coverage:** crate placement (Task 1) ✓; extract procedures, examples thin (Tasks 2-3) ✓; `playlist [<keyword>]` with full-scan-always + matches (Tasks 4-5) ✓; JSON output embedding the `schema_version`-tagged scan + exit codes (Tasks 4-6) ✓; two real bins (Task 6) ✓; no `auv-cli`/`music.rs` dependency (Task 7 Step 5) ✓; `playlist play` / `song` excluded ✓.
 - **Placeholders:** none — every code step is complete; extraction steps name exact items and line ranges.
-- **Type consistency:** `collect_matches(&PlaylistSidebarProjection, Option<&str>)` used identically in `output.rs` and `cli.rs`; `Inputs::with_defaults()` defined in Task 2, used in Tasks 2/5; `PlaylistEnvelope` fields match between definition (Task 4) and construction (Task 5); `cli::run() -> ExitCode` matches both bins (Task 6).
+- **Type consistency:** `collect_matches(&PlaylistSidebarProjection, Option<&str>)` used identically in `output.rs` and `cli.rs`; `Inputs::with_defaults()` defined in Task 2, used in Tasks 2/5; `PlaylistJsonOutput` fields match between definition (Task 4) and construction (Task 5); `cli::run() -> ExitCode` matches both bins (Task 6).
 
 ---
 

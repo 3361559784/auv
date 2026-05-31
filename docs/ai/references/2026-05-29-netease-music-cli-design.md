@@ -58,13 +58,13 @@ crates/auv-netease-music/
       mod.rs          //   observer, region detect, parse, reconstruct, scan loop
     song.rs           // extracted from netease_play_visible_anchor.rs (search -> play -> verify)
     cli.rs            // subcommand dispatch + baked defaults + JSON/exit-code emission
-    output.rs         // agent-facing JSON envelope types
+    output.rs         // agent-facing JSON output types
   src/bin/
     auv-netease-music.rs  // fn main() -> auv_netease_music::cli::run()
     auv-wyy.rs            // fn main() -> auv_netease_music::cli::run()  (alias binary)
   tests/
     parser_fixtures.rs    // recorded-fixture parser tests (moved from the example)
-    cli_output.rs         // JSON envelope + exit-code snapshots
+    cli_output.rs         // JSON output + exit-code snapshots
 ```
 
 Both `src/bin/*.rs` are thin: each is a `main` delegating to the same
@@ -159,8 +159,8 @@ play, verify the player bar shows the expected title/artist.
 The CLI is for an agent loop, so output and exit codes are part of the
 contract.
 
-- `--json` / `--json-out` produce a stable envelope. The `playlist`
-  envelope embeds the existing `PlaylistSidebarScan` JSON (which already
+- `--json` / `--json-out` produce a stable JSON output object. The `playlist`
+  output embeds the existing `PlaylistSidebarScan` JSON (which already
   carries `schema_version: "view-ir-v0"`) plus, when a keyword was
   given, a `matches` array.
 - Exit codes:

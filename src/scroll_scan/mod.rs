@@ -304,7 +304,7 @@ pub struct ScrollScanArtifact {
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   pub nodes: Vec<SurfaceNode>,
   /// Per-page projection of the scan into the v0 `ObservationSnapshot` shape.
-  /// Each page's observations are wrapped in one snapshot envelope so future
+  /// Each page's observations are grouped into one snapshot record so future
   /// consumers can read evidence through the unified observed-UI-layer
   /// contract without knowing scroll_scan internals. Empty if a partial scan
   /// failed before producing any pages.

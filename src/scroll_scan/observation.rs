@@ -320,12 +320,12 @@ pub(crate) fn surface_nodes_from_observations(
     .collect()
 }
 
-/// Build a v0 `ObservationSnapshot` envelope for one scanned page. The
+/// Build a v0 `ObservationSnapshot` record for one scanned page. The
 /// `nodes` field projects this page's observations into the unified UI layer;
 /// the snapshot context captures who, what, when, and where.
 ///
 /// Provenance limitations: scroll scan now threads observe-artifact
-/// `ArtifactRef`s into the snapshot envelope, but it still does not emit a
+/// `ArtifactRef`s into the snapshot record, but it still does not emit a
 /// separate capture-contract artifact. Per-node `source_artifacts` remain path
 /// strings for now because `SurfaceNode` has not yet grown structured artifact
 /// refs.

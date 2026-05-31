@@ -437,14 +437,14 @@ pub enum ObservationSource {
 /// fragments, visual detector outputs, and scroll-scan list-item candidates so
 /// consumers can read evidence without knowing which producer generated it.
 ///
-/// Envelope layout: the snapshot carries source/scope/coordinate context, raw
+/// Snapshot layout: the record carries source/scope/coordinate context, raw
 /// provider blob, and known limits. The per-item observations live in the
 /// `nodes` field as a list of [`SurfaceNode`]s; each node still carries its
 /// own `recognition_source` so the unified shape doesn't lose finer-grained
 /// origin information.
 ///
 /// **Status: v0, first producer landed.** `scroll_scan` now emits per-page
-/// `ObservationSnapshot` envelopes inside `ScrollScanArtifact.snapshots`.
+/// `ObservationSnapshot` records inside `ScrollScanArtifact.snapshots`.
 /// Other producers still emit their existing authoritative shapes
 /// (`RecognitionResult`, AX snapshots, raw detector JSON). The type exists so
 /// those producers can converge on one stable observed-UI projection rather

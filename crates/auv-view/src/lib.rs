@@ -387,7 +387,7 @@ pub struct ScanOptions {
 /// consecutive scroll-up + probe attempts produced the same fingerprint
 /// (the view didn't move, almost certainly at the top). Diagnostics and
 /// known limits carry the observer's reports so callers can attach them
-/// to whatever scan envelope they construct.
+/// to whatever scan result they construct.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TopSeekOutcome {
   pub boundary: BoundaryConfidence,
@@ -397,7 +397,7 @@ pub struct TopSeekOutcome {
 
 /// What `scan_with_observer` returns: the observations the loop captured
 /// plus the diagnostics and known limits the loop accumulated. `Obs` is
-/// the observer's `Observation` associated type so the envelope stays
+/// the observer's `Observation` associated type so the result stays
 /// per-app even though the loop is framework code.
 #[derive(Clone, Debug)]
 pub struct ScanLoopOutcome<Obs> {

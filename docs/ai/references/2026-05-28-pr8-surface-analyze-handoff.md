@@ -132,9 +132,10 @@ Observed test count:
 
 The working tree was clean after pushing `899ac79`.
 
-## What Remains
+## Historical Remaining Work
 
-If the next agent wants to finish PR #8 cleanly, the remaining work is small.
+These items were open when this handoff was written. They are now resolved, but
+the section is retained so reviewers can see the closure trail.
 
 ### 1. Convert the spec tail from "next slice" to implementation status
 
@@ -154,18 +155,18 @@ The bottom section still reads like future work:
 
 But the first two are already done in PR #8.
 
-Recommended fix:
+Resolution:
 
-- Replace `## Immediate Next Slice` with `## Implementation Status`.
-- Mark evidence refs as implemented in `6e0c7fd`.
-- Mark promotion gates as implemented in `899ac79`.
-- Keep `AppSurfaceCandidate -> contract::Candidate` promotion explicitly as
+- `docs/ai/references/2026-05-28-surface-analyze-v0.md` now has an
+  `Implementation Status` section.
+- Evidence refs and promotion gates are marked implemented.
+- `AppSurfaceCandidate -> contract::Candidate` promotion remains explicitly
   future work.
 
 ### 2. Add one JSON serialization regression for `promotion_gate`
 
-Current tests cover Rust values and Markdown rendering. Add one narrow test that
-serializes an analysis/candidate and asserts the JSON contains:
+Original request: add one narrow test that serializes an analysis/candidate and
+asserts the JSON contains:
 
 ```json
 "promotion_gate": {
@@ -174,20 +175,12 @@ serializes an analysis/candidate and asserts the JSON contains:
 }
 ```
 
-This closes the "write JSON that another operation can use without scraping
-Markdown" requirement from the surface analyze v0 spec.
+Resolution:
 
-Suggested location:
-
-```text
-src/app/mod.rs
-```
-
-Near:
-
-```text
-build_annotation_candidates_keeps_raw_ocr_as_visible_text_and_adds_selectors
-```
+- `src/app/mod.rs` includes JSON serialization coverage for `promotion_gate`.
+- Additional round-trip tests preserve evidence refs, review-only row/context
+  shape, unresolved grounding, and validation failure semantics without relying
+  on Markdown scraping.
 
 ### 3. Re-run the same validation commands
 

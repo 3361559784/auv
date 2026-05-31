@@ -1,6 +1,6 @@
 # Surface Analyze Closure — 2026-05-28
 
-Status: v0 boundary mostly closed
+Status: v0 analyze boundary closed; promotion remains future work
 
 PR branch tip before this closure note was added:
 
@@ -28,7 +28,7 @@ review.
 
 ## What Is Closed
 
-The important `surface analyze v0` seam is now largely closed:
+The important `surface analyze v0` seam is now closed for the analyze contract:
 
 ```text
 surface candidate
@@ -236,7 +236,7 @@ valuable now that the `surface analyze v0` boundary is mostly defended.
 
 ## Bottom Line
 
-`surface analyze v0` is **mostly closed as a boundary**.
+`surface analyze v0` is **closed as an analyze boundary**.
 
 It is **not closed as a full product capability**.
 

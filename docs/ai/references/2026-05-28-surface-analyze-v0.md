@@ -223,8 +223,8 @@ segmentation, or a new orchestration language, is outside v0.
 
 ## Implementation Status
 
-The `surface analyze v0` evidence/promotion boundary is now partially
-implemented on top of the `b702be0` selector baseline:
+The `surface analyze v0` evidence/promotion boundary is now closed for the v0
+analyze contract on top of the `b702be0` selector baseline:
 
 1. Evidence references on `AppSurfaceCandidate` landed in `6e0c7fd`.
    Candidates derived from current probe artifacts may now carry durable
@@ -233,11 +233,16 @@ implemented on top of the `b702be0` selector baseline:
    `899ac79`. Blocked OCR/row candidates and strategy-only candidates are now
    explicit in the analyze report contract instead of being inferred from
    reviewer notes.
-3. OCR visible text and row/list grouping remain surface candidates, not
+3. JSON/read-side closure for the analyze boundary landed after the initial
+   evidence and promotion-gate slices. Regression coverage now preserves
+   evidence refs, promotion gates, review-only row candidates, and unresolved
+   grounding semantics across persisted `analysis.json`, `distillation.json`,
+   and `validation.json` artifacts.
+4. OCR visible text and row/list grouping remain surface candidates, not
    action-grade runtime candidates. The v0 boundary still treats them as
    observable evidence unless a later slice provides the missing action,
    liveness, and verification contracts.
-4. Coordinate and capture context remain candidate-side detail rather than being
+5. Coordinate and capture context remain candidate-side detail rather than being
    pushed into a separate evidence-ref schema.
 
 The remaining future step is still the same seam:

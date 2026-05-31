@@ -14,11 +14,12 @@ use auv_driver::vision::TextRecognition;
 // crate because they consume NetEase-shaped observations.
 use auv_view::{
   AnchorStrength, BoundaryConfidence, Confidence, LandmarkUse, ParserDiagnostic, ScanAppContext,
-  ScanWindowContext, ScrollBoundarySummary, ViewAction, ViewAnchor, ViewAxis, ViewBounds,
-  ViewEvidenceNode, ViewEvidenceSource, ViewLandmark, ViewLayout, ViewNodeKind, ViewNodeRecord,
-  ViewObserver, ViewReconstructionRecord, ViewRegionRecord, ViewScrollable, ViewViewportRecord,
-  collect_anchors, collect_landmarks, confidence_from_ocr, normalize_identity, slug,
-  viewport_contains_center, viewport_fingerprint,
+  ScanOptions, ScanWindowContext, ScrollBoundarySummary, ViewAction, ViewAnchor, ViewAxis,
+  ViewBounds, ViewEvidenceNode, ViewEvidenceSource, ViewLandmark, ViewLayout, ViewNodeKind,
+  ViewNodeRecord, ViewObservation, ViewObserver, ViewReconstructionRecord, ViewRegionRecord,
+  ViewScrollable, ViewViewportRecord, collect_anchors, collect_landmarks, confidence_from_ocr,
+  normalize_identity, scan_with_observer, scroll_to_top, slug, viewport_contains_center,
+  viewport_fingerprint,
 };
 use image::{Rgba, RgbaImage};
 use serde::{Deserialize, Serialize};
@@ -66,12 +67,6 @@ impl Inputs {
       print_json: false,
     }
   }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct ScanOptions {
-  max_pages: usize,
-  max_scrolls: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -126,6 +121,12 @@ struct SidebarViewportObservation {
   evidence_nodes: Vec<ViewEvidenceNode>,
   candidates: Vec<SidebarViewportCandidate>,
   parser_notes: Vec<ParserDiagnostic>,
+}
+
+impl ViewObservation for SidebarViewportObservation {
+  fn viewport_fingerprint(&self) -> &str {
+    &self.viewport_fingerprint
+  }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -507,7 +508,7 @@ pub fn run_live_scan(inputs: &Inputs) -> Result<PlaylistSidebarScan, String> {
       pending_artifacts: Vec::new(),
       scroll_amount: inputs.scroll_amount,
     };
-    let top_seek = scroll_observer_to_top(&mut top_probe, inputs.max_scrolls);
+    let top_seek = scroll_to_top(&mut top_probe, inputs.max_scrolls);
     pre_scan_diagnostics.extend(top_seek.diagnostics);
     pre_scan_known_limits.extend(top_seek.known_limits);
     let LiveSidebarObserver {
@@ -1125,55 +1126,8 @@ fn scan_sidebar_with_observer(
   observer: &mut impl ViewObserver<Observation = SidebarViewportObservation>,
   options: ScanOptions,
 ) -> PlaylistSidebarScan {
-  let mut observations = Vec::new();
-  let mut diagnostics = Vec::new();
-  let mut known_limits = Vec::new();
-  let top_seek = scroll_observer_to_top(observer, options.max_scrolls);
-  diagnostics.extend(top_seek.diagnostics);
-  known_limits.extend(top_seek.known_limits);
-  let mut previous_fingerprint = None;
-  let mut scrolls = 0;
-
-  loop {
-    if observations.len() >= options.max_pages {
-      known_limits.push(format!("stopped after max_pages={}", options.max_pages));
-      break;
-    }
-
-    let observation_index = observations.len();
-    let observation = match observer.observe(observation_index) {
-      Ok(observation) => observation,
-      Err(diagnostic) => {
-        diagnostics.push(diagnostic);
-        break;
-      }
-    };
-    let repeated_fingerprint = previous_fingerprint
-      .as_deref()
-      .is_some_and(|fingerprint| fingerprint == observation.viewport_fingerprint);
-    previous_fingerprint = Some(observation.viewport_fingerprint.clone());
-    observations.push(observation);
-
-    if repeated_fingerprint {
-      break;
-    }
-
-    if observations.len() >= options.max_pages {
-      known_limits.push(format!("stopped after max_pages={}", options.max_pages));
-      break;
-    }
-
-    if scrolls >= options.max_scrolls {
-      known_limits.push(format!("stopped after max_scrolls={}", options.max_scrolls));
-      break;
-    }
-
-    if let Err(diagnostic) = observer.scroll_down() {
-      diagnostics.push(diagnostic);
-      break;
-    }
-    scrolls += 1;
-  }
+  let top_seek = scroll_to_top(observer, options.max_scrolls);
+  let loop_outcome = scan_with_observer(observer, options);
 
   let mut scan = reconstruct_playlist_sidebar(
     ScanAppContext {
@@ -1187,60 +1141,16 @@ fn scan_sidebar_with_observer(
       bounds: None,
     },
     ViewRegionRecord::default(),
-    observations,
+    loop_outcome.observations,
   );
-  scan.diagnostics.extend(diagnostics);
-  scan.known_limits.extend(known_limits);
+  scan.diagnostics.extend(top_seek.diagnostics);
+  scan.diagnostics.extend(loop_outcome.diagnostics);
+  scan.known_limits.extend(top_seek.known_limits);
+  scan.known_limits.extend(loop_outcome.known_limits);
   if top_seek.boundary == BoundaryConfidence::Likely {
     apply_top_boundary(&mut scan, top_seek.boundary);
   }
   scan
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-struct TopSeekOutcome {
-  boundary: BoundaryConfidence,
-  diagnostics: Vec<ParserDiagnostic>,
-  known_limits: Vec<String>,
-}
-
-fn scroll_observer_to_top(
-  observer: &mut impl ViewObserver<Observation = SidebarViewportObservation>,
-  max_scrolls: usize,
-) -> TopSeekOutcome {
-  let mut outcome = TopSeekOutcome::default();
-  let mut previous_fingerprint = match observer.observe_probe() {
-    Ok(observation) => observation.viewport_fingerprint,
-    Err(diagnostic) => {
-      outcome.diagnostics.push(diagnostic);
-      return outcome;
-    }
-  };
-
-  for _ in 0..max_scrolls {
-    if let Err(diagnostic) = observer.scroll_up() {
-      outcome.diagnostics.push(diagnostic);
-      return outcome;
-    }
-
-    let observation = match observer.observe_probe() {
-      Ok(observation) => observation,
-      Err(diagnostic) => {
-        outcome.diagnostics.push(diagnostic);
-        return outcome;
-      }
-    };
-    if observation.viewport_fingerprint == previous_fingerprint {
-      outcome.boundary = BoundaryConfidence::Likely;
-      return outcome;
-    }
-    previous_fingerprint = observation.viewport_fingerprint;
-  }
-
-  outcome
-    .known_limits
-    .push(format!("top seek stopped after max_scrolls={max_scrolls}"));
-  outcome
 }
 
 fn apply_top_boundary(scan: &mut PlaylistSidebarScan, top: BoundaryConfidence) {

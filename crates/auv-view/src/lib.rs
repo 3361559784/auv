@@ -351,6 +351,157 @@ pub trait ViewObserver {
   fn scroll_down(&mut self) -> Result<(), ParserDiagnostic>;
 }
 
+/// Minimum surface a domain observation type must expose so the framework
+/// scan loops can run against it without naming the per-app shape. v0 only
+/// needs `viewport_fingerprint` (drives repeated-viewport detection); add
+/// methods here only when a generic loop actually needs them.
+pub trait ViewObservation {
+  fn viewport_fingerprint(&self) -> &str;
+}
+
+/// Knobs the scan loop reads to decide when to stop. Cap on observation
+/// count (`max_pages`) is independent from cap on scroll calls
+/// (`max_scrolls`) so apps can prevent runaway parses without coupling
+/// the two dimensions.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ScanOptions {
+  pub max_pages: usize,
+  pub max_scrolls: usize,
+}
+
+/// Outcome of the top-seek pre-loop. `boundary` is `Likely` when two
+/// consecutive scroll-up + probe attempts produced the same fingerprint
+/// (the view didn't move, almost certainly at the top). Diagnostics and
+/// known limits carry the observer's reports so callers can attach them
+/// to whatever scan envelope they construct.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TopSeekOutcome {
+  pub boundary: BoundaryConfidence,
+  pub diagnostics: Vec<ParserDiagnostic>,
+  pub known_limits: Vec<String>,
+}
+
+/// What `scan_with_observer` returns: the observations the loop captured
+/// plus the diagnostics and known limits the loop accumulated. `Obs` is
+/// the observer's `Observation` associated type so the envelope stays
+/// per-app even though the loop is framework code.
+#[derive(Clone, Debug)]
+pub struct ScanLoopOutcome<Obs> {
+  pub observations: Vec<Obs>,
+  pub diagnostics: Vec<ParserDiagnostic>,
+  pub known_limits: Vec<String>,
+}
+
+/// Drive the observer back to the top of its scrollable surface. v0
+/// strategy: probe → scroll up → probe again; if the fingerprint is
+/// unchanged, the view is already (or now) at the top and we report
+/// `BoundaryConfidence::Likely`. Bounded by `max_scrolls` so a broken
+/// observer cannot loop forever.
+pub fn scroll_to_top<O>(observer: &mut O, max_scrolls: usize) -> TopSeekOutcome
+where
+  O: ViewObserver,
+  O::Observation: ViewObservation,
+{
+  let mut outcome = TopSeekOutcome::default();
+  let mut previous_fingerprint = match observer.observe_probe() {
+    Ok(observation) => observation.viewport_fingerprint().to_string(),
+    Err(diagnostic) => {
+      outcome.diagnostics.push(diagnostic);
+      return outcome;
+    }
+  };
+  for _ in 0..max_scrolls {
+    if let Err(diagnostic) = observer.scroll_up() {
+      outcome.diagnostics.push(diagnostic);
+      return outcome;
+    }
+    let observation = match observer.observe_probe() {
+      Ok(observation) => observation,
+      Err(diagnostic) => {
+        outcome.diagnostics.push(diagnostic);
+        return outcome;
+      }
+    };
+    let fingerprint = observation.viewport_fingerprint();
+    if fingerprint == previous_fingerprint {
+      outcome.boundary = BoundaryConfidence::Likely;
+      return outcome;
+    }
+    previous_fingerprint = fingerprint.to_string();
+  }
+  outcome
+    .known_limits
+    .push(format!("top seek stopped after max_scrolls={max_scrolls}"));
+  outcome
+}
+
+/// Run the per-observation scan loop: observe, push, check repeated
+/// fingerprint (boundary), check page/scroll caps, scroll down, repeat.
+/// The loop stops on the first of: repeated fingerprint, observer error,
+/// `max_pages` cap, `max_scrolls` cap.
+pub fn scan_with_observer<O>(
+  observer: &mut O,
+  options: ScanOptions,
+) -> ScanLoopOutcome<O::Observation>
+where
+  O: ViewObserver,
+  O::Observation: ViewObservation,
+{
+  let mut observations: Vec<O::Observation> = Vec::new();
+  let mut diagnostics = Vec::new();
+  let mut known_limits = Vec::new();
+  let mut previous_fingerprint: Option<String> = None;
+  let mut scrolls = 0;
+
+  loop {
+    if observations.len() >= options.max_pages {
+      known_limits.push(format!("stopped after max_pages={}", options.max_pages));
+      break;
+    }
+
+    let observation_index = observations.len();
+    let observation = match observer.observe(observation_index) {
+      Ok(observation) => observation,
+      Err(diagnostic) => {
+        diagnostics.push(diagnostic);
+        break;
+      }
+    };
+    let fingerprint = observation.viewport_fingerprint().to_string();
+    let repeated_fingerprint = previous_fingerprint
+      .as_deref()
+      .is_some_and(|prev| prev == fingerprint.as_str());
+    previous_fingerprint = Some(fingerprint);
+    observations.push(observation);
+
+    if repeated_fingerprint {
+      break;
+    }
+
+    if observations.len() >= options.max_pages {
+      known_limits.push(format!("stopped after max_pages={}", options.max_pages));
+      break;
+    }
+
+    if scrolls >= options.max_scrolls {
+      known_limits.push(format!("stopped after max_scrolls={}", options.max_scrolls));
+      break;
+    }
+
+    if let Err(diagnostic) = observer.scroll_down() {
+      diagnostics.push(diagnostic);
+      break;
+    }
+    scrolls += 1;
+  }
+
+  ScanLoopOutcome {
+    observations,
+    diagnostics,
+    known_limits,
+  }
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -486,5 +637,233 @@ mod tests {
       out.iter().map(|l| l.id.as_str()).collect::<Vec<_>>(),
       vec!["root", "child"]
     );
+  }
+
+  // ------------------------------------------------------------------------
+  // Scan-loop / top-seek coverage. FakeObservation + FakeObserver are
+  // programmable per-test (provide a queue of fingerprints; flag scrolls as
+  // failing if needed). These tests lock the loop's termination contract:
+  // repeated fingerprint, error handling, and both caps.
+  // ------------------------------------------------------------------------
+
+  #[derive(Clone, Debug)]
+  struct FakeObservation {
+    fingerprint: String,
+  }
+
+  impl ViewObservation for FakeObservation {
+    fn viewport_fingerprint(&self) -> &str {
+      &self.fingerprint
+    }
+  }
+
+  #[derive(Default)]
+  struct FakeObserver {
+    fingerprints: Vec<&'static str>,
+    cursor: usize,
+    fail_observe_after: Option<usize>,
+    fail_scroll_down_after: Option<usize>,
+    fail_scroll_up_after: Option<usize>,
+    scroll_up_calls: usize,
+    scroll_down_calls: usize,
+  }
+
+  impl FakeObserver {
+    fn new(fingerprints: Vec<&'static str>) -> Self {
+      Self {
+        fingerprints,
+        ..Self::default()
+      }
+    }
+
+    fn diagnostic(code: &str) -> ParserDiagnostic {
+      ParserDiagnostic {
+        code: code.to_string(),
+        message: code.to_string(),
+        node_id: None,
+      }
+    }
+
+    fn take_at(&self, index: usize) -> Result<FakeObservation, ParserDiagnostic> {
+      self
+        .fingerprints
+        .get(index)
+        .map(|fp| FakeObservation {
+          fingerprint: (*fp).to_string(),
+        })
+        .ok_or_else(|| Self::diagnostic("no_more_fake_observations"))
+    }
+  }
+
+  impl ViewObserver for FakeObserver {
+    type Observation = FakeObservation;
+
+    fn observe(
+      &mut self,
+      _observation_index: usize,
+    ) -> Result<Self::Observation, ParserDiagnostic> {
+      if let Some(after) = self.fail_observe_after {
+        if self.cursor >= after {
+          return Err(Self::diagnostic("observe_failed"));
+        }
+      }
+      let observation = self.take_at(self.cursor)?;
+      self.cursor += 1;
+      Ok(observation)
+    }
+
+    fn observe_probe(&mut self) -> Result<Self::Observation, ParserDiagnostic> {
+      self.take_at(self.cursor)
+    }
+
+    fn scroll_up(&mut self) -> Result<(), ParserDiagnostic> {
+      self.scroll_up_calls += 1;
+      if let Some(after) = self.fail_scroll_up_after {
+        if self.scroll_up_calls > after {
+          return Err(Self::diagnostic("scroll_up_failed"));
+        }
+      }
+      // For top-seek tests we mutate cursor so the next probe sees the next
+      // fingerprint in the queue, simulating an actually-scrolled viewport.
+      self.cursor = self.cursor.saturating_sub(0); // no-op: probe re-reads same cursor
+      Ok(())
+    }
+
+    fn scroll_down(&mut self) -> Result<(), ParserDiagnostic> {
+      self.scroll_down_calls += 1;
+      if let Some(after) = self.fail_scroll_down_after {
+        if self.scroll_down_calls > after {
+          return Err(Self::diagnostic("scroll_down_failed"));
+        }
+      }
+      Ok(())
+    }
+  }
+
+  #[test]
+  fn scan_with_observer_stops_on_repeated_fingerprint() {
+    let mut observer = FakeObserver::new(vec!["a", "b", "b"]);
+    let outcome = scan_with_observer(
+      &mut observer,
+      ScanOptions {
+        max_pages: 16,
+        max_scrolls: 16,
+      },
+    );
+
+    assert_eq!(outcome.observations.len(), 3);
+    assert_eq!(
+      outcome
+        .observations
+        .iter()
+        .map(|o| o.viewport_fingerprint())
+        .collect::<Vec<_>>(),
+      vec!["a", "b", "b"]
+    );
+    assert!(outcome.diagnostics.is_empty());
+    assert!(
+      outcome.known_limits.is_empty(),
+      "boundary hit, no cap fired"
+    );
+  }
+
+  #[test]
+  fn scan_with_observer_stops_at_max_pages_and_records_known_limit() {
+    let mut observer = FakeObserver::new(vec!["a", "b", "c", "d", "e"]);
+    let outcome = scan_with_observer(
+      &mut observer,
+      ScanOptions {
+        max_pages: 2,
+        max_scrolls: 16,
+      },
+    );
+
+    assert_eq!(outcome.observations.len(), 2);
+    assert!(outcome.diagnostics.is_empty());
+    assert_eq!(outcome.known_limits.len(), 1);
+    assert!(outcome.known_limits[0].contains("max_pages=2"));
+  }
+
+  #[test]
+  fn scan_with_observer_stops_at_max_scrolls_and_records_known_limit() {
+    let mut observer = FakeObserver::new(vec!["a", "b", "c", "d", "e"]);
+    let outcome = scan_with_observer(
+      &mut observer,
+      ScanOptions {
+        max_pages: 16,
+        max_scrolls: 1,
+      },
+    );
+
+    // First observation (cursor 0 → "a"), scroll #1 OK; second observation
+    // (cursor 1 → "b"), scroll cap exceeded, break before scroll #2.
+    assert_eq!(outcome.observations.len(), 2);
+    assert!(outcome.diagnostics.is_empty());
+    assert_eq!(outcome.known_limits.len(), 1);
+    assert!(outcome.known_limits[0].contains("max_scrolls=1"));
+  }
+
+  #[test]
+  fn scan_with_observer_records_diagnostic_and_breaks_on_observe_error() {
+    let mut observer = FakeObserver::new(vec!["a", "b"]);
+    observer.fail_observe_after = Some(1);
+    let outcome = scan_with_observer(
+      &mut observer,
+      ScanOptions {
+        max_pages: 16,
+        max_scrolls: 16,
+      },
+    );
+
+    // First observation succeeds; second errors before being pushed.
+    assert_eq!(outcome.observations.len(), 1);
+    assert_eq!(outcome.diagnostics.len(), 1);
+    assert_eq!(outcome.diagnostics[0].code, "observe_failed");
+  }
+
+  #[test]
+  fn scroll_to_top_reports_likely_boundary_on_repeated_fingerprint() {
+    // Probe sees "a"; after scroll_up, probe sees "a" again — view didn't
+    // move, declare top boundary as Likely.
+    let mut observer = FakeObserver::new(vec!["a", "a"]);
+    let outcome = scroll_to_top(&mut observer, 8);
+
+    assert_eq!(outcome.boundary, BoundaryConfidence::Likely);
+    assert!(outcome.diagnostics.is_empty());
+    assert!(outcome.known_limits.is_empty());
+    assert_eq!(observer.scroll_up_calls, 1);
+  }
+
+  #[test]
+  fn scroll_to_top_records_known_limit_when_max_scrolls_exhausted() {
+    // Every probe returns a different fingerprint forever; top-seek runs
+    // out of scrolls without seeing a repeat.
+    struct AlwaysNew {
+      counter: usize,
+    }
+    impl ViewObserver for AlwaysNew {
+      type Observation = FakeObservation;
+      fn observe(&mut self, _: usize) -> Result<Self::Observation, ParserDiagnostic> {
+        unreachable!("top-seek does not call observe")
+      }
+      fn observe_probe(&mut self) -> Result<Self::Observation, ParserDiagnostic> {
+        let fp = format!("fp-{}", self.counter);
+        self.counter += 1;
+        Ok(FakeObservation { fingerprint: fp })
+      }
+      fn scroll_up(&mut self) -> Result<(), ParserDiagnostic> {
+        Ok(())
+      }
+      fn scroll_down(&mut self) -> Result<(), ParserDiagnostic> {
+        unreachable!("top-seek does not call scroll_down")
+      }
+    }
+
+    let mut observer = AlwaysNew { counter: 0 };
+    let outcome = scroll_to_top(&mut observer, 3);
+
+    assert_eq!(outcome.boundary, BoundaryConfidence::Unknown);
+    assert_eq!(outcome.known_limits.len(), 1);
+    assert!(outcome.known_limits[0].contains("max_scrolls=3"));
   }
 }

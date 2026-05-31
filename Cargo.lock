@@ -228,6 +228,7 @@ version = "0.0.1"
 dependencies = [
  "auv-driver",
  "auv-driver-macos",
+ "auv-view",
  "image",
  "serde",
  "serde_json",
@@ -239,6 +240,14 @@ version = "0.0.1"
 dependencies = [
  "swift-bridge",
  "swift-bridge-build",
+]
+
+[[package]]
+name = "auv-view"
+version = "0.0.1"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

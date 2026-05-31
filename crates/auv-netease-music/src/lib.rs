@@ -6,6 +6,17 @@ pub mod output;
 use std::path::PathBuf;
 
 use auv_driver::vision::TextRecognition;
+// Framework view-parser IR types were extracted into `auv-view` so other app
+// crates (future QQ Music, etc.) can build on the same vocabulary without
+// duplicating the records. Domain types (`PlaylistSidebarScan`,
+// `SidebarSection`, the `Sidebar*` candidate flavors, the `SidebarObserver`
+// trait, etc.) stay in this crate.
+use auv_view::{
+  AnchorStrength, BoundaryConfidence, Confidence, LandmarkUse, ParserDiagnostic, ScanAppContext,
+  ScanWindowContext, ScrollBoundarySummary, ViewAction, ViewAnchor, ViewAxis, ViewBounds,
+  ViewEvidenceNode, ViewEvidenceSource, ViewLandmark, ViewLayout, ViewNodeKind, ViewNodeRecord,
+  ViewReconstructionRecord, ViewRegionRecord, ViewScrollable, ViewViewportRecord,
+};
 use image::{Rgba, RgbaImage};
 use serde::{Deserialize, Serialize};
 
@@ -103,28 +114,6 @@ pub struct PlaylistSidebarScan {
   known_limits: Vec<String>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-struct ScanAppContext {
-  app_id: Option<String>,
-  name: Option<String>,
-  version: Option<String>,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-struct ScanWindowContext {
-  id: Option<String>,
-  title: Option<String>,
-  bounds: Option<ViewBounds>,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-struct ViewRegionRecord {
-  id: Option<String>,
-  name: Option<String>,
-  bounds: Option<ViewBounds>,
-  coordinate_space: Option<String>,
-}
-
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 struct SidebarViewportObservation {
   observation_index: usize,
@@ -134,33 +123,6 @@ struct SidebarViewportObservation {
   evidence_nodes: Vec<ViewEvidenceNode>,
   candidates: Vec<SidebarViewportCandidate>,
   parser_notes: Vec<ParserDiagnostic>,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-struct ViewViewportRecord {
-  page_index: usize,
-  bounds: ViewBounds,
-  axis: ViewAxis,
-  scroll_offset: Option<f64>,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-struct ViewEvidenceNode {
-  id: String,
-  source: ViewEvidenceSource,
-  label: Option<String>,
-  bounds: Option<ViewBounds>,
-  confidence: Confidence,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum ViewEvidenceSource {
-  OcrText,
-  AxNode,
-  IconMatch,
-  #[default]
-  Visual,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -181,130 +143,6 @@ enum SidebarCandidateKind {
   NavigationItem,
   #[default]
   Unknown,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-struct ViewReconstructionRecord {
-  root: ViewNodeRecord,
-  anchor_index: Vec<ViewAnchor>,
-  landmark_index: Vec<ViewLandmark>,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-struct ViewNodeRecord {
-  id: String,
-  kind: ViewNodeKind,
-  domain_kind: Option<String>,
-  layout: Option<ViewLayout>,
-  label: Option<String>,
-  bounds: ViewBounds,
-  scrollable: Option<ViewScrollable>,
-  anchors: Vec<ViewAnchor>,
-  landmarks: Vec<ViewLandmark>,
-  actions: Vec<ViewAction>,
-  evidence: Vec<ViewEvidenceNode>,
-  children: Vec<ViewNodeRecord>,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum ViewNodeKind {
-  Container,
-  Collection,
-  Section,
-  Item,
-  Text,
-  Icon,
-  #[default]
-  Unknown,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum ViewLayout {
-  VStack,
-  HStack,
-  Group,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum ViewAxis {
-  #[default]
-  Vertical,
-  Horizontal,
-  Both,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-struct ViewScrollable {
-  axis: ViewAxis,
-  boundary: ScrollBoundarySummary,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-struct ViewAnchor {
-  id: String,
-  label: String,
-  strength: AnchorStrength,
-  bounds: ViewBounds,
-  evidence_ids: Vec<String>,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum AnchorStrength {
-  #[default]
-  Strong,
-  Medium,
-  Weak,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-struct ViewLandmark {
-  id: String,
-  label: String,
-  #[serde(rename = "use")]
-  landmark_use: LandmarkUse,
-  bounds: ViewBounds,
-  evidence_ids: Vec<String>,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum LandmarkUse {
-  ViewportPose,
-  BoundaryDetection,
-  AnchorReacquire,
-  #[default]
-  SectionAssignment,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum ViewAction {
-  Open,
-  Select,
-  Scroll,
-  ObserveOnly,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-struct ScrollBoundarySummary {
-  top: BoundaryConfidence,
-  bottom: BoundaryConfidence,
-  left: BoundaryConfidence,
-  right: BoundaryConfidence,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum BoundaryConfidence {
-  Confirmed,
-  Likely,
-  #[default]
-  Unknown,
-  Contradicted,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -342,22 +180,6 @@ pub struct PlaylistSidebarItem {
   pub anchor_id: Option<String>,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Confidence {
-  High,
-  Medium,
-  #[default]
-  Low,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-struct ParserDiagnostic {
-  code: String,
-  message: String,
-  node_id: Option<String>,
-}
-
 trait SidebarObserver {
   fn observe(
     &mut self,
@@ -366,25 +188,6 @@ trait SidebarObserver {
   fn observe_probe(&mut self) -> Result<SidebarViewportObservation, ParserDiagnostic>;
   fn scroll_up(&mut self) -> Result<(), ParserDiagnostic>;
   fn scroll_down(&mut self) -> Result<(), ParserDiagnostic>;
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
-struct ViewBounds {
-  x: f64,
-  y: f64,
-  width: f64,
-  height: f64,
-}
-
-impl ViewBounds {
-  const fn new(x: f64, y: f64, width: f64, height: f64) -> Self {
-    Self {
-      x,
-      y,
-      width,
-      height,
-    }
-  }
 }
 
 /// Parse the legacy flat flag list (no subcommand). Used by the demo example.

@@ -84,7 +84,7 @@ pub struct PlaylistSidebarScan {
   sidebar_region: ViewRegionRecord,
   observations: Vec<SidebarViewportObservation>,
   reconstruction: ViewReconstructionRecord,
-  pub(crate) projection: PlaylistSidebarProjection,
+  projection: PlaylistSidebarProjection,
   boundary: ScrollBoundarySummary,
   diagnostics: Vec<ParserDiagnostic>,
   known_limits: Vec<String>,

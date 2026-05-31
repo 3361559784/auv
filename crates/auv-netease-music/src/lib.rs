@@ -12,6 +12,7 @@ use auv_driver::vision::TextRecognition;
 // observer contract. Domain types (`PlaylistSidebarScan`, `SidebarSection`,
 // the `Sidebar*` candidate flavors, the scan-loop functions) stay in this
 // crate because they consume NetEase-shaped observations.
+use auv_driver::RatioRect;
 use auv_view::{
   AnchorStrength, BoundaryConfidence, Confidence, LandmarkUse, ParserDiagnostic, ScanAppContext,
   ScanOptions, ScanWindowContext, ScrollBoundarySummary, VIEW_IR_SCHEMA_VERSION, ViewAction,
@@ -29,7 +30,7 @@ use auv_driver::capture::Capture;
 #[cfg(target_os = "macos")]
 use auv_driver::selector::{App, Window};
 #[cfg(target_os = "macos")]
-use auv_driver::{Driver, InputPolicy, RatioRect, Scroll, ScrollOptions, Size};
+use auv_driver::{Driver, InputPolicy, Scroll, ScrollOptions, Size};
 #[cfg(target_os = "macos")]
 use auv_driver_macos::{MacosDriver, MacosDriverSession};
 
@@ -46,7 +47,7 @@ pub struct Inputs {
   pub max_pages: usize,
   pub max_scrolls: usize,
   pub scroll_amount: f64,
-  pub sidebar_region: Option<RatioRegion>,
+  pub sidebar_region: Option<RatioRect>,
   pub print_json: bool,
 }
 
@@ -61,25 +62,6 @@ impl Inputs {
       scroll_amount: 300.0,
       sidebar_region: None,
       print_json: false,
-    }
-  }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct RatioRegion {
-  pub x: f64,
-  pub y: f64,
-  pub width: f64,
-  pub height: f64,
-}
-
-impl RatioRegion {
-  pub const fn new(x: f64, y: f64, width: f64, height: f64) -> Self {
-    Self {
-      x,
-      y,
-      width,
-      height,
     }
   }
 }
@@ -253,7 +235,7 @@ fn parse_f64(flag: &str, value: String) -> Result<f64, String> {
     .map_err(|_| format!("{flag} expects a number"))
 }
 
-pub(crate) fn parse_ratio_region(value: String) -> Result<RatioRegion, String> {
+pub(crate) fn parse_ratio_region(value: String) -> Result<RatioRect, String> {
   let parts = value
     .split(',')
     .map(str::trim)
@@ -276,7 +258,7 @@ pub(crate) fn parse_ratio_region(value: String) -> Result<RatioRegion, String> {
     return Err("--sidebar-region width and height must be greater than 0".to_string());
   }
 
-  Ok(RatioRegion::new(parts[0], parts[1], parts[2], parts[3]))
+  Ok(RatioRect::new(parts[0], parts[1], parts[2], parts[3]))
 }
 
 pub fn render_human_summary(scan: &PlaylistSidebarScan) -> String {
@@ -626,7 +608,7 @@ fn empty_diagnostic_scan(
 }
 
 fn detect_sidebar_region(
-  manual: Option<RatioRegion>,
+  manual: Option<RatioRect>,
   window_size: auv_driver::Size,
   recognition: &TextRecognition,
 ) -> Result<ViewRegionRecord, ParserDiagnostic> {
@@ -753,7 +735,7 @@ fn sidebar_region_record(bounds: ViewBounds) -> ViewRegionRecord {
   }
 }
 
-fn ratio_to_window_bounds(region: RatioRegion, window_size: auv_driver::Size) -> ViewBounds {
+fn ratio_to_window_bounds(region: RatioRect, window_size: auv_driver::Size) -> ViewBounds {
   ViewBounds::new(
     region.x * window_size.width,
     region.y * window_size.height,
@@ -1580,7 +1562,7 @@ mod tests {
     assert_eq!(inputs.scroll_amount, 3.5);
     assert_eq!(
       inputs.sidebar_region,
-      Some(RatioRegion::new(0.0, 0.1, 0.25, 0.8))
+      Some(RatioRect::new(0.0, 0.1, 0.25, 0.8))
     );
     assert!(inputs.print_json);
   }
@@ -1645,7 +1627,7 @@ mod tests {
   #[test]
   fn detect_sidebar_region_uses_manual_region_when_provided() {
     let region = detect_sidebar_region(
-      Some(RatioRegion::new(0.0, 0.1, 0.25, 0.8)),
+      Some(RatioRect::new(0.0, 0.1, 0.25, 0.8)),
       auv_driver::Size::new(1000.0, 800.0),
       &fake_recognition(Vec::new()),
     )

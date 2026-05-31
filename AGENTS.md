@@ -342,6 +342,20 @@ Use this root-cause block format in regression tests when relevant:
   isolation, a reusable abstraction, or a platform boundary.
 - If a new abstraction does not add those things, keep the logic as a private
   helper or inline it.
+- Before defining a new reusable primitive — a struct, enum, type alias,
+  constant, or shared helper — search the workspace (owning/domain crate and
+  dependencies) for one that already carries the concept. Search by name
+  (rg/grep) and by shape (ast-grep, else rg/grep), not exact name alone.
+- Reuse an existing primitive when it fits; import a dependency's instead of
+  copying it. A primitive that re-expresses another's shape and meaning is a
+  duplicate — delete it and reuse the original.
+- If one almost fits (missing a derive, method, or variant), extend it in its
+  owning crate; do not fork a local variant.
+- Add a new primitive only for a genuinely distinct concept, never an ad-hoc
+  copy. Same-shape primitives are allowed only when meanings differ on purpose
+  (ScreenPoint vs WindowPoint) and the name shows it; place a reusable primitive
+  in its domain crate, and keep one private only when local and not a
+  shared-concept duplicate.
 - Avoid pass-through services and traits that only forward arguments to another
   layer with a similar signature.
 - Adjacent layers should expose different abstractions:

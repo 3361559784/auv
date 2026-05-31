@@ -1,3 +1,4 @@
+use auv_view::normalize_identity;
 use serde::Serialize;
 
 use crate::{PlaylistSidebarProjection, PlaylistSidebarScan, SidebarSectionKind};
@@ -31,12 +32,12 @@ pub fn collect_matches(
   projection: &PlaylistSidebarProjection,
   keyword: Option<&str>,
 ) -> Vec<MatchRef> {
-  let needle = keyword.map(crate::normalize_identity);
+  let needle = keyword.map(normalize_identity);
   let mut out = Vec::new();
   for section in &projection.sections {
     for item in &section.items {
       if let Some(needle) = &needle {
-        if !crate::normalize_identity(&item.label).contains(needle.as_str()) {
+        if !normalize_identity(&item.label).contains(needle.as_str()) {
           continue;
         }
       }

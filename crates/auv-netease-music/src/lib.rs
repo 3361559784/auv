@@ -15,7 +15,9 @@ use auv_view::{
   AnchorStrength, BoundaryConfidence, Confidence, LandmarkUse, ParserDiagnostic, ScanAppContext,
   ScanWindowContext, ScrollBoundarySummary, ViewAction, ViewAnchor, ViewAxis, ViewBounds,
   ViewEvidenceNode, ViewEvidenceSource, ViewLandmark, ViewLayout, ViewNodeKind, ViewNodeRecord,
-  ViewReconstructionRecord, ViewRegionRecord, ViewScrollable, ViewViewportRecord,
+  ViewReconstructionRecord, ViewRegionRecord, ViewScrollable, ViewViewportRecord, collect_anchors,
+  collect_landmarks, confidence_from_ocr, normalize_identity, slug, viewport_contains_center,
+  viewport_fingerprint,
 };
 use image::{Rgba, RgbaImage};
 use serde::{Deserialize, Serialize};
@@ -865,23 +867,6 @@ fn parse_sidebar_viewport(
   }
 }
 
-fn viewport_contains_center(viewport: ViewBounds, bounds: ViewBounds) -> bool {
-  let center_x = bounds.x + bounds.width * 0.5;
-  let center_y = bounds.y + bounds.height * 0.5;
-  center_x >= viewport.x
-    && center_x <= viewport.x + viewport.width
-    && center_y >= viewport.y
-    && center_y <= viewport.y + viewport.height
-}
-
-fn confidence_from_ocr(confidence: Option<f32>) -> Confidence {
-  match confidence {
-    Some(value) if value >= 0.85 => Confidence::High,
-    Some(value) if value >= 0.65 => Confidence::Medium,
-    _ => Confidence::Low,
-  }
-}
-
 fn candidate_from_evidence(
   observation_index: usize,
   node: &ViewEvidenceNode,
@@ -963,31 +948,6 @@ fn strip_leading_icon_noise(label: String) -> String {
     return "我的收藏".to_string();
   }
   label
-}
-
-fn viewport_fingerprint(nodes: &[ViewEvidenceNode]) -> String {
-  nodes
-    .iter()
-    .filter_map(|node| node.label.as_deref())
-    .map(normalize_identity)
-    .collect::<Vec<_>>()
-    .join("|")
-}
-
-pub fn normalize_identity(value: &str) -> String {
-  value
-    .trim()
-    .to_lowercase()
-    .chars()
-    .filter(|ch| !ch.is_whitespace())
-    .collect()
-}
-
-fn slug(value: &str) -> String {
-  normalize_identity(value)
-    .chars()
-    .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
-    .collect()
 }
 
 fn reconstruct_playlist_sidebar(
@@ -1690,20 +1650,6 @@ fn item_node(
 
 fn attach_item_node(section: &mut ViewNodeRecord, item: ViewNodeRecord) {
   section.children.push(item);
-}
-
-fn collect_anchors(node: &ViewNodeRecord, anchors: &mut Vec<ViewAnchor>) {
-  anchors.extend(node.anchors.clone());
-  for child in &node.children {
-    collect_anchors(child, anchors);
-  }
-}
-
-fn collect_landmarks(node: &ViewNodeRecord, landmarks: &mut Vec<ViewLandmark>) {
-  landmarks.extend(node.landmarks.clone());
-  for child in &node.children {
-    collect_landmarks(child, landmarks);
-  }
 }
 
 fn boundary_summary_from_observations(

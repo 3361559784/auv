@@ -320,6 +320,37 @@ pub fn collect_landmarks(node: &ViewNodeRecord, landmarks: &mut Vec<ViewLandmark
   }
 }
 
+// --------------------------------------------------------------------------
+// Observer seam. The `ViewObserver` trait is the contract that any view-
+// parser observer (live driver-backed, recorded-fixture-backed, fake test
+// double) must satisfy. The `Observation` associated type stays domain-
+// shaped so the framework crate never names a per-app observation
+// record. Scan loops that consume an observer continue to live in the
+// app crate today because they read app-specific fields off `Observation`
+// (e.g. `viewport_fingerprint`); pull them up only when a second app
+// applies the pressure.
+// --------------------------------------------------------------------------
+
+pub trait ViewObserver {
+  /// Domain observation shape (e.g. `SidebarViewportObservation` in
+  /// `auv-netease-music`). Kept as an associated type so the framework
+  /// crate never names a per-app record.
+  type Observation;
+
+  /// Capture the observation for the given scan-loop step.
+  fn observe(&mut self, observation_index: usize) -> Result<Self::Observation, ParserDiagnostic>;
+
+  /// Capture a probe observation without advancing the scan-loop index.
+  /// Used for top-seek and boundary probing.
+  fn observe_probe(&mut self) -> Result<Self::Observation, ParserDiagnostic>;
+
+  /// Scroll the underlying view up by the observer's configured amount.
+  fn scroll_up(&mut self) -> Result<(), ParserDiagnostic>;
+
+  /// Scroll the underlying view down by the observer's configured amount.
+  fn scroll_down(&mut self) -> Result<(), ParserDiagnostic>;
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;

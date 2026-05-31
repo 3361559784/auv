@@ -6,18 +6,19 @@ pub mod output;
 use std::path::PathBuf;
 
 use auv_driver::vision::TextRecognition;
-// Framework view-parser IR types were extracted into `auv-view` so other app
-// crates (future QQ Music, etc.) can build on the same vocabulary without
-// duplicating the records. Domain types (`PlaylistSidebarScan`,
-// `SidebarSection`, the `Sidebar*` candidate flavors, the `SidebarObserver`
-// trait, etc.) stay in this crate.
+// Framework view-parser IR types, utilities, and the `ViewObserver` trait
+// live in `auv-view` so other app crates (future QQ Music, etc.) can build
+// on the same vocabulary without duplicating the records or re-defining the
+// observer contract. Domain types (`PlaylistSidebarScan`, `SidebarSection`,
+// the `Sidebar*` candidate flavors, the scan-loop functions) stay in this
+// crate because they consume NetEase-shaped observations.
 use auv_view::{
   AnchorStrength, BoundaryConfidence, Confidence, LandmarkUse, ParserDiagnostic, ScanAppContext,
   ScanWindowContext, ScrollBoundarySummary, ViewAction, ViewAnchor, ViewAxis, ViewBounds,
   ViewEvidenceNode, ViewEvidenceSource, ViewLandmark, ViewLayout, ViewNodeKind, ViewNodeRecord,
-  ViewReconstructionRecord, ViewRegionRecord, ViewScrollable, ViewViewportRecord, collect_anchors,
-  collect_landmarks, confidence_from_ocr, normalize_identity, slug, viewport_contains_center,
-  viewport_fingerprint,
+  ViewObserver, ViewReconstructionRecord, ViewRegionRecord, ViewScrollable, ViewViewportRecord,
+  collect_anchors, collect_landmarks, confidence_from_ocr, normalize_identity, slug,
+  viewport_contains_center, viewport_fingerprint,
 };
 use image::{Rgba, RgbaImage};
 use serde::{Deserialize, Serialize};
@@ -180,16 +181,6 @@ pub struct PlaylistSidebarItem {
   pub confidence: Confidence,
   pub candidate_id: Option<String>,
   pub anchor_id: Option<String>,
-}
-
-trait SidebarObserver {
-  fn observe(
-    &mut self,
-    observation_index: usize,
-  ) -> Result<SidebarViewportObservation, ParserDiagnostic>;
-  fn observe_probe(&mut self) -> Result<SidebarViewportObservation, ParserDiagnostic>;
-  fn scroll_up(&mut self) -> Result<(), ParserDiagnostic>;
-  fn scroll_down(&mut self) -> Result<(), ParserDiagnostic>;
 }
 
 /// Parse the legacy flat flag list (no subcommand). Used by the demo example.
@@ -1131,7 +1122,7 @@ fn reconstruct_playlist_sidebar(
 }
 
 fn scan_sidebar_with_observer(
-  observer: &mut impl SidebarObserver,
+  observer: &mut impl ViewObserver<Observation = SidebarViewportObservation>,
   options: ScanOptions,
 ) -> PlaylistSidebarScan {
   let mut observations = Vec::new();
@@ -1214,7 +1205,7 @@ struct TopSeekOutcome {
 }
 
 fn scroll_observer_to_top(
-  observer: &mut impl SidebarObserver,
+  observer: &mut impl ViewObserver<Observation = SidebarViewportObservation>,
   max_scrolls: usize,
 ) -> TopSeekOutcome {
   let mut outcome = TopSeekOutcome::default();
@@ -1396,7 +1387,9 @@ impl LiveSidebarObserver {
 }
 
 #[cfg(target_os = "macos")]
-impl SidebarObserver for LiveSidebarObserver {
+impl ViewObserver for LiveSidebarObserver {
+  type Observation = SidebarViewportObservation;
+
   fn observe(
     &mut self,
     observation_index: usize,
@@ -2352,7 +2345,9 @@ mod tests {
     }
   }
 
-  impl SidebarObserver for FakeSidebarObserver {
+  impl ViewObserver for FakeSidebarObserver {
+    type Observation = SidebarViewportObservation;
+
     fn observe(
       &mut self,
       observation_index: usize,

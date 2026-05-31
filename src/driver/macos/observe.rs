@@ -1123,6 +1123,8 @@ pub(super) fn wait_for_screen_text(call: &DriverCall) -> AuvResult<DriverRespons
       exact,
       case_sensitive,
       max_observations,
+      &[],
+      None,
       region.as_ref(),
     )?;
     let ocr_report = auv_driver_macos::native::ocr::render_ocr_text_report(&ocr_capture);
@@ -1590,6 +1592,8 @@ pub(super) fn find_image_text(call: &DriverCall) -> AuvResult<DriverResponse> {
     exact,
     case_sensitive,
     max_observations,
+    &[],
+    None,
     region.as_ref(),
   )?;
   let ocr_report = auv_driver_macos::native::ocr::render_ocr_text_report(&ocr_capture);

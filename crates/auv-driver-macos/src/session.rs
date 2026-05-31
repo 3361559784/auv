@@ -13,7 +13,7 @@ use auv_driver::input::{
   Scroll, ScrollOptions, TextSubmit, TypeTextOptions, WaitOptions, WindowClickStrategy,
 };
 use auv_driver::selector::{AppSelector, TextMatcher, WindowSelector};
-use auv_driver::vision::{RecognizedText, TextRecognition};
+use auv_driver::vision::{RecognizedText, TextRecognition, TextRecognitionOptions};
 use auv_driver::window::{Window, WindowRef};
 use image::RgbaImage;
 
@@ -468,6 +468,15 @@ impl VisionApi<'_> {
     capture: &Capture,
     region: RatioRect,
   ) -> DriverResult<TextRecognition> {
+    self.recognize_text_in_capture_with_options(capture, region, TextRecognitionOptions::default())
+  }
+
+  pub fn recognize_text_in_capture_with_options(
+    &self,
+    capture: &Capture,
+    region: RatioRect,
+    options: TextRecognitionOptions,
+  ) -> DriverResult<TextRecognition> {
     let _ = self.session;
     let crop = ratio_rect_to_observed(capture, region);
     let native = crate::native::ocr::find_text_in_rgba(
@@ -478,6 +487,8 @@ impl VisionApi<'_> {
       false,
       false,
       256,
+      &options.custom_words,
+      options.recognition_languages.as_deref(),
       Some(&crop),
     )
     .map_err(backend)?;
@@ -490,7 +501,22 @@ impl VisionApi<'_> {
     query: &str,
     region: RatioRect,
   ) -> DriverResult<OcrMatches> {
-    let recognition = self.recognize_text_in_capture(capture, region)?;
+    self.find_text_in_capture_with_options(
+      capture,
+      query,
+      region,
+      TextRecognitionOptions::default(),
+    )
+  }
+
+  pub fn find_text_in_capture_with_options(
+    &self,
+    capture: &Capture,
+    query: &str,
+    region: RatioRect,
+    options: TextRecognitionOptions,
+  ) -> DriverResult<OcrMatches> {
+    let recognition = self.recognize_text_in_capture_with_options(capture, region, options)?;
     Ok(ocr_matches_from_recognition(&recognition, query))
   }
 }

@@ -1826,6 +1826,8 @@ fn ocr_text_fragments_in_crop_image(
     false,
     false,
     max_observations.min(64),
+    &[],
+    None,
     None,
   )?;
   let mut matches = capture

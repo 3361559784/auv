@@ -918,6 +918,8 @@ fn check_music_candidate_liveness(
       false,
       false,
       64,
+      &[],
+      None,
       None,
     )?;
     let found = ocr_result

@@ -115,6 +115,31 @@ private func normalizeForAnchorMatch(_ raw: String, caseSensitive: Bool) -> Stri
   )
 }
 
+private func ocrCustomWords(rawQuery: String, requestWords: RustVec<RustString>) -> [String] {
+  var words: [String] = []
+  for word in requestWords {
+    words.append(nativeSanitize(word.as_str().toString()))
+  }
+  if !rawQuery.isEmpty {
+    words.append(nativeSanitize(rawQuery))
+  }
+  var seen = Set<String>()
+  return words.filter { word in
+    !word.isEmpty && seen.insert(word).inserted
+  }
+}
+
+private func ocrRecognitionLanguages(_ requestLanguages: RustVec<RustString>) -> [String] {
+  var languages: [String] = []
+  for language in requestLanguages {
+    let sanitized = nativeSanitize(language.as_str().toString())
+    if !sanitized.isEmpty {
+      languages.append(sanitized)
+    }
+  }
+  return languages.isEmpty ? ["zh-Hans", "zh-Hant", "en-US"] : languages
+}
+
 func find_ocr_text(request: NativeOcrTextRequest) -> NativeOcrTextResponse {
   let imagePath = request.image_path.toString()
   let rawQuery = request.query.toString()
@@ -181,9 +206,10 @@ func find_ocr_text(request: NativeOcrTextRequest) -> NativeOcrTextResponse {
   let visionRequest = VNRecognizeTextRequest()
   visionRequest.recognitionLevel = .accurate
   visionRequest.usesLanguageCorrection = true
-  visionRequest.recognitionLanguages = ["zh-Hans", "zh-Hant", "en-US"]
-  if !rawQuery.isEmpty {
-    visionRequest.customWords = [rawQuery]
+  visionRequest.recognitionLanguages = ocrRecognitionLanguages(request.recognition_languages)
+  let customWords = ocrCustomWords(rawQuery: rawQuery, requestWords: request.custom_words)
+  if !customWords.isEmpty {
+    visionRequest.customWords = customWords
   }
   if #available(macOS 26.0, *) {
     visionRequest.automaticallyDetectsLanguage = true
@@ -372,9 +398,10 @@ func find_ocr_text_rgba(request: NativeOcrRgbaRequest) -> NativeOcrTextResponse 
   let visionRequest = VNRecognizeTextRequest()
   visionRequest.recognitionLevel = .accurate
   visionRequest.usesLanguageCorrection = true
-  visionRequest.recognitionLanguages = ["zh-Hans", "zh-Hant", "en-US"]
-  if !rawQuery.isEmpty {
-    visionRequest.customWords = [rawQuery]
+  visionRequest.recognitionLanguages = ocrRecognitionLanguages(request.recognition_languages)
+  let customWords = ocrCustomWords(rawQuery: rawQuery, requestWords: request.custom_words)
+  if !customWords.isEmpty {
+    visionRequest.customWords = customWords
   }
   if #available(macOS 26.0, *) {
     visionRequest.automaticallyDetectsLanguage = true

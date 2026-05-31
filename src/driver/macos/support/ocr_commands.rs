@@ -94,6 +94,8 @@ pub(crate) fn run_text_match_on_capture(
       exact,
       case_sensitive,
       max_observations,
+      &[],
+      None,
       region.as_ref(),
     )?
   } else {
@@ -103,6 +105,8 @@ pub(crate) fn run_text_match_on_capture(
       exact,
       case_sensitive,
       max_observations,
+      &[],
+      None,
       region.as_ref(),
     )?
   };

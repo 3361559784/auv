@@ -19,7 +19,9 @@ pub use input::{
 };
 pub use selector::{App, AppSelector, TextMatcher, WindowSelector};
 pub use traits::{Driver, DriverDescriptor, DriverSession, PlatformKind};
-pub use vision::{ImageMatch, ImageMatchResult, RecognizedText, TextRecognition};
+pub use vision::{
+  ImageMatch, ImageMatchResult, RecognizedText, TextRecognition, TextRecognitionOptions,
+};
 pub use window::{ObservedWindows, Window, WindowRef};
 
 #[cfg(test)]

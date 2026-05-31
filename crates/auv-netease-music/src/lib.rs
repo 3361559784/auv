@@ -5,7 +5,7 @@ pub mod output;
 
 use std::path::PathBuf;
 
-use auv_driver::vision::TextRecognition;
+use auv_driver::vision::{TextRecognition, TextRecognitionOptions};
 // Framework view-parser IR types, utilities, and the `ViewObserver` trait
 // live in `auv-view` so other app crates (future QQ Music, etc.) can build
 // on the same vocabulary without duplicating the records or re-defining the
@@ -48,6 +48,7 @@ pub struct Inputs {
   pub max_scrolls: usize,
   pub scroll_amount: f64,
   pub sidebar_region: Option<RatioRect>,
+  pub ocr_options: TextRecognitionOptions,
   pub print_json: bool,
 }
 
@@ -61,6 +62,7 @@ impl Inputs {
       max_scrolls: 48,
       scroll_amount: 300.0,
       sidebar_region: None,
+      ocr_options: TextRecognitionOptions::default(),
       print_json: false,
     }
   }
@@ -263,6 +265,35 @@ fn parse_inputs(args: Vec<String>) -> Result<Inputs, String> {
           "--sidebar-region",
         )?)?);
       }
+      "--hint-ocr-custom-word" => {
+        push_trimmed(
+          &mut inputs.ocr_options.custom_words,
+          next_value(&mut args, "--hint-ocr-custom-word")?,
+        );
+      }
+      "--hint-ocr-custom-words" => {
+        push_csv(
+          &mut inputs.ocr_options.custom_words,
+          &next_value(&mut args, "--hint-ocr-custom-words")?,
+        );
+      }
+      "--hint-ocr-custom-words-file" => {
+        load_custom_words_file(
+          &mut inputs.ocr_options.custom_words,
+          PathBuf::from(next_value(&mut args, "--hint-ocr-custom-words-file")?),
+        )?;
+      }
+      "--hint-ocr-language" => {
+        push_ocr_language(
+          &mut inputs.ocr_options,
+          next_value(&mut args, "--hint-ocr-language")?,
+        );
+      }
+      "--hint-ocr-languages" => {
+        for language in split_csv(&next_value(&mut args, "--hint-ocr-languages")?) {
+          push_ocr_language(&mut inputs.ocr_options, language);
+        }
+      }
       "--print-json" => {
         inputs.print_json = true;
       }
@@ -271,6 +302,54 @@ fn parse_inputs(args: Vec<String>) -> Result<Inputs, String> {
   }
 
   Ok(inputs)
+}
+
+pub(crate) fn split_csv(value: &str) -> Vec<String> {
+  value
+    .split(',')
+    .map(str::trim)
+    .filter(|part| !part.is_empty())
+    .map(ToOwned::to_owned)
+    .collect()
+}
+
+pub(crate) fn push_trimmed(values: &mut Vec<String>, value: String) {
+  let value = value.trim();
+  if !value.is_empty() && !values.iter().any(|existing| existing == value) {
+    values.push(value.to_string());
+  }
+}
+
+pub(crate) fn push_csv(values: &mut Vec<String>, value: &str) {
+  for part in split_csv(value) {
+    push_trimmed(values, part);
+  }
+}
+
+pub(crate) fn push_ocr_language(options: &mut TextRecognitionOptions, language: String) {
+  let language = language.trim();
+  if language.is_empty() {
+    return;
+  }
+  let languages = options.recognition_languages.get_or_insert_with(Vec::new);
+  if !languages.iter().any(|existing| existing == language) {
+    languages.push(language.to_string());
+  }
+}
+
+pub(crate) fn load_custom_words_file(
+  values: &mut Vec<String>,
+  path: PathBuf,
+) -> Result<(), String> {
+  let content = std::fs::read_to_string(&path)
+    .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+  for line in content.lines() {
+    let word = line.trim();
+    if !word.is_empty() && !word.starts_with('#') {
+      push_trimmed(values, word.to_string());
+    }
+  }
+  Ok(())
 }
 
 fn next_value(args: &mut impl Iterator<Item = String>, flag: &str) -> Result<String, String> {
@@ -519,10 +598,11 @@ pub fn run_live_scan(inputs: &Inputs) -> Result<PlaylistSidebarScan, String> {
     }
   };
   let full_window = RatioRect::new(0.0, 0.0, 1.0, 1.0);
-  let mut full_recognition = match session
-    .vision()
-    .recognize_text_in_capture(&capture, full_window)
-  {
+  let mut full_recognition = match session.vision().recognize_text_in_capture_with_options(
+    &capture,
+    full_window,
+    inputs.ocr_options.clone(),
+  ) {
     Ok(recognition) => recognition_in_window_space(recognition, &capture),
     Err(error) => {
       return Ok(empty_diagnostic_scan(
@@ -557,6 +637,7 @@ pub fn run_live_scan(inputs: &Inputs) -> Result<PlaylistSidebarScan, String> {
       window: window.clone(),
       sidebar_bounds: broad_sidebar_bounds,
       sidebar_ratio: broad_sidebar_ratio,
+      ocr_options: inputs.ocr_options.clone(),
       artifact_dir: inputs.artifact_dir.clone(),
       pending_artifacts: Vec::new(),
       scroll_amount: inputs.scroll_amount,
@@ -586,10 +667,11 @@ pub fn run_live_scan(inputs: &Inputs) -> Result<PlaylistSidebarScan, String> {
         ));
       }
     };
-    full_recognition = match session
-      .vision()
-      .recognize_text_in_capture(&capture, full_window)
-    {
+    full_recognition = match session.vision().recognize_text_in_capture_with_options(
+      &capture,
+      full_window,
+      inputs.ocr_options.clone(),
+    ) {
       Ok(recognition) => recognition_in_window_space(recognition, &capture),
       Err(error) => {
         return Ok(empty_diagnostic_scan(
@@ -630,6 +712,7 @@ pub fn run_live_scan(inputs: &Inputs) -> Result<PlaylistSidebarScan, String> {
     window: window.clone(),
     sidebar_bounds,
     sidebar_ratio,
+    ocr_options: inputs.ocr_options.clone(),
     artifact_dir: inputs.artifact_dir.clone(),
     pending_artifacts: Vec::new(),
     scroll_amount: inputs.scroll_amount,
@@ -1239,6 +1322,7 @@ struct LiveSidebarObserver {
   window: auv_driver::Window,
   sidebar_bounds: ViewBounds,
   sidebar_ratio: RatioRect,
+  ocr_options: TextRecognitionOptions,
   artifact_dir: PathBuf,
   pending_artifacts: Vec<std::thread::JoinHandle<Result<(), String>>>,
   scroll_amount: f64,
@@ -1262,7 +1346,11 @@ impl LiveSidebarObserver {
     let recognition = self
       .session
       .vision()
-      .recognize_text_in_capture(&capture, self.sidebar_ratio)
+      .recognize_text_in_capture_with_options(
+        &capture,
+        self.sidebar_ratio,
+        self.ocr_options.clone(),
+      )
       .map_err(|error| ParserDiagnostic {
         code: "sidebar_ocr_failed".to_string(),
         message: error.to_string(),

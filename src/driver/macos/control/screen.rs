@@ -73,6 +73,8 @@ pub(crate) fn click_screen_text(call: &DriverCall) -> AuvResult<DriverResponse> 
     exact,
     case_sensitive,
     max_observations,
+    &[],
+    None,
     region.as_ref(),
   )?;
   let ocr_snapshot = ocr_capture.snapshot;

@@ -16,6 +16,7 @@ pub(crate) enum OutputMode {
 pub(crate) struct PlaylistCommand {
   pub inputs: Inputs,
   pub keyword: Option<String>,
+  pub filter: Option<String>,
   pub output: OutputMode,
 }
 
@@ -66,6 +67,7 @@ pub(crate) fn parse_command(args: Vec<String>) -> Result<Command, String> {
 fn parse_playlist(args: Vec<String>) -> Result<Command, String> {
   let mut inputs = Inputs::with_defaults();
   let mut keyword: Option<String> = None;
+  let mut filter: Option<String> = None;
   let mut json = false;
   let mut json_out: Option<PathBuf> = None;
   let mut ls_verb_consumed = false;
@@ -85,11 +87,46 @@ fn parse_playlist(args: Vec<String>) -> Result<Command, String> {
       "--scroll-amount" => {
         inputs.scroll_amount = parse_amount(next(&mut iter, "--scroll-amount")?)?
       }
+      "--filter" => {
+        if filter.is_some() {
+          return Err("--filter may only be provided once".to_string());
+        }
+        filter = Some(next(&mut iter, "--filter")?);
+      }
       "--sidebar-region" => {
         inputs.sidebar_region = Some(crate::parse_ratio_region(next(
           &mut iter,
           "--sidebar-region",
         )?)?)
+      }
+      "--hint-ocr-custom-word" => {
+        crate::push_trimmed(
+          &mut inputs.ocr_options.custom_words,
+          next(&mut iter, "--hint-ocr-custom-word")?,
+        );
+      }
+      "--hint-ocr-custom-words" => {
+        crate::push_csv(
+          &mut inputs.ocr_options.custom_words,
+          &next(&mut iter, "--hint-ocr-custom-words")?,
+        );
+      }
+      "--hint-ocr-custom-words-file" => {
+        crate::load_custom_words_file(
+          &mut inputs.ocr_options.custom_words,
+          PathBuf::from(next(&mut iter, "--hint-ocr-custom-words-file")?),
+        )?;
+      }
+      "--hint-ocr-language" => {
+        crate::push_ocr_language(
+          &mut inputs.ocr_options,
+          next(&mut iter, "--hint-ocr-language")?,
+        );
+      }
+      "--hint-ocr-languages" => {
+        for language in crate::split_csv(&next(&mut iter, "--hint-ocr-languages")?) {
+          crate::push_ocr_language(&mut inputs.ocr_options, language);
+        }
       }
       other if other.starts_with("--") => return Err(format!("unknown flag {other}")),
       // A leading `ls` is accepted as a no-op "list" verb, so `playlist`,
@@ -100,6 +137,9 @@ fn parse_playlist(args: Vec<String>) -> Result<Command, String> {
           return Err(format!("unexpected extra argument {other:?}"));
         }
         keyword = Some(other.to_string());
+        if filter.is_none() {
+          filter = Some(other.to_string());
+        }
       }
     }
   }
@@ -111,6 +151,7 @@ fn parse_playlist(args: Vec<String>) -> Result<Command, String> {
   Ok(Command::Playlist(PlaylistCommand {
     inputs,
     keyword,
+    filter,
     output,
   }))
 }
@@ -120,10 +161,13 @@ fn print_usage() {
     "auv-netease-music — NetEase Cloud Music CLI\n\
      \n\
      USAGE:\n\
-     \x20 auv-netease-music playlist [ls] [<keyword>] [--json | --json-out <path>]\n\
+     \x20 auv-netease-music playlist [ls] [--filter <text>] [--json | --json-out <path>]\n\
      \x20   [--app-id <bundle>] [--artifact-dir <path>] [--max-pages <n>]\n\
      \x20   [--max-scrolls <n>] [--scroll-amount <f>]\n\
      \x20   [--sidebar-region x,y,width,height]\n\
+     \x20   [--hint-ocr-custom-word <word>] [--hint-ocr-custom-words <a,b>]\n\
+     \x20   [--hint-ocr-custom-words-file <path>]\n\
+     \x20   [--hint-ocr-language <tag>] [--hint-ocr-languages <a,b>]\n\
      \n\
      Exit: 0 ok (even with 0 matches); 1 scan/IO failure; 2 usage error."
   );
@@ -152,7 +196,8 @@ fn run_playlist(cmd: PlaylistCommand) -> ExitCode {
       return ExitCode::from(1);
     }
   };
-  let envelope = build_playlist_envelope(&scan, cmd.keyword.as_deref());
+  let filter = cmd.filter.as_deref().or(cmd.keyword.as_deref());
+  let envelope = build_playlist_envelope(&scan, filter);
 
   match &cmd.output {
     OutputMode::Human => {
@@ -217,6 +262,44 @@ mod tests {
       panic!("expected playlist command");
     };
     assert_eq!(cmd.keyword.as_deref(), Some("daily"));
+    assert_eq!(cmd.output, OutputMode::Json);
+  }
+
+  #[test]
+  fn playlist_filter_and_ocr_hints_are_separate() {
+    let Command::Playlist(cmd) = parse_command(args(&[
+      "playlist",
+      "ls",
+      "--filter",
+      "daily",
+      "--hint-ocr-custom-word",
+      "primary-term",
+      "--hint-ocr-custom-words",
+      "secondary-term,artist-alias",
+      "--hint-ocr-language",
+      "ja-JP",
+      "--hint-ocr-languages",
+      "zh-Hans,en-US",
+      "--json",
+    ]))
+    .unwrap() else {
+      panic!("expected playlist command");
+    };
+
+    assert_eq!(cmd.filter.as_deref(), Some("daily"));
+    assert_eq!(cmd.keyword, None);
+    assert_eq!(
+      cmd.inputs.ocr_options.custom_words,
+      vec!["primary-term", "secondary-term", "artist-alias"]
+    );
+    assert_eq!(
+      cmd.inputs.ocr_options.recognition_languages,
+      Some(vec![
+        "ja-JP".to_string(),
+        "zh-Hans".to_string(),
+        "en-US".to_string()
+      ])
+    );
     assert_eq!(cmd.output, OutputMode::Json);
   }
 

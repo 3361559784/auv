@@ -21,6 +21,27 @@ pub struct TextRecognition {
   pub regions: Vec<RecognizedText>,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TextRecognitionOptions {
+  pub custom_words: Vec<String>,
+  pub recognition_languages: Option<Vec<String>>,
+}
+
+impl TextRecognitionOptions {
+  pub fn with_custom_words(mut self, words: impl IntoIterator<Item = impl Into<String>>) -> Self {
+    self.custom_words = words.into_iter().map(Into::into).collect();
+    self
+  }
+
+  pub fn with_recognition_languages(
+    mut self,
+    languages: impl IntoIterator<Item = impl Into<String>>,
+  ) -> Self {
+    self.recognition_languages = Some(languages.into_iter().map(Into::into).collect());
+    self
+  }
+}
+
 impl TextRecognition {
   pub fn find_contains(&self, query: &str) -> Vec<&RecognizedText> {
     let normalized_query = normalize_text(query);
@@ -68,5 +89,18 @@ mod tests {
 
     assert_eq!(matched.text, "Cure For Me");
     assert_eq!(matched.action_point(), Point::new(25.0, 40.0));
+  }
+
+  #[test]
+  fn text_recognition_options_preserve_provider_hints() {
+    let options = TextRecognitionOptions::default()
+      .with_custom_words(["绚香", "AURORA"])
+      .with_recognition_languages(["zh-Hans", "en-US"]);
+
+    assert_eq!(options.custom_words, vec!["绚香", "AURORA"]);
+    assert_eq!(
+      options.recognition_languages,
+      Some(vec!["zh-Hans".to_string(), "en-US".to_string()])
+    );
   }
 }

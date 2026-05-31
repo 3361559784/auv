@@ -31,12 +31,15 @@ pub struct NativeVisualRowsCapture {
 }
 
 #[cfg(target_os = "macos")]
+#[allow(clippy::too_many_arguments)]
 pub fn find_text(
   image_path: &Path,
   query: &str,
   exact: bool,
   case_sensitive: bool,
   max_observations: i64,
+  custom_words: &[String],
+  recognition_languages: Option<&[String]>,
   crop_region: Option<&ObservedRect>,
 ) -> AuvResult<NativeOcrTextCapture> {
   let crop = crop_region.cloned().unwrap_or(ObservedRect {
@@ -52,6 +55,10 @@ pub fn find_text(
       exact,
       case_sensitive,
       max_observations,
+      custom_words: custom_words.to_vec(),
+      recognition_languages: recognition_languages
+        .map(<[String]>::to_vec)
+        .unwrap_or_default(),
       crop_enabled: crop_region.is_some(),
       crop_x: crop.x,
       crop_y: crop.y,
@@ -71,6 +78,8 @@ pub fn find_text_in_rgba(
   exact: bool,
   case_sensitive: bool,
   max_observations: i64,
+  custom_words: &[String],
+  recognition_languages: Option<&[String]>,
   crop_region: Option<&ObservedRect>,
 ) -> AuvResult<NativeOcrTextCapture> {
   let crop = crop_region.cloned().unwrap_or(ObservedRect {
@@ -88,6 +97,10 @@ pub fn find_text_in_rgba(
       exact,
       case_sensitive,
       max_observations,
+      custom_words: custom_words.to_vec(),
+      recognition_languages: recognition_languages
+        .map(<[String]>::to_vec)
+        .unwrap_or_default(),
       crop_enabled: crop_region.is_some(),
       crop_x: crop.x,
       crop_y: crop.y,
@@ -107,6 +120,8 @@ pub fn find_text_in_rgba(
   _exact: bool,
   _case_sensitive: bool,
   _max_observations: i64,
+  _custom_words: &[String],
+  _recognition_languages: Option<&[String]>,
   _crop_region: Option<&ObservedRect>,
 ) -> AuvResult<NativeOcrTextCapture> {
   Err("macOS native OCR text detection is unsupported on this target".to_string())
@@ -119,6 +134,8 @@ pub fn find_text(
   _exact: bool,
   _case_sensitive: bool,
   _max_observations: i64,
+  _custom_words: &[String],
+  _recognition_languages: Option<&[String]>,
   _crop_region: Option<&ObservedRect>,
 ) -> AuvResult<NativeOcrTextCapture> {
   Err("macOS native OCR text detection is unsupported on this target".to_string())

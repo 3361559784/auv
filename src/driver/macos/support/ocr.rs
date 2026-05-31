@@ -140,6 +140,8 @@ pub(crate) fn detect_screen_rows(
     false,
     false,
     max_observations,
+    &[],
+    None,
     region,
   )?;
   let ocr_report = auv_driver_macos::native::ocr::render_ocr_text_report(&ocr_capture);
@@ -237,6 +239,8 @@ fn attach_row_crop_ocr_fragments(
       false,
       false,
       max_observations.min(32),
+      &[],
+      None,
       Some(&row_region),
     )?;
     let row_matches = filter_ocr_matches(&row_capture.snapshot.matches, min_confidence, None);

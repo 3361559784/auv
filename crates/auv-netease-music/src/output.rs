@@ -26,6 +26,23 @@ pub struct PlaylistEnvelope<'a> {
   pub scan: &'a PlaylistSidebarScan,
 }
 
+/// Build the agent-facing envelope without performing any live scan work.
+pub fn build_playlist_envelope<'a>(
+  scan: &'a PlaylistSidebarScan,
+  keyword: Option<&str>,
+) -> PlaylistEnvelope<'a> {
+  let matches = collect_matches(scan.projection(), keyword);
+  let item_count = collect_matches(scan.projection(), None).len();
+  PlaylistEnvelope {
+    command: "playlist",
+    query: keyword.map(str::to_string),
+    item_count,
+    match_count: matches.len(),
+    matches,
+    scan,
+  }
+}
+
 /// Collect items whose normalized label contains the normalized keyword.
 /// `keyword == None` returns every item (full listing).
 pub fn collect_matches(
@@ -106,5 +123,19 @@ mod tests {
   fn keyword_without_match_returns_empty() {
     let matches = collect_matches(&projection(), Some("zzz"));
     assert!(matches.is_empty());
+  }
+
+  #[test]
+  fn build_playlist_envelope_counts_all_items_and_matches() {
+    let scan = PlaylistSidebarScan::from_projection_for_tests(projection());
+
+    let envelope = build_playlist_envelope(&scan, Some("daily"));
+
+    assert_eq!(envelope.command, "playlist");
+    assert_eq!(envelope.query.as_deref(), Some("daily"));
+    assert_eq!(envelope.item_count, 2);
+    assert_eq!(envelope.match_count, 1);
+    assert_eq!(envelope.matches[0].item_id, "i1");
+    assert!(std::ptr::eq(envelope.scan, &scan));
   }
 }

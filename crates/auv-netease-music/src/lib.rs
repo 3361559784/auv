@@ -122,6 +122,22 @@ impl PlaylistSidebarScan {
   pub fn known_limits(&self) -> &[String] {
     &self.known_limits
   }
+
+  #[cfg(test)]
+  pub(crate) fn from_projection_for_tests(projection: PlaylistSidebarProjection) -> Self {
+    Self {
+      schema_version: VIEW_IR_SCHEMA_VERSION.to_string(),
+      app: ScanAppContext::default(),
+      window: ScanWindowContext::default(),
+      sidebar_region: ViewRegionRecord::default(),
+      observations: Vec::new(),
+      reconstruction: ViewReconstructionRecord::default(),
+      projection,
+      boundary: ScrollBoundarySummary::default(),
+      diagnostics: Vec::new(),
+      known_limits: Vec::new(),
+    }
+  }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]

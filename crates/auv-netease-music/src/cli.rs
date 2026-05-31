@@ -2,7 +2,7 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use crate::output::{PlaylistEnvelope, collect_matches};
+use crate::output::build_playlist_envelope;
 use crate::{Inputs, render_human_summary, run_live_scan};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -152,16 +152,7 @@ fn run_playlist(cmd: PlaylistCommand) -> ExitCode {
       return ExitCode::from(1);
     }
   };
-  let matches = collect_matches(scan.projection(), cmd.keyword.as_deref());
-  let item_count = collect_matches(scan.projection(), None).len();
-  let envelope = PlaylistEnvelope {
-    command: "playlist",
-    query: cmd.keyword.clone(),
-    item_count,
-    match_count: matches.len(),
-    matches,
-    scan: &scan,
-  };
+  let envelope = build_playlist_envelope(&scan, cmd.keyword.as_deref());
 
   match &cmd.output {
     OutputMode::Human => {

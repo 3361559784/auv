@@ -24,6 +24,7 @@
 //!   newtypes once `playlist get <anchor>` lands and requires stable
 //!   cross-run identity.
 
+use image::{Rgba, RgbaImage};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -502,6 +503,95 @@ where
   }
 }
 
+/// Derive a `ScrollBoundarySummary` from a slice of observations by
+/// looking for adjacent identical viewport fingerprints. v0 only
+/// populates `bottom = Likely` on a match — top boundaries come from
+/// `scroll_to_top`, not from observing the scan loop's output, because
+/// the loop scrolls downward and never re-probes upward.
+pub fn boundary_summary_from_observations<O>(observations: &[O]) -> ScrollBoundarySummary
+where
+  O: ViewObservation,
+{
+  let mut summary = ScrollBoundarySummary::default();
+  if observations
+    .windows(2)
+    .any(|pair| pair[0].viewport_fingerprint() == pair[1].viewport_fingerprint())
+  {
+    summary.bottom = BoundaryConfidence::Likely;
+  }
+  summary
+}
+
+// --------------------------------------------------------------------------
+// Pixel-level drawing helpers. Used by view-parser apps that want to render
+// overlay diagnostics (which evidence node was matched, which candidate
+// kind it became, where the region was detected) on top of a captured
+// screenshot. These helpers are pure pixel ops over `image::RgbaImage`;
+// they hold no NetEase or other domain knowledge. App-specific overlay
+// composition (color choice per candidate kind, what to draw) stays in
+// the app crate.
+// --------------------------------------------------------------------------
+
+/// Draw the outline of `bounds` on `image` with `color`, growing the
+/// stroke inward by `stroke` pixels. Out-of-bounds pixels are silently
+/// dropped by `put_pixel`.
+pub fn draw_rect(image: &mut RgbaImage, bounds: ViewBounds, color: Rgba<u8>, stroke: i64) {
+  let x0 = bounds.x.round() as i64;
+  let y0 = bounds.y.round() as i64;
+  let x1 = (bounds.x + bounds.width).round() as i64;
+  let y1 = (bounds.y + bounds.height).round() as i64;
+  for offset in 0..stroke {
+    draw_line(image, x0, y0 + offset, x1, y0 + offset, color);
+    draw_line(image, x0, y1 - offset, x1, y1 - offset, color);
+    draw_line(image, x0 + offset, y0, x0 + offset, y1, color);
+    draw_line(image, x1 - offset, y0, x1 - offset, y1, color);
+  }
+}
+
+/// Bresenham line from `(x0,y0)` to `(x1,y1)` on `image` with `color`.
+/// Out-of-bounds pixels are silently dropped by `put_pixel`.
+pub fn draw_line(
+  image: &mut RgbaImage,
+  mut x0: i64,
+  mut y0: i64,
+  x1: i64,
+  y1: i64,
+  color: Rgba<u8>,
+) {
+  let dx = (x1 - x0).abs();
+  let sx = if x0 < x1 { 1 } else { -1 };
+  let dy = -(y1 - y0).abs();
+  let sy = if y0 < y1 { 1 } else { -1 };
+  let mut error = dx + dy;
+
+  loop {
+    put_pixel(image, x0, y0, color);
+    if x0 == x1 && y0 == y1 {
+      break;
+    }
+    let doubled = error * 2;
+    if doubled >= dy {
+      error += dy;
+      x0 += sx;
+    }
+    if doubled <= dx {
+      error += dx;
+      y0 += sy;
+    }
+  }
+}
+
+/// Set the pixel at `(x,y)` to `color`, doing nothing if the coordinate
+/// is outside `image`. The clamp lets callers project window-local
+/// bounds onto a capture without first intersecting against the capture
+/// rectangle.
+pub fn put_pixel(image: &mut RgbaImage, x: i64, y: i64, color: Rgba<u8>) {
+  if x < 0 || y < 0 || x >= image.width() as i64 || y >= image.height() as i64 {
+    return;
+  }
+  image.put_pixel(x as u32, y as u32, color);
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -865,5 +955,111 @@ mod tests {
     assert_eq!(outcome.boundary, BoundaryConfidence::Unknown);
     assert_eq!(outcome.known_limits.len(), 1);
     assert!(outcome.known_limits[0].contains("max_scrolls=3"));
+  }
+
+  #[test]
+  fn boundary_summary_likely_on_adjacent_repeat() {
+    let obs = vec![
+      FakeObservation {
+        fingerprint: "a".into(),
+      },
+      FakeObservation {
+        fingerprint: "b".into(),
+      },
+      FakeObservation {
+        fingerprint: "b".into(),
+      },
+    ];
+    let summary = boundary_summary_from_observations(&obs);
+    assert_eq!(summary.bottom, BoundaryConfidence::Likely);
+    assert_eq!(summary.top, BoundaryConfidence::Unknown);
+  }
+
+  #[test]
+  fn boundary_summary_unknown_when_no_adjacent_repeat() {
+    let obs = vec![
+      FakeObservation {
+        fingerprint: "a".into(),
+      },
+      FakeObservation {
+        fingerprint: "b".into(),
+      },
+      FakeObservation {
+        fingerprint: "c".into(),
+      },
+    ];
+    let summary = boundary_summary_from_observations(&obs);
+    assert_eq!(summary.bottom, BoundaryConfidence::Unknown);
+  }
+
+  #[test]
+  fn boundary_summary_unknown_on_non_adjacent_repeat() {
+    // Non-adjacent fingerprint repeat should NOT trigger Likely — only
+    // adjacent identical pairs do. Other repeats are handled by
+    // RepeatedViewport diagnostics in the policy spec.
+    let obs = vec![
+      FakeObservation {
+        fingerprint: "a".into(),
+      },
+      FakeObservation {
+        fingerprint: "b".into(),
+      },
+      FakeObservation {
+        fingerprint: "a".into(),
+      },
+    ];
+    let summary = boundary_summary_from_observations(&obs);
+    assert_eq!(summary.bottom, BoundaryConfidence::Unknown);
+  }
+
+  #[test]
+  fn put_pixel_clamps_out_of_bounds() {
+    let mut img = RgbaImage::new(4, 4);
+    let color = Rgba([1, 2, 3, 255]);
+    // In-bounds writes apply.
+    put_pixel(&mut img, 0, 0, color);
+    put_pixel(&mut img, 3, 3, color);
+    assert_eq!(img.get_pixel(0, 0), &color);
+    assert_eq!(img.get_pixel(3, 3), &color);
+    // Out-of-bounds writes are silently dropped.
+    put_pixel(&mut img, -1, 2, color);
+    put_pixel(&mut img, 2, -1, color);
+    put_pixel(&mut img, 4, 2, color);
+    put_pixel(&mut img, 2, 4, color);
+    // Untouched cell stays default (0,0,0,0).
+    assert_eq!(img.get_pixel(2, 2), &Rgba([0, 0, 0, 0]));
+  }
+
+  #[test]
+  fn draw_line_paints_horizontal_segment() {
+    let mut img = RgbaImage::new(8, 4);
+    let color = Rgba([10, 20, 30, 255]);
+    draw_line(&mut img, 1, 2, 5, 2, color);
+    for x in 1..=5 {
+      assert_eq!(
+        img.get_pixel(x as u32, 2),
+        &color,
+        "x={x} should be painted"
+      );
+    }
+    assert_eq!(img.get_pixel(0, 2), &Rgba([0, 0, 0, 0]));
+    assert_eq!(img.get_pixel(6, 2), &Rgba([0, 0, 0, 0]));
+  }
+
+  #[test]
+  fn draw_rect_outlines_bounds_with_stroke() {
+    let mut img = RgbaImage::new(10, 10);
+    let color = Rgba([200, 100, 50, 255]);
+    draw_rect(&mut img, ViewBounds::new(2.0, 2.0, 6.0, 6.0), color, 1);
+    // Corners on the rectangle are painted.
+    assert_eq!(img.get_pixel(2, 2), &color);
+    assert_eq!(img.get_pixel(8, 2), &color);
+    assert_eq!(img.get_pixel(2, 8), &color);
+    assert_eq!(img.get_pixel(8, 8), &color);
+    // Interior is not painted.
+    assert_eq!(img.get_pixel(5, 5), &Rgba([0, 0, 0, 0]));
+    // Outside is not painted.
+    assert_eq!(img.get_pixel(1, 1), &Rgba([0, 0, 0, 0]));
+    assert_eq!(img.get_pixel(9, 9), &Rgba([0, 0, 0, 0]));
   }
 }

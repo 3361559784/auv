@@ -17,9 +17,9 @@ use auv_view::{
   ScanOptions, ScanWindowContext, ScrollBoundarySummary, ViewAction, ViewAnchor, ViewAxis,
   ViewBounds, ViewEvidenceNode, ViewEvidenceSource, ViewLandmark, ViewLayout, ViewNodeKind,
   ViewNodeRecord, ViewObservation, ViewObserver, ViewReconstructionRecord, ViewRegionRecord,
-  ViewScrollable, ViewViewportRecord, collect_anchors, collect_landmarks, confidence_from_ocr,
-  normalize_identity, scan_with_observer, scroll_to_top, slug, viewport_contains_center,
-  viewport_fingerprint,
+  ViewScrollable, ViewViewportRecord, boundary_summary_from_observations, collect_anchors,
+  collect_landmarks, confidence_from_ocr, draw_rect, normalize_identity, scan_with_observer,
+  scroll_to_top, slug, viewport_contains_center, viewport_fingerprint,
 };
 use image::{Rgba, RgbaImage};
 use serde::{Deserialize, Serialize};
@@ -1413,53 +1413,6 @@ fn draw_overlay(
 }
 
 #[cfg(target_os = "macos")]
-fn draw_rect(image: &mut RgbaImage, bounds: ViewBounds, color: Rgba<u8>, stroke: i64) {
-  let x0 = bounds.x.round() as i64;
-  let y0 = bounds.y.round() as i64;
-  let x1 = (bounds.x + bounds.width).round() as i64;
-  let y1 = (bounds.y + bounds.height).round() as i64;
-  for offset in 0..stroke {
-    draw_line(image, x0, y0 + offset, x1, y0 + offset, color);
-    draw_line(image, x0, y1 - offset, x1, y1 - offset, color);
-    draw_line(image, x0 + offset, y0, x0 + offset, y1, color);
-    draw_line(image, x1 - offset, y0, x1 - offset, y1, color);
-  }
-}
-
-#[cfg(target_os = "macos")]
-fn draw_line(image: &mut RgbaImage, mut x0: i64, mut y0: i64, x1: i64, y1: i64, color: Rgba<u8>) {
-  let dx = (x1 - x0).abs();
-  let sx = if x0 < x1 { 1 } else { -1 };
-  let dy = -(y1 - y0).abs();
-  let sy = if y0 < y1 { 1 } else { -1 };
-  let mut error = dx + dy;
-
-  loop {
-    put_pixel(image, x0, y0, color);
-    if x0 == x1 && y0 == y1 {
-      break;
-    }
-    let doubled = error * 2;
-    if doubled >= dy {
-      error += dy;
-      x0 += sx;
-    }
-    if doubled <= dx {
-      error += dx;
-      y0 += sy;
-    }
-  }
-}
-
-#[cfg(target_os = "macos")]
-fn put_pixel(image: &mut RgbaImage, x: i64, y: i64, color: Rgba<u8>) {
-  if x < 0 || y < 0 || x >= image.width() as i64 || y >= image.height() as i64 {
-    return;
-  }
-  image.put_pixel(x as u32, y as u32, color);
-}
-
-#[cfg(target_os = "macos")]
 fn bounds_to_ratio(bounds: ViewBounds, capture: &Capture) -> RatioRect {
   let width = capture.bounds.size.width.max(1.0);
   let height = capture.bounds.size.height.max(1.0);
@@ -1553,19 +1506,6 @@ fn item_node(
 
 fn attach_item_node(section: &mut ViewNodeRecord, item: ViewNodeRecord) {
   section.children.push(item);
-}
-
-fn boundary_summary_from_observations(
-  observations: &[SidebarViewportObservation],
-) -> ScrollBoundarySummary {
-  let mut summary = ScrollBoundarySummary::default();
-  if observations
-    .windows(2)
-    .any(|pair| pair[0].viewport_fingerprint == pair[1].viewport_fingerprint)
-  {
-    summary.bottom = BoundaryConfidence::Likely;
-  }
-  summary
 }
 
 fn candidate_evidence(

@@ -18,8 +18,7 @@ pub(crate) enum OutputMode {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct PlaylistCommand {
   pub inputs: Inputs,
-  pub keyword: Option<String>,
-  pub filter: Option<String>,
+  pub query: Option<String>,
   pub output: OutputMode,
 }
 
@@ -86,11 +85,11 @@ fn command_from_args(parsed: CliArgs) -> Result<PlaylistCommand, String> {
 
 fn parse_playlist(args: PlaylistArgs) -> Result<PlaylistCommand, String> {
   let mut inputs = Inputs::with_defaults();
-  let (keyword, positional_filter) = match (args.first.as_deref(), args.second.as_deref()) {
-    (None, None) => (None, None),
-    (Some("ls"), None) => (None, None),
-    (Some("ls"), Some(keyword)) => (Some(keyword.to_string()), Some(keyword.to_string())),
-    (Some(keyword), None) => (Some(keyword.to_string()), Some(keyword.to_string())),
+  let query = match (args.first.as_deref(), args.second.as_deref()) {
+    (None, None) => None,
+    (Some("ls"), None) => None,
+    (Some("ls"), Some(keyword)) => Some(keyword.to_string()),
+    (Some(keyword), None) => Some(keyword.to_string()),
     (Some(_), Some(extra)) => return Err(format!("unexpected extra argument {extra:?}")),
     (None, Some(_)) => unreachable!("clap fills positional arguments in order"),
   };
@@ -133,7 +132,7 @@ fn parse_playlist(args: PlaylistArgs) -> Result<PlaylistCommand, String> {
       crate::push_ocr_language(&mut inputs.ocr_options, language);
     }
   }
-  let filter = args.filter.or(positional_filter);
+  let query = args.filter.or(query);
   let output = match args.json_out {
     Some(path) => OutputMode::JsonFile(path),
     None if args.json => OutputMode::Json,
@@ -141,8 +140,7 @@ fn parse_playlist(args: PlaylistArgs) -> Result<PlaylistCommand, String> {
   };
   Ok(PlaylistCommand {
     inputs,
-    keyword,
-    filter,
+    query,
     output,
   })
 }
@@ -175,6 +173,62 @@ pub fn run() -> ExitCode {
   }
 }
 
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  fn playlist_args() -> PlaylistArgs {
+    PlaylistArgs {
+      first: None,
+      second: None,
+      category: None,
+      filter: None,
+      json: false,
+      json_out: None,
+      app_id: None,
+      artifact_dir: None,
+      max_scrolls: None,
+      scroll_amount: None,
+      scroll_settle_ms: None,
+      sidebar_region: None,
+      custom_words: Vec::new(),
+      custom_word_csvs: Vec::new(),
+      custom_word_files: Vec::new(),
+      ocr_languages: Vec::new(),
+      ocr_language_csvs: Vec::new(),
+    }
+  }
+
+  #[test]
+  fn parse_playlist_without_positional_or_filter_leaves_query_empty() {
+    let command = parse_playlist(playlist_args()).expect("playlist args should parse");
+
+    assert_eq!(command.query, None);
+    assert_eq!(command.output, OutputMode::Human);
+  }
+
+  #[test]
+  fn parse_playlist_uses_positional_keyword_as_query() {
+    let mut args = playlist_args();
+    args.first = Some("daily".to_string());
+
+    let command = parse_playlist(args).expect("playlist args should parse");
+
+    assert_eq!(command.query.as_deref(), Some("daily"));
+  }
+
+  #[test]
+  fn parse_playlist_prefers_explicit_filter_over_positional_keyword() {
+    let mut args = playlist_args();
+    args.first = Some("daily".to_string());
+    args.filter = Some("liked".to_string());
+
+    let command = parse_playlist(args).expect("playlist args should parse");
+
+    assert_eq!(command.query.as_deref(), Some("liked"));
+  }
+}
+
 fn run_playlist(cmd: PlaylistCommand) -> ExitCode {
   let scan = match run_live_scan(&cmd.inputs) {
     Ok(scan) => scan,
@@ -183,8 +237,7 @@ fn run_playlist(cmd: PlaylistCommand) -> ExitCode {
       return ExitCode::from(1);
     }
   };
-  let filter = cmd.filter.as_deref().or(cmd.keyword.as_deref());
-  let output = build_playlist_json_output(&scan, filter);
+  let output = build_playlist_json_output(&scan, cmd.query.as_deref());
 
   match &cmd.output {
     OutputMode::Human => {

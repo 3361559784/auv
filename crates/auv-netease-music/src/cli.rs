@@ -176,6 +176,8 @@ pub fn run() -> ExitCode {
 #[cfg(test)]
 mod tests {
   use super::*;
+  use std::path::{Path, PathBuf};
+  use std::time::{SystemTime, UNIX_EPOCH};
 
   fn playlist_args() -> PlaylistArgs {
     PlaylistArgs {
@@ -196,6 +198,40 @@ mod tests {
       custom_word_files: Vec::new(),
       ocr_languages: Vec::new(),
       ocr_language_csvs: Vec::new(),
+    }
+  }
+
+  fn parse_playlist_command(argv: &[&str]) -> PlaylistCommand {
+    let parsed = CliArgs::try_parse_from(argv).expect("CLI args should parse");
+    command_from_args(parsed).expect("playlist command should parse")
+  }
+
+  struct TempWordsFile {
+    path: PathBuf,
+  }
+
+  impl TempWordsFile {
+    fn new(contents: &str) -> Self {
+      let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time should be after unix epoch")
+        .as_nanos();
+      let path = std::env::temp_dir().join(format!(
+        "auv-netease-cli-custom-words-{}-{unique}.txt",
+        std::process::id()
+      ));
+      std::fs::write(&path, contents).expect("temp custom words file should be writable");
+      Self { path }
+    }
+
+    fn path(&self) -> &Path {
+      &self.path
+    }
+  }
+
+  impl Drop for TempWordsFile {
+    fn drop(&mut self) {
+      let _ = std::fs::remove_file(&self.path);
     }
   }
 
@@ -226,6 +262,134 @@ mod tests {
     let command = parse_playlist(args).expect("playlist args should parse");
 
     assert_eq!(command.query.as_deref(), Some("liked"));
+  }
+
+  #[test]
+  fn clap_playlist_ls_leaves_query_empty() {
+    let command = parse_playlist_command(&["auv-netease-music", "playlist", "ls"]);
+
+    assert_eq!(command.query, None);
+    assert_eq!(command.output, OutputMode::Human);
+  }
+
+  #[test]
+  fn clap_playlist_ls_keyword_sets_query() {
+    let command = parse_playlist_command(&["auv-netease-music", "playlist", "ls", "daily"]);
+
+    assert_eq!(command.query.as_deref(), Some("daily"));
+  }
+
+  #[test]
+  fn clap_playlist_prefers_json_out_over_json_flag() {
+    let command = parse_playlist_command(&[
+      "auv-netease-music",
+      "playlist",
+      "ls",
+      "--json",
+      "--json-out",
+      "/tmp/playlists.json",
+    ]);
+
+    assert_eq!(
+      command.output,
+      OutputMode::JsonFile(PathBuf::from("/tmp/playlists.json"))
+    );
+  }
+
+  #[test]
+  fn clap_playlist_maps_flags_into_inputs() {
+    let command = parse_playlist_command(&[
+      "auv-netease-music",
+      "playlist",
+      "ls",
+      "--category",
+      "favorite",
+      "--app-id",
+      "com.example.Player",
+      "--artifact-dir",
+      "/tmp/netease-artifacts",
+      "--max-scrolls",
+      "9",
+      "--scroll-amount",
+      "512",
+      "--scroll-settle-ms",
+      "750",
+      "--sidebar-region",
+      "0.1,0.2,0.3,0.4",
+    ]);
+
+    assert_eq!(command.inputs.category, PlaylistCategory::Favorite);
+    assert_eq!(command.inputs.app_id, "com.example.Player");
+    assert_eq!(
+      command.inputs.artifact_dir,
+      PathBuf::from("/tmp/netease-artifacts")
+    );
+    assert_eq!(command.inputs.max_scrolls, 9);
+    assert_eq!(command.inputs.scroll_amount, 512.0);
+    assert_eq!(command.inputs.scroll_settle_ms, 750);
+    assert_eq!(
+      command.inputs.sidebar_region,
+      Some(crate::parse_ratio_region("0.1,0.2,0.3,0.4".to_string()).expect("region should parse"))
+    );
+  }
+
+  #[test]
+  fn clap_playlist_collects_ocr_hint_flags() {
+    let custom_words = TempWordsFile::new(
+      r#"
+        # comment
+        Gamma
+        Delta
+        Alpha
+      "#,
+    );
+    let custom_words_path = custom_words.path().to_string_lossy().into_owned();
+
+    let command = parse_playlist_command(&[
+      "auv-netease-music",
+      "playlist",
+      "ls",
+      "--hint-ocr-custom-word",
+      " Alpha ",
+      "--hint-ocr-custom-word",
+      "Alpha",
+      "--hint-ocr-custom-words",
+      "Beta, Gamma",
+      "--hint-ocr-custom-words-file",
+      custom_words_path.as_str(),
+      "--hint-ocr-language",
+      " zh-Hans ",
+      "--hint-ocr-language",
+      "zh-Hans",
+      "--hint-ocr-languages",
+      "en-US, ja-JP",
+    ]);
+
+    assert_eq!(
+      command.inputs.ocr_options.custom_words,
+      vec![
+        "Alpha".to_string(),
+        "Beta".to_string(),
+        "Gamma".to_string(),
+        "Delta".to_string(),
+      ]
+    );
+    assert_eq!(
+      command.inputs.ocr_options.recognition_languages,
+      Some(vec![
+        "zh-Hans".to_string(),
+        "en-US".to_string(),
+        "ja-JP".to_string(),
+      ])
+    );
+  }
+
+  #[test]
+  fn clap_playlist_rejects_extra_positional_argument() {
+    let error = CliArgs::try_parse_from(["auv-netease-music", "playlist", "ls", "daily", "extra"])
+      .expect_err("extra positional argument should fail clap parsing");
+
+    assert_eq!(error.kind(), clap::error::ErrorKind::UnknownArgument);
   }
 }
 

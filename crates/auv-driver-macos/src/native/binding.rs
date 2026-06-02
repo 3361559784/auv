@@ -321,6 +321,16 @@ pub(crate) mod ffi {
     ) -> NativeActionResponse;
     fn current_mouse_location() -> NativeMouseLocationResponse;
     fn scroll_point(x: f64, y: f64, delta_x: f64, delta_y: f64) -> NativeActionResponse;
+    fn scroll_window_point(
+      pid: i64,
+      window_number: i64,
+      screen_x: f64,
+      screen_y: f64,
+      window_x: f64,
+      window_y: f64,
+      delta_x: f64,
+      delta_y: f64,
+    ) -> NativeActionResponse;
     fn type_text_in_window(
       pid: i64,
       window_number: i64,

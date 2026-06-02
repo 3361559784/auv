@@ -217,6 +217,22 @@ a background-only click might be delivered through an AX action, a pid-targeted
 CGEvent, a browser protocol command, or an ADB input path depending on the
 target and driver capabilities.
 
+## Scroll Delivery Strategy
+
+Scroll delivery strategy is a provisional driver contract for the ordered
+scroll candidates an action may try under an input mode. It is pre-execution
+intent, not proof of what happened. Examples include AX scroll, window-targeted
+wheel delivery, window-targeted keyboard scroll, and foreground/global HID.
+
+The selected input delivery path is the post-execution fact. A background
+preferred scroll may try background candidates first and still report
+foreground/global HID when fallback was required. For scroll input,
+foreground preferred means foreground/global HID can be the first candidate;
+it is not the same as background preferred with faster fallback. Scroll scans
+and product workflows should record the selected path next to observation
+evidence so reviewers can distinguish background delivery from foreground
+fallback.
+
 ## Prepare For Input Options
 
 Prepare for input options is a provisional term for how an action may prepare a

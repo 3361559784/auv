@@ -2,6 +2,7 @@
 use super::binding::ffi::{
   NativeActionResponse, click_window_point as native_click_window_point,
   hotkey_in_window as native_hotkey_in_window, press_key_in_window as native_press_key_in_window,
+  scroll_window_point as native_scroll_window_point,
   type_text_in_window as native_type_text_in_window,
 };
 use super::types::AuvResult;
@@ -73,6 +74,46 @@ pub fn type_text_in_window(
   _inter_char_delay_ms: u64,
 ) -> AuvResult<()> {
   Err("macOS native window-targeted text input is unsupported on this target".to_string())
+}
+
+#[cfg(target_os = "macos")]
+pub fn scroll_window_point(
+  pid: i64,
+  window_number: i64,
+  screen_x: f64,
+  screen_y: f64,
+  window_x: f64,
+  window_y: f64,
+  delta_x: f64,
+  delta_y: f64,
+) -> AuvResult<()> {
+  action_result(
+    "scroll_window_point",
+    native_scroll_window_point(
+      pid,
+      window_number,
+      screen_x,
+      screen_y,
+      window_x,
+      window_y,
+      delta_x,
+      delta_y,
+    ),
+  )
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn scroll_window_point(
+  _pid: i64,
+  _window_number: i64,
+  _screen_x: f64,
+  _screen_y: f64,
+  _window_x: f64,
+  _window_y: f64,
+  _delta_x: f64,
+  _delta_y: f64,
+) -> AuvResult<()> {
+  Err("macOS native window-targeted scroll is unsupported on this target".to_string())
 }
 
 #[cfg(target_os = "macos")]

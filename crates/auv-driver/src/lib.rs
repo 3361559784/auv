@@ -15,7 +15,8 @@ pub use geometry::{CoordinateSpace, Point, RatioRect, Rect, ScreenPoint, Size, W
 pub use input::{
   ActivationPolicy, Click, ClickOptions, DisturbanceLevel, InputActionResult, InputAttempt,
   InputDeliveryPath, InputPolicy, InputPreparationLease, PasteTextOptions, PrepareForInputOptions,
-  Scroll, ScrollOptions, TextSubmit, TypeTextOptions, WaitOptions, WindowClickStrategy,
+  Scroll, ScrollDeliveryCandidate, ScrollDeliveryStrategy, ScrollOptions, TextSubmit,
+  TypeTextOptions, WaitOptions, WindowClickStrategy,
 };
 pub use selector::{App, AppSelector, TextMatcher, WindowSelector};
 pub use traits::{Driver, DriverDescriptor, DriverSession, PlatformKind};
@@ -31,7 +32,8 @@ mod tests {
   use crate::{
     ActivationPolicy, Click, ClickOptions, DisturbanceLevel, InputActionResult, InputAttempt,
     InputDeliveryPath, InputPolicy, InputPreparationLease, PrepareForInputOptions, ScreenPoint,
-    Scroll, ScrollOptions, TextSubmit, TypeTextOptions, WindowClickStrategy, WindowPoint,
+    Scroll, ScrollDeliveryCandidate, ScrollDeliveryStrategy, ScrollOptions, TextSubmit,
+    TypeTextOptions, WindowClickStrategy, WindowPoint,
     capture::{Activation, Capture, CaptureOptions, ImageView},
     display::{Display, ObservedDisplays},
     error::{DriverError, DriverResult},
@@ -85,7 +87,21 @@ mod tests {
     let _attempt = InputAttempt::success(InputDeliveryPath::WindowTargetedKeyboard);
     let _result = InputActionResult::single_success(InputDeliveryPath::WindowTargetedKeyboard);
     let _scroll = Scroll::new(0.0, -120.0);
-    let _scroll_options = ScrollOptions::default();
+    let _scroll_strategy = ScrollDeliveryStrategy {
+      candidates: vec![
+        ScrollDeliveryCandidate::AxScroll,
+        ScrollDeliveryCandidate::WindowTargetedWheel,
+        ScrollDeliveryCandidate::ForegroundHid,
+      ],
+    };
+    let _scroll_options = ScrollOptions {
+      policy: InputPolicy::BackgroundPreferred,
+      delivery_strategy: _scroll_strategy,
+      settle: Duration::from_millis(25),
+    };
+    let _ = InputDeliveryPath::AxScroll;
+    let _ = InputDeliveryPath::WindowTargetedWheel;
+    let _ = InputDeliveryPath::WindowTargetedKeyboardScroll;
     let _ = DisturbanceLevel::None;
     let _ = ActivationPolicy::Background;
     let _ = ActivationPolicy::FocusWithoutRaise;
@@ -108,6 +124,8 @@ mod tests {
     let _ = std::any::type_name::<Size>();
     let _ = std::any::type_name::<PasteTextOptions>();
     let _ = std::any::type_name::<Scroll>();
+    let _ = std::any::type_name::<ScrollDeliveryCandidate>();
+    let _ = std::any::type_name::<ScrollDeliveryStrategy>();
     let _ = std::any::type_name::<ScrollOptions>();
     let _ = std::any::type_name::<TextSubmit>();
     let _ = std::any::type_name::<WaitOptions>();

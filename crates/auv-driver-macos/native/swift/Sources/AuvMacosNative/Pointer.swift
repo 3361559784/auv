@@ -525,3 +525,54 @@ func scroll_point(x: Double, y: Double, delta_x: Double, delta_y: Double) -> Nat
 
   return nativeActionOk()
 }
+
+func scroll_window_point(
+  pid: Int64,
+  window_number: Int64,
+  screen_x: Double,
+  screen_y: Double,
+  window_x: Double,
+  window_y: Double,
+  delta_x: Double,
+  delta_y: Double
+) -> NativeActionResponse {
+  let screenLocation = CGPoint(x: screen_x, y: screen_y)
+  let windowLocation = CGPoint(x: window_x, y: window_y)
+  guard let setWindowLocation = cgEventSetWindowLocation else {
+    return nativeActionError(
+      "CGEventSetWindowLocation is unavailable",
+      "retry on a macOS version that exposes the SkyLight symbol"
+    )
+  }
+  guard
+    let scrollEvent = CGEvent(
+      scrollWheelEvent2Source: nil,
+      units: .pixel,
+      wheelCount: 2,
+      wheel1: Int32(delta_y.rounded()),
+      wheel2: Int32(delta_x.rounded()),
+      wheel3: 0
+    )
+  else {
+    return nativeActionError(
+      "failed to create window-targeted scroll event",
+      "grant Accessibility permission and retry"
+    )
+  }
+
+  scrollEvent.location = screenLocation
+  scrollEvent.setIntegerValueField(.eventTargetUnixProcessID, value: pid)
+  setRawIntegerField(scrollEvent, 40, pid)
+  setRawIntegerField(scrollEvent, 51, window_number)
+  setRawIntegerField(scrollEvent, 91, window_number)
+  setRawIntegerField(scrollEvent, 92, window_number)
+  setWindowLocation(scrollEvent, windowLocation)
+
+  if let slEventPostToPid {
+    slEventPostToPid(pid_t(pid), scrollEvent)
+  } else {
+    scrollEvent.postToPid(pid_t(pid))
+  }
+
+  return nativeActionOk()
+}

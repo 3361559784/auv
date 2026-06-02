@@ -137,6 +137,13 @@ pub enum InputPolicy {
   that fails. The name is provisional and may be refined once action policy is
   separated from delivery preference.
 
+NOTICE(2026-06-02-scroll-policy): Scroll now has a narrower owner-approved
+policy override in `docs/superpowers/specs/2026-06-02-background-scroll-policy-design.md`.
+For scroll input, `ForegroundPreferred` means choose foreground/global HID first;
+`BackgroundPreferred` is the policy that tries window-targeted delivery before
+foreground fallback. Non-input capabilities such as capture remain background
+when they are naturally non-disturbing.
+
 ```rust
 pub enum ActivationPolicy {
   NoChange,

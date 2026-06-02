@@ -253,17 +253,36 @@ pub(crate) fn scroll_window_region(call: &DriverCall) -> AuvResult<DriverRespons
     &parse_window_selection(call)?,
   )?;
   let window = &candidate.window_ref;
-  let x =
-    window.bounds.x as f64 + window.bounds.width as f64 * ((region.left + region.right) / 2.0);
-  let y =
-    window.bounds.y as f64 + window.bounds.height as f64 * ((region.top + region.bottom) / 2.0);
+  let window_x = window.bounds.width as f64 * ((region.left + region.right) / 2.0);
+  let window_y = window.bounds.height as f64 * ((region.top + region.bottom) / 2.0);
+  let x = window.bounds.x as f64 + window_x;
+  let y = window.bounds.y as f64 + window_y;
   let resolution = resolve_display_point(&display_snapshot, x, y).ok_or_else(|| {
     format!("resolved scroll point ({x:.3}, {y:.3}) is outside all connected displays")
   })?;
   let (delta_x, delta_y) = scan_scroll_delta(&direction, amount)?;
-  let scroll_outcome = crate::driver::macos::typed::session::scroll_point_bridge(
-    x,
-    y,
+  let typed_window = auv_driver::Window {
+    reference: auv_driver::WindowRef {
+      id: window.window_number.to_string(),
+    },
+    title: (!window.title.is_empty()).then(|| window.title.clone()),
+    app_name: (!window.app_name.is_empty()).then(|| window.app_name.clone()),
+    app_bundle_id: (!window.owner_bundle_id.is_empty()).then(|| window.owner_bundle_id.clone()),
+    process_id: u32::try_from(window.owner_pid).ok(),
+    frame: auv_driver::Rect::new(
+      window.bounds.x as f64,
+      window.bounds.y as f64,
+      window.bounds.width as f64,
+      window.bounds.height as f64,
+    ),
+    coordinate_space: auv_driver::CoordinateSpace::Screen,
+    is_main: candidate.is_main_candidate,
+    is_visible: window.bounds.width > 0 && window.bounds.height > 0,
+  };
+  let scroll_outcome = crate::driver::macos::typed::session::scroll_window_point_bridge(
+    typed_window,
+    window_x,
+    window_y,
     delta_x,
     delta_y,
     input_policy,
@@ -271,7 +290,7 @@ pub(crate) fn scroll_window_region(call: &DriverCall) -> AuvResult<DriverRespons
   )?;
 
   let report = [
-    "coordinateSpace=global-logical".to_string(),
+    "coordinateSpace=window-local".to_string(),
     format!("applicationId={app}"),
     format!("appSelector={}", resolved_app.selector.raw),
     format!("matchStrategy={}", resolved_app.match_strategy),
@@ -291,6 +310,7 @@ pub(crate) fn scroll_window_region(call: &DriverCall) -> AuvResult<DriverRespons
       region.left, region.top, region.right, region.bottom
     ),
     format!("scrollPoint={x:.3},{y:.3}"),
+    format!("windowScrollPoint={window_x:.3},{window_y:.3}"),
     format!(
       "backingPixelPoint={},{}",
       resolution.backing_pixel_x, resolution.backing_pixel_y

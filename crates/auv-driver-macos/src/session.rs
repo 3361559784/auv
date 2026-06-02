@@ -10,7 +10,8 @@ use auv_driver::geometry::{CoordinateSpace, Point, RatioRect, Rect, ScreenPoint,
 use auv_driver::input::{
   ActivationPolicy, Click, ClickOptions, DisturbanceLevel, InputActionResult, InputAttempt,
   InputDeliveryPath, InputPolicy, InputPreparationLease, PasteTextOptions, PrepareForInputOptions,
-  Scroll, ScrollOptions, TextSubmit, TypeTextOptions, WaitOptions, WindowClickStrategy,
+  Scroll, ScrollDeliveryCandidate, ScrollOptions, TextSubmit, TypeTextOptions, WaitOptions,
+  WindowClickStrategy,
 };
 use auv_driver::selector::{AppSelector, TextMatcher, WindowSelector};
 use auv_driver::vision::{RecognizedText, TextRecognition, TextRecognitionOptions};
@@ -322,6 +323,88 @@ impl WindowApi<'_> {
     }
   }
 
+  pub fn scroll(
+    &self,
+    window: &Window,
+    point: WindowPoint,
+    scroll: Scroll,
+    options: ScrollOptions,
+  ) -> DriverResult<InputActionResult> {
+    let mut attempts = Vec::new();
+    let mut fallback_reason = None;
+    for candidate in scroll_attempt_candidates(&options) {
+      match candidate {
+        ScrollDeliveryCandidate::AxScroll => {
+          // TODO(background-scroll-ax): AX scrollbar/value scrolling is deferred
+          // until this policy slice has verification evidence for the
+          // window-targeted wheel path; implement when owner approves AX scroll
+          // mutation against captured AX tree state.
+          let message = "AX scroll is not implemented in this slice";
+          attempts.push(InputAttempt::failure(InputDeliveryPath::AxScroll, message));
+          fallback_reason.get_or_insert_with(|| message.to_string());
+        }
+        ScrollDeliveryCandidate::WindowTargetedWheel => {
+          match self.scroll_window_targeted_wheel(window, point, scroll, options.settle) {
+            Ok(()) => {
+              attempts.push(InputAttempt::success(
+                InputDeliveryPath::WindowTargetedWheel,
+              ));
+              return Ok(InputActionResult {
+                selected_path: InputDeliveryPath::WindowTargetedWheel,
+                attempts,
+                fallback_reason,
+                mouse_disturbance: DisturbanceLevel::None,
+                focus_disturbance: DisturbanceLevel::None,
+                clipboard_disturbance: DisturbanceLevel::None,
+              });
+            }
+            Err(error) => {
+              let message = error.to_string();
+              attempts.push(InputAttempt::failure(
+                InputDeliveryPath::WindowTargetedWheel,
+                message.clone(),
+              ));
+              fallback_reason.get_or_insert(message);
+            }
+          }
+        }
+        ScrollDeliveryCandidate::WindowTargetedKeyboardScroll => {
+          // TODO(background-scroll-keyboard): Keyboard scroll needs target state
+          // and reliability rules before it can be enabled; add only after
+          // owner-approved verification for focus/element anchoring.
+          let message = "window-targeted keyboard scroll is reserved but disabled";
+          attempts.push(InputAttempt::failure(
+            InputDeliveryPath::WindowTargetedKeyboardScroll,
+            message,
+          ));
+          fallback_reason.get_or_insert_with(|| message.to_string());
+        }
+        ScrollDeliveryCandidate::ForegroundHid => {
+          if options.policy == InputPolicy::BackgroundOnly {
+            continue;
+          }
+          let screen_point = self.to_screen_point(window, point)?;
+          let result =
+            self
+              .session
+              .input()
+              .scroll_global_hid(screen_point.point(), scroll, options.settle)?;
+          attempts.extend(result.attempts);
+          return Ok(InputActionResult {
+            selected_path: result.selected_path,
+            attempts,
+            fallback_reason,
+            mouse_disturbance: result.mouse_disturbance,
+            focus_disturbance: result.focus_disturbance,
+            clipboard_disturbance: result.clipboard_disturbance,
+          });
+        }
+      }
+    }
+
+    Err(DriverError::unsupported("background_scroll"))
+  }
+
   pub fn prepare_for_input(
     &self,
     window: &Window,
@@ -360,6 +443,35 @@ impl WindowApi<'_> {
     lease.mark_restored();
     Ok(())
   }
+
+  fn scroll_window_targeted_wheel(
+    &self,
+    window: &Window,
+    point: WindowPoint,
+    scroll: Scroll,
+    settle: Duration,
+  ) -> DriverResult<()> {
+    let pid = window_pid(window)?;
+    let number = window_number(window)?;
+    let screen_point = self.to_screen_point(window, point)?;
+    let screen = screen_point.point();
+    let window_point = point.point();
+    crate::native::input::scroll_window_point(
+      pid,
+      number,
+      screen.x,
+      screen.y,
+      window_point.x,
+      window_point.y,
+      scroll.delta_x,
+      scroll.delta_y,
+    )
+    .map_err(backend)?;
+    if !settle.is_zero() {
+      thread::sleep(settle);
+    }
+    Ok(())
+  }
 }
 
 impl InputApi<'_> {
@@ -372,24 +484,28 @@ impl InputApi<'_> {
     crate::native::pointer::click_point(point.x, point.y, 0, count, interval).map_err(backend)
   }
 
-  pub fn scroll_at(
+  pub fn scroll_global_hid(
     &self,
     point: Point,
     scroll: Scroll,
-    options: ScrollOptions,
+    settle: Duration,
   ) -> DriverResult<InputActionResult> {
     let _ = self.session;
-    if options.policy == InputPolicy::BackgroundOnly {
-      return Err(DriverError::unsupported("background_scroll"));
-    }
     crate::native::pointer::scroll_point(point.x, point.y, scroll.delta_x, scroll.delta_y)
       .map_err(backend)?;
-    if !options.settle.is_zero() {
-      thread::sleep(options.settle);
+    if !settle.is_zero() {
+      thread::sleep(settle);
     }
-    Ok(InputActionResult::single_success(
-      InputDeliveryPath::ForegroundSystemEvents,
-    ))
+    Ok(InputActionResult {
+      selected_path: InputDeliveryPath::ForegroundSystemEvents,
+      attempts: vec![InputAttempt::success(
+        InputDeliveryPath::ForegroundSystemEvents,
+      )],
+      fallback_reason: None,
+      mouse_disturbance: DisturbanceLevel::Temporary,
+      focus_disturbance: DisturbanceLevel::Unknown,
+      clipboard_disturbance: DisturbanceLevel::None,
+    })
   }
 
   pub fn copy(&self) -> DriverResult<()> {
@@ -780,6 +896,20 @@ fn type_text_parts(options: TypeTextOptions) -> DriverResult<(Option<i32>, u64)>
   let submit_key_code = text_submit_key_code(options.submit)?;
   let inter_char_delay_ms = duration_millis(options.inter_char_delay)?;
   Ok((submit_key_code, inter_char_delay_ms))
+}
+
+fn scroll_attempt_candidates(options: &ScrollOptions) -> Vec<ScrollDeliveryCandidate> {
+  match options.policy {
+    InputPolicy::ForegroundPreferred => vec![ScrollDeliveryCandidate::ForegroundHid],
+    InputPolicy::BackgroundOnly => options
+      .delivery_strategy
+      .candidates
+      .iter()
+      .copied()
+      .filter(|candidate| *candidate != ScrollDeliveryCandidate::ForegroundHid)
+      .collect(),
+    InputPolicy::BackgroundPreferred => options.delivery_strategy.candidates.clone(),
+  }
 }
 
 fn foreground_prepare_options(settle: Duration) -> PrepareForInputOptions {
@@ -1231,6 +1361,58 @@ mod no_steal_tests {
       }),
       Err(DriverError::InvalidInput { .. })
     ));
+  }
+
+  #[test]
+  fn input_api_exposes_explicit_global_hid_scroll_method() {
+    if false {
+      let session = MacosDriverSession { _private: () };
+      let _ = session.input().scroll_global_hid(
+        Point::new(20.0, 30.0),
+        Scroll::new(0.0, -120.0),
+        Duration::ZERO,
+      );
+    }
+  }
+
+  #[test]
+  fn scroll_attempt_candidates_background_preferred_keep_background_before_foreground() {
+    let candidates = scroll_attempt_candidates(&ScrollOptions::default());
+
+    assert_eq!(
+      candidates,
+      vec![
+        ScrollDeliveryCandidate::AxScroll,
+        ScrollDeliveryCandidate::WindowTargetedWheel,
+        ScrollDeliveryCandidate::ForegroundHid,
+      ]
+    );
+  }
+
+  #[test]
+  fn scroll_attempt_candidates_foreground_preferred_uses_foreground_hid_first() {
+    let candidates = scroll_attempt_candidates(&ScrollOptions {
+      policy: InputPolicy::ForegroundPreferred,
+      ..ScrollOptions::default()
+    });
+
+    assert_eq!(candidates, vec![ScrollDeliveryCandidate::ForegroundHid]);
+  }
+
+  #[test]
+  fn scroll_attempt_candidates_background_only_drops_foreground_hid() {
+    let candidates = scroll_attempt_candidates(&ScrollOptions {
+      policy: InputPolicy::BackgroundOnly,
+      ..ScrollOptions::default()
+    });
+
+    assert_eq!(
+      candidates,
+      vec![
+        ScrollDeliveryCandidate::AxScroll,
+        ScrollDeliveryCandidate::WindowTargetedWheel,
+      ]
+    );
   }
 
   #[test]

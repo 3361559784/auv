@@ -182,9 +182,10 @@ impl Scroll {
   }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ScrollOptions {
   pub policy: InputPolicy,
+  pub delivery_strategy: ScrollDeliveryStrategy,
   pub settle: Duration,
 }
 
@@ -192,7 +193,42 @@ impl Default for ScrollOptions {
   fn default() -> Self {
     Self {
       policy: InputPolicy::BackgroundPreferred,
+      delivery_strategy: ScrollDeliveryStrategy::default(),
       settle: Duration::ZERO,
+    }
+  }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScrollDeliveryCandidate {
+  AxScroll,
+  WindowTargetedWheel,
+  WindowTargetedKeyboardScroll,
+  ForegroundHid,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScrollDeliveryStrategy {
+  pub candidates: Vec<ScrollDeliveryCandidate>,
+}
+
+impl Default for ScrollDeliveryStrategy {
+  fn default() -> Self {
+    Self {
+      candidates: vec![
+        ScrollDeliveryCandidate::AxScroll,
+        ScrollDeliveryCandidate::WindowTargetedWheel,
+        ScrollDeliveryCandidate::ForegroundHid,
+      ],
+    }
+  }
+}
+
+impl ScrollDeliveryStrategy {
+  pub fn foreground_hid() -> Self {
+    Self {
+      candidates: vec![ScrollDeliveryCandidate::ForegroundHid],
     }
   }
 }
@@ -204,9 +240,12 @@ pub enum InputDeliveryPath {
   AxPress,
   AxFocus,
   AxSetValue,
+  AxScroll,
   AxSelectedText,
   WindowTargetedMouse,
+  WindowTargetedWheel,
   WindowTargetedKeyboard,
+  WindowTargetedKeyboardScroll,
   ClipboardPaste,
   ForegroundSystemEvents,
   Unsupported,
@@ -313,11 +352,103 @@ mod tests {
   }
 
   #[test]
+  fn scroll_options_serde_uses_public_snake_case_contract() {
+    let options = ScrollOptions {
+      policy: InputPolicy::BackgroundPreferred,
+      delivery_strategy: ScrollDeliveryStrategy {
+        candidates: vec![
+          ScrollDeliveryCandidate::AxScroll,
+          ScrollDeliveryCandidate::WindowTargetedWheel,
+          ScrollDeliveryCandidate::ForegroundHid,
+        ],
+      },
+      settle: Duration::from_millis(25),
+    };
+
+    let encoded = serde_json::to_value(&options).expect("serialize scroll options");
+
+    assert_eq!(
+      encoded,
+      serde_json::json!({
+        "policy": "background_preferred",
+        "delivery_strategy": {
+          "candidates": [
+            "ax_scroll",
+            "window_targeted_wheel",
+            "foreground_hid",
+          ],
+        },
+        "settle": {
+          "secs": 0,
+          "nanos": 25_000_000,
+        },
+      })
+    );
+    let decoded: ScrollOptions =
+      serde_json::from_value(encoded).expect("deserialize scroll options");
+    assert_eq!(decoded, options);
+  }
+
+  #[test]
+  fn scroll_delivery_path_variants_serde_as_snake_case() {
+    assert_eq!(
+      serde_json::to_string(&InputDeliveryPath::AxScroll).expect("serialize ax scroll"),
+      "\"ax_scroll\""
+    );
+    assert_eq!(
+      serde_json::to_string(&InputDeliveryPath::WindowTargetedWheel)
+        .expect("serialize window wheel"),
+      "\"window_targeted_wheel\""
+    );
+    assert_eq!(
+      serde_json::to_string(&InputDeliveryPath::WindowTargetedKeyboardScroll)
+        .expect("serialize keyboard scroll"),
+      "\"window_targeted_keyboard_scroll\""
+    );
+  }
+
+  #[test]
   fn scroll_options_default_to_background_preferred() {
     let options = ScrollOptions::default();
 
     assert_eq!(options.policy, InputPolicy::BackgroundPreferred);
     assert_eq!(options.settle, Duration::ZERO);
+  }
+
+  #[test]
+  fn scroll_delivery_strategy_defaults_to_background_first_without_keyboard() {
+    let strategy = ScrollDeliveryStrategy::default();
+
+    assert_eq!(
+      strategy.candidates,
+      vec![
+        ScrollDeliveryCandidate::AxScroll,
+        ScrollDeliveryCandidate::WindowTargetedWheel,
+        ScrollDeliveryCandidate::ForegroundHid,
+      ]
+    );
+  }
+
+  #[test]
+  fn scroll_options_default_include_delivery_strategy() {
+    let options = ScrollOptions::default();
+
+    assert_eq!(options.policy, InputPolicy::BackgroundPreferred);
+    assert_eq!(options.delivery_strategy, ScrollDeliveryStrategy::default());
+    assert_eq!(options.settle, Duration::ZERO);
+  }
+
+  #[test]
+  fn scroll_specific_delivery_paths_are_distinct_from_mouse_and_keyboard() {
+    assert_ne!(InputDeliveryPath::AxScroll, InputDeliveryPath::AxSetValue);
+    assert_ne!(
+      InputDeliveryPath::WindowTargetedWheel,
+      InputDeliveryPath::WindowTargetedMouse
+    );
+    assert_ne!(
+      InputDeliveryPath::WindowTargetedKeyboardScroll,
+      InputDeliveryPath::WindowTargetedKeyboard
+    );
   }
 
   #[test]

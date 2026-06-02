@@ -2,10 +2,12 @@
 
 pub mod cli;
 pub mod output;
+pub mod scroll;
 
 use std::fmt;
 use std::path::PathBuf;
 
+use crate::scroll::policies::detection_motion::{MotionDetectionPolicy, MotionEvidence};
 use auv_driver::vision::{TextRecognition, TextRecognitionOptions};
 // Framework view-parser IR types, utilities, and the `ViewObserver` trait
 // live in `auv-view` so other app crates (future QQ Music, etc.) can build
@@ -32,12 +34,17 @@ use auv_driver::capture::Capture;
 #[cfg(target_os = "macos")]
 use auv_driver::selector::{App, Window};
 #[cfg(target_os = "macos")]
-use auv_driver::{Driver, InputPolicy, Scroll, ScrollOptions, Size};
+use auv_driver::{Driver, InputPolicy, Scroll, ScrollOptions, Size, WindowPoint};
 #[cfg(target_os = "macos")]
 use auv_driver_macos::{MacosDriver, MacosDriverSession};
 
 pub const DEFAULT_APP_ID: &str = "com.netease.163music";
 pub const DEFAULT_ARTIFACT_DIR: &str = "/tmp/auv-netease-playlist-ls-artifacts";
+// TODO(netease-scroll-completion): this conservative default is only a
+// product-agnostic safety cap, not an account-size estimate or completion
+// policy. Full playlist enumeration should derive its budget from section
+// counts or stronger scroll-state evidence when that slice is owner-approved.
+pub const DEFAULT_MAX_SCROLLS: usize = 12;
 // NOTICE(netease-scroll-settle): NetEase sidebar scrolls settle quickly in
 // observed captures. Keep the default below generic desktop-action waits so
 // playlist listing remains interactive; raise via --scroll-settle-ms if OCR
@@ -80,7 +87,7 @@ impl Inputs {
     Self {
       app_id: DEFAULT_APP_ID.to_string(),
       artifact_dir: std::path::PathBuf::from(DEFAULT_ARTIFACT_DIR),
-      max_scrolls: 48,
+      max_scrolls: DEFAULT_MAX_SCROLLS,
       scroll_amount: 300.0,
       scroll_settle_ms: DEFAULT_SCROLL_SETTLE_MS,
       sidebar_region: None,
@@ -317,6 +324,8 @@ struct SidebarViewportObservation {
   /// storage. Pulling the root contract into this app crate now would invert
   /// the intended crate boundary.
   source_artifacts: Vec<String>,
+  incoming_scroll_delivery_path: Option<String>,
+  scroll_motion: Option<MotionEvidence>,
   viewport_fingerprint: String,
   evidence_nodes: Vec<ViewEvidenceNode>,
   candidates: Vec<SidebarViewportCandidate>,
@@ -436,6 +445,7 @@ pub struct InteractionEvent {
   pub to_observation: Option<usize>,
   pub viewport_fingerprint: Option<String>,
   pub scroll: Option<ScrollInteraction>,
+  pub motion: Option<MotionEvidence>,
   pub artifacts: Vec<String>,
   pub note: Option<String>,
 }
@@ -464,6 +474,8 @@ pub struct ScrollInteraction {
   pub direction: ScrollDirection,
   pub requested_delta: f64,
   pub policy: String,
+  pub delivery_path: Option<String>,
+  pub motion: Option<MotionEvidence>,
   pub settle_ms: u64,
   pub anchor: Option<ViewBounds>,
   pub detected_boundary: String,
@@ -719,7 +731,13 @@ pub fn run_live_scan(inputs: &Inputs) -> Result<PlaylistSidebarScan, String> {
       pending_artifacts: Vec::new(),
       scroll_amount: inputs.scroll_amount,
       scroll_settle_ms: inputs.scroll_settle_ms,
+      pending_scroll_delivery_path: None,
+      previous_sidebar_crop: None,
+      motion_policy: MotionDetectionPolicy::default(),
     };
+    // TODO(netease-scroll-top-seek): this shared top seek still relies on exact
+    // viewport fingerprints and max_scrolls. Move it to scroll motion/count
+    // evidence once the collection stop policy has a reliable completion model.
     let top_seek = scroll_to_top(&mut top_probe, inputs.max_scrolls);
     pre_scan_diagnostics.extend(top_seek.diagnostics);
     pre_scan_known_limits.extend(top_seek.known_limits);
@@ -795,6 +813,9 @@ pub fn run_live_scan(inputs: &Inputs) -> Result<PlaylistSidebarScan, String> {
     pending_artifacts: Vec::new(),
     scroll_amount: inputs.scroll_amount,
     scroll_settle_ms: inputs.scroll_settle_ms,
+    pending_scroll_delivery_path: None,
+    previous_sidebar_crop: None,
+    motion_policy: MotionDetectionPolicy::default(),
   };
   let mut scan = scan_sidebar_with_observer(
     &mut observer,
@@ -1001,6 +1022,8 @@ fn parse_sidebar_viewport(
       scroll_offset: None,
     },
     source_artifacts: Vec::new(),
+    incoming_scroll_delivery_path: None,
+    scroll_motion: None,
     viewport_fingerprint,
     evidence_nodes,
     candidates,
@@ -1322,6 +1345,9 @@ fn scan_sidebar_with_observer(
   if top_seek.boundary == BoundaryConfidence::Likely {
     apply_top_boundary(&mut scan, top_seek.boundary);
   }
+  if loop_outcome.stop_reason.as_deref() == Some("scroll_no_motion_after_input") {
+    apply_bottom_boundary(&mut scan, BoundaryConfidence::Likely);
+  }
   scan
 }
 
@@ -1342,6 +1368,7 @@ fn scan_with_collection_policy(
   let mut diagnostics = Vec::new();
   let mut known_limits = Vec::new();
   let mut previous_fingerprint: Option<String> = None;
+  let mut consecutive_no_motion_after_scroll = 0usize;
   let mut scrolls = 0;
   let mut stop_reason = None;
 
@@ -1361,6 +1388,13 @@ fn scan_with_collection_policy(
     previous_fingerprint = Some(fingerprint);
     let observation = policy.apply(observation);
     let reached_stop_landmark = policy.reached_stop_landmark();
+    if let Some(motion) = observation.scroll_motion.as_ref() {
+      if motion.no_motion {
+        consecutive_no_motion_after_scroll += 1;
+      } else {
+        consecutive_no_motion_after_scroll = 0;
+      }
+    }
     observations.push(observation);
 
     if reached_stop_landmark {
@@ -1368,8 +1402,22 @@ fn scan_with_collection_policy(
       break;
     }
 
+    // NOTICE(netease-scroll-stop): exact viewport fingerprints are kept as a
+    // backward-compatible loop-boundary signal, but they are no longer the only
+    // scroll stop detector. Motion evidence covers the real NetEase case where
+    // OCR text drifts enough that exact fingerprints do not repeat at bottom.
     if repeated_fingerprint {
       stop_reason = Some("repeated_viewport_fingerprint".to_string());
+      break;
+    }
+
+    // REVIEW(netease-scroll-motion): live NetEase testing on 2026-06-03 showed
+    // that motion detection was captured in JSON but did not stop the large
+    // playlist scan before the default max_scrolls cap. A better completion
+    // strategy likely needs section header counts and/or scroll bar state
+    // evidence instead of relying on crop motion alone.
+    if consecutive_no_motion_after_scroll >= 2 {
+      stop_reason = Some("scroll_no_motion_after_input".to_string());
       break;
     }
 
@@ -1498,6 +1546,7 @@ fn build_standalone_interaction_events(
       to_observation: None,
       viewport_fingerprint: Some(observation.viewport_fingerprint.clone()),
       scroll: None,
+      motion: observation.scroll_motion.clone(),
       artifacts: observation.source_artifacts.clone(),
       note: None,
     });
@@ -1522,10 +1571,15 @@ fn build_standalone_interaction_events(
           direction: ScrollDirection::Down,
           requested_delta: -scroll_amount,
           policy: "background_preferred".to_string(),
+          delivery_path: observations[index + 1]
+            .incoming_scroll_delivery_path
+            .clone(),
+          motion: observations[index + 1].scroll_motion.clone(),
           settle_ms: scroll_settle_ms,
           anchor: None,
           detected_boundary: "unknown".to_string(),
         }),
+        motion: observations[index + 1].scroll_motion.clone(),
         artifacts,
         note: Some(
           "standalone event; durable trace should use view.parse.scroll.<index> spans".to_string(),
@@ -1547,6 +1601,9 @@ fn build_standalone_interaction_events(
         .last()
         .map(|observation| observation.viewport_fingerprint.clone()),
       scroll: None,
+      motion: observations
+        .last()
+        .and_then(|observation| observation.scroll_motion.clone()),
       artifacts: observations
         .last()
         .map(|observation| observation.source_artifacts.clone())
@@ -1561,6 +1618,13 @@ fn apply_top_boundary(scan: &mut PlaylistSidebarScan, top: BoundaryConfidence) {
   scan.boundary.top = top;
   if let Some(scrollable) = scan.reconstruction.root.scrollable.as_mut() {
     scrollable.boundary.top = top;
+  }
+}
+
+fn apply_bottom_boundary(scan: &mut PlaylistSidebarScan, bottom: BoundaryConfidence) {
+  scan.boundary.bottom = bottom;
+  if let Some(scrollable) = scan.reconstruction.root.scrollable.as_mut() {
+    scrollable.boundary.bottom = bottom;
   }
 }
 
@@ -1595,6 +1659,9 @@ struct LiveSidebarObserver {
   pending_artifacts: Vec<std::thread::JoinHandle<Result<(), String>>>,
   scroll_amount: f64,
   scroll_settle_ms: u64,
+  pending_scroll_delivery_path: Option<String>,
+  previous_sidebar_crop: Option<RgbaImage>,
+  motion_policy: MotionDetectionPolicy,
 }
 
 #[cfg(target_os = "macos")]
@@ -1716,6 +1783,14 @@ impl ViewObserver for LiveSidebarObserver {
   ) -> Result<SidebarViewportObservation, ParserDiagnostic> {
     let (image, window_recognition, mut observation) =
       self.capture_observation(observation_index)?;
+    let sidebar_crop = crop_image(&image, self.sidebar_bounds);
+    let incoming_scroll_delivery_path = self.pending_scroll_delivery_path.take();
+    observation.scroll_motion = incoming_scroll_delivery_path
+      .as_ref()
+      .and(self.previous_sidebar_crop.as_ref())
+      .map(|previous| self.motion_policy.compare(previous, &sidebar_crop));
+    self.previous_sidebar_crop = Some(sidebar_crop);
+    observation.incoming_scroll_delivery_path = incoming_scroll_delivery_path;
     observation.source_artifacts = self.write_observation_artifacts(
       observation_index,
       image,
@@ -1751,28 +1826,17 @@ impl LiveSidebarObserver {
 
   fn scroll_by(&mut self, vertical_delta: f64) -> Result<(), ParserDiagnostic> {
     let anchor = self.scroll_anchor();
-    let screen_point = self
+    let result = self
       .session
       .window()
-      .to_screen_point(
+      .scroll(
         &self.window,
-        auv_driver::WindowPoint::new(anchor.x, anchor.y),
-      )
-      .map_err(|error| ParserDiagnostic {
-        code: "sidebar_scroll_point_failed".to_string(),
-        message: error.to_string(),
-        node_id: None,
-      })?;
-    let point = screen_point.point();
-    self
-      .session
-      .input()
-      .scroll_at(
-        point,
+        WindowPoint::new(anchor.x, anchor.y),
         Scroll::new(0.0, vertical_delta),
         ScrollOptions {
           policy: InputPolicy::BackgroundPreferred,
           settle: std::time::Duration::from_millis(self.scroll_settle_ms),
+          ..ScrollOptions::default()
         },
       )
       .map_err(|error| ParserDiagnostic {
@@ -1780,7 +1844,29 @@ impl LiveSidebarObserver {
         message: error.to_string(),
         node_id: None,
       })?;
+    self.pending_scroll_delivery_path = Some(delivery_path_label(result.selected_path).to_string());
     Ok(())
+  }
+}
+
+#[cfg(target_os = "macos")]
+fn delivery_path_label(path: auv_driver::InputDeliveryPath) -> &'static str {
+  match path {
+    auv_driver::InputDeliveryPath::Noop => "noop",
+    auv_driver::InputDeliveryPath::AxPress => "ax_press",
+    auv_driver::InputDeliveryPath::AxFocus => "ax_focus",
+    auv_driver::InputDeliveryPath::AxSetValue => "ax_set_value",
+    auv_driver::InputDeliveryPath::AxScroll => "ax_scroll",
+    auv_driver::InputDeliveryPath::AxSelectedText => "ax_selected_text",
+    auv_driver::InputDeliveryPath::WindowTargetedMouse => "window_targeted_mouse",
+    auv_driver::InputDeliveryPath::WindowTargetedWheel => "window_targeted_wheel",
+    auv_driver::InputDeliveryPath::WindowTargetedKeyboard => "window_targeted_keyboard",
+    auv_driver::InputDeliveryPath::WindowTargetedKeyboardScroll => {
+      "window_targeted_keyboard_scroll"
+    }
+    auv_driver::InputDeliveryPath::ClipboardPaste => "clipboard_paste",
+    auv_driver::InputDeliveryPath::ForegroundSystemEvents => "foreground_system_events",
+    auv_driver::InputDeliveryPath::Unsupported => "unsupported",
   }
 }
 
@@ -1794,6 +1880,27 @@ fn recognition_in_window_space(
     region.bounds.origin.y -= capture.bounds.origin.y;
   }
   recognition
+}
+
+#[cfg(target_os = "macos")]
+fn crop_image(image: &RgbaImage, bounds: ViewBounds) -> RgbaImage {
+  let x = bounds.x.max(0.0).floor() as u32;
+  let y = bounds.y.max(0.0).floor() as u32;
+  let right = (bounds.x + bounds.width).ceil().max(0.0) as u32;
+  let bottom = (bounds.y + bounds.height).ceil().max(0.0) as u32;
+  let right = right.min(image.width());
+  let bottom = bottom.min(image.height());
+  if x >= right || y >= bottom {
+    return RgbaImage::new(0, 0);
+  }
+
+  let mut crop = RgbaImage::new(right - x, bottom - y);
+  for crop_y in 0..crop.height() {
+    for crop_x in 0..crop.width() {
+      crop.put_pixel(crop_x, crop_y, *image.get_pixel(x + crop_x, y + crop_y));
+    }
+  }
+  crop
 }
 
 #[cfg(target_os = "macos")]
@@ -1933,6 +2040,7 @@ fn candidate_evidence(
 #[cfg(test)]
 mod tests {
   use super::*;
+  use crate::scroll::policies::detection_motion::MotionEvidence;
 
   #[test]
   fn parse_viewport_classifies_sections_and_playlist_items() {
@@ -2313,6 +2421,7 @@ mod tests {
       &fake_recognition(vec![("Jazz", 32.0, 42.0, 80.0, 20.0)]),
     );
     second.source_artifacts = vec!["obs-0001-window.png".to_string()];
+    second.incoming_scroll_delivery_path = Some("window_targeted_wheel".to_string());
     let mut observer = FakeSidebarObserver::new(vec![first, second]);
 
     let scan = scan_sidebar_with_observer(
@@ -2340,10 +2449,10 @@ mod tests {
             "obs-0000-window.png".to_string(),
             "obs-0001-window.png".to_string(),
           ]
-        && event
-          .scroll
-          .as_ref()
-          .is_some_and(|scroll| scroll.settle_ms == 250)
+        && event.scroll.as_ref().is_some_and(|scroll| {
+          scroll.settle_ms == 250
+            && scroll.delivery_path.as_deref() == Some("window_targeted_wheel")
+        })
     }));
   }
 
@@ -2538,6 +2647,79 @@ mod tests {
     assert_eq!(scan.window.id, Some("fake".to_string()));
     assert_eq!(scan.observations.len(), 3);
     assert_eq!(scan.boundary.bottom, BoundaryConfidence::Likely);
+    assert!(
+      scan
+        .interaction_events
+        .iter()
+        .any(|event| event.kind == InteractionEventKind::StopDecision
+          && event.note.as_deref() == Some("repeated_viewport_fingerprint"))
+    );
+  }
+
+  #[test]
+  fn scan_loop_stops_after_two_scrolls_with_no_motion_evidence() {
+    let mut first = parse_sidebar_viewport(
+      0,
+      ViewBounds::new(0.0, 0.0, 240.0, 400.0),
+      &fake_recognition(vec![("A", 32.0, 42.0, 80.0, 20.0)]),
+    );
+    first.viewport_fingerprint = "page-a".to_string();
+    let mut second = parse_sidebar_viewport(
+      1,
+      ViewBounds::new(0.0, 0.0, 240.0, 400.0),
+      &fake_recognition(vec![("B", 32.0, 42.0, 80.0, 20.0)]),
+    );
+    second.viewport_fingerprint = "page-b".to_string();
+    second.scroll_motion = Some(MotionEvidence {
+      estimated_shift_y: 0,
+      normalized_diff: 0.0,
+      no_motion: true,
+    });
+    let mut third = parse_sidebar_viewport(
+      2,
+      ViewBounds::new(0.0, 0.0, 240.0, 400.0),
+      &fake_recognition(vec![("C", 32.0, 42.0, 80.0, 20.0)]),
+    );
+    third.viewport_fingerprint = "page-c".to_string();
+    third.scroll_motion = Some(MotionEvidence {
+      estimated_shift_y: 0,
+      normalized_diff: 0.0,
+      no_motion: true,
+    });
+    let mut fourth = parse_sidebar_viewport(
+      3,
+      ViewBounds::new(0.0, 0.0, 240.0, 400.0),
+      &fake_recognition(vec![("D", 32.0, 42.0, 80.0, 20.0)]),
+    );
+    fourth.viewport_fingerprint = "page-d".to_string();
+    let mut observer = FakeSidebarObserver::new(vec![first, second, third, fourth]);
+
+    let scan = scan_sidebar_with_observer(
+      &mut observer,
+      ScanOptions {
+        max_pages: 10,
+        max_scrolls: 10,
+      },
+      PlaylistCategory::All,
+      300.0,
+      DEFAULT_SCROLL_SETTLE_MS,
+    );
+
+    assert_eq!(scan.observations.len(), 3);
+    assert_eq!(scan.boundary.bottom, BoundaryConfidence::Likely);
+    assert!(
+      scan
+        .interaction_events
+        .iter()
+        .any(|event| event.kind == InteractionEventKind::StopDecision
+          && event.note.as_deref() == Some("scroll_no_motion_after_input"))
+    );
+    assert!(
+      !scan
+        .known_limits
+        .iter()
+        .any(|limit| limit.contains("max_scrolls"))
+    );
   }
 
   #[test]

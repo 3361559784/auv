@@ -103,7 +103,7 @@ pub(crate) fn scroll_point(call: &DriverCall) -> AuvResult<DriverResponse> {
   if input_policy == auv_driver::InputPolicy::ForegroundPreferred {
     activate_app_if_needed(&app_identifier(call).unwrap_or_default())?;
   }
-  let scroll_outcome = crate::driver::macos::typed::session::scroll_point_bridge(
+  let scroll_outcome = crate::driver::macos::typed::session::scroll_global_hid_bridge(
     x,
     y,
     delta_x,

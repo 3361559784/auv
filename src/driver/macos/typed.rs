@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use auv_driver::{
   Driver as TypedDriver, InputPolicy, PasteTextOptions, Point, Scroll, ScrollOptions, TextSubmit,
+  WindowPoint,
 };
 
 use crate::model::AuvResult;
@@ -46,10 +47,10 @@ pub(crate) mod session {
   }
 
   impl ScrollPointBridgeOutcome {
-    pub(crate) fn used_typed_session(policy: InputPolicy) -> Self {
+    pub(crate) fn from_result(policy: InputPolicy, result: &auv_driver::InputActionResult) -> Self {
       Self {
         input_bridge: "typed-session",
-        selected_path: "foreground_system_events",
+        selected_path: selected_path_name(result.selected_path),
         input_policy: input_policy_name(policy),
       }
     }
@@ -102,7 +103,7 @@ pub(crate) mod session {
     Ok(PasteTextBridgeOutcome::UsedTypedSession)
   }
 
-  pub(crate) fn scroll_point_bridge(
+  pub(crate) fn scroll_global_hid_bridge(
     x: f64,
     y: f64,
     delta_x: f64,
@@ -114,18 +115,44 @@ pub(crate) mod session {
     let session = driver
       .open_local()
       .map_err(|error| format!("failed to open typed macOS driver session: {error}"))?;
-    session
+    let result = session
       .input()
-      .scroll_at(
+      .scroll_global_hid(
         Point::new(x, y),
+        Scroll::new(delta_x, delta_y),
+        Duration::from_millis(settle_ms),
+      )
+      .map_err(|error| format!("typed macOS global scroll adapter failed: {error}"))?;
+    Ok(ScrollPointBridgeOutcome::from_result(policy, &result))
+  }
+
+  pub(crate) fn scroll_window_point_bridge(
+    window: auv_driver::Window,
+    window_x: f64,
+    window_y: f64,
+    delta_x: f64,
+    delta_y: f64,
+    policy: InputPolicy,
+    settle_ms: u64,
+  ) -> AuvResult<ScrollPointBridgeOutcome> {
+    let driver = auv_driver_macos::MacosDriver::new();
+    let session = driver
+      .open_local()
+      .map_err(|error| format!("failed to open typed macOS driver session: {error}"))?;
+    let result = session
+      .window()
+      .scroll(
+        &window,
+        WindowPoint::new(window_x, window_y),
         Scroll::new(delta_x, delta_y),
         ScrollOptions {
           policy,
           settle: Duration::from_millis(settle_ms),
+          ..ScrollOptions::default()
         },
       )
-      .map_err(|error| format!("typed macOS scroll_at adapter failed: {error}"))?;
-    Ok(ScrollPointBridgeOutcome::used_typed_session(policy))
+      .map_err(|error| format!("typed macOS window scroll adapter failed: {error}"))?;
+    Ok(ScrollPointBridgeOutcome::from_result(policy, &result))
   }
 
   pub(crate) fn input_policy_name(policy: InputPolicy) -> &'static str {
@@ -133,6 +160,26 @@ pub(crate) mod session {
       InputPolicy::BackgroundOnly => "background_only",
       InputPolicy::BackgroundPreferred => "background_preferred",
       InputPolicy::ForegroundPreferred => "foreground_preferred",
+    }
+  }
+
+  pub(crate) fn selected_path_name(path: auv_driver::InputDeliveryPath) -> &'static str {
+    match path {
+      auv_driver::InputDeliveryPath::Noop => "noop",
+      auv_driver::InputDeliveryPath::AxPress => "ax_press",
+      auv_driver::InputDeliveryPath::AxFocus => "ax_focus",
+      auv_driver::InputDeliveryPath::AxSetValue => "ax_set_value",
+      auv_driver::InputDeliveryPath::AxScroll => "ax_scroll",
+      auv_driver::InputDeliveryPath::AxSelectedText => "ax_selected_text",
+      auv_driver::InputDeliveryPath::WindowTargetedMouse => "window_targeted_mouse",
+      auv_driver::InputDeliveryPath::WindowTargetedWheel => "window_targeted_wheel",
+      auv_driver::InputDeliveryPath::WindowTargetedKeyboard => "window_targeted_keyboard",
+      auv_driver::InputDeliveryPath::WindowTargetedKeyboardScroll => {
+        "window_targeted_keyboard_scroll"
+      }
+      auv_driver::InputDeliveryPath::ClipboardPaste => "clipboard_paste",
+      auv_driver::InputDeliveryPath::ForegroundSystemEvents => "foreground_system_events",
+      auv_driver::InputDeliveryPath::Unsupported => "unsupported",
     }
   }
 
@@ -158,12 +205,30 @@ pub(crate) mod session {
     }
 
     #[test]
-    fn scroll_point_bridge_outcome_exposes_signal_values() {
-      let outcome = ScrollPointBridgeOutcome::used_typed_session(InputPolicy::ForegroundPreferred);
+    fn scroll_global_hid_bridge_outcome_exposes_signal_values() {
+      let result = auv_driver::InputActionResult::single_success(
+        auv_driver::InputDeliveryPath::ForegroundSystemEvents,
+      );
+      let outcome =
+        ScrollPointBridgeOutcome::from_result(InputPolicy::ForegroundPreferred, &result);
 
       assert_eq!(outcome.input_bridge, "typed-session");
       assert_eq!(outcome.selected_path, "foreground_system_events");
       assert_eq!(outcome.input_policy, "foreground_preferred");
+    }
+
+    #[test]
+    fn scroll_bridge_outcome_uses_actual_selected_path() {
+      let result = auv_driver::InputActionResult::single_success(
+        auv_driver::InputDeliveryPath::WindowTargetedWheel,
+      );
+
+      let outcome =
+        ScrollPointBridgeOutcome::from_result(InputPolicy::BackgroundPreferred, &result);
+
+      assert_eq!(outcome.input_bridge, "typed-session");
+      assert_eq!(outcome.selected_path, "window_targeted_wheel");
+      assert_eq!(outcome.input_policy, "background_preferred");
     }
   }
 }

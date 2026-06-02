@@ -1669,7 +1669,7 @@ impl LiveSidebarObserver {
   fn capture_observation(
     &mut self,
     observation_index: usize,
-  ) -> Result<(RgbaImage, TextRecognition, SidebarViewportObservation), ParserDiagnostic> {
+  ) -> Result<(RgbaImage, f64, TextRecognition, SidebarViewportObservation), ParserDiagnostic> {
     let capture = self
       .session
       .window()
@@ -1697,7 +1697,12 @@ impl LiveSidebarObserver {
     let observation =
       parse_sidebar_viewport(observation_index, self.sidebar_bounds, &window_recognition);
 
-    Ok((capture.image.clone(), window_recognition, observation))
+    Ok((
+      capture.image.clone(),
+      capture.scale_factor,
+      window_recognition,
+      observation,
+    ))
   }
 
   fn write_observation_artifacts(
@@ -1781,9 +1786,9 @@ impl ViewObserver for LiveSidebarObserver {
     &mut self,
     observation_index: usize,
   ) -> Result<SidebarViewportObservation, ParserDiagnostic> {
-    let (image, window_recognition, mut observation) =
+    let (image, scale_factor, window_recognition, mut observation) =
       self.capture_observation(observation_index)?;
-    let sidebar_crop = crop_image(&image, self.sidebar_bounds);
+    let sidebar_crop = crop_image(&image, self.sidebar_bounds, scale_factor);
     let incoming_scroll_delivery_path = self.pending_scroll_delivery_path.take();
     observation.scroll_motion = incoming_scroll_delivery_path
       .as_ref()
@@ -1802,7 +1807,7 @@ impl ViewObserver for LiveSidebarObserver {
   }
 
   fn observe_probe(&mut self) -> Result<SidebarViewportObservation, ParserDiagnostic> {
-    let (_, _, observation) = self.capture_observation(0)?;
+    let (_, _, _, observation) = self.capture_observation(0)?;
     Ok(observation)
   }
 
@@ -1883,11 +1888,16 @@ fn recognition_in_window_space(
 }
 
 #[cfg(target_os = "macos")]
-fn crop_image(image: &RgbaImage, bounds: ViewBounds) -> RgbaImage {
-  let x = bounds.x.max(0.0).floor() as u32;
-  let y = bounds.y.max(0.0).floor() as u32;
-  let right = (bounds.x + bounds.width).ceil().max(0.0) as u32;
-  let bottom = (bounds.y + bounds.height).ceil().max(0.0) as u32;
+fn crop_image(image: &RgbaImage, bounds: ViewBounds, scale_factor: f64) -> RgbaImage {
+  let scale = if scale_factor.is_finite() && scale_factor > 0.0 {
+    scale_factor
+  } else {
+    1.0
+  };
+  let x = (bounds.x * scale).max(0.0).floor() as u32;
+  let y = (bounds.y * scale).max(0.0).floor() as u32;
+  let right = ((bounds.x + bounds.width) * scale).ceil().max(0.0) as u32;
+  let bottom = ((bounds.y + bounds.height) * scale).ceil().max(0.0) as u32;
   let right = right.min(image.width());
   let bottom = bottom.min(image.height());
   if x >= right || y >= bottom {
@@ -2720,6 +2730,23 @@ mod tests {
         .iter()
         .any(|limit| limit.contains("max_scrolls"))
     );
+  }
+
+  #[test]
+  fn crop_image_projects_logical_sidebar_bounds_into_capture_pixels() {
+    let mut image = RgbaImage::new(16, 16);
+    for y in 0..16 {
+      for x in 0..16 {
+        image.put_pixel(x, y, Rgba([x as u8, y as u8, 0, 255]));
+      }
+    }
+
+    let cropped = crop_image(&image, ViewBounds::new(2.0, 3.0, 4.0, 5.0), 2.0);
+
+    assert_eq!(cropped.width(), 8);
+    assert_eq!(cropped.height(), 10);
+    assert_eq!(cropped.get_pixel(0, 0), &Rgba([4, 6, 0, 255]));
+    assert_eq!(cropped.get_pixel(7, 9), &Rgba([11, 15, 0, 255]));
   }
 
   #[test]

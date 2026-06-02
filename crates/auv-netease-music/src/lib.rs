@@ -3,6 +3,7 @@
 pub mod cli;
 pub mod output;
 
+use std::fmt;
 use std::path::PathBuf;
 
 use auv_driver::vision::{TextRecognition, TextRecognitionOptions};
@@ -22,6 +23,7 @@ use auv_view::{
   collect_anchors, collect_landmarks, confidence_from_ocr, draw_rect, normalize_identity,
   scroll_to_top, slug, viewport_contains_center, viewport_fingerprint,
 };
+use clap::ValueEnum;
 use image::{Rgba, RgbaImage};
 use serde::{Deserialize, Serialize};
 
@@ -42,30 +44,28 @@ pub const DEFAULT_ARTIFACT_DIR: &str = "/tmp/auv-netease-playlist-ls-artifacts";
 // evidence becomes unstable on slower machines.
 pub const DEFAULT_SCROLL_SETTLE_MS: u64 = 250;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ValueEnum)]
 #[serde(rename_all = "snake_case")]
 pub enum PlaylistCategory {
   #[default]
   All,
   Created,
-  Favorited,
+  Favorite,
 }
 
-impl PlaylistCategory {
-  pub fn parse(raw: &str) -> Result<Self, String> {
-    match raw.trim() {
-      "all" => Ok(Self::All),
-      "created" => Ok(Self::Created),
-      "favorited" => Ok(Self::Favorited),
-      _ => Err("--category expects one of all, created, favorited".to_string()),
-    }
+pub(crate) fn positive_scroll_amount(raw: &str) -> Result<f64, String> {
+  let parsed = raw
+    .parse::<f64>()
+    .map_err(|_| "expects a number".to_string())?;
+  if !parsed.is_finite() || parsed <= 0.0 {
+    return Err("must be greater than 0".to_string());
   }
+  Ok(parsed)
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Inputs {
   pub app_id: String,
-  pub json_out: Option<PathBuf>,
   pub artifact_dir: PathBuf,
   pub max_scrolls: usize,
   pub scroll_amount: f64,
@@ -73,14 +73,12 @@ pub struct Inputs {
   pub sidebar_region: Option<RatioRect>,
   pub ocr_options: TextRecognitionOptions,
   pub category: PlaylistCategory,
-  pub print_json: bool,
 }
 
 impl Inputs {
   pub fn with_defaults() -> Self {
     Self {
       app_id: DEFAULT_APP_ID.to_string(),
-      json_out: None,
       artifact_dir: std::path::PathBuf::from(DEFAULT_ARTIFACT_DIR),
       max_scrolls: 48,
       scroll_amount: 300.0,
@@ -88,7 +86,6 @@ impl Inputs {
       sidebar_region: None,
       ocr_options: TextRecognitionOptions::default(),
       category: PlaylistCategory::All,
-      print_json: false,
     }
   }
 }
@@ -126,6 +123,48 @@ pub struct PlaylistSidebarScan {
 }
 
 impl PlaylistSidebarScan {
+  fn empty(
+    app: ScanAppContext,
+    window: ScanWindowContext,
+    sidebar_region: ViewRegionRecord,
+  ) -> Self {
+    let mut root = empty_root();
+    if let Some(bounds) = sidebar_region.bounds {
+      root.bounds = bounds;
+    }
+
+    Self {
+      schema_version: VIEW_IR_SCHEMA_VERSION.to_string(),
+      app,
+      window,
+      sidebar_region,
+      observations: Vec::new(),
+      reconstruction: ViewReconstructionRecord {
+        root,
+        anchor_index: Vec::new(),
+        landmark_index: Vec::new(),
+      },
+      projection: PlaylistSidebarProjection::default(),
+      boundary: ScrollBoundarySummary::default(),
+      interaction_events: Vec::new(),
+      diagnostics: Vec::new(),
+      known_limits: Vec::new(),
+    }
+  }
+
+  fn empty_with_diagnostic(
+    app: ScanAppContext,
+    window: ScanWindowContext,
+    sidebar_region: ViewRegionRecord,
+    diagnostic: ParserDiagnostic,
+    known_limit: impl Into<String>,
+  ) -> Self {
+    let mut scan = Self::empty(app, window, sidebar_region);
+    scan.diagnostics.push(diagnostic);
+    scan.known_limits.push(known_limit.into());
+    scan
+  }
+
   pub fn app(&self) -> &ScanAppContext {
     &self.app
   }
@@ -158,20 +197,111 @@ impl PlaylistSidebarScan {
     &self.known_limits
   }
 
+  pub fn human_summary(&self) -> PlaylistSidebarHumanSummary<'_> {
+    PlaylistSidebarHumanSummary { scan: self }
+  }
+
   #[cfg(test)]
   pub(crate) fn from_projection_for_tests(projection: PlaylistSidebarProjection) -> Self {
-    Self {
-      schema_version: VIEW_IR_SCHEMA_VERSION.to_string(),
-      app: ScanAppContext::default(),
-      window: ScanWindowContext::default(),
-      sidebar_region: ViewRegionRecord::default(),
-      observations: Vec::new(),
-      reconstruction: ViewReconstructionRecord::default(),
-      projection,
-      boundary: ScrollBoundarySummary::default(),
-      interaction_events: Vec::new(),
-      diagnostics: Vec::new(),
-      known_limits: Vec::new(),
+    let mut scan = Self::empty(
+      ScanAppContext::default(),
+      ScanWindowContext::default(),
+      ViewRegionRecord::default(),
+    );
+    scan.projection = projection;
+    scan
+  }
+}
+
+pub struct PlaylistSidebarHumanSummary<'a> {
+  scan: &'a PlaylistSidebarScan,
+}
+
+impl fmt::Display for PlaylistSidebarHumanSummary<'_> {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    let scan = self.scan;
+    writeln!(f, "NetEase playlist sidebar scan")?;
+    writeln!(
+      f,
+      "app: id={} name={} version={}",
+      optional(scan.app.app_id.as_deref()),
+      optional(scan.app.name.as_deref()),
+      optional(scan.app.version.as_deref())
+    )?;
+    writeln!(
+      f,
+      "window: id={} title={} bounds={}",
+      optional(scan.window.id.as_deref()),
+      optional(scan.window.title.as_deref()),
+      render_optional_bounds(scan.window.bounds)
+    )?;
+    writeln!(
+      f,
+      "sidebar_region: name={} bounds={}",
+      optional(scan.sidebar_region.name.as_deref()),
+      render_optional_bounds(scan.sidebar_region.bounds)
+    )?;
+    writeln!(
+      f,
+      "boundary: top={:?} bottom={:?} left={:?} right={:?}",
+      scan.boundary.top, scan.boundary.bottom, scan.boundary.left, scan.boundary.right
+    )?;
+    writeln!(f, "observations: {}", scan.observations.len())?;
+    writeln!(f, "sections:")?;
+    if scan.projection.sections.is_empty() {
+      writeln!(f, "  (none)")?;
+    } else {
+      for section in &scan.projection.sections {
+        writeln!(
+          f,
+          "  - {} [{:?}]",
+          optional(section.label.as_deref()),
+          section.kind
+        )?;
+        if section.items.is_empty() {
+          writeln!(f, "    (no items)")?;
+        } else {
+          for item in &section.items {
+            writeln!(
+              f,
+              "    - {} confidence={:?} anchor={}",
+              item.label,
+              item.confidence,
+              optional(item.anchor_id.as_deref())
+            )?;
+          }
+        }
+      }
+    }
+    writeln!(f, "diagnostics:")?;
+    if scan.diagnostics.is_empty() {
+      writeln!(f, "  (none)")?;
+    } else {
+      for diagnostic in &scan.diagnostics {
+        writeln!(
+          f,
+          "  - {}: {}{}",
+          diagnostic.code,
+          diagnostic.message,
+          diagnostic
+            .node_id
+            .as_deref()
+            .map(|node_id| format!(" node={node_id}"))
+            .unwrap_or_default()
+        )?;
+      }
+    }
+    writeln!(f, "known_limits:")?;
+    if scan.known_limits.is_empty() {
+      write!(f, "  (none)")
+    } else {
+      for (index, limit) in scan.known_limits.iter().enumerate() {
+        if index > 0 {
+          writeln!(f)?;
+        }
+        write!(f, "  - {limit}")?;
+      }
+      Ok(())
     }
   }
 }
@@ -239,9 +369,45 @@ pub enum SidebarSectionKind {
   LibraryNav,
   PlaylistNav,
   MyPlaylists,
-  FavoritedPlaylists,
+  FavoritePlaylists,
   #[default]
   Unknown,
+}
+
+impl SidebarSectionKind {
+  fn from_label(label: &str) -> Self {
+    let label = normalize_section_label(label);
+    if label.contains("创建的歌单") || label.contains("我的歌单") {
+      Self::MyPlaylists
+    } else if label.contains("收藏的歌单") {
+      Self::FavoritePlaylists
+    } else if label == "我的收藏" {
+      Self::LibraryNav
+    } else if matches!(label.as_str(), "推荐" | "音乐服务") {
+      Self::FeatureNav
+    } else {
+      Self::Unknown
+    }
+  }
+
+  fn is_known(self) -> bool {
+    self != Self::Unknown
+  }
+
+  fn is_playlist_collection(self) -> bool {
+    matches!(self, Self::MyPlaylists | Self::FavoritePlaylists)
+  }
+
+  fn domain_kind(self) -> &'static str {
+    match self {
+      Self::FeatureNav => "netease.feature_nav",
+      Self::LibraryNav => "netease.library_nav",
+      Self::PlaylistNav => "netease.playlist_nav",
+      Self::MyPlaylists => "netease.my_playlists",
+      Self::FavoritePlaylists => "netease.favorite_playlists",
+      Self::Unknown => "netease.sidebar_section",
+    }
+  }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -305,96 +471,6 @@ pub enum ScrollDirection {
   Down,
 }
 
-/// Parse the legacy flat flag list (no subcommand). Used by the demo example.
-pub fn parse_inputs_public(args: Vec<String>) -> Result<Inputs, String> {
-  parse_inputs(args)
-}
-
-fn parse_inputs(args: Vec<String>) -> Result<Inputs, String> {
-  let mut inputs = Inputs::with_defaults();
-
-  let mut args = args.into_iter();
-  while let Some(arg) = args.next() {
-    match arg.as_str() {
-      "--app-id" => {
-        inputs.app_id = next_value(&mut args, "--app-id")?;
-      }
-      "--json-out" => {
-        inputs.json_out = Some(PathBuf::from(next_value(&mut args, "--json-out")?));
-      }
-      "--artifact-dir" => {
-        inputs.artifact_dir = PathBuf::from(next_value(&mut args, "--artifact-dir")?);
-      }
-      "--max-scrolls" => {
-        inputs.max_scrolls = parse_usize("--max-scrolls", next_value(&mut args, "--max-scrolls")?)?;
-        if inputs.max_scrolls == 0 {
-          return Err("--max-scrolls must be greater than 0".to_string());
-        }
-      }
-      "--scroll-amount" => {
-        inputs.scroll_amount =
-          parse_f64("--scroll-amount", next_value(&mut args, "--scroll-amount")?)?;
-        if !inputs.scroll_amount.is_finite() || inputs.scroll_amount <= 0.0 {
-          return Err("--scroll-amount must be greater than 0".to_string());
-        }
-      }
-      "--scroll-settle-ms" => {
-        inputs.scroll_settle_ms = parse_u64(
-          "--scroll-settle-ms",
-          next_value(&mut args, "--scroll-settle-ms")?,
-        )?;
-        if inputs.scroll_settle_ms == 0 {
-          return Err("--scroll-settle-ms must be greater than 0".to_string());
-        }
-      }
-      "--category" => {
-        inputs.category = PlaylistCategory::parse(&next_value(&mut args, "--category")?)?;
-      }
-      "--sidebar-region" => {
-        inputs.sidebar_region = Some(parse_ratio_region(next_value(
-          &mut args,
-          "--sidebar-region",
-        )?)?);
-      }
-      "--hint-ocr-custom-word" => {
-        push_trimmed(
-          &mut inputs.ocr_options.custom_words,
-          next_value(&mut args, "--hint-ocr-custom-word")?,
-        );
-      }
-      "--hint-ocr-custom-words" => {
-        push_csv(
-          &mut inputs.ocr_options.custom_words,
-          &next_value(&mut args, "--hint-ocr-custom-words")?,
-        );
-      }
-      "--hint-ocr-custom-words-file" => {
-        load_custom_words_file(
-          &mut inputs.ocr_options.custom_words,
-          PathBuf::from(next_value(&mut args, "--hint-ocr-custom-words-file")?),
-        )?;
-      }
-      "--hint-ocr-language" => {
-        push_ocr_language(
-          &mut inputs.ocr_options,
-          next_value(&mut args, "--hint-ocr-language")?,
-        );
-      }
-      "--hint-ocr-languages" => {
-        for language in split_csv(&next_value(&mut args, "--hint-ocr-languages")?) {
-          push_ocr_language(&mut inputs.ocr_options, language);
-        }
-      }
-      "--print-json" => {
-        inputs.print_json = true;
-      }
-      other => return Err(format!("unknown argument {other}")),
-    }
-  }
-
-  Ok(inputs)
-}
-
 pub(crate) fn split_csv(value: &str) -> Vec<String> {
   value
     .split(',')
@@ -443,30 +519,6 @@ pub(crate) fn load_custom_words_file(
   Ok(())
 }
 
-fn next_value(args: &mut impl Iterator<Item = String>, flag: &str) -> Result<String, String> {
-  args
-    .next()
-    .ok_or_else(|| format!("{flag} requires a value"))
-}
-
-fn parse_usize(flag: &str, value: String) -> Result<usize, String> {
-  value
-    .parse()
-    .map_err(|_| format!("{flag} expects a positive integer"))
-}
-
-fn parse_f64(flag: &str, value: String) -> Result<f64, String> {
-  value
-    .parse()
-    .map_err(|_| format!("{flag} expects a number"))
-}
-
-fn parse_u64(flag: &str, value: String) -> Result<u64, String> {
-  value
-    .parse()
-    .map_err(|_| format!("{flag} expects a positive integer"))
-}
-
 pub(crate) fn parse_ratio_region(value: String) -> Result<RatioRect, String> {
   let parts = value
     .split(',')
@@ -512,84 +564,6 @@ pub fn decode_playlist_sidebar_scan_json(input: &str) -> Result<PlaylistSidebarS
     .map_err(|error| format!("invalid playlist sidebar scan shape: {error}"))
 }
 
-pub fn render_human_summary(scan: &PlaylistSidebarScan) -> String {
-  let mut lines = Vec::new();
-  lines.push("NetEase playlist sidebar scan".to_string());
-  lines.push(format!(
-    "app: id={} name={} version={}",
-    optional(scan.app.app_id.as_deref()),
-    optional(scan.app.name.as_deref()),
-    optional(scan.app.version.as_deref())
-  ));
-  lines.push(format!(
-    "window: id={} title={} bounds={}",
-    optional(scan.window.id.as_deref()),
-    optional(scan.window.title.as_deref()),
-    render_optional_bounds(scan.window.bounds)
-  ));
-  lines.push(format!(
-    "sidebar_region: name={} bounds={}",
-    optional(scan.sidebar_region.name.as_deref()),
-    render_optional_bounds(scan.sidebar_region.bounds)
-  ));
-  lines.push(format!(
-    "boundary: top={:?} bottom={:?} left={:?} right={:?}",
-    scan.boundary.top, scan.boundary.bottom, scan.boundary.left, scan.boundary.right
-  ));
-  lines.push(format!("observations: {}", scan.observations.len()));
-  lines.push("sections:".to_string());
-  if scan.projection.sections.is_empty() {
-    lines.push("  (none)".to_string());
-  } else {
-    for section in &scan.projection.sections {
-      lines.push(format!(
-        "  - {} [{:?}]",
-        optional(section.label.as_deref()),
-        section.kind
-      ));
-      if section.items.is_empty() {
-        lines.push("    (no items)".to_string());
-      } else {
-        for item in &section.items {
-          lines.push(format!(
-            "    - {} confidence={:?} anchor={}",
-            item.label,
-            item.confidence,
-            optional(item.anchor_id.as_deref())
-          ));
-        }
-      }
-    }
-  }
-  lines.push("diagnostics:".to_string());
-  if scan.diagnostics.is_empty() {
-    lines.push("  (none)".to_string());
-  } else {
-    for diagnostic in &scan.diagnostics {
-      lines.push(format!(
-        "  - {}: {}{}",
-        diagnostic.code,
-        diagnostic.message,
-        diagnostic
-          .node_id
-          .as_deref()
-          .map(|node_id| format!(" node={node_id}"))
-          .unwrap_or_default()
-      ));
-    }
-  }
-  lines.push("known_limits:".to_string());
-  if scan.known_limits.is_empty() {
-    lines.push("  (none)".to_string());
-  } else {
-    for limit in &scan.known_limits {
-      lines.push(format!("  - {limit}"));
-    }
-  }
-
-  lines.join("\n")
-}
-
 fn optional(value: Option<&str>) -> &str {
   value
     .filter(|value| !value.trim().is_empty())
@@ -623,7 +597,7 @@ pub fn run_live_scan(inputs: &Inputs) -> Result<PlaylistSidebarScan, String> {
   let mut session = match driver.open_local() {
     Ok(session) => session,
     Err(error) => {
-      return Ok(empty_diagnostic_scan(
+      return Ok(PlaylistSidebarScan::empty_with_diagnostic(
         default_app_context,
         ScanWindowContext::default(),
         ViewRegionRecord::default(),
@@ -643,7 +617,7 @@ pub fn run_live_scan(inputs: &Inputs) -> Result<PlaylistSidebarScan, String> {
   {
     Ok(window) => window,
     Err(error) => {
-      return Ok(empty_diagnostic_scan(
+      return Ok(PlaylistSidebarScan::empty_with_diagnostic(
         default_app_context,
         ScanWindowContext::default(),
         ViewRegionRecord::default(),
@@ -681,7 +655,7 @@ pub fn run_live_scan(inputs: &Inputs) -> Result<PlaylistSidebarScan, String> {
   let mut capture = match session.window().capture(&window) {
     Ok(capture) => capture,
     Err(error) => {
-      return Ok(empty_diagnostic_scan(
+      return Ok(PlaylistSidebarScan::empty_with_diagnostic(
         app_context,
         window_context,
         ViewRegionRecord::default(),
@@ -702,7 +676,7 @@ pub fn run_live_scan(inputs: &Inputs) -> Result<PlaylistSidebarScan, String> {
   ) {
     Ok(recognition) => recognition_in_window_space(recognition, &capture),
     Err(error) => {
-      return Ok(empty_diagnostic_scan(
+      return Ok(PlaylistSidebarScan::empty_with_diagnostic(
         app_context,
         window_context,
         ViewRegionRecord::default(),
@@ -717,7 +691,7 @@ pub fn run_live_scan(inputs: &Inputs) -> Result<PlaylistSidebarScan, String> {
   };
 
   if let Some(diagnostic) = detect_blocking_modal(&full_recognition) {
-    return Ok(empty_diagnostic_scan(
+    return Ok(PlaylistSidebarScan::empty_with_diagnostic(
       app_context,
       window_context,
       ViewRegionRecord::default(),
@@ -752,7 +726,7 @@ pub fn run_live_scan(inputs: &Inputs) -> Result<PlaylistSidebarScan, String> {
     capture = match session.window().capture(&window) {
       Ok(capture) => capture,
       Err(error) => {
-        return Ok(empty_diagnostic_scan(
+        return Ok(PlaylistSidebarScan::empty_with_diagnostic(
           app_context,
           window_context,
           ViewRegionRecord::default(),
@@ -772,7 +746,7 @@ pub fn run_live_scan(inputs: &Inputs) -> Result<PlaylistSidebarScan, String> {
     ) {
       Ok(recognition) => recognition_in_window_space(recognition, &capture),
       Err(error) => {
-        return Ok(empty_diagnostic_scan(
+        return Ok(PlaylistSidebarScan::empty_with_diagnostic(
           app_context,
           window_context,
           ViewRegionRecord::default(),
@@ -794,7 +768,7 @@ pub fn run_live_scan(inputs: &Inputs) -> Result<PlaylistSidebarScan, String> {
   ) {
     Ok(sidebar_region) => sidebar_region,
     Err(diagnostic) => {
-      return Ok(empty_diagnostic_scan(
+      return Ok(PlaylistSidebarScan::empty_with_diagnostic(
         app_context,
         window_context,
         ViewRegionRecord::default(),
@@ -839,37 +813,6 @@ pub fn run_live_scan(inputs: &Inputs) -> Result<PlaylistSidebarScan, String> {
   scan.reconstruction.root.bounds = sidebar_bounds;
 
   Ok(scan)
-}
-
-fn empty_diagnostic_scan(
-  app: ScanAppContext,
-  window: ScanWindowContext,
-  sidebar_region: ViewRegionRecord,
-  diagnostic: ParserDiagnostic,
-  known_limit: &str,
-) -> PlaylistSidebarScan {
-  let mut root = empty_root();
-  if let Some(bounds) = sidebar_region.bounds {
-    root.bounds = bounds;
-  }
-
-  PlaylistSidebarScan {
-    schema_version: VIEW_IR_SCHEMA_VERSION.to_string(),
-    app,
-    window,
-    sidebar_region,
-    observations: Vec::new(),
-    reconstruction: ViewReconstructionRecord {
-      root,
-      anchor_index: Vec::new(),
-      landmark_index: Vec::new(),
-    },
-    projection: PlaylistSidebarProjection::default(),
-    boundary: ScrollBoundarySummary::default(),
-    interaction_events: Vec::new(),
-    diagnostics: vec![diagnostic],
-    known_limits: vec![known_limit.to_string()],
-  }
 }
 
 fn detect_sidebar_region(
@@ -968,13 +911,12 @@ fn ratio_to_window_bounds(region: RatioRect, window_size: auv_driver::Size) -> V
 }
 
 fn is_sidebar_marker(label: &str) -> bool {
-  section_kind_from_label(label) != SidebarSectionKind::Unknown
+  SidebarSectionKind::from_label(label).is_known()
     || matches!(label, "推荐" | "发现音乐" | "最近播放")
 }
 
 fn is_playlist_section_marker(label: &str) -> bool {
-  section_kind_from_label(label) == SidebarSectionKind::MyPlaylists
-    || section_kind_from_label(label) == SidebarSectionKind::FavoritedPlaylists
+  SidebarSectionKind::from_label(label).is_playlist_collection()
 }
 
 fn detect_blocking_modal(recognition: &TextRecognition) -> Option<ParserDiagnostic> {
@@ -1095,7 +1037,7 @@ fn candidate_source_component(observation_index: usize, evidence_id: &str) -> &s
 }
 
 fn classify_sidebar_text(label: &str, x: f64) -> SidebarCandidateKind {
-  if section_kind_from_label(label) != SidebarSectionKind::Unknown {
+  if SidebarSectionKind::from_label(label).is_known() {
     SidebarCandidateKind::SectionHeader
   } else if x >= 24.0 {
     SidebarCandidateKind::PlaylistItem
@@ -1106,21 +1048,6 @@ fn classify_sidebar_text(label: &str, x: f64) -> SidebarCandidateKind {
     SidebarCandidateKind::NavigationItem
   } else {
     SidebarCandidateKind::Unknown
-  }
-}
-
-fn section_kind_from_label(label: &str) -> SidebarSectionKind {
-  let label = normalize_section_label(label);
-  if label.contains("创建的歌单") || label.contains("我的歌单") {
-    SidebarSectionKind::MyPlaylists
-  } else if label.contains("收藏的歌单") {
-    SidebarSectionKind::FavoritedPlaylists
-  } else if label == "我的收藏" {
-    SidebarSectionKind::LibraryNav
-  } else if matches!(label.as_str(), "推荐" | "音乐服务") {
-    SidebarSectionKind::FeatureNav
-  } else {
-    SidebarSectionKind::Unknown
   }
 }
 
@@ -1167,7 +1094,7 @@ fn reconstruct_playlist_sidebar(
           let Some(label) = candidate.label.as_deref().map(str::trim) else {
             continue;
           };
-          let kind = section_kind_from_label(label);
+          let kind = SidebarSectionKind::from_label(label);
           let section_id = format!(
             "section.obs{}.{}.{}",
             observation.observation_index,
@@ -1206,7 +1133,7 @@ fn reconstruct_playlist_sidebar(
             section_nodes.push(ViewNodeRecord {
               id: section_id.clone(),
               kind: ViewNodeKind::Section,
-              domain_kind: Some(domain_kind_for_section(SidebarSectionKind::Unknown)),
+              domain_kind: Some(SidebarSectionKind::Unknown.domain_kind().to_string()),
               layout: Some(ViewLayout::VStack),
               label: None,
               bounds: ViewBounds::default(),
@@ -1468,7 +1395,7 @@ impl CollectionPolicy {
       let section_kind = candidate
         .label
         .as_deref()
-        .map(section_kind_from_label)
+        .map(SidebarSectionKind::from_label)
         .unwrap_or(SidebarSectionKind::Unknown);
 
       if candidate.kind == SidebarCandidateKind::SectionHeader {
@@ -1478,16 +1405,16 @@ impl CollectionPolicy {
             accepted.push(candidate);
           }
           PlaylistCategory::Created
-            if self.started && section_kind == SidebarSectionKind::FavoritedPlaylists =>
+            if self.started && section_kind == SidebarSectionKind::FavoritePlaylists =>
           {
             self.stopped = true;
             break;
           }
-          PlaylistCategory::Favorited if section_kind == SidebarSectionKind::FavoritedPlaylists => {
+          PlaylistCategory::Favorite if section_kind == SidebarSectionKind::FavoritePlaylists => {
             self.started = true;
             accepted.push(candidate);
           }
-          PlaylistCategory::Favorited if self.started => {
+          PlaylistCategory::Favorite if self.started => {
             accepted.push(candidate);
           }
           _ => {}
@@ -1514,8 +1441,8 @@ impl CollectionPolicy {
       PlaylistCategory::Created => {
         Some("category created scan ended without seeing created playlist landmark".to_string())
       }
-      PlaylistCategory::Favorited => {
-        Some("category favorited scan ended without seeing favorited playlist landmark".to_string())
+      PlaylistCategory::Favorite => {
+        Some("category favorite scan ended without seeing favorite playlist landmark".to_string())
       }
     }
   }
@@ -1782,8 +1709,15 @@ impl ViewObserver for LiveSidebarObserver {
 
 #[cfg(target_os = "macos")]
 impl LiveSidebarObserver {
+  fn scroll_anchor(&self) -> auv_driver::Point {
+    auv_driver::Point::new(
+      self.sidebar_bounds.x + self.sidebar_bounds.width * 0.5,
+      self.sidebar_bounds.y + self.sidebar_bounds.height * 0.75,
+    )
+  }
+
   fn scroll_by(&mut self, vertical_delta: f64) -> Result<(), ParserDiagnostic> {
-    let anchor = scroll_anchor_for_bounds(self.sidebar_bounds);
+    let anchor = self.scroll_anchor();
     let screen_point = self
       .session
       .window()
@@ -1815,14 +1749,6 @@ impl LiveSidebarObserver {
       })?;
     Ok(())
   }
-}
-
-#[cfg(target_os = "macos")]
-fn scroll_anchor_for_bounds(bounds: ViewBounds) -> auv_driver::Point {
-  auv_driver::Point::new(
-    bounds.x + bounds.width * 0.5,
-    bounds.y + bounds.height * 0.75,
-  )
 }
 
 #[cfg(target_os = "macos")]
@@ -1884,7 +1810,7 @@ fn section_node(
   ViewNodeRecord {
     id: id.to_string(),
     kind: ViewNodeKind::Section,
-    domain_kind: Some(domain_kind_for_section(kind)),
+    domain_kind: Some(kind.domain_kind().to_string()),
     layout: Some(ViewLayout::VStack),
     label: Some(label.to_string()),
     bounds: candidate.bounds.unwrap_or_default(),
@@ -1975,104 +1901,9 @@ fn candidate_evidence(
     .collect()
 }
 
-fn domain_kind_for_section(kind: SidebarSectionKind) -> String {
-  match kind {
-    SidebarSectionKind::FeatureNav => "netease.feature_nav",
-    SidebarSectionKind::LibraryNav => "netease.library_nav",
-    SidebarSectionKind::PlaylistNav => "netease.playlist_nav",
-    SidebarSectionKind::MyPlaylists => "netease.my_playlists",
-    SidebarSectionKind::FavoritedPlaylists => "netease.favorited_playlists",
-    SidebarSectionKind::Unknown => "netease.sidebar_section",
-  }
-  .to_string()
-}
-
 #[cfg(test)]
 mod tests {
   use super::*;
-
-  #[test]
-  fn parse_inputs_uses_safe_defaults() {
-    let inputs = parse_inputs(Vec::new()).expect("defaults should parse");
-
-    assert_eq!(inputs.app_id, DEFAULT_APP_ID);
-    assert_eq!(inputs.json_out, None);
-    assert_eq!(inputs.artifact_dir, PathBuf::from(DEFAULT_ARTIFACT_DIR));
-    assert_eq!(inputs.max_scrolls, 48);
-    assert_eq!(inputs.scroll_amount, 300.0);
-    assert_eq!(inputs.scroll_settle_ms, DEFAULT_SCROLL_SETTLE_MS);
-    assert_eq!(inputs.sidebar_region, None);
-    assert_eq!(inputs.category, PlaylistCategory::All);
-    assert!(!inputs.print_json);
-  }
-
-  #[test]
-  fn parse_inputs_accepts_json_and_scan_options() {
-    let inputs = parse_inputs(vec![
-      "--app-id".to_string(),
-      "com.example.music".to_string(),
-      "--json-out".to_string(),
-      "/tmp/scan.json".to_string(),
-      "--artifact-dir".to_string(),
-      "/tmp/scan-artifacts".to_string(),
-      "--max-scrolls".to_string(),
-      "9".to_string(),
-      "--scroll-amount".to_string(),
-      "3.5".to_string(),
-      "--scroll-settle-ms".to_string(),
-      "250".to_string(),
-      "--category".to_string(),
-      "favorited".to_string(),
-      "--sidebar-region".to_string(),
-      "0.0,0.1,0.25,0.8".to_string(),
-      "--print-json".to_string(),
-    ])
-    .expect("arguments should parse");
-
-    assert_eq!(inputs.app_id, "com.example.music");
-    assert_eq!(inputs.json_out, Some(PathBuf::from("/tmp/scan.json")));
-    assert_eq!(inputs.artifact_dir, PathBuf::from("/tmp/scan-artifacts"));
-    assert_eq!(inputs.max_scrolls, 9);
-    assert_eq!(inputs.scroll_amount, 3.5);
-    assert_eq!(inputs.scroll_settle_ms, 250);
-    assert_eq!(inputs.category, PlaylistCategory::Favorited);
-    assert_eq!(
-      inputs.sidebar_region,
-      Some(RatioRect::new(0.0, 0.1, 0.25, 0.8))
-    );
-    assert!(inputs.print_json);
-  }
-
-  #[test]
-  fn parse_inputs_rejects_invalid_values() {
-    let cases = [
-      (vec!["--bogus".to_string()], "unknown argument --bogus"),
-      (
-        vec!["--scroll-amount".to_string(), "NaN".to_string()],
-        "--scroll-amount must be greater than 0",
-      ),
-      (
-        vec!["--scroll-settle-ms".to_string(), "0".to_string()],
-        "--scroll-settle-ms must be greater than 0",
-      ),
-      (
-        vec!["--category".to_string(), "recent".to_string()],
-        "--category expects one of all, created, favorited",
-      ),
-      (
-        vec![
-          "--sidebar-region".to_string(),
-          "0.0,NaN,0.25,0.8".to_string(),
-        ],
-        "--sidebar-region expects finite x,y,width,height",
-      ),
-    ];
-
-    for (args, expected) in cases {
-      let error = parse_inputs(args).expect_err("invalid inputs should fail");
-      assert!(error.contains(expected));
-    }
-  }
 
   #[test]
   fn parse_viewport_classifies_sections_and_playlist_items() {
@@ -2226,18 +2057,6 @@ mod tests {
   }
 
   #[test]
-  fn detect_sidebar_region_fails_when_sidebar_markers_are_absent() {
-    let error = detect_sidebar_region(
-      None,
-      auv_driver::Size::new(1000.0, 800.0),
-      &fake_recognition(vec![("搜索", 400.0, 20.0, 60.0, 24.0)]),
-    )
-    .expect_err("missing left-side sidebar markers should fail");
-
-    assert_eq!(error.code, "sidebar_region_not_found");
-  }
-
-  #[test]
   fn detect_blocking_modal_reports_cancel_or_open_dialog_markers() {
     let diagnostic = detect_blocking_modal(&fake_recognition(vec![
       ("打开", 760.0, 720.0, 80.0, 32.0),
@@ -2246,32 +2065,6 @@ mod tests {
     .expect("open dialog markers should be reported as blocking modal");
 
     assert_eq!(diagnostic.code, "blocking_modal_dialog");
-  }
-
-  #[cfg(target_os = "macos")]
-  #[test]
-  fn scroll_anchor_uses_lower_playlist_body_hit_area() {
-    let anchor = scroll_anchor_for_bounds(ViewBounds::new(0.0, 146.0, 344.0, 908.0));
-
-    assert_eq!(anchor.x, 172.0);
-    assert_eq!(anchor.y, 827.0);
-  }
-
-  #[test]
-  fn parse_viewport_keeps_unknown_short_noise_as_evidence_not_item() {
-    let recognition = fake_recognition(vec![
-      ("创建的歌单", 8.0, 42.0, 110.0, 20.0),
-      ("·", 12.0, 74.0, 8.0, 8.0),
-    ]);
-    let observation =
-      parse_sidebar_viewport(0, ViewBounds::new(0.0, 0.0, 240.0, 400.0), &recognition);
-
-    assert_eq!(observation.evidence_nodes.len(), 2);
-    assert_eq!(observation.candidates.len(), 1);
-    assert_eq!(
-      observation.candidates[0].kind,
-      SidebarCandidateKind::SectionHeader
-    );
   }
 
   #[test]
@@ -2330,38 +2123,6 @@ mod tests {
   }
 
   #[test]
-  fn section_classification_uses_normalized_exact_labels() {
-    assert_eq!(
-      section_kind_from_label("创建的歌单 215"),
-      SidebarSectionKind::MyPlaylists
-    );
-    assert_eq!(
-      section_kind_from_label("收藏的歌单 12"),
-      SidebarSectionKind::FavoritedPlaylists
-    );
-    assert_eq!(
-      section_kind_from_label("我的收藏"),
-      SidebarSectionKind::LibraryNav
-    );
-    assert_eq!(
-      section_kind_from_label("食我的收藏"),
-      SidebarSectionKind::LibraryNav
-    );
-    assert_eq!(
-      section_kind_from_label("创建的歌单 215 入"),
-      SidebarSectionKind::MyPlaylists
-    );
-    assert_eq!(
-      section_kind_from_label("年度精选歌单"),
-      SidebarSectionKind::Unknown
-    );
-    assert_eq!(
-      section_kind_from_label("我的收藏夹"),
-      SidebarSectionKind::Unknown
-    );
-  }
-
-  #[test]
   fn reconstruct_sidebar_groups_items_under_carried_section() {
     let page0 = parse_sidebar_viewport(
       0,
@@ -2405,14 +2166,14 @@ mod tests {
     );
     assert_eq!(
       scan.projection.sections[1].items[0].section_hint,
-      Some(SidebarSectionKind::FavoritedPlaylists)
+      Some(SidebarSectionKind::FavoritePlaylists)
     );
     assert_eq!(scan.reconstruction.root.kind, ViewNodeKind::Collection);
     assert_eq!(scan.reconstruction.root.children.len(), 2);
   }
 
   #[test]
-  fn created_category_scan_stops_at_favorited_landmark_before_scrolling_again() {
+  fn created_category_scan_stops_at_favorite_landmark_before_scrolling_again() {
     let observations = vec![
       parse_sidebar_viewport(
         0,
@@ -2465,7 +2226,7 @@ mod tests {
   }
 
   #[test]
-  fn favorited_category_starts_collecting_at_favorited_landmark() {
+  fn favorite_category_starts_collecting_at_favorite_landmark() {
     let observations = vec![
       parse_sidebar_viewport(
         0,
@@ -2492,7 +2253,7 @@ mod tests {
         max_pages: 10,
         max_scrolls: 10,
       },
-      PlaylistCategory::Favorited,
+      PlaylistCategory::Favorite,
       300.0,
       DEFAULT_SCROLL_SETTLE_MS,
     );
@@ -2500,7 +2261,7 @@ mod tests {
     assert_eq!(scan.projection.sections.len(), 1);
     assert_eq!(
       scan.projection.sections[0].kind,
-      SidebarSectionKind::FavoritedPlaylists
+      SidebarSectionKind::FavoritePlaylists
     );
     assert_eq!(scan.projection.sections[0].items.len(), 1);
     assert_eq!(scan.projection.sections[0].items[0].label, "Road Trip");

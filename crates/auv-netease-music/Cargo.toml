@@ -14,6 +14,7 @@ repository.workspace = true
 [dependencies]
 auv-driver = { path = "../auv-driver" }
 auv-view = { path = "../auv-view" }
+clap = { version = "4.5", features = ["derive"] }
 serde.workspace = true
 serde_json.workspace = true
 image.workspace = true

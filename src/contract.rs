@@ -328,6 +328,42 @@ pub enum TargetGrounding {
   Coordinate,
 }
 
+/// NOTICE(contract-ratio-region-rect-duplication-v0):
+///
+/// `RatioRegion` and `auv_driver::geometry::RatioRect` carry the same
+/// concept (axis-aligned rectangle expressed as ratios of a containing
+/// space) with the same f64 storage size, which the workspace
+/// primitive-reuse guideline (AGENTS.md, commit 7b520c0) calls out as
+/// a duplicate that should normally be collapsed onto the existing
+/// primitive.
+///
+/// v0 keeps both because the **wire shapes differ**:
+///
+/// - `RatioRegion` serializes LRBT:
+///   `{"left":…,"top":…,"right":…,"bottom":…}`. Stored
+///   `CandidateQuery` / `SurfaceSelectorClause::Ocr.region_hint`
+///   JSON is full of this shape, and `OPERATION_RESULT_API_VERSION`
+///   readers (see `NOTICE(contract-api-version-reader-check)` above)
+///   silently fall back to v1alpha1 on unknown shapes — switching the
+///   wire layout now would parse historical artifacts incorrectly.
+/// - `auv_driver::geometry::RatioRect` serializes XYWH:
+///   `{"x":…,"y":…,"width":…,"height":…}`. It is used by driver
+///   capture / window geometry APIs and was reused by
+///   `auv-netease-music` for the CLI `--sidebar-region` flag in
+///   commit `3196cfe`.
+///
+/// Mirrors the same trade-off documented for `ViewBounds` vs `Rect` in
+/// `crates/auv-view/src/lib.rs::ViewBounds`
+/// (`NOTICE(view-bounds-rect-duplication-v0)`, commit `2c1a382`).
+///
+/// Unification therefore needs a wire-shape migration plan (versioned
+/// reader, fixture re-records, possibly a serde adapter) before this
+/// duplicate type can be deleted. Until that lands, do not "fix" this
+/// by adding a `From<RatioRect>` for `RatioRegion` (or vice versa)
+/// here — `contract.rs` must stay free of `auv-driver` so the type
+/// surface stays platform-agnostic, and an automatic conversion would
+/// hide the wire-shape boundary that a future migration needs to
+/// preserve.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RatioRegion {
   pub left: f64,

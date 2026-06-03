@@ -2,6 +2,7 @@
 
 pub mod cli;
 pub mod output;
+pub mod screen;
 pub mod scroll;
 
 use std::collections::HashSet;
@@ -1973,7 +1974,7 @@ fn ratio_to_window_bounds(region: RatioRect, window_size: auv_driver::Size) -> V
   )
 }
 
-fn is_sidebar_marker(label: &str) -> bool {
+pub(crate) fn is_sidebar_marker(label: &str) -> bool {
   SidebarSectionKind::from_label(label).is_known()
     || matches!(label, "推荐" | "发现音乐" | "最近播放")
 }

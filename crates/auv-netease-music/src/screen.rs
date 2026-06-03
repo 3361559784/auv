@@ -26,6 +26,16 @@ impl ScreenView {
     }
   }
 
+  /// Build a view when the screen was not classified by this observation.
+  pub fn unknown() -> Self {
+    Self::new(ScreenState::Unknown, None)
+  }
+
+  #[cfg(test)]
+  pub(crate) fn for_tests(state: ScreenState, restore_point: Option<auv_driver::Point>) -> Self {
+    Self::new(state, restore_point)
+  }
+
   pub fn state(&self) -> ScreenState {
     self.state
   }

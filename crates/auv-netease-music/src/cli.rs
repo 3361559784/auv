@@ -7,7 +7,8 @@ use clap::{Args, Parser, Subcommand};
 
 use crate::output::build_playlist_json_output;
 use crate::{
-  DailyRecommendedPlayInputs, Inputs, PlaylistCategory, run_daily_recommended_play, run_live_scan,
+  DailyRecommendedPlayInputs, Inputs, PlaylistCategory, SongListInputs, run_daily_recommended_play,
+  run_daily_recommended_songs_scan, run_live_scan,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -31,9 +32,22 @@ pub(crate) struct DailyRecommendedPlayCommand {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub(crate) struct SongsLsCommand {
+  pub inputs: SongListInputs,
+  pub target: SongsLsTarget,
+  pub output: OutputMode,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum SongsLsTarget {
+  DailyRecommended,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Command {
   PlaylistLs(PlaylistCommand),
   PlaylistPlayDailyRecommended(DailyRecommendedPlayCommand),
+  PlaylistSongsLs(SongsLsCommand),
 }
 
 #[derive(Clone, Debug, Parser)]
@@ -67,6 +81,50 @@ enum PlaylistSubcommand {
   Ls(PlaylistLsArgs),
   /// Play a built-in playlist.
   Play(PlaylistPlayArgs),
+  /// Scan songs from a playlist-like song table.
+  Songs(PlaylistSongsArgs),
+}
+
+#[derive(Clone, Debug, Args)]
+struct PlaylistSongsArgs {
+  #[command(subcommand)]
+  command: PlaylistSongsSubcommand,
+}
+
+#[derive(Clone, Debug, Subcommand)]
+enum PlaylistSongsSubcommand {
+  /// List songs from a supported song list.
+  Ls(SongsLsArgs),
+}
+
+#[derive(Clone, Debug, Args)]
+struct SongsLsArgs {
+  #[arg(value_name = "daily-recommended")]
+  target: String,
+  #[arg(long = "json")]
+  json: bool,
+  #[arg(long = "json-out")]
+  json_out: Option<PathBuf>,
+  #[arg(long = "app-id")]
+  app_id: Option<String>,
+  #[arg(long = "artifact-dir")]
+  artifact_dir: Option<PathBuf>,
+  #[arg(long = "max-scrolls")]
+  max_scrolls: Option<NonZeroUsize>,
+  #[arg(long = "scroll-amount", value_parser = crate::positive_scroll_amount)]
+  scroll_amount: Option<f64>,
+  #[arg(long = "scroll-settle-ms")]
+  scroll_settle_ms: Option<u64>,
+  #[arg(long = "hint-ocr-custom-word")]
+  custom_words: Vec<String>,
+  #[arg(long = "hint-ocr-custom-words")]
+  custom_word_csvs: Vec<String>,
+  #[arg(long = "hint-ocr-custom-words-file")]
+  custom_word_files: Vec<PathBuf>,
+  #[arg(long = "hint-ocr-language")]
+  ocr_languages: Vec<String>,
+  #[arg(long = "hint-ocr-languages")]
+  ocr_language_csvs: Vec<String>,
 }
 
 #[derive(Clone, Debug, Args)]
@@ -137,7 +195,7 @@ struct PlaylistLsArgs {
   #[arg(long = "scroll-amount", value_parser = crate::positive_scroll_amount)]
   scroll_amount: Option<f64>,
   #[arg(long = "scroll-settle-ms")]
-  scroll_settle_ms: Option<NonZeroU64>,
+  scroll_settle_ms: Option<u64>,
   #[arg(long = "sidebar-region")]
   sidebar_region: Option<String>,
   #[arg(long = "hint-ocr-custom-word")]
@@ -162,6 +220,7 @@ fn parse_playlist(args: PlaylistArgs) -> Result<Command, String> {
   match args.command {
     Some(PlaylistSubcommand::Ls(ls)) => parse_playlist_ls(ls).map(Command::PlaylistLs),
     Some(PlaylistSubcommand::Play(play)) => parse_playlist_play(play),
+    Some(PlaylistSubcommand::Songs(songs)) => parse_playlist_songs(songs),
     None => parse_playlist_ls(args.ls).map(Command::PlaylistLs),
   }
 }
@@ -190,7 +249,7 @@ fn parse_playlist_ls(args: PlaylistLsArgs) -> Result<PlaylistCommand, String> {
     inputs.scroll_amount = scroll_amount;
   }
   if let Some(scroll_settle_ms) = args.scroll_settle_ms {
-    inputs.scroll_settle_ms = scroll_settle_ms.get();
+    inputs.scroll_settle_ms = scroll_settle_ms;
   }
   if let Some(category) = args.category {
     inputs.category = category;
@@ -234,6 +293,66 @@ fn parse_playlist_play(args: PlaylistPlayArgs) -> Result<Command, String> {
       parse_daily_recommended(args).map(Command::PlaylistPlayDailyRecommended)
     }
   }
+}
+
+fn parse_playlist_songs(args: PlaylistSongsArgs) -> Result<Command, String> {
+  match args.command {
+    PlaylistSongsSubcommand::Ls(args) => parse_songs_ls(args).map(Command::PlaylistSongsLs),
+  }
+}
+
+fn parse_songs_ls(args: SongsLsArgs) -> Result<SongsLsCommand, String> {
+  let target = match args.target.as_str() {
+    "daily-recommended" => SongsLsTarget::DailyRecommended,
+    other => {
+      return Err(format!(
+        "unsupported songs ls target {other:?}; expected \"daily-recommended\""
+      ));
+    }
+  };
+  let mut inputs = SongListInputs::with_defaults();
+  if let Some(app_id) = args.app_id {
+    inputs.app_id = app_id;
+  }
+  if let Some(artifact_dir) = args.artifact_dir {
+    inputs.artifact_dir = artifact_dir;
+  }
+  if let Some(max_scrolls) = args.max_scrolls {
+    inputs.max_scrolls = max_scrolls.get();
+  }
+  if let Some(scroll_amount) = args.scroll_amount {
+    inputs.scroll_amount = scroll_amount;
+  }
+  if let Some(scroll_settle_ms) = args.scroll_settle_ms {
+    inputs.scroll_settle_ms = scroll_settle_ms;
+  }
+  for word in args.custom_words {
+    crate::push_trimmed(&mut inputs.ocr_options.custom_words, word);
+  }
+  for csv in args.custom_word_csvs {
+    crate::push_csv(&mut inputs.ocr_options.custom_words, &csv);
+  }
+  for path in args.custom_word_files {
+    crate::load_custom_words_file(&mut inputs.ocr_options.custom_words, path)?;
+  }
+  for language in args.ocr_languages {
+    crate::push_ocr_language(&mut inputs.ocr_options, language);
+  }
+  for csv in args.ocr_language_csvs {
+    for language in crate::split_csv(&csv) {
+      crate::push_ocr_language(&mut inputs.ocr_options, language);
+    }
+  }
+  let output = match args.json_out {
+    Some(path) => OutputMode::JsonFile(path),
+    None if args.json => OutputMode::Json,
+    None => OutputMode::Human,
+  };
+  Ok(SongsLsCommand {
+    inputs,
+    target,
+    output,
+  })
 }
 
 fn parse_daily_recommended(
@@ -303,6 +422,7 @@ pub fn run() -> ExitCode {
   match command_from_args(parsed) {
     Ok(Command::PlaylistLs(cmd)) => run_playlist(cmd),
     Ok(Command::PlaylistPlayDailyRecommended(cmd)) => run_daily_recommended(cmd),
+    Ok(Command::PlaylistSongsLs(cmd)) => run_songs_ls(cmd),
     Err(error) => {
       if error.starts_with("error:") {
         eprint!("{error}");
@@ -362,6 +482,14 @@ mod tests {
     match command_from_args(parsed).expect("daily recommended command should parse") {
       Command::PlaylistPlayDailyRecommended(command) => command,
       other => panic!("expected daily recommended command, got {other:?}"),
+    }
+  }
+
+  fn parse_songs_ls_command(argv: &[&str]) -> SongsLsCommand {
+    let parsed = CliArgs::try_parse_from(argv).expect("CLI args should parse");
+    match command_from_args(parsed).expect("songs ls command should parse") {
+      Command::PlaylistSongsLs(command) => command,
+      other => panic!("expected songs ls command, got {other:?}"),
     }
   }
 
@@ -509,6 +637,19 @@ mod tests {
   }
 
   #[test]
+  fn clap_playlist_allows_zero_scroll_settle_for_fast_collection() {
+    let command = parse_playlist_command(&[
+      "auv-netease-music",
+      "playlist",
+      "ls",
+      "--scroll-settle-ms",
+      "0",
+    ]);
+
+    assert_eq!(command.inputs.scroll_settle_ms, 0);
+  }
+
+  #[test]
   fn clap_playlist_collects_ocr_hint_flags() {
     let custom_words = TempWordsFile::new(
       r#"
@@ -581,6 +722,44 @@ mod tests {
     assert_eq!(
       command.inputs.play_icon_template,
       Some(PathBuf::from("/tmp/play.png"))
+    );
+  }
+
+  #[test]
+  fn clap_playlist_songs_ls_daily_recommended_maps_flags() {
+    let command = parse_songs_ls_command(&[
+      "auv-netease-music",
+      "playlist",
+      "songs",
+      "ls",
+      "daily-recommended",
+      "--json-out",
+      "/tmp/songs.json",
+      "--max-scrolls",
+      "42",
+      "--scroll-settle-ms",
+      "0",
+    ]);
+
+    assert_eq!(command.target, SongsLsTarget::DailyRecommended);
+    assert_eq!(
+      command.output,
+      OutputMode::JsonFile(PathBuf::from("/tmp/songs.json"))
+    );
+    assert_eq!(command.inputs.max_scrolls, 42);
+    assert_eq!(command.inputs.scroll_settle_ms, 0);
+  }
+
+  #[test]
+  fn playlist_songs_ls_rejects_unknown_target() {
+    let parsed =
+      CliArgs::try_parse_from(["auv-netease-music", "playlist", "songs", "ls", "current"])
+        .expect("unknown target is rejected by semantic parser");
+    let error = command_from_args(parsed).expect_err("unknown target should fail");
+
+    assert_eq!(
+      error,
+      "unsupported songs ls target \"current\"; expected \"daily-recommended\""
     );
   }
 
@@ -663,6 +842,60 @@ fn run_daily_recommended(cmd: DailyRecommendedPlayCommand) -> ExitCode {
   match &cmd.output {
     OutputMode::Human => {
       println!("{}", result.human_summary());
+      ExitCode::SUCCESS
+    }
+    OutputMode::Json => match serde_json::to_string_pretty(&result) {
+      Ok(json) => {
+        println!("{json}");
+        ExitCode::SUCCESS
+      }
+      Err(error) => {
+        eprintln!("encode failed: {error}");
+        ExitCode::from(1)
+      }
+    },
+    OutputMode::JsonFile(path) => {
+      let json = match serde_json::to_string_pretty(&result) {
+        Ok(json) => json,
+        Err(error) => {
+          eprintln!("encode failed: {error}");
+          return ExitCode::from(1);
+        }
+      };
+      if let Err(error) = std::fs::write(path, json) {
+        eprintln!("failed to write {}: {error}", path.display());
+        return ExitCode::from(1);
+      }
+      ExitCode::SUCCESS
+    }
+  }
+}
+
+fn run_songs_ls(cmd: SongsLsCommand) -> ExitCode {
+  let result = match cmd.target {
+    SongsLsTarget::DailyRecommended => match run_daily_recommended_songs_scan(&cmd.inputs) {
+      Ok(result) => result,
+      Err(error) => {
+        eprintln!("songs ls failed: {error}");
+        return ExitCode::from(1);
+      }
+    },
+  };
+
+  match &cmd.output {
+    OutputMode::Human => {
+      println!("NetEase song list scan");
+      println!("target: {}", result.target);
+      println!("items: {}", result.items.len());
+      println!("observations: {}", result.observations.len());
+      if result.known_limits.is_empty() {
+        println!("known_limits: (none)");
+      } else {
+        println!("known_limits:");
+        for limit in &result.known_limits {
+          println!("  - {limit}");
+        }
+      }
       ExitCode::SUCCESS
     }
     OutputMode::Json => match serde_json::to_string_pretty(&result) {

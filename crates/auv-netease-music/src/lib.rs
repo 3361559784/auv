@@ -1,9 +1,12 @@
 //! NetEase Music product CLI library: sidebar playlist scan + agent-callable output.
 
+pub mod app;
 pub mod cli;
 pub mod output;
+pub mod player;
 pub mod screen;
 pub mod scroll;
+pub mod sidebar;
 
 use std::collections::HashSet;
 use std::fmt;
@@ -60,7 +63,11 @@ pub const DEFAULT_MAX_SCROLLS: usize = 12;
 // observed captures. Keep the default below generic desktop-action waits so
 // playlist listing remains interactive; raise via --scroll-settle-ms if OCR
 // evidence becomes unstable on slower machines.
-pub const DEFAULT_SCROLL_SETTLE_MS: u64 = 250;
+pub const DEFAULT_SCROLL_SETTLE_MS: u64 = 50;
+const LIVE_TOP_SEEK_MAX_SCROLL_INPUTS: usize = 32;
+const LIVE_TOP_SEEK_SCROLL_DELTA_MULTIPLIER: f64 = 8.0;
+const LIVE_FAST_SEEK_BATCH_SCROLLS: usize = 4;
+const LIVE_FAST_SEEK_SAMPLE_INTERVAL_MS: u64 = 40;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ValueEnum)]
 #[serde(rename_all = "snake_case")]
@@ -215,6 +222,62 @@ impl fmt::Display for DailyRecommendedHumanSummary<'_> {
       Ok(())
     }
   }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct SongListInputs {
+  pub app_id: String,
+  pub artifact_dir: PathBuf,
+  pub max_scrolls: usize,
+  pub scroll_amount: f64,
+  pub scroll_settle_ms: u64,
+  pub ocr_options: TextRecognitionOptions,
+}
+
+impl SongListInputs {
+  pub fn with_defaults() -> Self {
+    Self {
+      app_id: DEFAULT_APP_ID.to_string(),
+      artifact_dir: PathBuf::from("/tmp/auv-netease-song-list-artifacts"),
+      max_scrolls: DEFAULT_MAX_SCROLLS,
+      scroll_amount: 520.0,
+      scroll_settle_ms: DEFAULT_SCROLL_SETTLE_MS,
+      ocr_options: TextRecognitionOptions::default(),
+    }
+  }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SongListScanResult {
+  pub command: String,
+  pub target: String,
+  pub app: ScanAppContext,
+  pub window: ScanWindowContext,
+  pub song_list_region: ViewRegionRecord,
+  pub items: Vec<SongListItem>,
+  pub observations: Vec<SongListObservation>,
+  pub boundary: ScrollBoundarySummary,
+  pub diagnostics: Vec<ParserDiagnostic>,
+  pub known_limits: Vec<String>,
+  pub artifacts: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SongListObservation {
+  pub observation_index: usize,
+  pub source_artifact: Option<String>,
+  pub incoming_scroll_delivery_path: Option<String>,
+  pub scroll_motion: Option<MotionEvidence>,
+  pub rows: Vec<SongListItem>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SongListItem {
+  pub id: String,
+  pub index: Option<u32>,
+  pub title: String,
+  pub row_text: String,
+  pub bounds: Option<ViewBounds>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -776,6 +839,99 @@ pub fn run_daily_recommended_play(
   Err("live NetEase daily recommended play is only supported on macOS".to_string())
 }
 
+#[cfg(not(target_os = "macos"))]
+pub fn run_daily_recommended_songs_scan(
+  _inputs: &SongListInputs,
+) -> Result<SongListScanResult, String> {
+  Err("live NetEase daily recommended song scan is only supported on macOS".to_string())
+}
+
+#[cfg(target_os = "macos")]
+pub fn run_daily_recommended_songs_scan(
+  inputs: &SongListInputs,
+) -> Result<SongListScanResult, String> {
+  let daily_inputs = DailyRecommendedPlayInputs {
+    app_id: inputs.app_id.clone(),
+    artifact_dir: inputs.artifact_dir.clone(),
+    max_top_scrolls: LIVE_TOP_SEEK_MAX_SCROLL_INPUTS,
+    top_scroll_amount: inputs.scroll_amount,
+    settle_ms: inputs.scroll_settle_ms,
+    play_icon_template: None,
+    play_icon_threshold: 0.72,
+    ocr_options: inputs.ocr_options.clone(),
+  };
+  std::fs::create_dir_all(&daily_inputs.artifact_dir).map_err(|error| {
+    format!(
+      "failed to create {}: {error}",
+      daily_inputs.artifact_dir.display()
+    )
+  })?;
+
+  let driver = MacosDriver::new();
+  let session = driver
+    .open_local()
+    .map_err(|error| format!("failed to open macOS driver: {error}"))?;
+  let app = App::bundle(inputs.app_id.clone());
+  let window = session
+    .window()
+    .resolve(Window::main_visible().owned_by(app))
+    .map_err(|error| format!("failed to resolve NetEase window: {error}"))?;
+
+  let app_context = ScanAppContext {
+    app_id: window
+      .app_bundle_id
+      .clone()
+      .or_else(|| Some(inputs.app_id.clone())),
+    name: window.app_name.clone(),
+    version: None,
+  };
+  let window_context = ScanWindowContext {
+    id: Some(window.reference.id.clone()),
+    title: window.title.clone(),
+    bounds: Some(ViewBounds::new(
+      0.0,
+      0.0,
+      window.frame.size.width,
+      window.frame.size.height,
+    )),
+  };
+
+  let mut run = DailyRecommendedRun {
+    session,
+    window,
+    inputs: &daily_inputs,
+    steps: Vec::new(),
+    artifacts: Vec::new(),
+    diagnostics: Vec::new(),
+    known_limits: Vec::new(),
+  };
+  run.scroll_sidebar_to_top();
+  run.click_text("select-sidebar-recommend", "推荐", |bounds, size| {
+    bounds.x < size.width * 0.28
+  })?;
+  run.open_daily_recommended()?;
+
+  let region_bounds = daily_song_list_bounds(Size::new(
+    run.window.frame.size.width,
+    run.window.frame.size.height,
+  ));
+  let song_list_region = ViewRegionRecord {
+    id: None,
+    name: Some("daily_recommended_song_list".to_string()),
+    bounds: Some(region_bounds),
+    coordinate_space: Some("window".to_string()),
+  };
+  let mut scanner = SongListScanner::new(run, inputs, region_bounds);
+  scanner.seek_boundary(ScrollDirection::Up)?;
+  scanner.scan_down()?;
+  Ok(scanner.finish(
+    app_context,
+    window_context,
+    song_list_region,
+    "daily-recommended",
+  ))
+}
+
 #[cfg(target_os = "macos")]
 pub fn run_daily_recommended_play(
   inputs: &DailyRecommendedPlayInputs,
@@ -867,6 +1023,371 @@ struct DailyRecommendedRun<'a> {
   artifacts: Vec<String>,
   diagnostics: Vec<ParserDiagnostic>,
   known_limits: Vec<String>,
+}
+
+fn daily_song_list_bounds(window_size: Size) -> ViewBounds {
+  let x = window_size.width * 0.30;
+  let y = window_size.height * 0.23;
+  let bottom = playlist_sidebar_bottom(window_size);
+  ViewBounds::new(x, y, window_size.width - x - 24.0, (bottom - y).max(1.0))
+}
+
+fn parse_song_list_rows(
+  observation_index: usize,
+  bounds: ViewBounds,
+  recognition: &TextRecognition,
+) -> Vec<SongListItem> {
+  let mut index_regions = recognition
+    .regions
+    .iter()
+    .filter(|region| {
+      let text = region.text.trim();
+      let center_y = region.bounds.origin.y + region.bounds.size.height * 0.5;
+      text.len() <= 3
+        && text.chars().all(|ch| ch.is_ascii_digit())
+        && viewport_contains_center(bounds, recognized_bounds(&region.bounds))
+        && center_y > bounds.y + 36.0
+    })
+    .collect::<Vec<_>>();
+  index_regions.sort_by(|left, right| {
+    left
+      .bounds
+      .origin
+      .y
+      .partial_cmp(&right.bounds.origin.y)
+      .unwrap_or(std::cmp::Ordering::Equal)
+  });
+
+  let mut rows = Vec::new();
+  for index_region in index_regions {
+    let index = index_region.text.trim().parse::<u32>().ok();
+    let row_center_y = index_region.bounds.origin.y + index_region.bounds.size.height * 0.5;
+    let row_top = row_center_y - 32.0;
+    let row_bottom = row_center_y + 32.0;
+    let mut parts = recognition
+      .regions
+      .iter()
+      .filter(|region| {
+        let text = region.text.trim();
+        let center_y = region.bounds.origin.y + region.bounds.size.height * 0.5;
+        !text.is_empty()
+          && center_y >= row_top
+          && center_y <= row_bottom
+          && viewport_contains_center(bounds, recognized_bounds(&region.bounds))
+          && region.bounds.origin.x > index_region.bounds.origin.x + 16.0
+      })
+      .collect::<Vec<_>>();
+    parts.sort_by(|left, right| {
+      left
+        .bounds
+        .origin
+        .x
+        .partial_cmp(&right.bounds.origin.x)
+        .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let title = parts
+      .iter()
+      .find(|region| {
+        let x = region.bounds.origin.x;
+        x > bounds.x + 60.0 && x < bounds.x + bounds.width * 0.52
+      })
+      .map(|region| region.text.trim().to_string());
+    let row_text = parts
+      .iter()
+      .map(|region| region.text.trim())
+      .filter(|text| !text.is_empty())
+      .collect::<Vec<_>>()
+      .join(" | ");
+    let Some(title) = title.filter(|title| !title.is_empty()) else {
+      continue;
+    };
+    let row_bounds = ViewBounds::new(bounds.x, row_top, bounds.width, row_bottom - row_top);
+    rows.push(SongListItem {
+      id: format!(
+        "daily.song.obs{observation_index}.{}",
+        index
+          .map(|value| value.to_string())
+          .unwrap_or_else(|| slug(&title))
+      ),
+      index,
+      title,
+      row_text,
+      bounds: Some(row_bounds),
+    });
+  }
+  rows
+}
+
+fn song_item_key(row: &SongListItem) -> String {
+  row
+    .index
+    .map(|index| format!("index:{index}"))
+    .unwrap_or_else(|| format!("text:{}", normalize_identity(&row.row_text)))
+}
+
+fn recognized_bounds(bounds: &auv_driver::Rect) -> ViewBounds {
+  ViewBounds::new(
+    bounds.origin.x,
+    bounds.origin.y,
+    bounds.size.width,
+    bounds.size.height,
+  )
+}
+
+#[cfg(target_os = "macos")]
+struct SongListScanner<'a> {
+  run: DailyRecommendedRun<'a>,
+  inputs: &'a SongListInputs,
+  region_bounds: ViewBounds,
+  observations: Vec<SongListObservation>,
+  items: Vec<SongListItem>,
+  seen_items: HashSet<String>,
+  boundary: ScrollBoundarySummary,
+  pending_scroll_delivery_path: Option<String>,
+  previous_crop: Option<RgbaImage>,
+  motion_policy: MotionDetectionPolicy,
+}
+
+#[cfg(target_os = "macos")]
+impl<'a> SongListScanner<'a> {
+  fn new(
+    run: DailyRecommendedRun<'a>,
+    inputs: &'a SongListInputs,
+    region_bounds: ViewBounds,
+  ) -> Self {
+    Self {
+      run,
+      inputs,
+      region_bounds,
+      observations: Vec::new(),
+      items: Vec::new(),
+      seen_items: HashSet::new(),
+      boundary: ScrollBoundarySummary::default(),
+      pending_scroll_delivery_path: None,
+      previous_crop: None,
+      motion_policy: MotionDetectionPolicy::default(),
+    }
+  }
+
+  fn finish(
+    self,
+    app: ScanAppContext,
+    window: ScanWindowContext,
+    song_list_region: ViewRegionRecord,
+    target: &str,
+  ) -> SongListScanResult {
+    SongListScanResult {
+      command: "playlist.songs.ls".to_string(),
+      target: target.to_string(),
+      app,
+      window,
+      song_list_region,
+      items: self.items,
+      observations: self.observations,
+      boundary: self.boundary,
+      diagnostics: self.run.diagnostics,
+      known_limits: self.run.known_limits,
+      artifacts: self.run.artifacts,
+    }
+  }
+
+  fn seek_boundary(&mut self, direction: ScrollDirection) -> Result<(), String> {
+    self.pending_scroll_delivery_path = None;
+    self.previous_crop = Some(self.capture_region_crop()?);
+    let delta = match direction {
+      ScrollDirection::Up => self.inputs.scroll_amount * LIVE_TOP_SEEK_SCROLL_DELTA_MULTIPLIER,
+      ScrollDirection::Down => -self.inputs.scroll_amount * LIVE_TOP_SEEK_SCROLL_DELTA_MULTIPLIER,
+    };
+    let mut no_motion_confirmations = 0usize;
+    for _ in 0..LIVE_TOP_SEEK_MAX_SCROLL_INPUTS {
+      self.scroll_region(delta, std::time::Duration::ZERO)?;
+      std::thread::sleep(std::time::Duration::from_millis(
+        LIVE_FAST_SEEK_SAMPLE_INTERVAL_MS,
+      ));
+      let crop = self.capture_region_crop()?;
+      if let Some(previous) = self.previous_crop.as_ref() {
+        let motion = self.motion_policy.compare(previous, &crop);
+        if motion.no_motion
+          && successful_scroll_delivery_path(self.pending_scroll_delivery_path.as_deref())
+        {
+          no_motion_confirmations += 1;
+          if no_motion_confirmations >= 2 {
+            match direction {
+              ScrollDirection::Up => self.boundary.top = BoundaryConfidence::Likely,
+              ScrollDirection::Down => self.boundary.bottom = BoundaryConfidence::Likely,
+            }
+            self.pending_scroll_delivery_path = None;
+            self.previous_crop = Some(crop);
+            return Ok(());
+          }
+        } else {
+          no_motion_confirmations = 0;
+        }
+      }
+      self.previous_crop = Some(crop);
+      self.pending_scroll_delivery_path = None;
+    }
+    self.run.known_limits.push(format!(
+      "song list {:?} seek stopped after max_scrolls={} without boundary confirmation",
+      direction, LIVE_TOP_SEEK_MAX_SCROLL_INPUTS
+    ));
+    Ok(())
+  }
+
+  fn scan_down(&mut self) -> Result<(), String> {
+    self.pending_scroll_delivery_path = None;
+    self.previous_crop = None;
+    let mut consecutive_no_new = 0usize;
+    let mut consecutive_no_motion = 0usize;
+    for _ in 0..=self.inputs.max_scrolls {
+      let observation_index = self.observations.len();
+      let observation = self.observe_page(observation_index)?;
+      let introduced_new = self.record_items(&observation.rows);
+      if introduced_new {
+        consecutive_no_new = 0;
+      } else if observation.incoming_scroll_delivery_path.is_some() {
+        consecutive_no_new += 1;
+      }
+      if observation
+        .scroll_motion
+        .as_ref()
+        .is_some_and(|motion| motion.no_motion)
+      {
+        consecutive_no_motion += 1;
+      } else {
+        consecutive_no_motion = 0;
+      }
+      self.observations.push(observation);
+
+      if consecutive_no_new >= 2 || consecutive_no_motion >= 2 {
+        self.seek_boundary(ScrollDirection::Down)?;
+        let final_observation = self.observe_page(self.observations.len())?;
+        self.record_items(&final_observation.rows);
+        self.observations.push(final_observation);
+        return Ok(());
+      }
+
+      if self.observations.len() > self.inputs.max_scrolls {
+        self.run.known_limits.push(format!(
+          "song list scan stopped after max_scrolls={}",
+          self.inputs.max_scrolls
+        ));
+        return Ok(());
+      }
+      self.scroll_region(
+        -self.inputs.scroll_amount,
+        std::time::Duration::from_millis(self.inputs.scroll_settle_ms),
+      )?;
+    }
+    Ok(())
+  }
+
+  fn record_items(&mut self, rows: &[SongListItem]) -> bool {
+    let mut introduced_new = false;
+    for row in rows {
+      let key = song_item_key(row);
+      if self.seen_items.insert(key) {
+        self.items.push(row.clone());
+        introduced_new = true;
+      }
+    }
+    introduced_new
+  }
+
+  fn observe_page(&mut self, observation_index: usize) -> Result<SongListObservation, String> {
+    let capture = self
+      .run
+      .session
+      .window()
+      .capture(&self.run.window)
+      .map_err(|error| format!("song list capture failed: {error}"))?;
+    let artifact = self.write_song_observation_artifact(observation_index, &capture)?;
+    let recognition = self
+      .run
+      .session
+      .vision()
+      .recognize_text_in_capture_with_options(
+        &capture,
+        bounds_to_ratio(self.region_bounds, &capture),
+        self.inputs.ocr_options.clone(),
+      )
+      .map_err(|error| format!("song list OCR failed: {error}"))?;
+    let recognition = recognition_in_window_space(recognition, &capture);
+    let crop = crop_image(&capture.image, self.region_bounds, capture.scale_factor);
+    let incoming_scroll_delivery_path = self.pending_scroll_delivery_path.take();
+    let scroll_motion = incoming_scroll_delivery_path
+      .as_ref()
+      .and(self.previous_crop.as_ref())
+      .map(|previous| self.motion_policy.compare(previous, &crop));
+    self.previous_crop = Some(crop);
+    Ok(SongListObservation {
+      observation_index,
+      source_artifact: Some(artifact),
+      incoming_scroll_delivery_path,
+      scroll_motion,
+      rows: parse_song_list_rows(observation_index, self.region_bounds, &recognition),
+    })
+  }
+
+  fn write_song_observation_artifact(
+    &mut self,
+    observation_index: usize,
+    capture: &Capture,
+  ) -> Result<String, String> {
+    let path = self
+      .inputs
+      .artifact_dir
+      .join(format!("songs-obs-{observation_index:04}.png"));
+    capture
+      .image
+      .save(&path)
+      .map_err(|error| format!("failed to save {}: {error}", path.display()))?;
+    let rendered = path.display().to_string();
+    self.run.artifacts.push(rendered.clone());
+    Ok(rendered)
+  }
+
+  fn capture_region_crop(&mut self) -> Result<RgbaImage, String> {
+    let capture = self
+      .run
+      .session
+      .window()
+      .capture(&self.run.window)
+      .map_err(|error| format!("song list seek capture failed: {error}"))?;
+    Ok(crop_image(
+      &capture.image,
+      self.region_bounds,
+      capture.scale_factor,
+    ))
+  }
+
+  fn scroll_region(
+    &mut self,
+    vertical_delta: f64,
+    settle: std::time::Duration,
+  ) -> Result<(), String> {
+    let point = WindowPoint::new(
+      self.region_bounds.x + self.region_bounds.width * 0.5,
+      self.region_bounds.y + self.region_bounds.height * 0.65,
+    );
+    let result = self
+      .run
+      .session
+      .window()
+      .scroll(
+        &self.run.window,
+        point,
+        Scroll::new(0.0, vertical_delta),
+        ScrollOptions {
+          policy: InputPolicy::BackgroundPreferred,
+          settle,
+          ..ScrollOptions::default()
+        },
+      )
+      .map_err(|error| format!("song list scroll failed: {error}"))?;
+    self.pending_scroll_delivery_path = Some(delivery_path_label(result.selected_path).to_string());
+    Ok(())
+  }
 }
 
 #[cfg(target_os = "macos")]
@@ -1110,10 +1631,19 @@ impl DailyRecommendedRun<'_> {
       fallback_reason: result.fallback_reason,
       artifact: Some(artifact),
     });
-    if self.play_all_is_visible(true)? {
+    if self.play_all_is_visible(false)? {
       Ok(())
     } else {
-      Err("daily recommended card body click did not reveal 播放全部".to_string())
+      self.click_text_foreground(
+        "open-daily-recommended-title-foreground-retry",
+        "每日推荐",
+        |bounds, size| bounds.x > size.width * 0.18 && bounds.y < size.height * 0.35,
+      )?;
+      if self.play_all_is_visible(true)? {
+        Ok(())
+      } else {
+        Err("daily recommended card body click did not reveal 播放全部".to_string())
+      }
     }
   }
 
@@ -1339,7 +1869,7 @@ fn best_text_match(
     .cloned()
 }
 
-fn classify_bottom_playback_control_state(image: &RgbaImage) -> PlaybackControlState {
+pub(crate) fn classify_bottom_playback_control_state(image: &RgbaImage) -> PlaybackControlState {
   if image.width() < 80 || image.height() < 80 {
     return PlaybackControlState::Unknown;
   }
@@ -1599,7 +2129,8 @@ pub fn run_live_scan(inputs: &Inputs) -> Result<PlaylistSidebarScan, String> {
       previous_sidebar_crop: None,
       motion_policy: MotionDetectionPolicy::default(),
     };
-    let top_seek = scroll_to_top_by_motion(&mut top_probe, inputs.max_scrolls);
+    let top_seek =
+      scroll_to_top_by_motion(&mut top_probe, top_seek_scroll_budget(inputs.max_scrolls));
     pre_scan_diagnostics.extend(top_seek.diagnostics);
     pre_scan_known_limits.extend(top_seek.known_limits);
     let LiveSidebarObserver {
@@ -1868,21 +2399,15 @@ fn detect_default_screen_restore(
   recognition: &TextRecognition,
   window_size: auv_driver::Size,
 ) -> Option<DefaultScreenRestore> {
-  if recognition.regions.iter().any(|region| {
-    region.bounds.origin.x < window_size.width * 0.38 && is_sidebar_marker(region.text.trim())
-  }) {
-    return None;
-  }
-
-  let has_song_detail_controls =
-    recognition.best_contains("评论").is_some() && recognition.best_contains("收藏").is_some();
-  if !has_song_detail_controls {
-    return None;
-  }
+  let screen = screen::classify_screen(recognition, window_size);
+  let point = match screen.state() {
+    screen::ScreenState::PlayingSongDetail => screen.restore_point()?,
+    _ => return None,
+  };
 
   Some(DefaultScreenRestore {
     reason: DefaultScreenRestoreReason::SongDetailScreen,
-    point: song_detail_restore_point(window_size),
+    point,
   })
 }
 
@@ -1939,9 +2464,10 @@ fn broad_sidebar_probe_bounds(window_size: auv_driver::Size) -> ViewBounds {
 
 fn fallback_playlist_sidebar_region(window_size: auv_driver::Size) -> ViewRegionRecord {
   // NOTICE(netease-sidebar-fallback): if OCR misses section headers, avoid the
-  // full left rail because it can target library/navigation rows such as "我喜欢的音乐".
-  // Start near the observed playlist section band instead; replace this with
-  // AX/sidebar-scrollbar evidence when that preflight contract is approved.
+  // full left rail because it can target library/navigation rows such as
+  // "我喜欢的音乐". Start near the observed playlist section band instead;
+  // replace this with AX/sidebar-scrollbar evidence when that preflight
+  // contract is approved.
   let y = (window_size.height * 0.30)
     .max(220.0)
     .min(window_size.height * 0.55);
@@ -2355,7 +2881,7 @@ fn scan_sidebar_with_observer(
   scroll_amount: f64,
   scroll_settle_ms: u64,
 ) -> PlaylistSidebarScan {
-  let top_seek = scroll_to_top_by_motion(observer, options.max_scrolls);
+  let top_seek = scroll_to_top_by_motion(observer, top_seek_scroll_budget(options.max_scrolls));
   observer.reset_collection_phase();
   let loop_outcome = scan_with_collection_policy(observer, options, category);
   let interaction_events = build_standalone_interaction_events(
@@ -2436,8 +2962,20 @@ fn motion_stop_threshold(ax_scrollbar_boundary: Option<SidebarScrollbarBoundary>
   }
 }
 
+fn top_seek_scroll_budget(collection_max_scrolls: usize) -> usize {
+  collection_max_scrolls.min(LIVE_TOP_SEEK_MAX_SCROLL_INPUTS)
+}
+
 trait SidebarScanObserver: ViewObserver<Observation = SidebarViewportObservation> {
   fn reset_collection_phase(&mut self) {}
+
+  fn scroll_seek_batch_size(&self) -> usize {
+    1
+  }
+
+  fn scroll_seek_up(&mut self) -> Result<(), ParserDiagnostic> {
+    self.scroll_up()
+  }
 
   fn observe_scroll_seek(
     &mut self,
@@ -2459,29 +2997,38 @@ fn scroll_to_top_by_motion(
     return outcome;
   }
 
-  for scroll_index in 0..max_scrolls {
-    if let Err(diagnostic) = observer.scroll_up() {
-      outcome.diagnostics.push(diagnostic);
-      return outcome;
+  let mut scrolls = 0usize;
+  let mut sample_index = 1usize;
+  while scrolls < max_scrolls {
+    let batch = observer
+      .scroll_seek_batch_size()
+      .max(1)
+      .min(max_scrolls - scrolls);
+    for _ in 0..batch {
+      if let Err(diagnostic) = observer.scroll_seek_up() {
+        outcome.diagnostics.push(diagnostic);
+        return outcome;
+      }
+      scrolls += 1;
     }
 
-    let observation = match observer.observe_scroll_seek(scroll_index + 1) {
+    let observation = match observer.observe_scroll_seek(sample_index) {
       Ok(observation) => observation,
       Err(diagnostic) => {
         outcome.diagnostics.push(diagnostic);
         return outcome;
       }
     };
+    sample_index += 1;
 
-    if successful_scroll_delivery_path(observation.incoming_scroll_delivery_path.as_deref()) {
-      if observation
+    if successful_scroll_delivery_path(observation.incoming_scroll_delivery_path.as_deref())
+      && observation
         .scroll_motion
         .as_ref()
         .is_some_and(|motion| motion.no_motion)
-      {
-        outcome.boundary = BoundaryConfidence::Likely;
-        return outcome;
-      }
+    {
+      outcome.boundary = BoundaryConfidence::Likely;
+      return outcome;
     }
   }
 
@@ -2489,6 +3036,29 @@ fn scroll_to_top_by_motion(
     "top seek stopped after max_scrolls={max_scrolls} without repeated sidebar pixels"
   ));
   outcome
+}
+
+fn empty_scroll_seek_observation(
+  observation_index: usize,
+  viewport_bounds: ViewBounds,
+) -> SidebarViewportObservation {
+  SidebarViewportObservation {
+    observation_index,
+    viewport: ViewViewportRecord {
+      page_index: observation_index,
+      bounds: viewport_bounds,
+      axis: ViewAxis::Vertical,
+      scroll_offset: None,
+    },
+    source_artifacts: Vec::new(),
+    incoming_scroll_delivery_path: None,
+    scroll_motion: None,
+    viewport_fingerprint: String::new(),
+    evidence_nodes: Vec::new(),
+    candidates: Vec::new(),
+    parser_notes: Vec::new(),
+    ax_scrollbar_boundary: None,
+  }
 }
 
 struct CollectionLoopOutcome {
@@ -3159,12 +3729,36 @@ impl SidebarScanObserver for LiveSidebarObserver {
     self.previous_sidebar_crop = None;
   }
 
+  fn scroll_seek_batch_size(&self) -> usize {
+    LIVE_FAST_SEEK_BATCH_SCROLLS
+  }
+
+  fn scroll_seek_up(&mut self) -> Result<(), ParserDiagnostic> {
+    self.scroll_by_with_settle(
+      self.scroll_amount * LIVE_TOP_SEEK_SCROLL_DELTA_MULTIPLIER,
+      std::time::Duration::ZERO,
+    )
+  }
+
   fn observe_scroll_seek(
     &mut self,
     observation_index: usize,
   ) -> Result<SidebarViewportObservation, ParserDiagnostic> {
-    let (image, scale_factor, _, mut observation) = self.capture_observation(observation_index)?;
-    observation.ax_scrollbar_boundary = self.capture_ax_scrollbar_boundary();
+    std::thread::sleep(std::time::Duration::from_millis(
+      LIVE_FAST_SEEK_SAMPLE_INTERVAL_MS,
+    ));
+    let capture = self
+      .session
+      .window()
+      .capture(&self.window)
+      .map_err(|error| ParserDiagnostic {
+        code: "window_capture_failed".to_string(),
+        message: error.to_string(),
+        node_id: None,
+      })?;
+    let mut observation = empty_scroll_seek_observation(observation_index, self.sidebar_bounds);
+    let image = capture.image.clone();
+    let scale_factor = capture.scale_factor;
     let sidebar_crop = crop_image(&image, self.sidebar_bounds, scale_factor);
     let incoming_scroll_delivery_path = self.pending_scroll_delivery_path.take();
     observation.scroll_motion = incoming_scroll_delivery_path
@@ -3198,6 +3792,17 @@ impl LiveSidebarObserver {
   }
 
   fn scroll_by(&mut self, vertical_delta: f64) -> Result<(), ParserDiagnostic> {
+    self.scroll_by_with_settle(
+      vertical_delta,
+      std::time::Duration::from_millis(self.scroll_settle_ms),
+    )
+  }
+
+  fn scroll_by_with_settle(
+    &mut self,
+    vertical_delta: f64,
+    settle: std::time::Duration,
+  ) -> Result<(), ParserDiagnostic> {
     let anchor = self.scroll_anchor();
     let result = self
       .session
@@ -3208,7 +3813,7 @@ impl LiveSidebarObserver {
         Scroll::new(0.0, vertical_delta),
         ScrollOptions {
           policy: InputPolicy::BackgroundPreferred,
-          settle: std::time::Duration::from_millis(self.scroll_settle_ms),
+          settle,
           ..ScrollOptions::default()
         },
       )
@@ -3606,6 +4211,21 @@ mod tests {
         ("推荐", 8.0, 20.0, 40.0, 20.0),
         ("评论", 760.0, 182.0, 80.0, 28.0),
         ("收藏", 880.0, 182.0, 80.0, 28.0),
+      ]),
+      auv_driver::Size::new(1646.0, 1053.0),
+    );
+
+    assert_eq!(restore, None);
+  }
+
+  #[test]
+  fn detect_default_screen_restore_ignores_blocking_modal() {
+    let restore = detect_default_screen_restore(
+      &fake_recognition(vec![
+        ("评论", 760.0, 182.0, 80.0, 28.0),
+        ("收藏", 880.0, 182.0, 80.0, 28.0),
+        ("打开", 760.0, 720.0, 80.0, 32.0),
+        ("取消", 860.0, 720.0, 80.0, 32.0),
       ]),
       auv_driver::Size::new(1646.0, 1053.0),
     );
@@ -4145,6 +4765,12 @@ mod tests {
         .iter()
         .any(|limit| limit.contains("max_scrolls"))
     );
+  }
+
+  #[test]
+  fn top_seek_budget_is_capped_separately_from_collection_budget() {
+    assert_eq!(top_seek_scroll_budget(3), 3);
+    assert_eq!(top_seek_scroll_budget(250), LIVE_TOP_SEEK_MAX_SCROLL_INPUTS);
   }
 
   #[test]

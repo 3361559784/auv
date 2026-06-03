@@ -1,6 +1,6 @@
-use auv_view::normalize_identity;
 use serde::Serialize;
 
+use crate::sidebar::SidebarView;
 use crate::{PlaylistSidebarProjection, PlaylistSidebarScan, SidebarSectionKind};
 
 /// One playlist item surfaced by the listing or keyword filter.
@@ -31,8 +31,9 @@ pub fn build_playlist_json_output<'a>(
   scan: &'a PlaylistSidebarScan,
   keyword: Option<&str>,
 ) -> PlaylistJsonOutput<'a> {
-  let matches = collect_matches(scan.projection(), keyword);
-  let item_count = collect_matches(scan.projection(), None).len();
+  let sidebar = SidebarView::from_projection(scan.projection().clone());
+  let item_count = collect_matches_from_sidebar(&sidebar, None).len();
+  let matches = collect_matches_from_sidebar(&sidebar, keyword);
   PlaylistJsonOutput {
     command: "playlist",
     query: keyword.map(str::to_string),
@@ -49,25 +50,22 @@ pub fn collect_matches(
   projection: &PlaylistSidebarProjection,
   keyword: Option<&str>,
 ) -> Vec<MatchRef> {
-  let needle = keyword.map(normalize_identity);
-  let mut out = Vec::new();
-  for section in &projection.sections {
-    for item in &section.items {
-      if let Some(needle) = &needle {
-        if !normalize_identity(&item.label).contains(needle.as_str()) {
-          continue;
-        }
-      }
-      out.push(MatchRef {
-        section_id: section.id.clone(),
-        section_kind: section.kind,
-        item_id: item.id.clone(),
-        label: item.label.clone(),
-        anchor_id: item.anchor_id.clone(),
-      });
-    }
-  }
-  out
+  let sidebar = SidebarView::from_projection(projection.clone());
+  collect_matches_from_sidebar(&sidebar, keyword)
+}
+
+fn collect_matches_from_sidebar(sidebar: &SidebarView, keyword: Option<&str>) -> Vec<MatchRef> {
+  sidebar
+    .playlists(keyword)
+    .into_iter()
+    .map(|playlist| MatchRef {
+      section_id: playlist.section.id.clone(),
+      section_kind: playlist.section.kind,
+      item_id: playlist.item.id.clone(),
+      label: playlist.item.label.clone(),
+      anchor_id: playlist.item.anchor_id.clone(),
+    })
+    .collect()
 }
 
 #[cfg(test)]
@@ -103,6 +101,39 @@ mod tests {
     }
   }
 
+  fn projection_with_nav_item() -> PlaylistSidebarProjection {
+    PlaylistSidebarProjection {
+      sections: vec![
+        SidebarSection {
+          id: "nav".to_string(),
+          kind: SidebarSectionKind::FeatureNav,
+          label: Some("推荐".to_string()),
+          items: vec![PlaylistSidebarItem {
+            id: "nav-daily".to_string(),
+            label: "Daily".to_string(),
+            section_hint: None,
+            confidence: Confidence::High,
+            candidate_id: None,
+            anchor_id: Some("nav-anchor".to_string()),
+          }],
+        },
+        SidebarSection {
+          id: "playlist".to_string(),
+          kind: SidebarSectionKind::FavoritePlaylists,
+          label: Some("收藏的歌单".to_string()),
+          items: vec![PlaylistSidebarItem {
+            id: "playlist-daily".to_string(),
+            label: "Daily".to_string(),
+            section_hint: None,
+            confidence: Confidence::High,
+            candidate_id: None,
+            anchor_id: Some("playlist-anchor".to_string()),
+          }],
+        },
+      ],
+    }
+  }
+
   #[test]
   fn no_keyword_returns_all_items() {
     let matches = collect_matches(&projection(), None);
@@ -123,6 +154,19 @@ mod tests {
   fn keyword_without_match_returns_empty() {
     let matches = collect_matches(&projection(), Some("zzz"));
     assert!(matches.is_empty());
+  }
+
+  #[test]
+  fn collect_matches_uses_sidebar_playlist_sections_only() {
+    let matches = collect_matches(&projection_with_nav_item(), Some("daily"));
+
+    assert_eq!(matches.len(), 1);
+    assert_eq!(
+      matches[0].section_kind,
+      SidebarSectionKind::FavoritePlaylists
+    );
+    assert_eq!(matches[0].item_id, "playlist-daily");
+    assert_eq!(matches[0].anchor_id.as_deref(), Some("playlist-anchor"));
   }
 
   #[test]

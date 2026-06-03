@@ -114,6 +114,7 @@ pub(crate) fn render_search_entry_candidate_recipe(analysis: &AppAnalysis) -> Va
     "inputs": {
       "app_id": { "type": "string", "default": analysis.app_identity.bundle_id },
       "focus_query": { "type": "string", "note": "Replace with the best known search-field or entry-point AX query for this app." },
+      "focus_candidate": { "type": "string", "default": "", "note": "Optional serialized contract::Candidate injected during validate when an action-grade search-entry promotion exists." },
       "query": { "type": "string", "note": "Replace with a real query during validation." },
       "activate_settle_ms": { "type": "integer", "default": 250 },
       "submit_settle_ms": { "type": "integer", "default": 600 }
@@ -143,7 +144,7 @@ pub(crate) fn render_search_entry_candidate_recipe(analysis: &AppAnalysis) -> Va
         "id": "focus-search-input",
         "command_id": "debug.focusTextInput",
         "disturbance": { "classes": ["foreground_app", "keyboard", "pointer"], "max": "pointer" },
-        "args": { "target": "${app_id}", "query": "${focus_query}", "max_depth": 6, "max_children": 24 },
+        "args": { "target": "${app_id}", "query": "${focus_query}", "candidate": "${focus_candidate}", "max_depth": 6, "max_children": 24 },
         "purpose": "Try to focus the search-entry surface through AX."
       },
       {

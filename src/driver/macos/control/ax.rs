@@ -35,18 +35,24 @@ use super::common::{
 use super::window_ocr::{
   capture_resolved_window_observation, click_window_text, logical_point_for_match,
 };
+use crate::contract::{Candidate, TargetGrounding};
 use crate::model::AuvResult;
+use serde::Deserialize;
 use std::fs;
 
 pub(crate) fn focus_text_input(call: &DriverCall) -> AuvResult<DriverResponse> {
   let app = app_identifier(call).unwrap_or_default();
-  let query = required_non_empty_string(call, "query")?;
+  let query = optional_non_empty_string(call, "query");
+  let candidate_json = optional_non_empty_string(call, "candidate");
   let reveal_shortcut = optional_non_empty_string(call, "reveal_shortcut");
   let reveal_settle_ms = optional_positive_u64(call, "reveal_settle_ms")?.unwrap_or(250);
   let max_depth = optional_i64(call, "max_depth")?.unwrap_or(6).clamp(1, 10);
   let max_children = optional_i64(call, "max_children")?
     .unwrap_or(16)
     .clamp(1, 50);
+  if query.is_none() && candidate_json.is_none() {
+    return Err("operation requires --query <text> or --candidate <json>".to_string());
+  }
 
   activate_app_if_needed(&app)?;
   send_reveal_shortcut_if_needed(reveal_shortcut.as_deref(), reveal_settle_ms)?;
@@ -54,8 +60,8 @@ pub(crate) fn focus_text_input(call: &DriverCall) -> AuvResult<DriverResponse> {
   let snapshot =
     auv_driver_macos::native::ax_tree::capture_ax_tree_snapshot(&app, max_depth, max_children)?
       .snapshot;
-  let matched = find_best_ax_node(&snapshot, &query)
-    .ok_or_else(|| no_matching_ax_node_error(&snapshot, &query, "text input-like"))?;
+  let target = resolve_focus_text_target(&snapshot, candidate_json.as_deref(), query.as_deref())?;
+  let matched = target.matched;
   let (center_x, center_y) = ax_node_center(matched);
   auv_driver_macos::native::pointer::click_point(
     center_x,
@@ -65,21 +71,38 @@ pub(crate) fn focus_text_input(call: &DriverCall) -> AuvResult<DriverResponse> {
     DEFAULT_CLICK_INTERVAL_MS,
   )?;
 
-  let report = render_ax_interaction_report("focus-text-input", &snapshot, matched, &query);
+  let report = render_ax_interaction_report("focus-text-input", &snapshot, matched, &target.query);
   let artifact = build_text_artifact(
     "focus-text-input",
     "txt",
-    &format!("focus-text-input-{}", sanitize_file_component(&query)),
+    &format!(
+      "focus-text-input-{}",
+      sanitize_file_component(&target.query)
+    ),
     report,
     "Focused a text input by matching the observed AX tree and clicking the resolved bounds.",
   )?;
-  let mut notes = build_ax_click_notes(&query, matched, center_x, center_y);
+  let mut notes = build_ax_click_notes(&target.query, matched, center_x, center_y);
   if let Some(shortcut) = reveal_shortcut.as_deref() {
     notes.push(format!("revealShortcut={shortcut}"));
     notes.push(format!("revealSettleMs={reveal_settle_ms}"));
   }
   if !matched.placeholder.is_empty() {
     notes.push(format!("matchedPlaceholder={}", matched.placeholder));
+  }
+  let mut signals = std::collections::BTreeMap::new();
+  if let Some(candidate_local_id) = target.consumed_candidate_local_id.as_deref() {
+    notes.push(format!("consumedCandidateLocalId={candidate_local_id}"));
+    signals.insert(
+      "focusTextInput.consumer".to_string(),
+      "contract-candidate".to_string(),
+    );
+    signals.insert(
+      "focusTextInput.candidateLocalId".to_string(),
+      candidate_local_id.to_string(),
+    );
+  } else {
+    signals.insert("focusTextInput.consumer".to_string(), "query".to_string());
   }
 
   Ok(DriverResponse {
@@ -91,7 +114,7 @@ pub(crate) fn focus_text_input(call: &DriverCall) -> AuvResult<DriverResponse> {
         } else {
           &snapshot.app_name
         },
-        query,
+        target.query,
         matched.role
       )
     } else {
@@ -107,14 +130,259 @@ pub(crate) fn focus_text_input(call: &DriverCall) -> AuvResult<DriverResponse> {
         } else {
           &snapshot.app_name
         },
-        query
+        target.query
       )
     },
     backend: Some("macos.desktop.ax-tree-click-focus".to_string()),
-    signals: std::collections::BTreeMap::new(),
+    signals,
     notes,
     artifacts: vec![artifact],
   })
+}
+
+#[derive(Clone, Debug)]
+struct FocusTextTarget<'a> {
+  query: String,
+  matched: &'a ObservedAxNode,
+  consumed_candidate_local_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct FocusTextCandidateObservation {
+  #[serde(default)]
+  query: Option<FocusTextCandidateObservationQuery>,
+  #[serde(default)]
+  bounds: Option<FocusTextObservedBounds>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct FocusTextCandidateObservationQuery {
+  #[serde(default)]
+  ax: Option<FocusTextCandidateAxSelector>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct FocusTextCandidateAxSelector {
+  #[serde(default)]
+  role: Option<String>,
+  #[serde(default)]
+  label: Option<String>,
+  #[serde(default)]
+  path: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct FocusTextObservedBounds {
+  x: i64,
+  y: i64,
+  width: i64,
+  height: i64,
+}
+
+#[derive(Clone, Debug)]
+struct ResolvedFocusTextCandidate {
+  candidate_local_id: String,
+  query: String,
+  role: Option<String>,
+  label: Option<String>,
+  path: Option<String>,
+  observed_bounds: Option<FocusTextObservedBounds>,
+}
+
+fn resolve_focus_text_target<'a>(
+  snapshot: &'a auv_driver_macos::types::ObservedAxTreeSnapshot,
+  candidate_json: Option<&str>,
+  query: Option<&str>,
+) -> AuvResult<FocusTextTarget<'a>> {
+  if let Some(candidate_json) = candidate_json {
+    let candidate = parse_focus_text_candidate(candidate_json)?;
+    let matched = resolve_focus_text_candidate(snapshot, &candidate).ok_or_else(|| {
+      format!(
+        "no matching text input-like node found for promoted candidate {}",
+        candidate.candidate_local_id
+      )
+    })?;
+    return Ok(FocusTextTarget {
+      query: candidate.query,
+      matched,
+      consumed_candidate_local_id: Some(candidate.candidate_local_id),
+    });
+  }
+
+  let query =
+    query.ok_or_else(|| "operation requires --query <text> or --candidate <json>".to_string())?;
+  let matched = find_best_ax_node(snapshot, query)
+    .ok_or_else(|| no_matching_ax_node_error(snapshot, query, "text input-like"))?;
+  Ok(FocusTextTarget {
+    query: query.to_string(),
+    matched,
+    consumed_candidate_local_id: None,
+  })
+}
+
+fn parse_focus_text_candidate(raw_candidate: &str) -> AuvResult<ResolvedFocusTextCandidate> {
+  let candidate: Candidate = serde_json::from_str(raw_candidate)
+    .map_err(|error| format!("invalid --candidate JSON: {error}"))?;
+  if candidate.target_spec.grounding != TargetGrounding::AxNode {
+    return Err(format!(
+      "focus_text_input only accepts AxNode candidates; got {:?}",
+      candidate.target_spec.grounding
+    ));
+  }
+
+  let observation: FocusTextCandidateObservation =
+    serde_json::from_value(candidate.evidence.observation.clone()).map_err(|error| {
+      format!("candidate observation is missing search-entry AX selector detail: {error}")
+    })?;
+  let ax = observation
+    .query
+    .and_then(|query| query.ax)
+    .ok_or_else(|| "candidate observation is missing query.ax selector detail".to_string())?;
+  let label = ax
+    .label
+    .as_deref()
+    .and_then(non_empty_trimmed)
+    .or_else(|| {
+      candidate
+        .label
+        .clone()
+        .and_then(|value| non_empty_trimmed(&value))
+    })
+    .or_else(|| {
+      candidate
+        .target_spec
+        .anchor_text
+        .clone()
+        .and_then(|value| non_empty_trimmed(&value))
+    });
+  let path = ax.path.as_deref().and_then(non_empty_trimmed);
+  let role = ax.role.as_deref().and_then(non_empty_trimmed);
+  if label.is_none() && path.is_none() {
+    return Err("candidate must carry at least one AX selector hint (label or path)".to_string());
+  }
+  let query = label
+    .clone()
+    .or_else(|| {
+      candidate
+        .target_spec
+        .anchor_text
+        .clone()
+        .and_then(|value| non_empty_trimmed(&value))
+    })
+    .unwrap_or_else(|| candidate.candidate_local_id.clone());
+
+  Ok(ResolvedFocusTextCandidate {
+    candidate_local_id: candidate.candidate_local_id,
+    query,
+    role,
+    label,
+    path,
+    observed_bounds: observation.bounds,
+  })
+}
+
+fn resolve_focus_text_candidate<'a>(
+  snapshot: &'a auv_driver_macos::types::ObservedAxTreeSnapshot,
+  candidate: &ResolvedFocusTextCandidate,
+) -> Option<&'a ObservedAxNode> {
+  snapshot
+    .nodes
+    .iter()
+    .filter(|node| node.bounds.width > 0 && node.bounds.height > 0)
+    .filter_map(|node| focus_text_candidate_score(node, candidate).map(|score| (score, node)))
+    .max_by_key(|(score, _)| *score)
+    .map(|(_, node)| node)
+}
+
+fn focus_text_candidate_score(
+  node: &ObservedAxNode,
+  candidate: &ResolvedFocusTextCandidate,
+) -> Option<i64> {
+  let mut score = 0i64;
+
+  if let Some(path) = candidate.path.as_deref() {
+    if node.path == path {
+      score += 1000;
+    } else if !path.is_empty() {
+      score -= 200;
+    }
+  }
+
+  if let Some(role) = candidate.role.as_deref() {
+    if node.role == role {
+      score += 200;
+    } else {
+      return None;
+    }
+  }
+
+  if let Some(label) = candidate.label.as_deref() {
+    let label_score = focus_text_node_label_score(node, label)?;
+    score += label_score;
+  }
+
+  if let Some(bounds) = candidate.observed_bounds.as_ref() {
+    score += focus_text_bounds_score(node, bounds);
+  }
+
+  Some(score - node.depth as i64)
+}
+
+fn focus_text_node_label_score(node: &ObservedAxNode, label: &str) -> Option<i64> {
+  let normalized_label = normalize_focus_text_value(label);
+  if normalized_label.is_empty() {
+    return None;
+  }
+
+  let fields = [
+    node.title.as_str(),
+    node.description.as_str(),
+    node.help.as_str(),
+    node.identifier.as_str(),
+    node.placeholder.as_str(),
+    node.value.as_str(),
+  ];
+
+  let mut best_score = None;
+  for raw_field in fields {
+    let normalized_field = normalize_focus_text_value(raw_field);
+    if normalized_field.is_empty() || !normalized_field.contains(&normalized_label) {
+      continue;
+    }
+    let mut score = 120;
+    if normalized_field == normalized_label {
+      score += 40;
+    }
+    best_score = Some(best_score.map_or(score, |current: i64| current.max(score)));
+  }
+
+  best_score
+}
+
+fn focus_text_bounds_score(node: &ObservedAxNode, bounds: &FocusTextObservedBounds) -> i64 {
+  let node_center_x = node.bounds.x + node.bounds.width / 2;
+  let node_center_y = node.bounds.y + node.bounds.height / 2;
+  let target_center_x = bounds.x + bounds.width / 2;
+  let target_center_y = bounds.y + bounds.height / 2;
+  let distance = (node_center_x - target_center_x).abs() + (node_center_y - target_center_y).abs();
+  100 - distance.min(100)
+}
+
+fn normalize_focus_text_value(raw: &str) -> String {
+  raw
+    .chars()
+    .filter(|character| !character.is_whitespace())
+    .collect::<String>()
+    .to_lowercase()
+}
+
+fn non_empty_trimmed(raw: &str) -> Option<String> {
+  let trimmed = raw.trim();
+  if trimmed.is_empty() {
+    None
+  } else {
+    Some(trimmed.to_string())
+  }
 }
 
 pub(crate) fn ax_focus_text_input(call: &DriverCall) -> AuvResult<DriverResponse> {
@@ -1155,8 +1423,133 @@ fn report_value(raw: &str) -> String {
 mod tests {
   use super::super::action_resolver::ACTION_RESOLVER_VERSION;
   use super::*;
+  use crate::contract::{
+    AnchorRecheckPrecondition, ArtifactRef, Candidate, CandidateEvidence, CandidateLiveness,
+    ControlRequirements, LivenessPreconditions, RatioRegion, TargetGrounding, TargetSpec,
+    WindowRefPrecondition,
+  };
   use crate::driver::macos::support::temp_file_path;
   use crate::model::ProducedArtifact;
+  use crate::trace::{ArtifactId, RunId, SpanId};
+
+  fn sample_focus_snapshot() -> auv_driver_macos::types::ObservedAxTreeSnapshot {
+    auv_driver_macos::types::ObservedAxTreeSnapshot {
+      observed_at: "2026-06-03T00:00:00Z".to_string(),
+      app_name: "Example".to_string(),
+      bundle_id: "com.example.App".to_string(),
+      pid: 4242,
+      window_title: "Example Window".to_string(),
+      nodes: vec![
+        ObservedAxNode {
+          depth: 1,
+          path: "0.1".to_string(),
+          role: "AXTextField".to_string(),
+          subrole: String::new(),
+          title: String::new(),
+          description: String::new(),
+          help: String::new(),
+          identifier: String::new(),
+          placeholder: "Other".to_string(),
+          value: String::new(),
+          bounds: auv_driver_macos::types::ObservedRect {
+            x: 20,
+            y: 20,
+            width: 120,
+            height: 32,
+          },
+        },
+        ObservedAxNode {
+          depth: 2,
+          path: "0.3".to_string(),
+          role: "AXTextField".to_string(),
+          subrole: "AXSearchField".to_string(),
+          title: String::new(),
+          description: String::new(),
+          help: String::new(),
+          identifier: "search-field".to_string(),
+          placeholder: "Search".to_string(),
+          value: String::new(),
+          bounds: auv_driver_macos::types::ObservedRect {
+            x: 120,
+            y: 64,
+            width: 220,
+            height: 36,
+          },
+        },
+      ],
+    }
+  }
+
+  fn sample_focus_candidate_json() -> String {
+    serde_json::to_string(&Candidate {
+      candidate_local_id: "search-entry-focus-ax".to_string(),
+      kind: "search_entry".to_string(),
+      label: Some("Search".to_string()),
+      target_spec: TargetSpec {
+        grounding: TargetGrounding::AxNode,
+        anchor_text: Some("Search".to_string()),
+        region_hint: Some(RatioRegion {
+          left: 0.1,
+          top: 0.1,
+          right: 0.3,
+          bottom: 0.2,
+        }),
+        row_index: None,
+      },
+      evidence: CandidateEvidence {
+        artifact_ref: ArtifactRef {
+          run_id: RunId::new("run_probe"),
+          span_id: SpanId::new("span_probe"),
+          artifact_id: ArtifactId::new("artifact_0001"),
+          captured_event_id: None,
+        },
+        observation: serde_json::json!({
+          "source": "ax",
+          "surface_candidate_id": "search-entry-focus-ax",
+          "query": {
+            "query_id": "search-entry-focus-ax",
+            "output_kind": "focus-query",
+            "selector_within": "target_window",
+            "require_visible": true,
+            "ax": {
+              "role": "AXTextField",
+              "label": "Search",
+              "path": "0.3",
+              "visible": true
+            }
+          },
+          "bounds": {
+            "x": 120,
+            "y": 64,
+            "width": 220,
+            "height": 36
+          }
+        }),
+      },
+      liveness: CandidateLiveness {
+        preconditions: LivenessPreconditions {
+          window_ref: Some(WindowRefPrecondition {
+            app_bundle_id: "com.example.App".to_string(),
+            window_title_substring: Some("Example".to_string()),
+            window_number: None,
+          }),
+          anchor_recheck: Some(AnchorRecheckPrecondition {
+            text: "Search".to_string(),
+            region_hint: None,
+            expected_min_confidence: 0.0,
+            max_pixel_distance: 48.0,
+          }),
+        },
+        ttl_hint_ms: Some(5000),
+      },
+      control: ControlRequirements {
+        requires_app_frontmost: true,
+        requires_window_focus: true,
+      },
+      known_limits: Vec::new(),
+    })
+    .expect("sample candidate should serialize")
+  }
 
   #[test]
   fn augment_smart_press_overlay_annotation_records_decision() {
@@ -1274,5 +1667,62 @@ mod tests {
     for artifact in response.artifacts {
       let _ = fs::remove_file(artifact.source_path);
     }
+  }
+
+  #[test]
+  fn resolve_focus_text_target_consumes_promoted_candidate_selector() {
+    let snapshot = sample_focus_snapshot();
+    let candidate_json = sample_focus_candidate_json();
+
+    let resolved = resolve_focus_text_target(&snapshot, Some(&candidate_json), None)
+      .expect("candidate should resolve");
+
+    assert_eq!(resolved.query, "Search");
+    assert_eq!(resolved.matched.path, "0.3");
+    assert_eq!(
+      resolved.consumed_candidate_local_id.as_deref(),
+      Some("search-entry-focus-ax")
+    );
+  }
+
+  #[test]
+  fn parse_focus_text_candidate_rejects_non_ax_grounding() {
+    let candidate_json = serde_json::to_string(&Candidate {
+      candidate_local_id: "ocr-anchor".to_string(),
+      kind: "search_entry".to_string(),
+      label: Some("Search".to_string()),
+      target_spec: TargetSpec {
+        grounding: TargetGrounding::OcrAnchor,
+        anchor_text: Some("Search".to_string()),
+        region_hint: None,
+        row_index: None,
+      },
+      evidence: CandidateEvidence {
+        artifact_ref: ArtifactRef {
+          run_id: RunId::new("run_probe"),
+          span_id: SpanId::new("span_probe"),
+          artifact_id: ArtifactId::new("artifact_0001"),
+          captured_event_id: None,
+        },
+        observation: serde_json::json!({}),
+      },
+      liveness: CandidateLiveness {
+        preconditions: LivenessPreconditions {
+          window_ref: None,
+          anchor_recheck: None,
+        },
+        ttl_hint_ms: None,
+      },
+      control: ControlRequirements {
+        requires_app_frontmost: true,
+        requires_window_focus: true,
+      },
+      known_limits: Vec::new(),
+    })
+    .expect("candidate json");
+
+    let error =
+      parse_focus_text_candidate(&candidate_json).expect_err("non-AxNode candidate should reject");
+    assert!(error.contains("only accepts AxNode candidates"));
   }
 }

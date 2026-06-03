@@ -39,6 +39,7 @@ use std::path::{Path, PathBuf};
 
 use auv_driver_macos::types::ObservedRect;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::contract::ArtifactRef;
 use crate::model::{AuvResult, now_millis};
@@ -968,7 +969,7 @@ fn validate_app_distillation_into_run(
   let mut candidates = Vec::new();
   let mut unresolved_candidate_failures = Vec::new();
   for candidate in &distillation.candidates {
-    let manifest: SkillManifest = read_json(&candidate.recipe_path)?;
+    let mut manifest: SkillManifest = read_json(&candidate.recipe_path)?;
     let mut matrix: SkillCaseMatrix = read_json(&candidate.case_matrix_path)?;
     let verification_mode =
       verification_mode_for_strategy(&manifest.strategy).map_err(|error| {
@@ -988,6 +989,18 @@ fn validate_app_distillation_into_run(
       &mut matrix,
       &mut resolved_inputs,
     );
+    inject_promoted_candidate_runtime_inputs(
+      candidate,
+      &mut manifest,
+      &mut matrix,
+      &mut resolved_inputs,
+    )
+    .map_err(|error| {
+      format!(
+        "candidate {} has invalid promoted candidate payload: {error}",
+        candidate.recipe_id
+      )
+    })?;
     let (unresolved_inputs, grounded_annotation_ids) = apply_candidate_grounding(
       &analysis,
       ax_snapshot.as_ref(),
@@ -1165,6 +1178,95 @@ fn validate_app_distillation_into_run(
   })
 }
 
+fn inject_promoted_candidate_runtime_inputs(
+  candidate: &AppDistilledCandidate,
+  manifest: &mut SkillManifest,
+  matrix: &mut SkillCaseMatrix,
+  resolved_inputs: &mut BTreeMap<String, String>,
+) -> AuvResult<()> {
+  let Some(promoted_candidate) = candidate.promoted_candidate.as_ref() else {
+    return Ok(());
+  };
+  if candidate.taxonomy_id != "search-entry.ax-text-input.clipboard-submit.capture-evidence" {
+    return Ok(());
+  }
+
+  let serialized = serde_json::to_string(promoted_candidate)
+    .map_err(|error| format!("failed to serialize promoted candidate: {error}"))?;
+  ensure_manifest_string_input(
+    manifest,
+    "focus_candidate",
+    Some(Value::String(serialized.clone())),
+    "Validate injects the promoted search-entry contract::Candidate here so debug.focusTextInput can consume the typed target without reopening app-only schema.",
+  );
+  if !candidate
+    .candidate_shape
+    .provided_inputs
+    .contains_key("focus_query")
+    && !resolved_inputs.contains_key("focus_query")
+    && let Some(anchor_text) = promoted_candidate.target_spec.anchor_text.as_ref()
+  {
+    ensure_manifest_string_input(
+      manifest,
+      "focus_query",
+      Some(Value::String(anchor_text.clone())),
+      "Legacy fallback for search-entry validate. TODO(app-search-entry-query-fallback-removal): remove once the query-only path is no longer needed by existing recipes.",
+    );
+  }
+  for case in &mut matrix.cases {
+    case
+      .inputs
+      .entry("focus_candidate".to_string())
+      .or_insert_with(|| serialized.clone());
+    if let Some(anchor_text) = promoted_candidate.target_spec.anchor_text.as_ref() {
+      case
+        .inputs
+        .entry("focus_query".to_string())
+        .or_insert_with(|| anchor_text.clone());
+    }
+  }
+  resolved_inputs
+    .entry("focus_candidate".to_string())
+    .or_insert(serialized);
+  if let Some(anchor_text) = promoted_candidate.target_spec.anchor_text.as_ref() {
+    resolved_inputs
+      .entry("focus_query".to_string())
+      .or_insert_with(|| anchor_text.clone());
+  }
+
+  Ok(())
+}
+
+fn ensure_manifest_string_input(
+  manifest: &mut SkillManifest,
+  input_key: &str,
+  default: Option<Value>,
+  note: &str,
+) {
+  use std::collections::btree_map::Entry;
+
+  match manifest.inputs.entry(input_key.to_string()) {
+    Entry::Occupied(mut entry) => {
+      if entry.get().kind.trim().is_empty() {
+        entry.get_mut().kind = "string".to_string();
+      }
+      if entry.get().default.is_none() {
+        entry.get_mut().default = default;
+      }
+      if entry.get().note.trim().is_empty() {
+        entry.get_mut().note = note.to_string();
+      }
+    }
+    Entry::Vacant(entry) => {
+      entry.insert(crate::skill::SkillInputSpec {
+        kind: "string".to_string(),
+        default,
+        note: note.to_string(),
+      });
+    }
+  }
+}
+
 fn default_distill_output_dir(analysis_path: &Path, analysis: &AppAnalysis) -> PathBuf {
   let base = analysis_path.parent().unwrap_or_else(|| Path::new("."));
   base.join("distill").join(format!(
@@ -1248,6 +1350,37 @@ mod tests {
           signals: BTreeMap::from([("outcome".to_string(), "ok".to_string())]),
           backend: None,
         });
+      }
+
+      if call.operation == "test_operation"
+        && call
+          .inputs
+          .get("require_focus_candidate")
+          .map(String::as_str)
+          == Some("true")
+      {
+        let raw_candidate = call
+          .inputs
+          .get("focus_candidate")
+          .ok_or_else(|| "expected focus_candidate input".to_string())?;
+        let candidate: crate::contract::Candidate = serde_json::from_str(raw_candidate)
+          .map_err(|error| format!("focus_candidate was not valid Candidate JSON: {error}"))?;
+        if candidate.target_spec.grounding != crate::contract::TargetGrounding::AxNode {
+          return Err(format!(
+            "expected AxNode focus_candidate grounding, got {:?}",
+            candidate.target_spec.grounding
+          ));
+        }
+        let expected_query = call
+          .inputs
+          .get("focus_query")
+          .ok_or_else(|| "expected focus_query fallback input".to_string())?;
+        if candidate.target_spec.anchor_text.as_deref() != Some(expected_query.as_str()) {
+          return Err(format!(
+            "focus_candidate anchor_text {:?} did not match focus_query {}",
+            candidate.target_spec.anchor_text, expected_query
+          ));
+        }
       }
 
       Ok(DriverResponse {
@@ -1657,6 +1790,11 @@ mod tests {
       serde_json::from_value(matrix_value).expect("candidate matrix should parse");
     validate_case_matrix_manifest(&matrix).expect("candidate matrix should validate");
     validate_case_matrix_against_skill(&manifest, &matrix).expect("candidate matrix should align");
+    assert!(manifest.inputs.contains_key("focus_candidate"));
+    assert_eq!(
+      manifest.steps[1].args.get("candidate"),
+      Some(&serde_json::json!("${focus_candidate}"))
+    );
   }
 
   #[test]
@@ -3068,6 +3206,98 @@ mod tests {
         .get("relative_y"),
       Some(&"0.500000".to_string())
     );
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn validate_app_distillation_injects_search_entry_promoted_candidate_into_runtime_inputs() {
+    let root = temp_dir("app-validate-search-entry-promoted-consumer");
+    let runtime = test_runtime(root.clone());
+    let analysis_path = root.join("analysis.json");
+    let distillation_path = root.join("distillation.json");
+    let recipe_path = root.join("search-entry.recipe.json");
+    let case_matrix_path = root.join("search-entry.cases.json");
+
+    let analysis = sample_promotable_search_entry_analysis();
+    write_pretty_json(&analysis_path, &analysis).expect("analysis should write");
+
+    write_pretty_json(&recipe_path, &test_candidate_manifest_value())
+      .expect("candidate recipe should write");
+    write_pretty_json(
+      &case_matrix_path,
+      &serde_json::json!({
+        "skill_id": "test.recorded.skill",
+        "version": "0.1.0",
+        "status": "active-case-matrix",
+        "cases": [{
+          "case_id": "baseline",
+          "status": "validated",
+          "inputs": {
+            "require_focus_candidate": "true"
+          },
+          "disturbance": "none"
+        }]
+      }),
+    )
+    .expect("candidate matrix should write");
+
+    let candidate_shape = build_distilled_candidate_shape(
+      &analysis,
+      "search-entry.ax-text-input.clipboard-submit.capture-evidence",
+    );
+    let promoted_candidate = promoted_candidate_for_candidate_shape(
+      &analysis,
+      "search-entry.ax-text-input.clipboard-submit.capture-evidence",
+      &candidate_shape,
+    )
+    .expect("search-entry candidate should promote");
+    let distillation = AppDistillation {
+      distill_version: APP_DISTILL_VERSION.to_string(),
+      created_at_millis: 0,
+      source_analysis_path: analysis_path,
+      app_identity: analysis.app_identity.clone(),
+      candidates: vec![AppDistilledCandidate {
+        recipe_id: "test.recorded.skill".to_string(),
+        taxonomy_id: "search-entry.ax-text-input.clipboard-submit.capture-evidence".to_string(),
+        status: AssessmentStatus::Candidate,
+        rationale: "test".to_string(),
+        suggested_annotation_ids: vec!["search-entry-focus-ax".to_string()],
+        source_evidence_refs: Vec::new(),
+        promoted_candidate: Some(promoted_candidate),
+        candidate_shape,
+        recipe_path,
+        case_matrix_path,
+      }],
+      known_boundaries: Vec::new(),
+    };
+    write_pretty_json(&distillation_path, &distillation).expect("distillation should write");
+
+    let output =
+      validate_app_distillation(&runtime, &distillation_path).expect("validation should complete");
+    assert_eq!(
+      output.validation.candidates[0].status,
+      AppValidationStatus::Validated
+    );
+    assert!(
+      output.validation.candidates[0]
+        .used_annotation_ids
+        .iter()
+        .any(|candidate_id| candidate_id == "search-entry-focus-ax")
+    );
+    assert_eq!(
+      output.validation.candidates[0]
+        .resolved_inputs
+        .get("focus_query"),
+      Some(&"Search".to_string())
+    );
+    let focus_candidate = output.validation.candidates[0]
+      .resolved_inputs
+      .get("focus_candidate")
+      .expect("validate should inject focus_candidate");
+    let parsed_candidate: crate::contract::Candidate = serde_json::from_str(focus_candidate)
+      .expect("focus_candidate should stay valid candidate JSON");
+    assert_eq!(parsed_candidate.candidate_local_id, "search-entry-focus-ax");
 
     let _ = fs::remove_dir_all(root);
   }
@@ -4555,12 +4785,22 @@ mod tests {
         "max_disturbance": "none",
         "declared_classes": ["none"]
       },
+      "inputs": {
+        "focus_candidate": { "type": "string", "default": "" },
+        "focus_query": { "type": "string", "default": "" },
+        "require_focus_candidate": { "type": "string", "default": "false" }
+      },
       "steps": [{
         "id": "first",
         "command_id": "test.skill.invoke",
         "disturbance": {
           "classes": ["none"],
           "max": "none"
+        },
+        "args": {
+          "focus_candidate": "${focus_candidate}",
+          "focus_query": "${focus_query}",
+          "require_focus_candidate": "${require_focus_candidate}"
         },
         "expect": {
           "output_must_contain": ["outcome=ok"]
@@ -4581,7 +4821,9 @@ mod tests {
       "cases": [{
         "case_id": "baseline",
         "status": "validated",
-        "inputs": {},
+        "inputs": {
+          "require_focus_candidate": "false"
+        },
         "disturbance": "none"
       }]
     })

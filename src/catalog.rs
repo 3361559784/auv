@@ -299,7 +299,7 @@ pub fn default_command_catalog() -> CommandCatalog {
     CommandSpec {
       id: "debug.focusTextInput",
       namespace: ACTION,
-      summary: "Focus a target macOS text input by query through AX.",
+      summary: "Focus a target macOS text input through AX, either by legacy --query text or by a promoted --candidate JSON payload carrying the typed search-entry contract candidate.",
       driver_id: "macos.desktop",
       operation: "focus_text_input",
       disturbance_classes: FOCUS_POINTER_ENTRY,

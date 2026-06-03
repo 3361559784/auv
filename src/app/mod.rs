@@ -1187,9 +1187,18 @@ fn inject_promoted_candidate_runtime_inputs(
   let Some(promoted_candidate) = candidate.promoted_candidate.as_ref() else {
     return Ok(());
   };
-  if candidate.taxonomy_id != "search-entry.ax-text-input.clipboard-submit.capture-evidence" {
-    return Ok(());
-  }
+
+  let (candidate_note, focus_query_note) = match candidate.taxonomy_id.as_str() {
+    "search-entry.ax-text-input.clipboard-submit.capture-evidence" => (
+      "Validate injects the promoted search-entry contract::Candidate here so debug.focusTextInput can consume the typed target without reopening app-only schema.",
+      "Legacy fallback for search-entry validate. TODO(app-search-entry-query-fallback-removal): remove once the query-only path is no longer needed by existing recipes.",
+    ),
+    "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text" => (
+      "Validate injects the promoted native-text contract::Candidate here so debug.focusTextInput can consume the typed target without reopening app-only schema.",
+      "Legacy fallback for native-text validate. TODO(app-native-text-query-fallback-removal): remove once the query-only path is no longer needed by existing recipes.",
+    ),
+    _ => return Ok(()),
+  };
 
   let serialized = serde_json::to_string(promoted_candidate)
     .map_err(|error| format!("failed to serialize promoted candidate: {error}"))?;
@@ -1197,7 +1206,7 @@ fn inject_promoted_candidate_runtime_inputs(
     manifest,
     "focus_candidate",
     Some(Value::String(serialized.clone())),
-    "Validate injects the promoted search-entry contract::Candidate here so debug.focusTextInput can consume the typed target without reopening app-only schema.",
+    candidate_note,
   );
   if !candidate
     .candidate_shape
@@ -1210,7 +1219,7 @@ fn inject_promoted_candidate_runtime_inputs(
       manifest,
       "focus_query",
       Some(Value::String(anchor_text.clone())),
-      "Legacy fallback for search-entry validate. TODO(app-search-entry-query-fallback-removal): remove once the query-only path is no longer needed by existing recipes.",
+      focus_query_note,
     );
   }
   for case in &mut matrix.cases {
@@ -1971,7 +1980,13 @@ mod tests {
 
   #[test]
   fn search_entry_candidates_expose_action_grade_promotion_gate() {
-    let analysis = sample_promotable_search_entry_analysis();
+    let analysis = sample_promotable_ax_focus_analysis(
+      "search-entry",
+      "search-entry-focus-ax",
+      "search-entry.ax-text-input.clipboard-submit.capture-evidence",
+      "Search",
+      "Sample candidate satisfies the v0 search-entry promotion seam.",
+    );
     let candidate = analysis
       .annotation_candidates
       .iter()
@@ -2623,7 +2638,13 @@ mod tests {
 
   #[test]
   fn distillation_projects_search_entry_promoted_candidate() {
-    let analysis = sample_promotable_search_entry_analysis();
+    let analysis = sample_promotable_ax_focus_analysis(
+      "search-entry",
+      "search-entry-focus-ax",
+      "search-entry.ax-text-input.clipboard-submit.capture-evidence",
+      "Search",
+      "Sample candidate satisfies the v0 search-entry promotion seam.",
+    );
     let candidate_shape = build_distilled_candidate_shape(
       &analysis,
       "search-entry.ax-text-input.clipboard-submit.capture-evidence",
@@ -2637,6 +2658,40 @@ mod tests {
 
     assert_eq!(promoted.candidate_local_id, "search-entry-focus-ax");
     assert_eq!(promoted.kind, "search_entry");
+    assert_eq!(
+      promoted.target_spec.grounding,
+      crate::contract::TargetGrounding::AxNode
+    );
+    assert_eq!(promoted.control.requires_app_frontmost, true);
+    assert_eq!(promoted.control.requires_window_focus, true);
+    assert_eq!(
+      promoted.evidence.artifact_ref.artifact_id.as_str(),
+      "artifact_0001"
+    );
+  }
+
+  #[test]
+  fn distillation_projects_native_text_promoted_candidate() {
+    let analysis = sample_promotable_ax_focus_analysis(
+      "native-text",
+      "native-text-focus-ax",
+      "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text",
+      "Editor",
+      "Sample candidate satisfies the v0 native-text promotion seam.",
+    );
+    let candidate_shape = build_distilled_candidate_shape(
+      &analysis,
+      "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text",
+    );
+    let promoted = promoted_candidate_for_candidate_shape(
+      &analysis,
+      "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text",
+      &candidate_shape,
+    )
+    .expect("native-text candidate should promote");
+
+    assert_eq!(promoted.candidate_local_id, "native-text-focus-ax");
+    assert_eq!(promoted.kind, "native_text");
     assert_eq!(
       promoted.target_spec.grounding,
       crate::contract::TargetGrounding::AxNode
@@ -3219,7 +3274,13 @@ mod tests {
     let recipe_path = root.join("search-entry.recipe.json");
     let case_matrix_path = root.join("search-entry.cases.json");
 
-    let analysis = sample_promotable_search_entry_analysis();
+    let analysis = sample_promotable_ax_focus_analysis(
+      "search-entry",
+      "search-entry-focus-ax",
+      "search-entry.ax-text-input.clipboard-submit.capture-evidence",
+      "Search",
+      "Sample candidate satisfies the v0 search-entry promotion seam.",
+    );
     write_pretty_json(&analysis_path, &analysis).expect("analysis should write");
 
     write_pretty_json(&recipe_path, &test_candidate_manifest_value())
@@ -3298,6 +3359,104 @@ mod tests {
     let parsed_candidate: crate::contract::Candidate = serde_json::from_str(focus_candidate)
       .expect("focus_candidate should stay valid candidate JSON");
     assert_eq!(parsed_candidate.candidate_local_id, "search-entry-focus-ax");
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn validate_app_distillation_injects_native_text_promoted_candidate_into_runtime_inputs() {
+    let root = temp_dir("app-validate-native-text-promoted-consumer");
+    let runtime = test_runtime(root.clone());
+    let analysis_path = root.join("analysis.json");
+    let distillation_path = root.join("distillation.json");
+    let recipe_path = root.join("native-text.recipe.json");
+    let case_matrix_path = root.join("native-text.cases.json");
+
+    let analysis = sample_promotable_ax_focus_analysis(
+      "native-text",
+      "native-text-focus-ax",
+      "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text",
+      "Editor",
+      "Sample candidate satisfies the v0 native-text promotion seam.",
+    );
+    write_pretty_json(&analysis_path, &analysis).expect("analysis should write");
+
+    write_pretty_json(&recipe_path, &test_candidate_manifest_value())
+      .expect("candidate recipe should write");
+    write_pretty_json(
+      &case_matrix_path,
+      &serde_json::json!({
+        "skill_id": "test.recorded.skill",
+        "version": "0.1.0",
+        "status": "active-case-matrix",
+        "cases": [{
+          "case_id": "baseline",
+          "status": "validated",
+          "inputs": {
+            "require_focus_candidate": "true"
+          },
+          "disturbance": "none"
+        }]
+      }),
+    )
+    .expect("candidate matrix should write");
+
+    let candidate_shape = build_distilled_candidate_shape(
+      &analysis,
+      "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text",
+    );
+    let promoted_candidate = promoted_candidate_for_candidate_shape(
+      &analysis,
+      "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text",
+      &candidate_shape,
+    )
+    .expect("native-text candidate should promote");
+    let distillation = AppDistillation {
+      distill_version: APP_DISTILL_VERSION.to_string(),
+      created_at_millis: 0,
+      source_analysis_path: analysis_path,
+      app_identity: analysis.app_identity.clone(),
+      candidates: vec![AppDistilledCandidate {
+        recipe_id: "test.recorded.skill".to_string(),
+        taxonomy_id: "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text".to_string(),
+        status: AssessmentStatus::Candidate,
+        rationale: "test".to_string(),
+        suggested_annotation_ids: vec!["native-text-focus-ax".to_string()],
+        source_evidence_refs: Vec::new(),
+        promoted_candidate: Some(promoted_candidate),
+        candidate_shape,
+        recipe_path,
+        case_matrix_path,
+      }],
+      known_boundaries: Vec::new(),
+    };
+    write_pretty_json(&distillation_path, &distillation).expect("distillation should write");
+
+    let output =
+      validate_app_distillation(&runtime, &distillation_path).expect("validation should complete");
+    assert_eq!(
+      output.validation.candidates[0].status,
+      AppValidationStatus::Validated
+    );
+    assert!(
+      output.validation.candidates[0]
+        .used_annotation_ids
+        .iter()
+        .any(|candidate_id| candidate_id == "native-text-focus-ax")
+    );
+    assert_eq!(
+      output.validation.candidates[0]
+        .resolved_inputs
+        .get("focus_query"),
+      Some(&"Editor".to_string())
+    );
+    let focus_candidate = output.validation.candidates[0]
+      .resolved_inputs
+      .get("focus_candidate")
+      .expect("validate should inject focus_candidate");
+    let parsed_candidate: crate::contract::Candidate = serde_json::from_str(focus_candidate)
+      .expect("focus_candidate should stay valid candidate JSON");
+    assert_eq!(parsed_candidate.candidate_local_id, "native-text-focus-ax");
 
     let _ = fs::remove_dir_all(root);
   }
@@ -4531,7 +4690,13 @@ mod tests {
     }
   }
 
-  fn sample_promotable_search_entry_analysis() -> AppAnalysis {
+  fn sample_promotable_ax_focus_analysis(
+    area: &str,
+    candidate_id: &str,
+    taxonomy_id: &str,
+    query_value: &str,
+    promotion_note: &str,
+  ) -> AppAnalysis {
     AppAnalysis {
       analysis_version: APP_ANALYSIS_VERSION.to_string(),
       created_at_millis: 0,
@@ -4605,14 +4770,14 @@ mod tests {
         pointer_fallback: vec!["pointer".to_string()],
       },
       annotation_candidates: vec![AppSurfaceCandidate {
-        candidate_id: "search-entry-focus-ax".to_string(),
-        area: "search-entry".to_string(),
+        candidate_id: candidate_id.to_string(),
+        area: area.to_string(),
         kind: "focus-query".to_string(),
         source: "ax".to_string(),
         status: AssessmentStatus::Candidate,
-        primary_text: "Search".to_string(),
+        primary_text: query_value.to_string(),
         secondary_text: "role=AXTextField path=0.1".to_string(),
-        query_value: "Search".to_string(),
+        query_value: query_value.to_string(),
         coordinate_space: "global-logical".to_string(),
         bounds: Some(AppRect {
           x: 10,
@@ -4630,11 +4795,11 @@ mod tests {
           captured_event_id: Some(crate::trace::EventId::new("event_probe")),
         }],
         candidate_query: Some(CandidateQuery {
-          query_id: "search-entry-focus-ax".to_string(),
+          query_id: candidate_id.to_string(),
           selector: SurfaceSelector {
             any_of: vec![SurfaceSelectorClause::Ax {
               role: Some("AXTextField".to_string()),
-              label: Some("Search".to_string()),
+              label: Some(query_value.to_string()),
               path: Some("0.1".to_string()),
               enabled: None,
               visible: Some(true),
@@ -4648,18 +4813,15 @@ mod tests {
         promotion_gate: Some(AppCandidatePromotionGate {
           status: AppCandidatePromotionStatus::ActionGradeCandidate,
           missing_gates: Vec::new(),
-          notes: vec!["Sample candidate satisfies the v0 search-entry promotion seam.".to_string()],
+          notes: vec![promotion_note.to_string()],
         }),
-        input_bindings: BTreeMap::from([("focus_query".to_string(), "Search".to_string())]),
-        compatibility: candidate_compatibility(
-          &["search-entry.ax-text-input.clipboard-submit.capture-evidence"],
-          &[],
-        ),
+        input_bindings: BTreeMap::from([("focus_query".to_string(), query_value.to_string())]),
+        compatibility: candidate_compatibility(&[taxonomy_id], &[]),
         notes: vec!["sample note".to_string()],
       }],
       known_boundaries: vec![],
       recommended_strategies: vec![AppRecommendedStrategy {
-        taxonomy_id: "search-entry.ax-text-input.clipboard-submit.capture-evidence".to_string(),
+        taxonomy_id: taxonomy_id.to_string(),
         status: AssessmentStatus::Candidate,
         rationale: "test".to_string(),
       }],

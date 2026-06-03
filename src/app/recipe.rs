@@ -210,6 +210,7 @@ pub(crate) fn render_native_text_candidate_recipe(analysis: &AppAnalysis) -> Val
     "inputs": {
       "app_id": { "type": "string", "default": analysis.app_identity.bundle_id },
       "focus_query": { "type": "string", "note": "Replace with the best known editable text-area AX query for this app." },
+      "focus_candidate": { "type": "string", "default": "", "note": "Optional serialized contract::Candidate injected during validate when an action-grade native-text promotion exists." },
       "target_text": { "type": "string", "default": marker },
       "activate_settle_ms": { "type": "integer", "default": 250 },
       "type_settle_ms": { "type": "integer", "default": 250 }
@@ -239,7 +240,7 @@ pub(crate) fn render_native_text_candidate_recipe(analysis: &AppAnalysis) -> Val
         "id": "focus-text-surface",
         "command_id": "debug.focusTextInput",
         "disturbance": { "classes": ["foreground_app", "keyboard", "pointer"], "max": "pointer" },
-        "args": { "target": "${app_id}", "query": "${focus_query}", "max_depth": 6, "max_children": 40 },
+        "args": { "target": "${app_id}", "query": "${focus_query}", "candidate": "${focus_candidate}", "max_depth": 6, "max_children": 40 },
         "purpose": "Focus a text-bearing surface through AX."
       },
       {
@@ -419,7 +420,8 @@ pub(crate) fn render_native_text_candidate_cases(
         "case_id": "default-candidate",
         "status": "candidate",
         "inputs": {
-          "focus_query": focus_query
+          "focus_query": focus_query,
+          "focus_candidate": ""
         },
         "disturbance": "pointer",
         "notes": [

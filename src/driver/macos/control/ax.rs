@@ -232,7 +232,7 @@ fn parse_focus_text_candidate(raw_candidate: &str) -> AuvResult<ResolvedFocusTex
 
   let observation: FocusTextCandidateObservation =
     serde_json::from_value(candidate.evidence.observation.clone()).map_err(|error| {
-      format!("candidate observation is missing search-entry AX selector detail: {error}")
+      format!("candidate observation is missing AX focus selector detail: {error}")
     })?;
   let ax = observation
     .query
@@ -1481,13 +1481,21 @@ mod tests {
   }
 
   fn sample_focus_candidate_json() -> String {
+    sample_focus_candidate_json_with_kind("search-entry-focus-ax", "search_entry", "Search")
+  }
+
+  fn sample_focus_candidate_json_with_kind(
+    candidate_local_id: &str,
+    kind: &str,
+    label: &str,
+  ) -> String {
     serde_json::to_string(&Candidate {
-      candidate_local_id: "search-entry-focus-ax".to_string(),
-      kind: "search_entry".to_string(),
-      label: Some("Search".to_string()),
+      candidate_local_id: candidate_local_id.to_string(),
+      kind: kind.to_string(),
+      label: Some(label.to_string()),
       target_spec: TargetSpec {
         grounding: TargetGrounding::AxNode,
-        anchor_text: Some("Search".to_string()),
+        anchor_text: Some(label.to_string()),
         region_hint: Some(RatioRegion {
           left: 0.1,
           top: 0.1,
@@ -1505,15 +1513,15 @@ mod tests {
         },
         observation: serde_json::json!({
           "source": "ax",
-          "surface_candidate_id": "search-entry-focus-ax",
+          "surface_candidate_id": candidate_local_id,
           "query": {
-            "query_id": "search-entry-focus-ax",
+            "query_id": candidate_local_id,
             "output_kind": "focus-query",
             "selector_within": "target_window",
             "require_visible": true,
             "ax": {
               "role": "AXTextField",
-              "label": "Search",
+              "label": label,
               "path": "0.3",
               "visible": true
             }
@@ -1534,7 +1542,7 @@ mod tests {
             window_number: None,
           }),
           anchor_recheck: Some(AnchorRecheckPrecondition {
-            text: "Search".to_string(),
+            text: label.to_string(),
             region_hint: None,
             expected_min_confidence: 0.0,
             max_pixel_distance: 48.0,
@@ -1682,6 +1690,23 @@ mod tests {
     assert_eq!(
       resolved.consumed_candidate_local_id.as_deref(),
       Some("search-entry-focus-ax")
+    );
+  }
+
+  #[test]
+  fn resolve_focus_text_target_accepts_native_text_candidate_kind() {
+    let snapshot = sample_focus_snapshot();
+    let candidate_json =
+      sample_focus_candidate_json_with_kind("native-text-focus-ax", "native_text", "Search");
+
+    let resolved = resolve_focus_text_target(&snapshot, Some(&candidate_json), None)
+      .expect("native-text candidate should resolve");
+
+    assert_eq!(resolved.query, "Search");
+    assert_eq!(resolved.matched.path, "0.3");
+    assert_eq!(
+      resolved.consumed_candidate_local_id.as_deref(),
+      Some("native-text-focus-ax")
     );
   }
 

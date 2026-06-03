@@ -1165,12 +1165,6 @@ pub(crate) fn promoted_candidate_for_candidate_shape(
   taxonomy_id: &str,
   candidate_shape: &AppDistilledCandidateShape,
 ) -> Option<Candidate> {
-  // TODO(app-surface-promotion-v1): native-text and window-action promotion are
-  // deferred. This slice only lands the first honest search-entry seam.
-  if taxonomy_id != "search-entry.ax-text-input.clipboard-submit.capture-evidence" {
-    return None;
-  }
-
   let direct_candidates = candidate_shape
     .direct_candidate_ids
     .iter()
@@ -1186,7 +1180,15 @@ pub(crate) fn promoted_candidate_for_candidate_shape(
     return None;
   }
 
-  promote_search_entry_candidate(analysis, direct_candidates[0])
+  match taxonomy_id {
+    "search-entry.ax-text-input.clipboard-submit.capture-evidence" => {
+      promote_search_entry_candidate(analysis, direct_candidates[0])
+    }
+    "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text" => {
+      promote_native_text_candidate(analysis, direct_candidates[0])
+    }
+    _ => None,
+  }
 }
 
 fn promote_search_entry_candidate(
@@ -1295,6 +1297,127 @@ fn promote_search_entry_candidate(
       .chain(query.known_limits.iter().cloned())
       .chain([
         "Promotion only covers refinding the search-entry surface; semantic query success still relies on later operation verification.".to_string(),
+      ])
+      .collect(),
+  })
+}
+
+fn promote_native_text_candidate(
+  analysis: &AppAnalysis,
+  candidate: &AppSurfaceCandidate,
+) -> Option<Candidate> {
+  if candidate.area != "native-text"
+    || candidate.kind != "focus-query"
+    || candidate.evidence_refs.is_empty()
+    || candidate.candidate_query.is_none()
+    || candidate.query_value.trim().is_empty()
+    || !candidate
+      .compatibility
+      .direct_taxonomy_ids
+      .iter()
+      .any(|value| value == "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text")
+  {
+    return None;
+  }
+
+  let evidence_ref = candidate.evidence_refs.first()?.clone();
+  let query = candidate.candidate_query.as_ref()?;
+  let ax_clause = query
+    .selector
+    .any_of
+    .iter()
+    .find_map(|clause| match clause {
+      SurfaceSelectorClause::Ax {
+        role,
+        label,
+        path,
+        visible,
+        ..
+      } => Some((role.clone(), label.clone(), path.clone(), *visible)),
+      _ => None,
+    })?;
+  let bounds = candidate.bounds.as_ref()?;
+  let primary_window_bounds = analysis.window_context.primary_window_bounds.as_ref()?;
+  let region_hint = app_rect_to_ratio_region(primary_window_bounds, bounds)?;
+  let app_bundle_id = analysis.app_identity.bundle_id.trim();
+  if app_bundle_id.is_empty() {
+    return None;
+  }
+
+  let (role, label, path, visible) = ax_clause;
+  let observation = serde_json::json!({
+    "source": candidate.source,
+    "surface_candidate_id": candidate.candidate_id,
+    "evidence_step_id": candidate.evidence_step_id,
+    "query": {
+      "query_id": query.query_id,
+      "output_kind": query.output_kind,
+      "selector_within": query.selector.within,
+      "require_visible": query.selector.require_visible,
+      "ax": {
+        "role": role,
+        "label": label,
+        "path": path,
+        "visible": visible,
+      }
+    },
+    "bounds": {
+      "x": bounds.x,
+      "y": bounds.y,
+      "width": bounds.width,
+      "height": bounds.height,
+    },
+    "click_point": candidate.click_point.as_ref().map(|point| serde_json::json!({
+      "x": point.x,
+      "y": point.y,
+    })),
+    "window_context": {
+      "app_bundle_id": analysis.app_identity.bundle_id,
+      "window_title": analysis.window_context.primary_window_title,
+    }
+  });
+
+  Some(Candidate {
+    candidate_local_id: candidate.candidate_id.clone(),
+    kind: "native_text".to_string(),
+    label: non_empty_trimmed(&candidate.primary_text),
+    target_spec: TargetSpec {
+      grounding: TargetGrounding::AxNode,
+      anchor_text: non_empty_trimmed(&candidate.query_value),
+      region_hint: Some(region_hint.clone()),
+      row_index: None,
+    },
+    evidence: CandidateEvidence {
+      artifact_ref: evidence_ref,
+      observation,
+    },
+    liveness: CandidateLiveness {
+      preconditions: LivenessPreconditions {
+        window_ref: Some(WindowRefPrecondition {
+          app_bundle_id: app_bundle_id.to_string(),
+          window_title_substring: non_empty_trimmed(&analysis.window_context.primary_window_title),
+          window_number: None,
+        }),
+        anchor_recheck: Some(AnchorRecheckPrecondition {
+          text: candidate.query_value.clone(),
+          region_hint: Some(region_hint),
+          expected_min_confidence: 0.0,
+          max_pixel_distance: 48.0,
+        }),
+      },
+      ttl_hint_ms: Some(5_000),
+    },
+    control: ControlRequirements {
+      requires_app_frontmost: true,
+      requires_window_focus: true,
+    },
+    known_limits: candidate
+      .notes
+      .iter()
+      .cloned()
+      .chain(query.known_limits.iter().cloned())
+      .chain([
+        "Promotion only covers refinding the native-text surface; semantic text success still relies on later operation verification.".to_string(),
       ])
       .collect(),
   })

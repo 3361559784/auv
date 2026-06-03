@@ -484,6 +484,7 @@ pub(crate) fn render_window_action_candidate_recipe(analysis: &AppAnalysis) -> V
     "objective": format!("Candidate window-relative pointer slice for {} distilled from app-surface analysis.", analysis.app_identity.app_name),
     "inputs": {
       "app_id": { "type": "string", "default": analysis.app_identity.bundle_id },
+      "click_candidate": { "type": "string", "default": "", "note": "Optional serialized contract::Candidate injected during validate when an action-grade window-action promotion exists." },
       "relative_x": { "type": "number", "note": "Replace with a window-relative x ratio in the range [0, 1]." },
       "relative_y": { "type": "number", "note": "Replace with a window-relative y ratio in the range [0, 1]." },
       "activate_settle_ms": { "type": "integer", "default": 250 },
@@ -515,7 +516,7 @@ pub(crate) fn render_window_action_candidate_recipe(analysis: &AppAnalysis) -> V
         "id": "click-window-point",
         "command_id": "debug.clickWindowPoint",
         "disturbance": { "classes": ["foreground_app", "pointer"], "max": "pointer" },
-        "args": { "target": "${app_id}", "relative_x": "${relative_x}", "relative_y": "${relative_y}" },
+        "args": { "target": "${app_id}", "relative_x": "${relative_x}", "relative_y": "${relative_y}", "candidate": "${click_candidate}" },
         "purpose": "Click a window-relative target point without pretending semantic grounding exists."
       },
       {
@@ -573,6 +574,7 @@ pub(crate) fn render_window_action_candidate_cases(
         "case_id": "default-candidate",
         "status": "candidate",
         "inputs": {
+          "click_candidate": "",
           "relative_x": relative_x,
           "relative_y": relative_y
         },

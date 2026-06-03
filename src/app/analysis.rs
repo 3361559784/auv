@@ -822,6 +822,20 @@ fn promotion_gate_for_candidate(candidate: &AppSurfaceCandidate) -> AppCandidate
       );
       AppCandidatePromotionStatus::ActionGradeCandidate
     }
+    ("native-text", "focus-query") if native_text_candidate_is_action_grade(candidate) => {
+      notes.push(
+        "Candidate satisfies the v0 native-text promotion seam and can project into contract::Candidate."
+          .to_string(),
+      );
+      AppCandidatePromotionStatus::ActionGradeCandidate
+    }
+    ("window.primary", "region") if window_action_candidate_is_action_grade(candidate) => {
+      notes.push(
+        "Candidate satisfies the v0 window-action promotion seam and can project into contract::Candidate."
+          .to_string(),
+      );
+      AppCandidatePromotionStatus::ActionGradeCandidate
+    }
     ("ocr-visible-text", _) => {
       push_unique(&mut missing_gates, "semantic_verification_contract");
       push_unique(&mut missing_gates, "action_contract");
@@ -874,6 +888,34 @@ fn search_entry_candidate_is_action_grade(candidate: &AppSurfaceCandidate) -> bo
       .direct_taxonomy_ids
       .iter()
       .any(|value| value == "search-entry.ax-text-input.clipboard-submit.capture-evidence")
+}
+
+fn native_text_candidate_is_action_grade(candidate: &AppSurfaceCandidate) -> bool {
+  candidate.area == "native-text"
+    && candidate.kind == "focus-query"
+    && !candidate.evidence_refs.is_empty()
+    && candidate.candidate_query.is_some()
+    && !candidate.query_value.trim().is_empty()
+    && candidate
+      .compatibility
+      .direct_taxonomy_ids
+      .iter()
+      .any(|value| value == "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text")
+}
+
+fn window_action_candidate_is_action_grade(candidate: &AppSurfaceCandidate) -> bool {
+  candidate.area == "window.primary"
+    && candidate.kind == "region"
+    && !candidate.evidence_refs.is_empty()
+    && candidate.bounds.is_some()
+    && candidate.click_point.is_some()
+    && candidate.input_bindings.contains_key("relative_x")
+    && candidate.input_bindings.contains_key("relative_y")
+    && candidate
+      .compatibility
+      .direct_taxonomy_ids
+      .iter()
+      .any(|value| value == "window-action.window-point.pointer-click.capture-evidence")
 }
 
 fn push_unique(values: &mut Vec<String>, value: &str) {
@@ -1187,6 +1229,9 @@ pub(crate) fn promoted_candidate_for_candidate_shape(
     "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text" => {
       promote_native_text_candidate(analysis, direct_candidates[0])
     }
+    "window-action.window-point.pointer-click.capture-evidence" => {
+      promote_window_action_candidate(analysis, direct_candidates[0])
+    }
     _ => None,
   }
 }
@@ -1306,17 +1351,7 @@ fn promote_native_text_candidate(
   analysis: &AppAnalysis,
   candidate: &AppSurfaceCandidate,
 ) -> Option<Candidate> {
-  if candidate.area != "native-text"
-    || candidate.kind != "focus-query"
-    || candidate.evidence_refs.is_empty()
-    || candidate.candidate_query.is_none()
-    || candidate.query_value.trim().is_empty()
-    || !candidate
-      .compatibility
-      .direct_taxonomy_ids
-      .iter()
-      .any(|value| value == "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text")
-  {
+  if !native_text_candidate_is_action_grade(candidate) {
     return None;
   }
 
@@ -1418,6 +1453,99 @@ fn promote_native_text_candidate(
       .chain(query.known_limits.iter().cloned())
       .chain([
         "Promotion only covers refinding the native-text surface; semantic text success still relies on later operation verification.".to_string(),
+      ])
+      .collect(),
+  })
+}
+
+fn promote_window_action_candidate(
+  analysis: &AppAnalysis,
+  candidate: &AppSurfaceCandidate,
+) -> Option<Candidate> {
+  if !window_action_candidate_is_action_grade(candidate) {
+    return None;
+  }
+
+  let evidence_ref = candidate.evidence_refs.first()?.clone();
+  let bounds = candidate.bounds.as_ref()?;
+  let primary_window_bounds = analysis.window_context.primary_window_bounds.as_ref()?;
+  let region_hint = app_rect_to_ratio_region(primary_window_bounds, bounds)?;
+  let app_bundle_id = analysis.app_identity.bundle_id.trim();
+  if app_bundle_id.is_empty() {
+    return None;
+  }
+  let observed_center = candidate.click_point.as_ref()?;
+  let (relative_x, relative_y) = bounds.relative_point(observed_center)?;
+  if !(0.0..=1.0).contains(&relative_x) || !(0.0..=1.0).contains(&relative_y) {
+    return None;
+  }
+
+  let observation = serde_json::json!({
+    "source": candidate.source,
+    "surface_candidate_id": candidate.candidate_id,
+    "evidence_step_id": candidate.evidence_step_id,
+    "coordinate_space": candidate.coordinate_space,
+    "window_region": {
+      "x": bounds.x,
+      "y": bounds.y,
+      "width": bounds.width,
+      "height": bounds.height,
+    },
+    "click_point": {
+      "x": observed_center.x,
+      "y": observed_center.y,
+    },
+    "relative_point": {
+      "x": relative_x,
+      "y": relative_y,
+    },
+    "window_context": {
+      "app_bundle_id": analysis.app_identity.bundle_id,
+      "window_title": analysis.window_context.primary_window_title,
+      "primary_window_bounds": {
+        "x": primary_window_bounds.x,
+        "y": primary_window_bounds.y,
+        "width": primary_window_bounds.width,
+        "height": primary_window_bounds.height,
+      }
+    }
+  });
+
+  Some(Candidate {
+    candidate_local_id: candidate.candidate_id.clone(),
+    kind: "window_action".to_string(),
+    label: non_empty_trimmed(&candidate.primary_text),
+    target_spec: TargetSpec {
+      grounding: TargetGrounding::Coordinate,
+      anchor_text: None,
+      region_hint: Some(region_hint.clone()),
+      row_index: None,
+    },
+    evidence: CandidateEvidence {
+      artifact_ref: evidence_ref,
+      observation,
+    },
+    liveness: CandidateLiveness {
+      preconditions: LivenessPreconditions {
+        window_ref: Some(WindowRefPrecondition {
+          app_bundle_id: app_bundle_id.to_string(),
+          window_title_substring: non_empty_trimmed(&analysis.window_context.primary_window_title),
+          window_number: None,
+        }),
+        anchor_recheck: None,
+      },
+      ttl_hint_ms: Some(5_000),
+    },
+    control: ControlRequirements {
+      requires_app_frontmost: true,
+      requires_window_focus: true,
+    },
+    known_limits: candidate
+      .notes
+      .iter()
+      .cloned()
+      .chain([
+        "Promotion only covers refinding the window-relative action point; semantic success still relies on later verification or evidence review.".to_string(),
       ])
       .collect(),
   })

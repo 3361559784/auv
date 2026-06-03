@@ -2,7 +2,8 @@
 use super::super::support::{
   artifacts::{build_text_artifact, sanitize_file_component},
   call::{
-    app_identifier, optional_i64, optional_string, parse_mouse_button, parse_window_selection,
+    app_identifier, optional_i64, optional_non_empty_string, optional_string, parse_mouse_button,
+    parse_window_selection,
   },
   geometry::{render_rect_compact, resolve_window_point},
   selector::{parse_app_selector, resolve_app_ref, resolve_window_candidate_for_input},
@@ -12,6 +13,7 @@ use super::common::{
   ClickPointCallOptions, build_click_point_call, parse_input_policy, resolve_click_interval_ms,
 };
 use super::pointer::click_point;
+use crate::contract::{Candidate, TargetGrounding};
 use crate::model::AuvResult;
 use std::time::Duration;
 
@@ -39,7 +41,9 @@ pub(crate) fn click_window_point(call: &DriverCall) -> AuvResult<DriverResponse>
     resolve_window_candidate_for_input(&snapshot, &resolved_app, &displays, &selection)?;
   let window = &selected.window_ref;
 
-  let (logical_x, logical_y, coordinate_summary) = resolve_window_point(call, window)?;
+  let consumed_candidate_local_id = optional_non_empty_window_click_candidate(call)?;
+  let (logical_x, logical_y, coordinate_summary) =
+    resolve_window_point_with_candidate(call, window, consumed_candidate_local_id.as_deref())?;
   let window_x = logical_x - window.bounds.x as f64;
   let window_y = logical_y - window.bounds.y as f64;
   let button_label = optional_string(call, "button").unwrap_or_else(|| "left".to_string());
@@ -135,6 +139,10 @@ pub(crate) fn click_window_point(call: &DriverCall) -> AuvResult<DriverResponse>
       format!("button={button_label}"),
       format!("clickCount={click_count}"),
       format!("clickIntervalMs={click_interval_ms}"),
+      format!(
+        "consumedCandidateLocalId={}",
+        consumed_candidate_local_id.as_deref().unwrap_or("-")
+      ),
       format!("inputPolicy={}", click_outcome.input_policy),
       format!("deliveryPath={}", delivery_path.name()),
       format!(
@@ -174,6 +182,10 @@ pub(crate) fn click_window_point(call: &DriverCall) -> AuvResult<DriverResponse>
     format!("windowPoint={window_x:.3},{window_y:.3}"),
     coordinate_summary,
     format!("clickIntervalMs={click_interval_ms}"),
+    format!(
+      "consumedCandidateLocalId={}",
+      consumed_candidate_local_id.as_deref().unwrap_or("-")
+    ),
     format!("inputPolicy={}", click_outcome.input_policy),
     format!("deliveryPath={}", delivery_path.name()),
     format!(
@@ -203,6 +215,91 @@ pub(crate) fn click_window_point(call: &DriverCall) -> AuvResult<DriverResponse>
     notes,
     artifacts: vec![artifact],
   })
+}
+
+fn optional_non_empty_window_click_candidate(call: &DriverCall) -> AuvResult<Option<String>> {
+  match optional_non_empty_string(call, "candidate") {
+    Some(raw_candidate) => {
+      let candidate: Candidate = serde_json::from_str(&raw_candidate)
+        .map_err(|error| format!("invalid --candidate JSON: {error}"))?;
+      if candidate.target_spec.grounding != TargetGrounding::Coordinate {
+        return Err(format!(
+          "click_window_point only accepts Coordinate candidates; got {:?}",
+          candidate.target_spec.grounding
+        ));
+      }
+      let observation = candidate.evidence.observation.as_object().ok_or_else(|| {
+        "candidate observation is missing coordinate detail for click_window_point".to_string()
+      })?;
+      let relative_point = observation
+        .get("relative_point")
+        .and_then(|value| value.as_object())
+        .ok_or_else(|| {
+          "candidate observation is missing relative_point detail for click_window_point"
+            .to_string()
+        })?;
+      let relative_x = relative_point
+        .get("x")
+        .and_then(|value| value.as_f64())
+        .ok_or_else(|| "candidate observation relative_point.x must be a number".to_string())?;
+      let relative_y = relative_point
+        .get("y")
+        .and_then(|value| value.as_f64())
+        .ok_or_else(|| "candidate observation relative_point.y must be a number".to_string())?;
+      if !(0.0..=1.0).contains(&relative_x) || !(0.0..=1.0).contains(&relative_y) {
+        return Err(format!(
+          "candidate relative_point must stay within 0.0..=1.0, got x={relative_x:.6} y={relative_y:.6}"
+        ));
+      }
+      Ok(Some(candidate.candidate_local_id))
+    }
+    None => Ok(None),
+  }
+}
+
+fn resolve_window_point_with_candidate(
+  call: &DriverCall,
+  window: &super::super::WindowRef,
+  consumed_candidate_local_id: Option<&str>,
+) -> AuvResult<(f64, f64, String)> {
+  let Some(raw_candidate) = optional_non_empty_string(call, "candidate") else {
+    return resolve_window_point(call, window);
+  };
+
+  let candidate: Candidate = serde_json::from_str(&raw_candidate)
+    .map_err(|error| format!("invalid --candidate JSON: {error}"))?;
+  let observation = candidate.evidence.observation.as_object().ok_or_else(|| {
+    "candidate observation is missing coordinate detail for click_window_point".to_string()
+  })?;
+  let relative_point = observation
+    .get("relative_point")
+    .and_then(|value| value.as_object())
+    .ok_or_else(|| {
+      "candidate observation is missing relative_point detail for click_window_point".to_string()
+    })?;
+  let relative_x = relative_point
+    .get("x")
+    .and_then(|value| value.as_f64())
+    .ok_or_else(|| "candidate observation relative_point.x must be a number".to_string())?;
+  let relative_y = relative_point
+    .get("y")
+    .and_then(|value| value.as_f64())
+    .ok_or_else(|| "candidate observation relative_point.y must be a number".to_string())?;
+  if !(0.0..=1.0).contains(&relative_x) || !(0.0..=1.0).contains(&relative_y) {
+    return Err(format!(
+      "candidate relative_point must stay within 0.0..=1.0, got x={relative_x:.6} y={relative_y:.6}"
+    ));
+  }
+  let logical_x = window.bounds.x as f64 + (window.bounds.width as f64 * relative_x);
+  let logical_y = window.bounds.y as f64 + (window.bounds.height as f64 * relative_y);
+  Ok((
+    logical_x,
+    logical_y,
+    format!(
+      "windowCandidate={} windowRelative={relative_x:.3},{relative_y:.3}",
+      consumed_candidate_local_id.unwrap_or(candidate.candidate_local_id.as_str())
+    ),
+  ))
 }
 
 struct ClickWindowPointOutcome {
@@ -311,5 +408,137 @@ fn typed_window_from_ref(candidate: &super::super::WindowCandidate) -> auv_drive
     coordinate_space: auv_driver::CoordinateSpace::Screen,
     is_main: candidate.is_main_candidate,
     is_visible: window.bounds.width > 0 && window.bounds.height > 0,
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use crate::contract::{
+    ArtifactRef, CandidateEvidence, CandidateLiveness, ControlRequirements, LivenessPreconditions,
+    TargetSpec, WindowRefPrecondition,
+  };
+  use crate::trace::{ArtifactId, RunId, SpanId};
+  use serde_json::json;
+  use std::collections::BTreeMap;
+  use std::path::PathBuf;
+
+  fn build_call<const N: usize>(entries: [(&str, &str); N]) -> DriverCall {
+    let mut inputs = BTreeMap::new();
+    for (key, value) in entries {
+      inputs.insert(key.to_string(), value.to_string());
+    }
+
+    DriverCall {
+      operation: "test".to_string(),
+      target: crate::model::ExecutionTarget::default(),
+      inputs,
+      working_directory: PathBuf::from("."),
+      run_context: crate::model::DriverRunContext::default(),
+    }
+  }
+
+  fn sample_window_ref() -> crate::driver::macos::WindowRef {
+    crate::driver::macos::WindowRef {
+      window_number: 7,
+      owner_pid: 1,
+      owner_bundle_id: "com.example.editor".to_string(),
+      app_name: "ExampleEditor".to_string(),
+      title: "Untitled".to_string(),
+      bounds: crate::driver::macos::ObservedRect {
+        x: 100,
+        y: 200,
+        width: 640,
+        height: 480,
+      },
+      layer: 0,
+    }
+  }
+
+  fn sample_window_candidate_json(grounding: TargetGrounding) -> String {
+    serde_json::to_string(&Candidate {
+      candidate_local_id: "window-primary-region".to_string(),
+      kind: "window_action".to_string(),
+      label: Some("Example".to_string()),
+      target_spec: TargetSpec {
+        grounding,
+        anchor_text: None,
+        region_hint: None,
+        row_index: None,
+      },
+      evidence: CandidateEvidence {
+        artifact_ref: ArtifactRef {
+          run_id: RunId::new("run_probe"),
+          span_id: SpanId::new("span_probe"),
+          artifact_id: ArtifactId::new("artifact_0002"),
+          captured_event_id: None,
+        },
+        observation: json!({
+          "source": "window",
+          "surface_candidate_id": "window-primary-region",
+          "relative_point": {
+            "x": 0.5,
+            "y": 0.25
+          }
+        }),
+      },
+      liveness: CandidateLiveness {
+        preconditions: LivenessPreconditions {
+          window_ref: Some(WindowRefPrecondition {
+            app_bundle_id: "com.example.App".to_string(),
+            window_title_substring: Some("Example".to_string()),
+            window_number: None,
+          }),
+          anchor_recheck: None,
+        },
+        ttl_hint_ms: Some(5000),
+      },
+      control: ControlRequirements {
+        requires_app_frontmost: true,
+        requires_window_focus: true,
+      },
+      known_limits: Vec::new(),
+    })
+    .expect("sample candidate should serialize")
+  }
+
+  #[test]
+  fn optional_non_empty_window_click_candidate_accepts_coordinate_candidate() {
+    let candidate_json = sample_window_candidate_json(TargetGrounding::Coordinate);
+    let call = build_call([("candidate", candidate_json.as_str())]);
+
+    let candidate_local_id =
+      optional_non_empty_window_click_candidate(&call).expect("coordinate candidate should parse");
+
+    assert_eq!(candidate_local_id.as_deref(), Some("window-primary-region"));
+  }
+
+  #[test]
+  fn optional_non_empty_window_click_candidate_rejects_non_coordinate_candidate() {
+    let candidate_json = sample_window_candidate_json(TargetGrounding::AxNode);
+    let call = build_call([("candidate", candidate_json.as_str())]);
+
+    let error = optional_non_empty_window_click_candidate(&call)
+      .expect_err("non-coordinate candidate should fail");
+
+    assert!(error.contains("only accepts Coordinate candidates"));
+  }
+
+  #[test]
+  fn resolve_window_point_with_candidate_uses_relative_point_from_candidate() {
+    let candidate_json = sample_window_candidate_json(TargetGrounding::Coordinate);
+    let call = build_call([("candidate", candidate_json.as_str())]);
+    let window = sample_window_ref();
+
+    let (x, y, summary) =
+      resolve_window_point_with_candidate(&call, &window, Some("window-primary-region"))
+        .expect("candidate point should resolve");
+
+    assert_eq!(x, 420.0);
+    assert_eq!(y, 320.0);
+    assert_eq!(
+      summary,
+      "windowCandidate=window-primary-region windowRelative=0.500,0.250"
+    );
   }
 }

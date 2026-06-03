@@ -389,7 +389,7 @@ pub fn default_command_catalog() -> CommandCatalog {
     CommandSpec {
       id: "debug.clickWindowPoint",
       namespace: ACTION,
-      summary: "Click a point relative to a target macOS window and record the resolved global point.",
+      summary: "Click a point relative to a target macOS window and record the resolved global point, either from legacy --relative_x/--relative_y inputs or from a promoted --candidate JSON payload carrying the typed window-action contract candidate.",
       driver_id: "macos.desktop",
       operation: "click_window_point",
       disturbance_classes: POINTER_WITH_FOREGROUND,

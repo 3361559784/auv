@@ -1188,14 +1188,27 @@ fn inject_promoted_candidate_runtime_inputs(
     return Ok(());
   };
 
-  let (candidate_note, focus_query_note) = match candidate.taxonomy_id.as_str() {
+  let (candidate_input_key, candidate_note, fallback_input_key, fallback_note) = match candidate
+    .taxonomy_id
+    .as_str()
+  {
     "search-entry.ax-text-input.clipboard-submit.capture-evidence" => (
+      "focus_candidate",
       "Validate injects the promoted search-entry contract::Candidate here so debug.focusTextInput can consume the typed target without reopening app-only schema.",
+      Some("focus_query"),
       "Legacy fallback for search-entry validate. TODO(app-search-entry-query-fallback-removal): remove once the query-only path is no longer needed by existing recipes.",
     ),
     "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text" => (
+      "focus_candidate",
       "Validate injects the promoted native-text contract::Candidate here so debug.focusTextInput can consume the typed target without reopening app-only schema.",
+      Some("focus_query"),
       "Legacy fallback for native-text validate. TODO(app-native-text-query-fallback-removal): remove once the query-only path is no longer needed by existing recipes.",
+    ),
+    "window-action.window-point.pointer-click.capture-evidence" => (
+      "click_candidate",
+      "Validate injects the promoted window-action contract::Candidate here so debug.clickWindowPoint can consume the typed target without reopening app-only schema.",
+      None,
+      "",
     ),
     _ => return Ok(()),
   };
@@ -1204,42 +1217,47 @@ fn inject_promoted_candidate_runtime_inputs(
     .map_err(|error| format!("failed to serialize promoted candidate: {error}"))?;
   ensure_manifest_string_input(
     manifest,
-    "focus_candidate",
+    candidate_input_key,
     Some(Value::String(serialized.clone())),
     candidate_note,
   );
-  if !candidate
-    .candidate_shape
-    .provided_inputs
-    .contains_key("focus_query")
-    && !resolved_inputs.contains_key("focus_query")
+  if let Some(fallback_input_key) = fallback_input_key
+    && !candidate
+      .candidate_shape
+      .provided_inputs
+      .contains_key(fallback_input_key)
+    && !resolved_inputs.contains_key(fallback_input_key)
     && let Some(anchor_text) = promoted_candidate.target_spec.anchor_text.as_ref()
   {
     ensure_manifest_string_input(
       manifest,
-      "focus_query",
+      fallback_input_key,
       Some(Value::String(anchor_text.clone())),
-      focus_query_note,
+      fallback_note,
     );
   }
   for case in &mut matrix.cases {
     case
       .inputs
-      .entry("focus_candidate".to_string())
+      .entry(candidate_input_key.to_string())
       .or_insert_with(|| serialized.clone());
-    if let Some(anchor_text) = promoted_candidate.target_spec.anchor_text.as_ref() {
+    if let Some(fallback_input_key) = fallback_input_key
+      && let Some(anchor_text) = promoted_candidate.target_spec.anchor_text.as_ref()
+    {
       case
         .inputs
-        .entry("focus_query".to_string())
+        .entry(fallback_input_key.to_string())
         .or_insert_with(|| anchor_text.clone());
     }
   }
   resolved_inputs
-    .entry("focus_candidate".to_string())
+    .entry(candidate_input_key.to_string())
     .or_insert(serialized);
-  if let Some(anchor_text) = promoted_candidate.target_spec.anchor_text.as_ref() {
+  if let Some(fallback_input_key) = fallback_input_key
+    && let Some(anchor_text) = promoted_candidate.target_spec.anchor_text.as_ref()
+  {
     resolved_inputs
-      .entry("focus_query".to_string())
+      .entry(fallback_input_key.to_string())
       .or_insert_with(|| anchor_text.clone());
   }
 
@@ -1839,6 +1857,11 @@ mod tests {
       serde_json::from_value(matrix_value).expect("candidate matrix should parse");
     validate_case_matrix_manifest(&matrix).expect("candidate matrix should validate");
     validate_case_matrix_against_skill(&manifest, &matrix).expect("candidate matrix should align");
+    assert!(manifest.inputs.contains_key("click_candidate"));
+    assert_eq!(
+      manifest.steps[1].args.get("candidate"),
+      Some(&serde_json::json!("${click_candidate}"))
+    );
   }
 
   #[test]
@@ -1942,9 +1965,9 @@ mod tests {
           captured_event_id: Some(crate::trace::EventId::new("event_probe")),
         }],
         promotion_gate: Some(AppCandidatePromotionGate {
-          status: AppCandidatePromotionStatus::DistillStrategyOnly,
+          status: AppCandidatePromotionStatus::ActionGradeCandidate,
           missing_gates: Vec::new(),
-          notes: vec!["Window region can seed a known distillation strategy.".to_string()],
+          notes: vec!["Window region satisfies the v0 window-action promotion seam.".to_string()],
         }),
         input_bindings: BTreeMap::from([
           ("window_bounds".to_string(), "100,200,800,600".to_string()),
@@ -1996,6 +2019,25 @@ mod tests {
       .promotion_gate
       .as_ref()
       .expect("search-entry candidate should expose promotion gate");
+    assert_eq!(
+      promotion_gate.status,
+      AppCandidatePromotionStatus::ActionGradeCandidate
+    );
+    assert!(promotion_gate.missing_gates.is_empty());
+  }
+
+  #[test]
+  fn window_action_candidates_expose_action_grade_promotion_gate() {
+    let analysis = sample_promotable_window_action_analysis();
+    let candidate = analysis
+      .annotation_candidates
+      .iter()
+      .find(|candidate| candidate.candidate_id == "window-primary-region")
+      .expect("window candidate should exist");
+    let promotion_gate = candidate
+      .promotion_gate
+      .as_ref()
+      .expect("window candidate should expose promotion gate");
     assert_eq!(
       promotion_gate.status,
       AppCandidatePromotionStatus::ActionGradeCandidate
@@ -2705,6 +2747,34 @@ mod tests {
   }
 
   #[test]
+  fn distillation_projects_window_action_promoted_candidate() {
+    let analysis = sample_promotable_window_action_analysis();
+    let candidate_shape = build_distilled_candidate_shape(
+      &analysis,
+      "window-action.window-point.pointer-click.capture-evidence",
+    );
+    let promoted = promoted_candidate_for_candidate_shape(
+      &analysis,
+      "window-action.window-point.pointer-click.capture-evidence",
+      &candidate_shape,
+    )
+    .expect("window-action candidate should promote");
+
+    assert_eq!(promoted.candidate_local_id, "window-primary-region");
+    assert_eq!(promoted.kind, "window_action");
+    assert_eq!(
+      promoted.target_spec.grounding,
+      crate::contract::TargetGrounding::Coordinate
+    );
+    assert_eq!(promoted.control.requires_app_frontmost, true);
+    assert_eq!(promoted.control.requires_window_focus, true);
+    assert_eq!(
+      promoted.evidence.artifact_ref.artifact_id.as_str(),
+      "artifact_0002"
+    );
+  }
+
+  #[test]
   fn apply_candidate_grounding_marks_unresolved_search_entry_without_search_signal() {
     let analysis =
       sample_analysis_with_strategy("search-entry.ax-text-input.clipboard-submit.capture-evidence");
@@ -2992,49 +3062,8 @@ mod tests {
     let recipe_path = root.join("window-action.recipe.json");
     let case_matrix_path = root.join("window-action.cases.json");
 
-    let mut analysis =
-      sample_analysis_with_strategy("window-action.window-point.pointer-click.capture-evidence");
+    let mut analysis = sample_promotable_window_action_analysis();
     analysis.probe_path = root.join("missing-probe.json");
-    analysis.annotation_candidates.push(AppSurfaceCandidate {
-      candidate_id: "window-primary-region".to_string(),
-      area: "window.primary".to_string(),
-      kind: "region".to_string(),
-      source: "ax".to_string(),
-      status: AssessmentStatus::Candidate,
-      primary_text: "Example".to_string(),
-      secondary_text: "com.example.App".to_string(),
-      query_value: "100,200,800,600".to_string(),
-      coordinate_space: "global-logical".to_string(),
-      bounds: Some(AppRect {
-        x: 100,
-        y: 200,
-        width: 800,
-        height: 600,
-      }),
-      click_point: Some(AppPoint { x: 500, y: 500 }),
-      confidence: None,
-      evidence_step_id: "capture-ax-tree".to_string(),
-      candidate_query: None,
-      evidence_refs: Vec::new(),
-      promotion_gate: Some(AppCandidatePromotionGate {
-        status: AppCandidatePromotionStatus::DistillStrategyOnly,
-        missing_gates: vec!["artifact_ref".to_string()],
-        notes: vec![
-          "Candidate can seed a known distillation strategy, but this slice does not promote this surface family into contract::Candidate.".to_string(),
-          "Candidate has no ArtifactRef; action consumers cannot reconstruct the source evidence chain.".to_string(),
-        ],
-      }),
-      input_bindings: BTreeMap::from([
-        ("window_bounds".to_string(), "100,200,800,600".to_string()),
-        ("relative_x".to_string(), "0.500000".to_string()),
-        ("relative_y".to_string(), "0.500000".to_string()),
-      ]),
-      compatibility: candidate_compatibility(
-        &["window-action.window-point.pointer-click.capture-evidence"],
-        &[],
-      ),
-      notes: vec!["sample window region".to_string()],
-    });
     write_pretty_json(&analysis_path, &analysis).expect("analysis should write");
 
     write_pretty_json(&recipe_path, &test_window_action_candidate_manifest_value())
@@ -3044,6 +3073,10 @@ mod tests {
       &test_window_action_candidate_matrix_value(),
     )
     .expect("candidate matrix should write");
+    let candidate_shape = build_distilled_candidate_shape(
+      &analysis,
+      "window-action.window-point.pointer-click.capture-evidence",
+    );
     let distillation = AppDistillation {
       distill_version: APP_DISTILL_VERSION.to_string(),
       created_at_millis: 0,
@@ -3056,8 +3089,15 @@ mod tests {
         rationale: "test".to_string(),
         suggested_annotation_ids: vec!["window-primary-region".to_string()],
         source_evidence_refs: Vec::new(),
-        promoted_candidate: None,
-        candidate_shape: AppDistilledCandidateShape::default(),
+        promoted_candidate: Some(
+          promoted_candidate_for_candidate_shape(
+            &analysis,
+            "window-action.window-point.pointer-click.capture-evidence",
+            &candidate_shape,
+          )
+          .expect("window-action candidate should promote"),
+        ),
+        candidate_shape,
         recipe_path,
         case_matrix_path,
       }],
@@ -3079,6 +3119,23 @@ mod tests {
       output.validation.candidates[0]
         .rationale
         .contains("evidence-only")
+    );
+    assert_eq!(
+      output.validation.candidates[0]
+        .resolved_inputs
+        .contains_key("click_candidate"),
+      true
+    );
+    let click_candidate = output.validation.candidates[0]
+      .resolved_inputs
+      .get("click_candidate")
+      .expect("validate should inject click_candidate");
+    let parsed_candidate: crate::contract::Candidate = serde_json::from_str(click_candidate)
+      .expect("click_candidate should stay valid candidate JSON");
+    assert_eq!(parsed_candidate.candidate_local_id, "window-primary-region");
+    assert_eq!(
+      parsed_candidate.target_spec.grounding,
+      crate::contract::TargetGrounding::Coordinate
     );
     assert_eq!(
       output.validation.candidates[0]
@@ -4597,14 +4654,9 @@ mod tests {
       .expect("window candidate should expose promotion gate");
     assert_eq!(
       promotion_gate.status,
-      AppCandidatePromotionStatus::DistillStrategyOnly
+      AppCandidatePromotionStatus::ActionGradeCandidate
     );
-    assert!(
-      !promotion_gate
-        .missing_gates
-        .iter()
-        .any(|item| item == "artifact_ref")
-    );
+    assert!(promotion_gate.missing_gates.is_empty());
     assert!(analysis.recommended_strategies.iter().any(|strategy| {
       strategy.taxonomy_id == "window-action.window-point.pointer-click.capture-evidence"
     }));
@@ -4822,6 +4874,132 @@ mod tests {
       known_boundaries: vec![],
       recommended_strategies: vec![AppRecommendedStrategy {
         taxonomy_id: taxonomy_id.to_string(),
+        status: AssessmentStatus::Candidate,
+        rationale: "test".to_string(),
+      }],
+    }
+  }
+
+  fn sample_promotable_window_action_analysis() -> AppAnalysis {
+    AppAnalysis {
+      analysis_version: APP_ANALYSIS_VERSION.to_string(),
+      created_at_millis: 0,
+      probe_path: PathBuf::from("/tmp/probe.json"),
+      app_identity: AppIdentity {
+        bundle_id: "com.example.App".to_string(),
+        app_name: "Example".to_string(),
+        app_path: Some(PathBuf::from("/Applications/Example.app")),
+        main_executable_path: None,
+        version: "1.0".to_string(),
+        build_version: "100".to_string(),
+        url_schemes: vec![],
+        apple_script_addressable: false,
+        launch_services_resolved: true,
+        resolution_notes: vec![],
+      },
+      window_context: AppWindowContext {
+        observed_window_count: 1,
+        observed_at: "2026-05-18T00:00:00Z".to_string(),
+        frontmost_app_name: "Example".to_string(),
+        frontmost_window_title: "Example".to_string(),
+        primary_window_title: "Example".to_string(),
+        primary_window_bounds: Some(AppRect {
+          x: 100,
+          y: 200,
+          width: 800,
+          height: 600,
+        }),
+        primary_window_display_scale: Some(2.0),
+      },
+      permissions: AppPermissionState {
+        screen_recording: "granted".to_string(),
+        accessibility: "granted".to_string(),
+        automation_to_system_events: "granted".to_string(),
+        launch_host_process: "Atlas".to_string(),
+      },
+      available_surfaces: AppAvailableSurfaces {
+        accessibility_tree: AssessmentStatus::Candidate,
+        menu_surface: AssessmentStatus::Unknown,
+        shortcut_surface: AssessmentStatus::Candidate,
+        apple_script_surface: AssessmentStatus::Unavailable,
+        url_scheme_surface: AssessmentStatus::Unavailable,
+        keyboard_first_surface: AssessmentStatus::Candidate,
+        pointer_fallback_surface: AssessmentStatus::Likely,
+      },
+      grounding_assessment: AppGroundingAssessment {
+        ocr_sample_query: "Example".to_string(),
+        ocr_sample_status: AssessmentStatus::Candidate,
+        ocr_sample_match_count: 1,
+        stable_anchor_candidates: vec![],
+        stable_region_candidates: vec!["primaryWindow=100,200,800,600".to_string()],
+        overlay_debug_artifacts_recommended: false,
+      },
+      control_assessment: AppControlAssessment {
+        preferred_path: "non-pointer first".to_string(),
+        non_pointer_path: AssessmentStatus::Candidate,
+        keyboard_path: AssessmentStatus::Candidate,
+        pointer_fallback: AssessmentStatus::Likely,
+        notes: vec![],
+      },
+      verification_assessment: AppVerificationAssessment {
+        ax_verify: AssessmentStatus::Candidate,
+        image_verify: AssessmentStatus::Candidate,
+        ui_state_verify: AssessmentStatus::Candidate,
+        semantic_success: AssessmentStatus::Unknown,
+        notes: vec![],
+      },
+      disturbance_profile: AppDisturbanceProfile {
+        observation: vec!["none".to_string()],
+        non_pointer_control: vec!["keyboard".to_string()],
+        pointer_fallback: vec!["pointer".to_string()],
+      },
+      annotation_candidates: vec![AppSurfaceCandidate {
+        candidate_id: "window-primary-region".to_string(),
+        area: "window.primary".to_string(),
+        kind: "region".to_string(),
+        source: "window".to_string(),
+        status: AssessmentStatus::Candidate,
+        primary_text: "Example".to_string(),
+        secondary_text: "com.example.App".to_string(),
+        query_value: "100,200,800,600".to_string(),
+        coordinate_space: "global-logical".to_string(),
+        bounds: Some(AppRect {
+          x: 100,
+          y: 200,
+          width: 800,
+          height: 600,
+        }),
+        click_point: Some(AppPoint { x: 500, y: 500 }),
+        confidence: None,
+        evidence_step_id: "list-windows".to_string(),
+        candidate_query: None,
+        evidence_refs: vec![ArtifactRef {
+          run_id: crate::trace::RunId::new("run_probe"),
+          span_id: crate::trace::SpanId::new("span_probe"),
+          artifact_id: crate::trace::ArtifactId::new("artifact_0002"),
+          captured_event_id: Some(crate::trace::EventId::new("event_probe")),
+        }],
+        promotion_gate: Some(AppCandidatePromotionGate {
+          status: AppCandidatePromotionStatus::ActionGradeCandidate,
+          missing_gates: Vec::new(),
+          notes: vec![
+            "Sample candidate satisfies the v0 window-action promotion seam.".to_string(),
+          ],
+        }),
+        input_bindings: BTreeMap::from([
+          ("window_bounds".to_string(), "100,200,800,600".to_string()),
+          ("relative_x".to_string(), "0.500000".to_string()),
+          ("relative_y".to_string(), "0.500000".to_string()),
+        ]),
+        compatibility: candidate_compatibility(
+          &["window-action.window-point.pointer-click.capture-evidence"],
+          &[],
+        ),
+        notes: vec!["sample window region".to_string()],
+      }],
+      known_boundaries: vec![],
+      recommended_strategies: vec![AppRecommendedStrategy {
+        taxonomy_id: "window-action.window-point.pointer-click.capture-evidence".to_string(),
         status: AssessmentStatus::Candidate,
         rationale: "test".to_string(),
       }],

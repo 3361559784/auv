@@ -631,10 +631,18 @@ pub trait ReconstructionPolicy {
 
   /// Iterate the candidates carried by one observation. Order is
   /// observation order (the policy must not re-sort).
+  ///
+  /// Rust 2024 RPITIT: the returned iterator type is implementer-chosen
+  /// and bound to `'a`, so apps can return `observation.candidates.iter()`
+  /// (or any other zero-allocation iterator) without boxing. The
+  /// `Self::Candidate: 'a` bound is required for the `&'a Self::Candidate`
+  /// items to be well-formed when the associated type is not `'static`.
   fn candidates<'a>(
     &self,
     observation: &'a Self::Observation,
-  ) -> Box<dyn Iterator<Item = &'a Self::Candidate> + 'a>;
+  ) -> impl Iterator<Item = &'a Self::Candidate> + 'a
+  where
+    Self::Candidate: 'a;
 
   /// Decide whether a candidate is a section header, a section item, or
   /// neither. The returned `SectionKey` (for headers) is used to dedup
@@ -1422,8 +1430,11 @@ mod tests {
     fn candidates<'a>(
       &self,
       observation: &'a Self::Observation,
-    ) -> Box<dyn Iterator<Item = &'a Self::Candidate> + 'a> {
-      Box::new(observation.candidates.iter())
+    ) -> impl Iterator<Item = &'a Self::Candidate> + 'a
+    where
+      Self::Candidate: 'a,
+    {
+      observation.candidates.iter()
     }
 
     fn classify(&self, candidate: &Self::Candidate) -> CandidateRole<Self::SectionKey> {

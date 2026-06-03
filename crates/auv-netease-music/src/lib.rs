@@ -1152,8 +1152,11 @@ impl ReconstructionPolicy for NeteasePolicy {
   fn candidates<'a>(
     &self,
     observation: &'a Self::Observation,
-  ) -> Box<dyn Iterator<Item = &'a Self::Candidate> + 'a> {
-    Box::new(observation.candidates.iter())
+  ) -> impl Iterator<Item = &'a Self::Candidate> + 'a
+  where
+    Self::Candidate: 'a,
+  {
+    observation.candidates.iter()
   }
 
   fn classify(&self, candidate: &Self::Candidate) -> CandidateRole<Self::SectionKey> {

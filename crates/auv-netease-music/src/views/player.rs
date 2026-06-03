@@ -1,4 +1,13 @@
-use crate::PlaybackControlState;
+use image::RgbaImage;
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlaybackControlState {
+  PlayVisible,
+  PauseVisible,
+  Unknown,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PlayerState {
@@ -78,9 +87,66 @@ impl PlayerView {
   }
 }
 
+pub(crate) fn classify_bottom_playback_control_state(image: &RgbaImage) -> PlaybackControlState {
+  if image.width() < 80 || image.height() < 80 {
+    return PlaybackControlState::Unknown;
+  }
+
+  let center_x = image.width() as i32 / 2;
+  let center_y = image.height() as i32 - 38;
+  let half_width = 24i32;
+  let half_height = 22i32;
+  let left = (center_x - half_width).max(0);
+  let right = (center_x + half_width).min(image.width() as i32 - 1);
+  let top = (center_y - half_height).max(0);
+  let bottom = (center_y + half_height).min(image.height() as i32 - 1);
+  let width = (right - left + 1).max(0) as usize;
+  if width == 0 {
+    return PlaybackControlState::Unknown;
+  }
+
+  let mut occupied_columns = vec![false; width];
+  for y in top..=bottom {
+    for x in left..=right {
+      let pixel = image.get_pixel(x as u32, y as u32);
+      if pixel[3] > 120 && pixel[0] > 220 && pixel[1] > 220 && pixel[2] > 220 {
+        occupied_columns[(x - left) as usize] = true;
+      }
+    }
+  }
+
+  let mut clusters = Vec::new();
+  let mut start = None;
+  for (index, occupied) in occupied_columns.iter().copied().enumerate() {
+    match (start, occupied) {
+      (None, true) => start = Some(index),
+      (Some(first), false) => {
+        if index.saturating_sub(first) >= 2 {
+          clusters.push((first, index - 1));
+        }
+        start = None;
+      }
+      _ => {}
+    }
+  }
+  if let Some(first) = start {
+    let last = occupied_columns.len() - 1;
+    if last.saturating_sub(first) + 1 >= 2 {
+      clusters.push((first, last));
+    }
+  }
+
+  match clusters.len() {
+    0 => PlaybackControlState::Unknown,
+    1 => PlaybackControlState::PlayVisible,
+    _ => PlaybackControlState::PauseVisible,
+  }
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
+  use image::{Rgba, RgbaImage};
 
   #[test]
   fn pause_control_means_present_and_playing() {
@@ -124,5 +190,44 @@ mod tests {
 
     assert_eq!(view.state(), PlayerState::Absent);
     assert_eq!(view.control_state(), None);
+  }
+
+  #[test]
+  fn classify_playback_control_state_distinguishes_pause_from_play_icon() {
+    let pause = playback_control_fixture(PlaybackControlState::PauseVisible);
+    let play = playback_control_fixture(PlaybackControlState::PlayVisible);
+
+    assert_eq!(
+      classify_bottom_playback_control_state(&pause),
+      PlaybackControlState::PauseVisible
+    );
+    assert_eq!(
+      classify_bottom_playback_control_state(&play),
+      PlaybackControlState::PlayVisible
+    );
+  }
+
+  fn playback_control_fixture(state: PlaybackControlState) -> RgbaImage {
+    let mut image = RgbaImage::from_pixel(200, 120, Rgba([14, 15, 24, 255]));
+    match state {
+      PlaybackControlState::PauseVisible => {
+        paint_control_columns(&mut image, &[92..=96, 104..=108]);
+      }
+      PlaybackControlState::PlayVisible => {
+        paint_control_columns(&mut image, &[96..=108]);
+      }
+      PlaybackControlState::Unknown => {}
+    }
+    image
+  }
+
+  fn paint_control_columns(image: &mut RgbaImage, columns: &[std::ops::RangeInclusive<u32>]) {
+    for column in columns {
+      for x in column.clone() {
+        for y in 72..=94 {
+          image.put_pixel(x, y, Rgba([255, 255, 255, 255]));
+        }
+      }
+    }
   }
 }

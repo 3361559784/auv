@@ -1,5 +1,76 @@
-use crate::{PlaylistSidebarItem, PlaylistSidebarProjection, SidebarSection, SidebarSectionKind};
-use auv_view::normalize_identity;
+use auv_view::{Confidence, normalize_identity};
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlaylistSidebarProjection {
+  pub sections: Vec<SidebarSection>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SidebarSection {
+  pub id: String,
+  pub kind: SidebarSectionKind,
+  pub label: Option<String>,
+  pub items: Vec<PlaylistSidebarItem>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SidebarSectionKind {
+  FeatureNav,
+  LibraryNav,
+  PlaylistNav,
+  MyPlaylists,
+  FavoritePlaylists,
+  #[default]
+  Unknown,
+}
+
+impl SidebarSectionKind {
+  pub(crate) fn from_label(label: &str) -> Self {
+    let label = normalize_section_label(label);
+    if label.contains("创建的歌单") || label.contains("我的歌单") {
+      Self::MyPlaylists
+    } else if label.contains("收藏的歌单") {
+      Self::FavoritePlaylists
+    } else if label == "我的收藏" {
+      Self::LibraryNav
+    } else if matches!(label.as_str(), "推荐" | "音乐服务") {
+      Self::FeatureNav
+    } else {
+      Self::Unknown
+    }
+  }
+
+  pub(crate) fn is_known(self) -> bool {
+    self != Self::Unknown
+  }
+
+  pub(crate) fn is_playlist_collection(self) -> bool {
+    matches!(self, Self::MyPlaylists | Self::FavoritePlaylists)
+  }
+
+  pub(crate) fn domain_kind(self) -> &'static str {
+    match self {
+      Self::FeatureNav => "netease.feature_nav",
+      Self::LibraryNav => "netease.library_nav",
+      Self::PlaylistNav => "netease.playlist_nav",
+      Self::MyPlaylists => "netease.my_playlists",
+      Self::FavoritePlaylists => "netease.favorite_playlists",
+      Self::Unknown => "netease.sidebar_section",
+    }
+  }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlaylistSidebarItem {
+  pub id: String,
+  pub label: String,
+  pub section_hint: Option<SidebarSectionKind>,
+  pub confidence: Confidence,
+  pub candidate_id: Option<String>,
+  pub anchor_id: Option<String>,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SidebarState {
@@ -161,6 +232,25 @@ fn is_playlist_collection(kind: SidebarSectionKind) -> bool {
     kind,
     SidebarSectionKind::MyPlaylists | SidebarSectionKind::FavoritePlaylists
   )
+}
+
+fn normalize_section_label(label: &str) -> String {
+  let label = label
+    .trim()
+    .trim_end_matches(|char: char| char.is_ascii_digit() || char.is_whitespace())
+    .trim_end_matches(|char| matches!(char, '⌃' | '⌄' | '˄' | '˅' | '^' | '∨' | '⌵' | '入'))
+    .trim_end_matches(|char: char| char.is_ascii_digit() || char.is_whitespace())
+    .trim()
+    .to_string();
+
+  strip_leading_icon_noise(label)
+}
+
+fn strip_leading_icon_noise(label: String) -> String {
+  if label.ends_with("我的收藏") && label != "我的收藏" {
+    return "我的收藏".to_string();
+  }
+  label
 }
 
 #[cfg(test)]

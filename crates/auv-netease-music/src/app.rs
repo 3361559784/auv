@@ -3,12 +3,12 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 #[cfg(target_os = "macos")]
 use crate::Inputs;
 #[cfg(target_os = "macos")]
-use crate::classify_bottom_playback_control_state;
-use crate::player::PlayerView;
-#[cfg(target_os = "macos")]
 use crate::run_live_scan;
-use crate::screen::{self, ScreenView};
-use crate::sidebar::SidebarView;
+use crate::views::player::PlayerView;
+#[cfg(target_os = "macos")]
+use crate::views::player::classify_bottom_playback_control_state;
+use crate::views::screen::{self, ScreenView};
+use crate::views::sidebar::SidebarView;
 #[cfg(target_os = "macos")]
 use auv_driver::Capture;
 #[cfg(target_os = "macos")]
@@ -305,9 +305,9 @@ fn observed_at_millis() -> u128 {
 mod tests {
   use super::*;
   use crate::PlaybackControlState;
-  use crate::player::PlayerView;
-  use crate::screen::{ScreenState, ScreenView};
-  use crate::sidebar::SidebarView;
+  use crate::views::player::PlayerView;
+  use crate::views::screen::{ScreenState, ScreenView};
+  use crate::views::sidebar::SidebarView;
 
   #[test]
   fn observe_reuses_valid_cache_without_calling_provider_again() {

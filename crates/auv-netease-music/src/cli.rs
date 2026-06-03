@@ -3,6 +3,8 @@ use std::num::{NonZeroU64, NonZeroUsize};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+use auv_driver::RatioRect;
+use auv_driver::vision::TextRecognitionOptions;
 use clap::{Args, Parser, Subcommand};
 
 use crate::output::build_playlist_json_output;
@@ -10,6 +12,100 @@ use crate::{
   DailyRecommendedPlayInputs, Inputs, PlaylistCategory, SongListInputs, run_daily_recommended_play,
   run_daily_recommended_songs_scan, run_live_scan,
 };
+
+pub(crate) fn positive_scroll_amount(raw: &str) -> Result<f64, String> {
+  let parsed = raw
+    .parse::<f64>()
+    .map_err(|_| "expects a number".to_string())?;
+  if !parsed.is_finite() || parsed <= 0.0 {
+    return Err("must be greater than 0".to_string());
+  }
+  Ok(parsed)
+}
+
+pub(crate) fn zero_to_one(raw: &str) -> Result<f64, String> {
+  let parsed = raw
+    .parse::<f64>()
+    .map_err(|_| "expects a number".to_string())?;
+  if !parsed.is_finite() || !(0.0..=1.0).contains(&parsed) {
+    return Err("must be between 0 and 1".to_string());
+  }
+  Ok(parsed)
+}
+
+pub(crate) fn split_csv(value: &str) -> Vec<String> {
+  value
+    .split(',')
+    .map(str::trim)
+    .filter(|part| !part.is_empty())
+    .map(ToOwned::to_owned)
+    .collect()
+}
+
+pub(crate) fn push_trimmed(values: &mut Vec<String>, value: String) {
+  let value = value.trim();
+  if !value.is_empty() && !values.iter().any(|existing| existing == value) {
+    values.push(value.to_string());
+  }
+}
+
+pub(crate) fn push_csv(values: &mut Vec<String>, value: &str) {
+  for part in split_csv(value) {
+    push_trimmed(values, part);
+  }
+}
+
+pub(crate) fn push_ocr_language(options: &mut TextRecognitionOptions, language: String) {
+  let language = language.trim();
+  if language.is_empty() {
+    return;
+  }
+  let languages = options.recognition_languages.get_or_insert_with(Vec::new);
+  if !languages.iter().any(|existing| existing == language) {
+    languages.push(language.to_string());
+  }
+}
+
+pub(crate) fn load_custom_words_file(
+  values: &mut Vec<String>,
+  path: PathBuf,
+) -> Result<(), String> {
+  let content = std::fs::read_to_string(&path)
+    .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+  for line in content.lines() {
+    let word = line.trim();
+    if !word.is_empty() && !word.starts_with('#') {
+      push_trimmed(values, word.to_string());
+    }
+  }
+  Ok(())
+}
+
+pub(crate) fn parse_ratio_region(value: String) -> Result<RatioRect, String> {
+  let parts = value
+    .split(',')
+    .map(str::trim)
+    .map(|part| {
+      part
+        .parse::<f64>()
+        .map_err(|_| "--sidebar-region expects x,y,width,height".to_string())
+    })
+    .collect::<Result<Vec<_>, _>>()?;
+
+  if parts.len() != 4 {
+    return Err("--sidebar-region expects x,y,width,height".to_string());
+  }
+
+  if parts.iter().any(|part| !part.is_finite()) {
+    return Err("--sidebar-region expects finite x,y,width,height".to_string());
+  }
+
+  if parts[2] <= 0.0 || parts[3] <= 0.0 {
+    return Err("--sidebar-region width and height must be greater than 0".to_string());
+  }
+
+  Ok(RatioRect::new(parts[0], parts[1], parts[2], parts[3]))
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum OutputMode {
@@ -111,7 +207,7 @@ struct SongsLsArgs {
   artifact_dir: Option<PathBuf>,
   #[arg(long = "max-scrolls")]
   max_scrolls: Option<NonZeroUsize>,
-  #[arg(long = "scroll-amount", value_parser = crate::positive_scroll_amount)]
+  #[arg(long = "scroll-amount", value_parser = positive_scroll_amount)]
   scroll_amount: Option<f64>,
   #[arg(long = "scroll-settle-ms")]
   scroll_settle_ms: Option<u64>,
@@ -152,13 +248,13 @@ struct DailyRecommendedArgs {
   artifact_dir: Option<PathBuf>,
   #[arg(long = "max-top-scrolls")]
   max_top_scrolls: Option<NonZeroUsize>,
-  #[arg(long = "top-scroll-amount", value_parser = crate::positive_scroll_amount)]
+  #[arg(long = "top-scroll-amount", value_parser = positive_scroll_amount)]
   top_scroll_amount: Option<f64>,
   #[arg(long = "settle-ms")]
   settle_ms: Option<NonZeroU64>,
   #[arg(long = "play-icon-template")]
   play_icon_template: Option<PathBuf>,
-  #[arg(long = "play-icon-threshold", value_parser = crate::zero_to_one)]
+  #[arg(long = "play-icon-threshold", value_parser = zero_to_one)]
   play_icon_threshold: Option<f64>,
   #[arg(long = "hint-ocr-custom-word")]
   custom_words: Vec<String>,
@@ -192,7 +288,7 @@ struct PlaylistLsArgs {
   artifact_dir: Option<PathBuf>,
   #[arg(long = "max-scrolls")]
   max_scrolls: Option<NonZeroUsize>,
-  #[arg(long = "scroll-amount", value_parser = crate::positive_scroll_amount)]
+  #[arg(long = "scroll-amount", value_parser = positive_scroll_amount)]
   scroll_amount: Option<f64>,
   #[arg(long = "scroll-settle-ms")]
   scroll_settle_ms: Option<u64>,
@@ -255,23 +351,23 @@ fn parse_playlist_ls(args: PlaylistLsArgs) -> Result<PlaylistCommand, String> {
     inputs.category = category;
   }
   if let Some(sidebar_region) = args.sidebar_region {
-    inputs.sidebar_region = Some(crate::parse_ratio_region(sidebar_region)?);
+    inputs.sidebar_region = Some(parse_ratio_region(sidebar_region)?);
   }
   for word in args.custom_words {
-    crate::push_trimmed(&mut inputs.ocr_options.custom_words, word);
+    push_trimmed(&mut inputs.ocr_options.custom_words, word);
   }
   for csv in args.custom_word_csvs {
-    crate::push_csv(&mut inputs.ocr_options.custom_words, &csv);
+    push_csv(&mut inputs.ocr_options.custom_words, &csv);
   }
   for path in args.custom_word_files {
-    crate::load_custom_words_file(&mut inputs.ocr_options.custom_words, path)?;
+    load_custom_words_file(&mut inputs.ocr_options.custom_words, path)?;
   }
   for language in args.ocr_languages {
-    crate::push_ocr_language(&mut inputs.ocr_options, language);
+    push_ocr_language(&mut inputs.ocr_options, language);
   }
   for csv in args.ocr_language_csvs {
-    for language in crate::split_csv(&csv) {
-      crate::push_ocr_language(&mut inputs.ocr_options, language);
+    for language in split_csv(&csv) {
+      push_ocr_language(&mut inputs.ocr_options, language);
     }
   }
   let query = args.filter.or(query);
@@ -327,20 +423,20 @@ fn parse_songs_ls(args: SongsLsArgs) -> Result<SongsLsCommand, String> {
     inputs.scroll_settle_ms = scroll_settle_ms;
   }
   for word in args.custom_words {
-    crate::push_trimmed(&mut inputs.ocr_options.custom_words, word);
+    push_trimmed(&mut inputs.ocr_options.custom_words, word);
   }
   for csv in args.custom_word_csvs {
-    crate::push_csv(&mut inputs.ocr_options.custom_words, &csv);
+    push_csv(&mut inputs.ocr_options.custom_words, &csv);
   }
   for path in args.custom_word_files {
-    crate::load_custom_words_file(&mut inputs.ocr_options.custom_words, path)?;
+    load_custom_words_file(&mut inputs.ocr_options.custom_words, path)?;
   }
   for language in args.ocr_languages {
-    crate::push_ocr_language(&mut inputs.ocr_options, language);
+    push_ocr_language(&mut inputs.ocr_options, language);
   }
   for csv in args.ocr_language_csvs {
-    for language in crate::split_csv(&csv) {
-      crate::push_ocr_language(&mut inputs.ocr_options, language);
+    for language in split_csv(&csv) {
+      push_ocr_language(&mut inputs.ocr_options, language);
     }
   }
   let output = match args.json_out {
@@ -379,20 +475,20 @@ fn parse_daily_recommended(
     inputs.play_icon_threshold = threshold;
   }
   for word in args.custom_words {
-    crate::push_trimmed(&mut inputs.ocr_options.custom_words, word);
+    push_trimmed(&mut inputs.ocr_options.custom_words, word);
   }
   for csv in args.custom_word_csvs {
-    crate::push_csv(&mut inputs.ocr_options.custom_words, &csv);
+    push_csv(&mut inputs.ocr_options.custom_words, &csv);
   }
   for path in args.custom_word_files {
-    crate::load_custom_words_file(&mut inputs.ocr_options.custom_words, path)?;
+    load_custom_words_file(&mut inputs.ocr_options.custom_words, path)?;
   }
   for language in args.ocr_languages {
-    crate::push_ocr_language(&mut inputs.ocr_options, language);
+    push_ocr_language(&mut inputs.ocr_options, language);
   }
   for csv in args.ocr_language_csvs {
-    for language in crate::split_csv(&csv) {
-      crate::push_ocr_language(&mut inputs.ocr_options, language);
+    for language in split_csv(&csv) {
+      push_ocr_language(&mut inputs.ocr_options, language);
     }
   }
 
@@ -632,7 +728,7 @@ mod tests {
     assert_eq!(command.inputs.scroll_settle_ms, 750);
     assert_eq!(
       command.inputs.sidebar_region,
-      Some(crate::parse_ratio_region("0.1,0.2,0.3,0.4".to_string()).expect("region should parse"))
+      Some(parse_ratio_region("0.1,0.2,0.3,0.4".to_string()).expect("region should parse"))
     );
   }
 

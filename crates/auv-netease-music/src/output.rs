@@ -1,6 +1,6 @@
 use serde::Serialize;
 
-use crate::sidebar::SidebarView;
+use crate::views::sidebar::SidebarView;
 use crate::{PlaylistSidebarProjection, PlaylistSidebarScan, SidebarSectionKind};
 
 /// One playlist item surfaced by the listing or keyword filter.

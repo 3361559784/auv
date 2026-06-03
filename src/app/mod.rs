@@ -16,9 +16,10 @@ mod report;
 
 use analysis::{
   apply_candidate_grounding, apply_distilled_candidate_shape_inputs, build_app_analysis,
-  build_distilled_candidate_shape, parse_ax_snapshot, resolve_probe_ocr_sample_query,
-  source_evidence_refs_for_candidate_shape, suggested_annotation_ids_for_candidate_shape,
-  validated_candidate_rationale, verification_mode_for_strategy,
+  build_distilled_candidate_shape, parse_ax_snapshot, promoted_candidate_for_candidate_shape,
+  resolve_probe_ocr_sample_query, source_evidence_refs_for_candidate_shape,
+  suggested_annotation_ids_for_candidate_shape, validated_candidate_rationale,
+  verification_mode_for_strategy,
 };
 use infra::{
   app_span_record, default_probe_output_dir, finish_failed_app_run, invoke_probe_step, read_json,
@@ -157,6 +158,8 @@ pub struct AppDistilledCandidate {
   pub suggested_annotation_ids: Vec<String>,
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   pub source_evidence_refs: Vec<ArtifactRef>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub promoted_candidate: Option<crate::contract::Candidate>,
   #[serde(default)]
   pub candidate_shape: AppDistilledCandidateShape,
   pub recipe_path: PathBuf,
@@ -869,6 +872,11 @@ fn distill_app_analysis_into_run(
       rationale: strategy.rationale.clone(),
       suggested_annotation_ids: suggested_annotation_ids_for_candidate_shape(&candidate_shape),
       source_evidence_refs: source_evidence_refs_for_candidate_shape(&analysis, &candidate_shape),
+      promoted_candidate: promoted_candidate_for_candidate_shape(
+        &analysis,
+        &strategy.taxonomy_id,
+        &candidate_shape,
+      ),
       candidate_shape,
       recipe_path,
       case_matrix_path,
@@ -1583,9 +1591,9 @@ mod tests {
           captured_event_id: Some(crate::trace::EventId::new("event_probe")),
         }],
         promotion_gate: Some(AppCandidatePromotionGate {
-          status: AppCandidatePromotionStatus::DistillStrategyOnly,
+          status: AppCandidatePromotionStatus::ActionGradeCandidate,
           missing_gates: Vec::new(),
-          notes: vec!["Sample candidate can seed a known distillation strategy.".to_string()],
+          notes: vec!["Sample candidate satisfies the v0 search-entry promotion seam.".to_string()],
         }),
         input_bindings: BTreeMap::from([("focus_query".to_string(), "Search".to_string())]),
         compatibility: candidate_compatibility(
@@ -1617,7 +1625,7 @@ mod tests {
     assert!(report.contains("candidateQuery"));
     assert!(report.contains("sources=`ax`"));
     assert!(report.contains("evidenceRefs"));
-    assert!(report.contains("promotionGate: `distill_strategy_only`"));
+    assert!(report.contains("promotionGate: `action_grade_candidate`"));
     assert!(report.contains("inputBindings"));
     assert!(report.contains("## 5. Control Strategy"));
     assert!(report.contains("## 6. Verification Assessment"));
@@ -1821,6 +1829,25 @@ mod tests {
     );
     assert!(candidate_shape.context_candidate_ids.is_empty());
     assert!(candidate_shape.notes.is_empty());
+  }
+
+  #[test]
+  fn search_entry_candidates_expose_action_grade_promotion_gate() {
+    let analysis = sample_promotable_search_entry_analysis();
+    let candidate = analysis
+      .annotation_candidates
+      .iter()
+      .find(|candidate| candidate.candidate_id == "search-entry-focus-ax")
+      .expect("search-entry candidate should exist");
+    let promotion_gate = candidate
+      .promotion_gate
+      .as_ref()
+      .expect("search-entry candidate should expose promotion gate");
+    assert_eq!(
+      promotion_gate.status,
+      AppCandidatePromotionStatus::ActionGradeCandidate
+    );
+    assert!(promotion_gate.missing_gates.is_empty());
   }
 
   #[test]
@@ -2350,7 +2377,7 @@ mod tests {
         status: AppCandidatePromotionStatus::DistillStrategyOnly,
         missing_gates: vec!["artifact_ref".to_string()],
         notes: vec![
-          "Candidate can seed a known distillation strategy, but analyze does not mint action-grade contract::Candidate values.".to_string(),
+          "Candidate can seed a known distillation strategy, but this slice does not promote this surface family into contract::Candidate.".to_string(),
           "Candidate has no ArtifactRef; action consumers cannot reconstruct the source evidence chain.".to_string(),
         ],
       }),
@@ -2434,7 +2461,7 @@ mod tests {
         captured_event_id: Some(crate::trace::EventId::new("event_probe")),
       }],
       promotion_gate: Some(AppCandidatePromotionGate {
-        status: AppCandidatePromotionStatus::DistillStrategyOnly,
+        status: AppCandidatePromotionStatus::ActionGradeCandidate,
         missing_gates: Vec::new(),
         notes: vec!["test candidate".to_string()],
       }),
@@ -2454,6 +2481,34 @@ mod tests {
     assert_eq!(evidence_refs.len(), 1);
     assert_eq!(evidence_refs[0].artifact_id.as_str(), "artifact_0001");
     assert_eq!(evidence_refs[0].span_id.as_str(), "span_probe");
+  }
+
+  #[test]
+  fn distillation_projects_search_entry_promoted_candidate() {
+    let analysis = sample_promotable_search_entry_analysis();
+    let candidate_shape = build_distilled_candidate_shape(
+      &analysis,
+      "search-entry.ax-text-input.clipboard-submit.capture-evidence",
+    );
+    let promoted = promoted_candidate_for_candidate_shape(
+      &analysis,
+      "search-entry.ax-text-input.clipboard-submit.capture-evidence",
+      &candidate_shape,
+    )
+    .expect("search-entry candidate should promote");
+
+    assert_eq!(promoted.candidate_local_id, "search-entry-focus-ax");
+    assert_eq!(promoted.kind, "search_entry");
+    assert_eq!(
+      promoted.target_spec.grounding,
+      crate::contract::TargetGrounding::AxNode
+    );
+    assert_eq!(promoted.control.requires_app_frontmost, true);
+    assert_eq!(promoted.control.requires_window_focus, true);
+    assert_eq!(
+      promoted.evidence.artifact_ref.artifact_id.as_str(),
+      "artifact_0001"
+    );
   }
 
   #[test]
@@ -2508,7 +2563,7 @@ mod tests {
         status: AppCandidatePromotionStatus::DistillStrategyOnly,
         missing_gates: vec!["artifact_ref".to_string()],
         notes: vec![
-          "Candidate can seed a known distillation strategy, but analyze does not mint action-grade contract::Candidate values.".to_string(),
+          "Candidate can seed a known distillation strategy, but this slice does not promote this surface family into contract::Candidate.".to_string(),
           "Candidate has no ArtifactRef; action consumers cannot reconstruct the source evidence chain.".to_string(),
         ],
       }),
@@ -2614,6 +2669,7 @@ mod tests {
           artifact_id: crate::trace::ArtifactId::new("artifact_0001"),
           captured_event_id: Some(crate::trace::EventId::new("event_probe")),
         }],
+        promoted_candidate: None,
         candidate_shape: AppDistilledCandidateShape::default(),
         recipe_path,
         case_matrix_path,
@@ -2687,6 +2743,7 @@ mod tests {
         rationale: "test".to_string(),
         suggested_annotation_ids: Vec::new(),
         source_evidence_refs: Vec::new(),
+        promoted_candidate: None,
         candidate_shape: AppDistilledCandidateShape::default(),
         recipe_path,
         case_matrix_path,
@@ -2770,7 +2827,7 @@ mod tests {
         status: AppCandidatePromotionStatus::DistillStrategyOnly,
         missing_gates: vec!["artifact_ref".to_string()],
         notes: vec![
-          "Candidate can seed a known distillation strategy, but analyze does not mint action-grade contract::Candidate values.".to_string(),
+          "Candidate can seed a known distillation strategy, but this slice does not promote this surface family into contract::Candidate.".to_string(),
           "Candidate has no ArtifactRef; action consumers cannot reconstruct the source evidence chain.".to_string(),
         ],
       }),
@@ -2806,6 +2863,7 @@ mod tests {
         rationale: "test".to_string(),
         suggested_annotation_ids: vec!["window-primary-region".to_string()],
         source_evidence_refs: Vec::new(),
+        promoted_candidate: None,
         candidate_shape: AppDistilledCandidateShape::default(),
         recipe_path,
         case_matrix_path,
@@ -2899,6 +2957,7 @@ mod tests {
         rationale: "test".to_string(),
         suggested_annotation_ids: Vec::new(),
         source_evidence_refs: Vec::new(),
+        promoted_candidate: None,
         candidate_shape: AppDistilledCandidateShape::default(),
         recipe_path,
         case_matrix_path,
@@ -2965,6 +3024,7 @@ mod tests {
         rationale: "test".to_string(),
         suggested_annotation_ids: vec!["window-primary-region".to_string()],
         source_evidence_refs: Vec::new(),
+        promoted_candidate: None,
         candidate_shape: AppDistilledCandidateShape {
           direct_candidate_ids: vec!["window-primary-region".to_string()],
           context_candidate_ids: Vec::new(),
@@ -3189,6 +3249,7 @@ mod tests {
         rationale: "test".to_string(),
         suggested_annotation_ids: vec!["visible-row-1".to_string()],
         source_evidence_refs: Vec::new(),
+        promoted_candidate: None,
         candidate_shape: candidate_shape.clone(),
         recipe_path,
         case_matrix_path,
@@ -3321,6 +3382,7 @@ mod tests {
           artifact_id: crate::trace::ArtifactId::new("artifact_0001"),
           captured_event_id: Some(crate::trace::EventId::new("event_probe")),
         }],
+        promoted_candidate: None,
         candidate_shape: AppDistilledCandidateShape {
           direct_candidate_ids: Vec::new(),
           context_candidate_ids: vec!["visible-row-1".to_string()],
@@ -3791,9 +3853,9 @@ mod tests {
           captured_event_id: Some(crate::trace::EventId::new("event_probe")),
         }],
         promotion_gate: Some(AppCandidatePromotionGate {
-          status: AppCandidatePromotionStatus::DistillStrategyOnly,
+          status: AppCandidatePromotionStatus::ActionGradeCandidate,
           missing_gates: Vec::new(),
-          notes: vec!["Sample candidate can seed a known distillation strategy.".to_string()],
+          notes: vec!["Sample candidate satisfies the v0 search-entry promotion seam.".to_string()],
         }),
         input_bindings: BTreeMap::from([("focus_query".to_string(), "Search".to_string())]),
         compatibility: candidate_compatibility(
@@ -3821,7 +3883,7 @@ mod tests {
       .expect("promotion gate should survive round trip");
     assert_eq!(
       promotion_gate.status,
-      AppCandidatePromotionStatus::DistillStrategyOnly
+      AppCandidatePromotionStatus::ActionGradeCandidate
     );
     assert!(promotion_gate.missing_gates.is_empty());
 
@@ -3860,6 +3922,7 @@ mod tests {
           artifact_id: crate::trace::ArtifactId::new("artifact_0001"),
           captured_event_id: Some(crate::trace::EventId::new("event_probe")),
         }],
+        promoted_candidate: None,
         candidate_shape: AppDistilledCandidateShape {
           direct_candidate_ids: Vec::new(),
           context_candidate_ids: vec!["visible-row-1".to_string()],
@@ -3888,6 +3951,7 @@ mod tests {
       candidate.suggested_annotation_ids,
       vec!["visible-row-1".to_string()]
     );
+    assert!(candidate.promoted_candidate.is_none());
     assert!(candidate.candidate_shape.direct_candidate_ids.is_empty());
     assert_eq!(
       candidate.candidate_shape.context_candidate_ids,
@@ -4231,6 +4295,141 @@ mod tests {
       known_boundaries: vec![],
       recommended_strategies: vec![AppRecommendedStrategy {
         taxonomy_id: taxonomy_id.to_string(),
+        status: AssessmentStatus::Candidate,
+        rationale: "test".to_string(),
+      }],
+    }
+  }
+
+  fn sample_promotable_search_entry_analysis() -> AppAnalysis {
+    AppAnalysis {
+      analysis_version: APP_ANALYSIS_VERSION.to_string(),
+      created_at_millis: 0,
+      probe_path: PathBuf::from("/tmp/probe.json"),
+      app_identity: AppIdentity {
+        bundle_id: "com.example.App".to_string(),
+        app_name: "Example".to_string(),
+        app_path: Some(PathBuf::from("/Applications/Example.app")),
+        main_executable_path: None,
+        version: "1.0".to_string(),
+        build_version: "100".to_string(),
+        url_schemes: vec![],
+        apple_script_addressable: false,
+        launch_services_resolved: true,
+        resolution_notes: vec![],
+      },
+      window_context: AppWindowContext {
+        observed_window_count: 1,
+        observed_at: "2026-05-18T00:00:00Z".to_string(),
+        frontmost_app_name: "Example".to_string(),
+        frontmost_window_title: "Example".to_string(),
+        primary_window_title: "Example".to_string(),
+        primary_window_bounds: Some(AppRect {
+          x: 0,
+          y: 0,
+          width: 100,
+          height: 100,
+        }),
+        primary_window_display_scale: Some(2.0),
+      },
+      permissions: AppPermissionState {
+        screen_recording: "granted".to_string(),
+        accessibility: "granted".to_string(),
+        automation_to_system_events: "granted".to_string(),
+        launch_host_process: "Atlas".to_string(),
+      },
+      available_surfaces: AppAvailableSurfaces {
+        accessibility_tree: AssessmentStatus::Available,
+        menu_surface: AssessmentStatus::Unknown,
+        shortcut_surface: AssessmentStatus::Candidate,
+        apple_script_surface: AssessmentStatus::Unavailable,
+        url_scheme_surface: AssessmentStatus::Unavailable,
+        keyboard_first_surface: AssessmentStatus::Candidate,
+        pointer_fallback_surface: AssessmentStatus::Likely,
+      },
+      grounding_assessment: AppGroundingAssessment {
+        ocr_sample_query: "Example".to_string(),
+        ocr_sample_status: AssessmentStatus::Candidate,
+        ocr_sample_match_count: 1,
+        stable_anchor_candidates: vec![],
+        stable_region_candidates: vec!["primaryWindow=0,0,100,100".to_string()],
+        overlay_debug_artifacts_recommended: false,
+      },
+      control_assessment: AppControlAssessment {
+        preferred_path: "non-pointer first".to_string(),
+        non_pointer_path: AssessmentStatus::Candidate,
+        keyboard_path: AssessmentStatus::Candidate,
+        pointer_fallback: AssessmentStatus::Likely,
+        notes: vec![],
+      },
+      verification_assessment: AppVerificationAssessment {
+        ax_verify: AssessmentStatus::Candidate,
+        image_verify: AssessmentStatus::Candidate,
+        ui_state_verify: AssessmentStatus::Candidate,
+        semantic_success: AssessmentStatus::Unknown,
+        notes: vec![],
+      },
+      disturbance_profile: AppDisturbanceProfile {
+        observation: vec!["none".to_string()],
+        non_pointer_control: vec!["keyboard".to_string()],
+        pointer_fallback: vec!["pointer".to_string()],
+      },
+      annotation_candidates: vec![AppSurfaceCandidate {
+        candidate_id: "search-entry-focus-ax".to_string(),
+        area: "search-entry".to_string(),
+        kind: "focus-query".to_string(),
+        source: "ax".to_string(),
+        status: AssessmentStatus::Candidate,
+        primary_text: "Search".to_string(),
+        secondary_text: "role=AXTextField path=0.1".to_string(),
+        query_value: "Search".to_string(),
+        coordinate_space: "global-logical".to_string(),
+        bounds: Some(AppRect {
+          x: 10,
+          y: 10,
+          width: 80,
+          height: 20,
+        }),
+        click_point: Some(AppPoint { x: 50, y: 20 }),
+        confidence: None,
+        evidence_step_id: "capture-ax-tree".to_string(),
+        evidence_refs: vec![ArtifactRef {
+          run_id: crate::trace::RunId::new("run_probe"),
+          span_id: crate::trace::SpanId::new("span_probe"),
+          artifact_id: crate::trace::ArtifactId::new("artifact_0001"),
+          captured_event_id: Some(crate::trace::EventId::new("event_probe")),
+        }],
+        candidate_query: Some(CandidateQuery {
+          query_id: "search-entry-focus-ax".to_string(),
+          selector: SurfaceSelector {
+            any_of: vec![SurfaceSelectorClause::Ax {
+              role: Some("AXTextField".to_string()),
+              label: Some("Search".to_string()),
+              path: Some("0.1".to_string()),
+              enabled: None,
+              visible: Some(true),
+            }],
+            within: SelectorScope::TargetWindow,
+            require_visible: true,
+          },
+          output_kind: Some("focus-query".to_string()),
+          known_limits: vec!["test query".to_string()],
+        }),
+        promotion_gate: Some(AppCandidatePromotionGate {
+          status: AppCandidatePromotionStatus::ActionGradeCandidate,
+          missing_gates: Vec::new(),
+          notes: vec!["Sample candidate satisfies the v0 search-entry promotion seam.".to_string()],
+        }),
+        input_bindings: BTreeMap::from([("focus_query".to_string(), "Search".to_string())]),
+        compatibility: candidate_compatibility(
+          &["search-entry.ax-text-input.clipboard-submit.capture-evidence"],
+          &[],
+        ),
+        notes: vec!["sample note".to_string()],
+      }],
+      known_boundaries: vec![],
+      recommended_strategies: vec![AppRecommendedStrategy {
+        taxonomy_id: "search-entry.ax-text-input.clipboard-submit.capture-evidence".to_string(),
         status: AssessmentStatus::Candidate,
         rationale: "test".to_string(),
       }],

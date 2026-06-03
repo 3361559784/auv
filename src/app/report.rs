@@ -403,6 +403,12 @@ pub(crate) fn render_app_distillation_report(
           ));
         }
       }
+      if let Some(promoted) = &candidate.promoted_candidate {
+        lines.push(format!(
+          "  - promoted candidate: `{}` grounding=`{:?}`",
+          promoted.candidate_local_id, promoted.target_spec.grounding
+        ));
+      }
       if !candidate.candidate_shape.direct_candidate_ids.is_empty() {
         lines.push("  - direct candidate ids:".to_string());
         for candidate_id in &candidate.candidate_shape.direct_candidate_ids {

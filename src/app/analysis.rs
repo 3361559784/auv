@@ -13,7 +13,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::contract::{CandidateQuery, SelectorScope, SurfaceSelector, SurfaceSelectorClause};
+use crate::contract::{
+  AnchorRecheckPrecondition, Candidate, CandidateEvidence, CandidateLiveness, CandidateQuery,
+  ControlRequirements, LivenessPreconditions, RatioRegion, SelectorScope, SurfaceSelector,
+  SurfaceSelectorClause, TargetGrounding, TargetSpec, WindowRefPrecondition,
+};
 use crate::model::{AuvResult, RunStatus, now_millis};
 use crate::skill::{SkillCaseMatrix, SkillStrategy};
 use crate::trace::{ArtifactId, EventId, RunId, SpanId};
@@ -811,6 +815,13 @@ fn promotion_gate_for_candidate(candidate: &AppSurfaceCandidate) -> AppCandidate
   }
 
   let status = match (candidate.area.as_str(), candidate.kind.as_str()) {
+    ("search-entry", "focus-query") if search_entry_candidate_is_action_grade(candidate) => {
+      notes.push(
+        "Candidate satisfies the v0 search-entry promotion seam and can project into contract::Candidate."
+          .to_string(),
+      );
+      AppCandidatePromotionStatus::ActionGradeCandidate
+    }
     ("ocr-visible-text", _) => {
       push_unique(&mut missing_gates, "semantic_verification_contract");
       push_unique(&mut missing_gates, "action_contract");
@@ -831,7 +842,7 @@ fn promotion_gate_for_candidate(candidate: &AppSurfaceCandidate) -> AppCandidate
     }
     _ if !candidate.compatibility.direct_taxonomy_ids.is_empty() => {
       notes.push(
-        "Candidate can seed a known distillation strategy, but analyze does not mint action-grade contract::Candidate values."
+        "Candidate can seed a known distillation strategy, but this slice does not promote this surface family into contract::Candidate."
           .to_string(),
       );
       AppCandidatePromotionStatus::DistillStrategyOnly
@@ -850,6 +861,19 @@ fn promotion_gate_for_candidate(candidate: &AppSurfaceCandidate) -> AppCandidate
     missing_gates,
     notes,
   }
+}
+
+fn search_entry_candidate_is_action_grade(candidate: &AppSurfaceCandidate) -> bool {
+  candidate.area == "search-entry"
+    && candidate.kind == "focus-query"
+    && !candidate.evidence_refs.is_empty()
+    && candidate.candidate_query.is_some()
+    && !candidate.query_value.trim().is_empty()
+    && candidate
+      .compatibility
+      .direct_taxonomy_ids
+      .iter()
+      .any(|value| value == "search-entry.ax-text-input.clipboard-submit.capture-evidence")
 }
 
 fn push_unique(values: &mut Vec<String>, value: &str) {
@@ -911,6 +935,19 @@ fn grouped_result_row_count(candidates: &[AppSurfaceCandidate]) -> usize {
     .iter()
     .filter(|candidate| candidate.area == "result-selection" && candidate.kind == "row")
     .count()
+}
+
+fn app_rect_to_ratio_region(window: &AppRect, target: &AppRect) -> Option<RatioRegion> {
+  if window.width <= 0 || window.height <= 0 {
+    return None;
+  }
+
+  Some(RatioRegion {
+    left: (target.x - window.x) as f64 / window.width as f64,
+    top: (target.y - window.y) as f64 / window.height as f64,
+    right: (target.x + target.width - window.x) as f64 / window.width as f64,
+    bottom: (target.y + target.height - window.y) as f64 / window.height as f64,
+  })
 }
 
 fn ax_candidate_query(
@@ -1121,6 +1158,146 @@ pub(crate) fn source_evidence_refs_for_candidate_shape(
     }
   }
   evidence_refs
+}
+
+pub(crate) fn promoted_candidate_for_candidate_shape(
+  analysis: &AppAnalysis,
+  taxonomy_id: &str,
+  candidate_shape: &AppDistilledCandidateShape,
+) -> Option<Candidate> {
+  // TODO(app-surface-promotion-v1): native-text and window-action promotion are
+  // deferred. This slice only lands the first honest search-entry seam.
+  if taxonomy_id != "search-entry.ax-text-input.clipboard-submit.capture-evidence" {
+    return None;
+  }
+
+  let direct_candidates = candidate_shape
+    .direct_candidate_ids
+    .iter()
+    .filter_map(|candidate_id| {
+      analysis
+        .annotation_candidates
+        .iter()
+        .find(|candidate| candidate.candidate_id == *candidate_id)
+    })
+    .collect::<Vec<_>>();
+
+  if direct_candidates.len() != 1 {
+    return None;
+  }
+
+  promote_search_entry_candidate(analysis, direct_candidates[0])
+}
+
+fn promote_search_entry_candidate(
+  analysis: &AppAnalysis,
+  candidate: &AppSurfaceCandidate,
+) -> Option<Candidate> {
+  if !search_entry_candidate_is_action_grade(candidate) {
+    return None;
+  }
+
+  let evidence_ref = candidate.evidence_refs.first()?.clone();
+  let query = candidate.candidate_query.as_ref()?;
+  let ax_clause = query
+    .selector
+    .any_of
+    .iter()
+    .find_map(|clause| match clause {
+      SurfaceSelectorClause::Ax {
+        role,
+        label,
+        path,
+        visible,
+        ..
+      } => Some((role.clone(), label.clone(), path.clone(), *visible)),
+      _ => None,
+    })?;
+  let bounds = candidate.bounds.as_ref()?;
+  let primary_window_bounds = analysis.window_context.primary_window_bounds.as_ref()?;
+  let region_hint = app_rect_to_ratio_region(primary_window_bounds, bounds)?;
+  let app_bundle_id = analysis.app_identity.bundle_id.trim();
+  if app_bundle_id.is_empty() {
+    return None;
+  }
+
+  let (role, label, path, visible) = ax_clause;
+  let observation = serde_json::json!({
+    "source": candidate.source,
+    "surface_candidate_id": candidate.candidate_id,
+    "evidence_step_id": candidate.evidence_step_id,
+    "query": {
+      "query_id": query.query_id,
+      "output_kind": query.output_kind,
+      "selector_within": query.selector.within,
+      "require_visible": query.selector.require_visible,
+      "ax": {
+        "role": role,
+        "label": label,
+        "path": path,
+        "visible": visible,
+      }
+    },
+    "bounds": {
+      "x": bounds.x,
+      "y": bounds.y,
+      "width": bounds.width,
+      "height": bounds.height,
+    },
+    "click_point": candidate.click_point.as_ref().map(|point| serde_json::json!({
+      "x": point.x,
+      "y": point.y,
+    })),
+    "window_context": {
+      "app_bundle_id": analysis.app_identity.bundle_id,
+      "window_title": analysis.window_context.primary_window_title,
+    }
+  });
+
+  Some(Candidate {
+    candidate_local_id: candidate.candidate_id.clone(),
+    kind: "search_entry".to_string(),
+    label: non_empty_trimmed(&candidate.primary_text),
+    target_spec: TargetSpec {
+      grounding: TargetGrounding::AxNode,
+      anchor_text: non_empty_trimmed(&candidate.query_value),
+      region_hint: Some(region_hint.clone()),
+      row_index: None,
+    },
+    evidence: CandidateEvidence {
+      artifact_ref: evidence_ref,
+      observation,
+    },
+    liveness: CandidateLiveness {
+      preconditions: LivenessPreconditions {
+        window_ref: Some(WindowRefPrecondition {
+          app_bundle_id: app_bundle_id.to_string(),
+          window_title_substring: non_empty_trimmed(&analysis.window_context.primary_window_title),
+          window_number: None,
+        }),
+        anchor_recheck: Some(AnchorRecheckPrecondition {
+          text: candidate.query_value.clone(),
+          region_hint: Some(region_hint),
+          expected_min_confidence: 0.0,
+          max_pixel_distance: 48.0,
+        }),
+      },
+      ttl_hint_ms: Some(5_000),
+    },
+    control: ControlRequirements {
+      requires_app_frontmost: true,
+      requires_window_focus: true,
+    },
+    known_limits: candidate
+      .notes
+      .iter()
+      .cloned()
+      .chain(query.known_limits.iter().cloned())
+      .chain([
+        "Promotion only covers refinding the search-entry surface; semantic query success still relies on later operation verification.".to_string(),
+      ])
+      .collect(),
+  })
 }
 
 fn find_annotation_candidate<'a>(

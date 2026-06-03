@@ -396,6 +396,15 @@ pub fn default_command_catalog() -> CommandCatalog {
       max_disturbance: DisturbanceClass::Pointer,
     },
     CommandSpec {
+      id: "debug.teachClick",
+      namespace: ACTION,
+      summary: "Capture a target window before and after a human-taught click, recording global and window-local click coordinates for automation debugging.",
+      driver_id: "macos.desktop",
+      operation: "teach_click",
+      disturbance_classes: POINTER_WITH_FOREGROUND,
+      max_disturbance: DisturbanceClass::Pointer,
+    },
+    CommandSpec {
       id: "debug.clickScreenText",
       namespace: ACTION,
       summary: "Capture a screenshot, resolve an OCR text anchor, and click its projected logical point. If activate_target_before_capture is true, the target app is foregrounded before capture.",
@@ -683,6 +692,7 @@ mod tests {
     assert!(catalog.resolve("debug.pressKey").is_some());
     assert!(catalog.resolve("debug.clickPoint").is_some());
     assert!(catalog.resolve("debug.clickWindowPoint").is_some());
+    assert!(catalog.resolve("debug.teachClick").is_some());
     assert!(catalog.resolve("debug.clickScreenText").is_some());
     assert!(catalog.resolve("debug.scrollPoint").is_some());
     assert!(catalog.resolve("debug.overlayClickPoint").is_some());

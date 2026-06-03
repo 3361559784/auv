@@ -7,7 +7,7 @@ use super::control::{
   find_icon_match, find_window_rows, find_window_text, focus_text_input, music_result_play,
   music_search_results, music_validate_candidate_liveness, observe_window_region,
   paste_text_preserve_clipboard, press_button, press_key, scroll_point, scroll_window_region,
-  smart_press, type_text, wait_for_window_rows, wait_for_window_text,
+  smart_press, teach_click, type_text, wait_for_window_rows, wait_for_window_text,
 };
 use super::observe::{
   find_image_text, find_screen_rows, find_screen_text, identify_point, list_windows,
@@ -111,6 +111,7 @@ fn dispatch_control_operation(call: &DriverCall) -> Option<AuvResult<DriverRespo
     "press_key" => press_key(call),
     "click_point" => click_point(call),
     "click_window_point" => click_window_point(call),
+    "teach_click" => teach_click(call),
     "click_screen_text" => click_screen_text(call),
     "click_screen_row" => click_screen_row(call),
     "click_window_text" => click_window_text(call),

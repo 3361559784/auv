@@ -1,10 +1,19 @@
 // File: src/driver/macos/native/pointer.rs
 #[cfg(target_os = "macos")]
 use super::binding::ffi::{
-  NativeActionResponse, NativeMouseLocationResponse, click_point as native_click_point,
-  current_mouse_location as native_current_mouse_location, scroll_point as native_scroll_point,
+  NativeActionResponse, NativeMouseLocationResponse, NativeTeachClickResponse,
+  click_point as native_click_point, current_mouse_location as native_current_mouse_location,
+  scroll_point as native_scroll_point, teach_next_click as native_teach_next_click,
 };
 use super::types::AuvResult;
+
+#[derive(Clone, Debug)]
+pub struct TaughtClick {
+  pub x: f64,
+  pub y: f64,
+  pub button_code: i32,
+  pub captured_at_unix_ms: i64,
+}
 
 #[cfg(target_os = "macos")]
 pub fn click_point(
@@ -41,6 +50,14 @@ pub fn current_mouse_logical_point() -> AuvResult<(f64, f64)> {
   mouse_location_result("current_mouse_location", native_current_mouse_location())
 }
 
+#[cfg(target_os = "macos")]
+pub fn teach_next_click(prompt: &str, timeout_ms: u64) -> AuvResult<TaughtClick> {
+  teach_click_result(
+    "teach_next_click",
+    native_teach_next_click(prompt.to_string(), timeout_ms),
+  )
+}
+
 #[cfg(not(target_os = "macos"))]
 pub fn scroll_point(_x: f64, _y: f64, _delta_x: f64, _delta_y: f64) -> AuvResult<()> {
   Err("macOS native pointer scroll is unsupported on this target".to_string())
@@ -49,6 +66,11 @@ pub fn scroll_point(_x: f64, _y: f64, _delta_x: f64, _delta_y: f64) -> AuvResult
 #[cfg(not(target_os = "macos"))]
 pub fn current_mouse_logical_point() -> AuvResult<(f64, f64)> {
   Err("macOS native mouse location is unsupported on this target".to_string())
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn teach_next_click(_prompt: &str, _timeout_ms: u64) -> AuvResult<TaughtClick> {
+  Err("macOS native teach click capture is unsupported on this target".to_string())
 }
 
 #[cfg(target_os = "macos")]
@@ -72,6 +94,24 @@ fn mouse_location_result(
       .error_message
       .is_none()
       .then_some((response.x, response.y)),
+    response.error_message,
+    response.recovery_hint,
+  )
+}
+
+#[cfg(target_os = "macos")]
+fn teach_click_result(
+  operation: &str,
+  response: NativeTeachClickResponse,
+) -> AuvResult<TaughtClick> {
+  super::error::native_result(
+    operation,
+    response.error_message.is_none().then_some(TaughtClick {
+      x: response.x,
+      y: response.y,
+      button_code: response.button_code,
+      captured_at_unix_ms: response.captured_at_unix_ms,
+    }),
     response.error_message,
     response.recovery_hint,
   )

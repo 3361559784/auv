@@ -282,6 +282,16 @@ pub(crate) mod ffi {
   }
 
   #[swift_bridge(swift_repr = "struct")]
+  struct NativeTeachClickResponse {
+    x: f64,
+    y: f64,
+    button_code: i32,
+    captured_at_unix_ms: i64,
+    error_message: Option<String>,
+    recovery_hint: Option<String>,
+  }
+
+  #[swift_bridge(swift_repr = "struct")]
   struct NativeClipboardSnapshotResponse {
     payload: Option<String>,
     error_message: Option<String>,
@@ -320,6 +330,7 @@ pub(crate) mod ffi {
       window_strategy_code: i32,
     ) -> NativeActionResponse;
     fn current_mouse_location() -> NativeMouseLocationResponse;
+    fn teach_next_click(prompt: String, timeout_ms: u64) -> NativeTeachClickResponse;
     fn scroll_point(x: f64, y: f64, delta_x: f64, delta_y: f64) -> NativeActionResponse;
     fn scroll_window_point(
       pid: i64,

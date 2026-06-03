@@ -46,6 +46,21 @@ private enum WindowClickStrategyCode: Int32 {
   case pidTargeted = 1
 }
 
+private final class TeachClickCaptureState {
+  var point: CGPoint?
+  var buttonCode: Int32 = 0
+  var capturedAtUnixMs: Int64 = 0
+}
+
+private final class TeachClickReadyController: NSObject {
+  weak var panel: NSPanel?
+
+  @objc func ready(_ sender: Any?) {
+    panel?.close()
+    NSApp.stopModal()
+  }
+}
+
 private func mouseButton(_ value: Int32) -> CGMouseButton {
   switch value {
   case 1: return .right
@@ -68,6 +83,140 @@ private func mouseUpType(_ button: CGMouseButton) -> CGEventType {
   case .center: return .otherMouseUp
   default: return .leftMouseUp
   }
+}
+
+private func buttonCode(for eventType: CGEventType) -> Int32 {
+  switch eventType {
+  case .rightMouseDown: return 1
+  case .otherMouseDown: return 2
+  default: return 0
+  }
+}
+
+private func showTeachClickReadyPanel(prompt: String) {
+  if !Thread.isMainThread {
+    DispatchQueue.main.sync {
+      showTeachClickReadyPanel(prompt: prompt)
+    }
+    return
+  }
+
+  let panel = NSPanel(
+    contentRect: NSRect(x: 0, y: 0, width: 360, height: 140),
+    styleMask: [.titled, .closable, .nonactivatingPanel],
+    backing: .buffered,
+    defer: false
+  )
+  panel.title = "AUV Teach Click"
+  panel.level = .floating
+  panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+
+  let label = NSTextField(labelWithString: prompt)
+  label.frame = NSRect(x: 20, y: 74, width: 320, height: 40)
+  label.lineBreakMode = .byWordWrapping
+  label.maximumNumberOfLines = 2
+
+  let button = NSButton(title: "Ready", target: nil, action: nil)
+  button.frame = NSRect(x: 248, y: 20, width: 92, height: 32)
+  button.bezelStyle = .rounded
+  let controller = TeachClickReadyController()
+  controller.panel = panel
+  button.target = controller
+  button.action = #selector(TeachClickReadyController.ready(_:))
+
+  panel.contentView?.addSubview(label)
+  panel.contentView?.addSubview(button)
+  objc_setAssociatedObject(
+    panel,
+    Unmanaged.passUnretained(panel).toOpaque(),
+    controller,
+    .OBJC_ASSOCIATION_RETAIN_NONATOMIC
+  )
+  panel.center()
+  NSApp.activate(ignoringOtherApps: true)
+  panel.makeKeyAndOrderFront(nil)
+  NSApp.runModal(for: panel)
+}
+
+private func currentUnixMs() -> Int64 {
+  Int64(Date().timeIntervalSince1970 * 1000.0)
+}
+
+private func waitForTaughtClick(timeoutMs: UInt64) -> NativeTeachClickResponse {
+  let state = TeachClickCaptureState()
+  let statePointer = Unmanaged.passRetained(state).toOpaque()
+  let mask =
+    (1 << CGEventType.leftMouseDown.rawValue)
+    | (1 << CGEventType.rightMouseDown.rawValue)
+    | (1 << CGEventType.otherMouseDown.rawValue)
+
+  guard
+    let tap = CGEvent.tapCreate(
+      tap: .cgSessionEventTap,
+      place: .headInsertEventTap,
+      options: .listenOnly,
+      eventsOfInterest: CGEventMask(mask),
+      callback: { _, eventType, event, userInfo in
+        guard let userInfo else {
+          return Unmanaged.passUnretained(event)
+        }
+        let state = Unmanaged<TeachClickCaptureState>
+          .fromOpaque(userInfo)
+          .takeUnretainedValue()
+        if state.point == nil {
+          state.point = event.location
+          state.buttonCode = buttonCode(for: eventType)
+          state.capturedAtUnixMs = currentUnixMs()
+        }
+        CFRunLoopStop(CFRunLoopGetCurrent())
+        return Unmanaged.passUnretained(event)
+      },
+      userInfo: statePointer
+    )
+  else {
+    Unmanaged<TeachClickCaptureState>.fromOpaque(statePointer).release()
+    return NativeTeachClickResponse(
+      x: 0,
+      y: 0,
+      button_code: 0,
+      captured_at_unix_ms: 0,
+      error_message: "failed to create teach-click event tap".intoRustString(),
+      recovery_hint: "grant Accessibility permission and retry".intoRustString()
+    )
+  }
+
+  let runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
+  CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
+  CGEvent.tapEnable(tap: tap, enable: true)
+
+  let deadline = Date().addingTimeInterval(Double(timeoutMs) / 1000.0)
+  while state.point == nil && Date() < deadline {
+    CFRunLoopRunInMode(.defaultMode, 0.05, true)
+  }
+
+  CGEvent.tapEnable(tap: tap, enable: false)
+  CFRunLoopRemoveSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
+  Unmanaged<TeachClickCaptureState>.fromOpaque(statePointer).release()
+
+  guard let point = state.point else {
+    return NativeTeachClickResponse(
+      x: 0,
+      y: 0,
+      button_code: 0,
+      captured_at_unix_ms: 0,
+      error_message: "timed out waiting for taught click".intoRustString(),
+      recovery_hint: "run debug.teachClick again and click the target before timeout_ms expires".intoRustString()
+    )
+  }
+
+  return NativeTeachClickResponse(
+    x: point.x,
+    y: point.y,
+    button_code: state.buttonCode,
+    captured_at_unix_ms: state.capturedAtUnixMs,
+    error_message: nil,
+    recovery_hint: nil
+  )
 }
 
 private func setRawIntegerField(_ event: CGEvent, _ raw: UInt32, _ value: Int64) {
@@ -486,6 +635,12 @@ func current_mouse_location() -> NativeMouseLocationResponse {
     error_message: nil,
     recovery_hint: nil
   )
+}
+
+func teach_next_click(prompt: RustString, timeout_ms: UInt64) -> NativeTeachClickResponse {
+  let promptText = nativeSanitize(prompt.toString())
+  showTeachClickReadyPanel(prompt: promptText)
+  return waitForTaughtClick(timeoutMs: max(timeout_ms, 1))
 }
 
 func scroll_point(x: Double, y: Double, delta_x: Double, delta_y: Double) -> NativeActionResponse {

@@ -69,6 +69,18 @@ fn dispatch_rejects_removed_ax_tree_operation_name() {
 }
 
 #[test]
+fn dispatch_routes_teach_click_operation() {
+  let call = build_call([]);
+  let mut call = call;
+  call.operation = "teach_click".to_string();
+
+  let error = super::dispatch::invoke_legacy_command_operation(&call).unwrap_err();
+
+  assert!(error.contains("operation requires --target"));
+  assert!(!error.contains("does not support operation"));
+}
+
+#[test]
 fn optional_f64_rejects_non_finite_numbers() {
   let call = build_call([("x", "NaN")]);
   let error = optional_f64(&call, "x").expect_err("NaN should be rejected");

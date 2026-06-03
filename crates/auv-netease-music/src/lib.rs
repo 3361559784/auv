@@ -2388,7 +2388,10 @@ fn scan_sidebar_with_observer(
   }
   if matches!(
     loop_outcome.stop_reason.as_deref(),
-    Some("scroll_no_motion_after_input") | Some("scroll_no_new_semantic_candidates_after_input")
+    Some("scroll_no_motion_after_input")
+      | Some("scroll_no_motion_with_ax_scrollbar_bottom")
+      | Some("scroll_no_new_semantic_candidates_after_input")
+      | Some("scroll_no_new_semantic_candidates_with_ax_scrollbar_bottom")
   ) {
     apply_bottom_boundary(&mut scan, BoundaryConfidence::Likely);
   }
@@ -2421,6 +2424,14 @@ fn repeated_fingerprint_stop_reason(
     "repeated_viewport_fingerprint_with_ax_scrollbar_bottom"
   } else {
     "repeated_viewport_fingerprint"
+  }
+}
+
+fn motion_stop_threshold(ax_scrollbar_boundary: Option<SidebarScrollbarBoundary>) -> usize {
+  if ax_scrollbar_boundary == Some(SidebarScrollbarBoundary::Bottom) {
+    1
+  } else {
+    2
   }
 }
 
@@ -2586,7 +2597,7 @@ fn scan_with_collection_policy(
     // least one prior post-scroll motion observation. This prevents launch
     // state, failed/noop input, or already-stuck captures from being promoted
     // into a false bottom boundary.
-    if consecutive_no_motion_after_scroll >= 2 {
+    if consecutive_no_motion_after_scroll >= motion_stop_threshold(ax_scrollbar_boundary) {
       if let Some(reason) = heuristic_stop_reason_with_ax_corroboration(
         "scroll_no_motion_after_input",
         ax_scrollbar_boundary,
@@ -4132,6 +4143,67 @@ mod tests {
         .known_limits
         .iter()
         .any(|limit| limit.contains("max_scrolls"))
+    );
+  }
+
+  #[test]
+  fn scan_loop_stops_after_one_no_motion_when_ax_scrollbar_is_bottom() {
+    let mut first = parse_sidebar_viewport(
+      0,
+      ViewBounds::new(0.0, 0.0, 240.0, 400.0),
+      &fake_recognition(vec![("A", 32.0, 42.0, 80.0, 20.0)]),
+    );
+    first.viewport_fingerprint = "page-a".to_string();
+    let mut second = parse_sidebar_viewport(
+      1,
+      ViewBounds::new(0.0, 0.0, 240.0, 400.0),
+      &fake_recognition(vec![("B", 32.0, 42.0, 80.0, 20.0)]),
+    );
+    second.viewport_fingerprint = "page-b".to_string();
+    second.scroll_motion = Some(MotionEvidence {
+      estimated_shift_y: 9,
+      normalized_diff: 0.24,
+      no_motion: false,
+    });
+    let mut third = parse_sidebar_viewport(
+      2,
+      ViewBounds::new(0.0, 0.0, 240.0, 400.0),
+      &fake_recognition(vec![("C", 32.0, 42.0, 80.0, 20.0)]),
+    );
+    third.viewport_fingerprint = "page-c".to_string();
+    third.scroll_motion = Some(MotionEvidence {
+      estimated_shift_y: 0,
+      normalized_diff: 0.0,
+      no_motion: true,
+    });
+    third.ax_scrollbar_boundary = Some(SidebarScrollbarBoundary::Bottom);
+    let mut fourth = parse_sidebar_viewport(
+      3,
+      ViewBounds::new(0.0, 0.0, 240.0, 400.0),
+      &fake_recognition(vec![("D", 32.0, 42.0, 80.0, 20.0)]),
+    );
+    fourth.viewport_fingerprint = "page-d".to_string();
+    let mut observer = FakeSidebarObserver::new(vec![first, second, third, fourth]);
+
+    let scan = scan_sidebar_with_observer(
+      &mut observer,
+      ScanOptions {
+        max_pages: 10,
+        max_scrolls: 10,
+      },
+      PlaylistCategory::All,
+      300.0,
+      DEFAULT_SCROLL_SETTLE_MS,
+    );
+
+    assert_eq!(scan.observations.len(), 3);
+    assert_eq!(scan.boundary.bottom, BoundaryConfidence::Likely);
+    assert!(
+      scan
+        .interaction_events
+        .iter()
+        .any(|event| event.kind == InteractionEventKind::StopDecision
+          && event.note.as_deref() == Some("scroll_no_motion_with_ax_scrollbar_bottom"))
     );
   }
 

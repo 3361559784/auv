@@ -1308,7 +1308,7 @@ fn promote_search_entry_candidate(
     target_spec: TargetSpec {
       grounding: TargetGrounding::AxNode,
       anchor_text: non_empty_trimmed(&candidate.query_value),
-      region_hint: Some(region_hint.clone()),
+      region_hint: Some(region_hint),
       row_index: None,
     },
     evidence: CandidateEvidence {
@@ -1419,7 +1419,7 @@ fn promote_native_text_candidate(
     target_spec: TargetSpec {
       grounding: TargetGrounding::AxNode,
       anchor_text: non_empty_trimmed(&candidate.query_value),
-      region_hint: Some(region_hint.clone()),
+      region_hint: Some(region_hint),
       row_index: None,
     },
     evidence: CandidateEvidence {
@@ -1518,7 +1518,7 @@ fn promote_window_action_candidate(
     target_spec: TargetSpec {
       grounding: TargetGrounding::Coordinate,
       anchor_text: None,
-      region_hint: Some(region_hint.clone()),
+      region_hint: Some(region_hint),
       row_index: None,
     },
     evidence: CandidateEvidence {

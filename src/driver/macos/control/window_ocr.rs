@@ -46,8 +46,28 @@ use super::pointer::click_point;
 use crate::contract::{Candidate, TargetGrounding};
 use crate::model::AuvResult;
 
-pub(super) fn click_window_text_signals(text: &str) -> std::collections::BTreeMap<String, String> {
-  std::collections::BTreeMap::from([("click.resolved_text".to_string(), text.to_string())])
+pub(super) fn click_window_text_signals(
+  text: &str,
+  candidate_local_id: Option<&str>,
+) -> std::collections::BTreeMap<String, String> {
+  let mut signals =
+    std::collections::BTreeMap::from([("click.resolved_text".to_string(), text.to_string())]);
+  match candidate_local_id {
+    Some(candidate_local_id) => {
+      signals.insert(
+        "clickWindowText.consumer".to_string(),
+        "contract-candidate".to_string(),
+      );
+      signals.insert(
+        "clickWindowText.candidateLocalId".to_string(),
+        candidate_local_id.to_string(),
+      );
+    }
+    None => {
+      signals.insert("clickWindowText.consumer".to_string(), "query".to_string());
+    }
+  }
+  signals
 }
 
 pub(super) fn click_window_row_signals(
@@ -366,13 +386,12 @@ pub(crate) fn click_window_text(call: &DriverCall) -> AuvResult<DriverResponse> 
     notes.push(format!("previewMs={preview_ms}"));
   }
 
-  let mut signals = click_window_text_signals(&matched.text);
-  if let Some(candidate) = resolved_candidate.as_ref() {
-    signals.insert(
-      "clickWindowText.candidateLocalId".to_string(),
-      candidate.candidate_local_id.clone(),
-    );
-  }
+  let mut signals = click_window_text_signals(
+    &matched.text,
+    resolved_candidate
+      .as_ref()
+      .map(|candidate| candidate.candidate_local_id.as_str()),
+  );
   signals.insert("pressMechanism".to_string(), "pointer-click".to_string());
   signals.insert("cursorDisturbance".to_string(), "warp-visible".to_string());
   if overlay {
@@ -1194,11 +1213,29 @@ mod tests {
 
   #[test]
   fn click_window_text_signals_exposes_resolved_text() {
-    let signals = click_window_text_signals("Play Now");
+    let signals = click_window_text_signals("Play Now", None);
 
     assert_eq!(
       signals.get("click.resolved_text"),
       Some(&"Play Now".to_string())
+    );
+    assert_eq!(
+      signals.get("clickWindowText.consumer"),
+      Some(&"query".to_string())
+    );
+  }
+
+  #[test]
+  fn click_window_text_signals_mark_contract_candidate_consumption() {
+    let signals = click_window_text_signals("Play Now", Some("result-selection-anchor-ax"));
+
+    assert_eq!(
+      signals.get("clickWindowText.consumer"),
+      Some(&"contract-candidate".to_string())
+    );
+    assert_eq!(
+      signals.get("clickWindowText.candidateLocalId"),
+      Some(&"result-selection-anchor-ax".to_string())
     );
   }
 

@@ -15,6 +15,7 @@ use super::common::{
 use super::pointer::click_point;
 use crate::contract::{Candidate, TargetGrounding};
 use crate::model::AuvResult;
+use std::collections::BTreeMap;
 use std::time::Duration;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -211,10 +212,35 @@ pub(crate) fn click_window_point(call: &DriverCall) -> AuvResult<DriverResponse>
       button_label, app, click_outcome.selected_path
     ),
     backend: Some("macos.typed.input.click-window-point".to_string()),
-    signals: std::collections::BTreeMap::new(),
+    signals: click_window_point_signals(consumed_candidate_local_id.as_deref()),
     notes,
     artifacts: vec![artifact],
   })
+}
+
+fn click_window_point_signals(
+  consumed_candidate_local_id: Option<&str>,
+) -> BTreeMap<String, String> {
+  let mut signals = BTreeMap::new();
+  match consumed_candidate_local_id {
+    Some(candidate_local_id) => {
+      signals.insert(
+        "clickWindowPoint.consumer".to_string(),
+        "contract-candidate".to_string(),
+      );
+      signals.insert(
+        "clickWindowPoint.candidateLocalId".to_string(),
+        candidate_local_id.to_string(),
+      );
+    }
+    None => {
+      signals.insert(
+        "clickWindowPoint.consumer".to_string(),
+        "relative-point".to_string(),
+      );
+    }
+  }
+  signals
 }
 
 fn optional_non_empty_window_click_candidate(call: &DriverCall) -> AuvResult<Option<String>> {
@@ -563,6 +589,31 @@ mod tests {
       .expect_err("non-coordinate candidate should fail");
 
     assert!(error.contains("only accepts Coordinate candidates"));
+  }
+
+  #[test]
+  fn click_window_point_signals_mark_contract_candidate_consumption() {
+    let signals = click_window_point_signals(Some("window-primary-region"));
+
+    assert_eq!(
+      signals.get("clickWindowPoint.consumer"),
+      Some(&"contract-candidate".to_string())
+    );
+    assert_eq!(
+      signals.get("clickWindowPoint.candidateLocalId"),
+      Some(&"window-primary-region".to_string())
+    );
+  }
+
+  #[test]
+  fn click_window_point_signals_mark_legacy_relative_point_path() {
+    let signals = click_window_point_signals(None);
+
+    assert_eq!(
+      signals.get("clickWindowPoint.consumer"),
+      Some(&"relative-point".to_string())
+    );
+    assert!(!signals.contains_key("clickWindowPoint.candidateLocalId"));
   }
 
   #[test]

@@ -1188,46 +1188,19 @@ fn inject_promoted_candidate_runtime_inputs(
     return Ok(());
   };
 
-  let (candidate_input_key, candidate_note, fallback_input_key, fallback_note) = match candidate
-    .taxonomy_id
-    .as_str()
-  {
-    "search-entry.ax-text-input.clipboard-submit.capture-evidence" => (
-      "focus_candidate",
-      "Validate injects the promoted search-entry contract::Candidate here so debug.focusTextInput can consume the typed target without reopening app-only schema.",
-      Some("focus_query"),
-      "Legacy fallback for search-entry validate. TODO(app-search-entry-query-fallback-removal): remove once the query-only path is no longer needed by existing recipes.",
-    ),
-    "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text" => (
-      "focus_candidate",
-      "Validate injects the promoted native-text contract::Candidate here so debug.focusTextInput can consume the typed target without reopening app-only schema.",
-      Some("focus_query"),
-      "Legacy fallback for native-text validate. TODO(app-native-text-query-fallback-removal): remove once the query-only path is no longer needed by existing recipes.",
-    ),
-    "window-action.window-point.pointer-click.capture-evidence" => (
-      "click_candidate",
-      "Validate injects the promoted window-action contract::Candidate here so debug.clickWindowPoint can consume the typed target without reopening app-only schema.",
-      None,
-      "",
-    ),
-    "result-selection.ocr-anchor.pointer-click.capture-evidence" => (
-      "click_candidate",
-      "Validate injects the promoted result-selection contract::Candidate here so debug.clickWindowText can consume the typed OCR anchor target without reopening app-only schema.",
-      Some("anchor_text"),
-      "Legacy fallback for result-selection validate. TODO(app-result-selection-anchor-fallback-removal): remove once the query-only path is no longer needed by existing recipes.",
-    ),
-    _ => return Ok(()),
+  let Some(contract) = promoted_candidate_runtime_contract(&candidate.taxonomy_id) else {
+    return Ok(());
   };
 
   let serialized = serde_json::to_string(promoted_candidate)
     .map_err(|error| format!("failed to serialize promoted candidate: {error}"))?;
   ensure_manifest_string_input(
     manifest,
-    candidate_input_key,
+    contract.candidate_input_key,
     Some(Value::String(serialized.clone())),
-    candidate_note,
+    contract.candidate_note,
   );
-  if let Some(fallback_input_key) = fallback_input_key
+  if let Some(fallback_input_key) = contract.fallback_input_key
     && !candidate
       .candidate_shape
       .provided_inputs
@@ -1239,15 +1212,16 @@ fn inject_promoted_candidate_runtime_inputs(
       manifest,
       fallback_input_key,
       Some(Value::String(anchor_text.clone())),
-      fallback_note,
+      contract.fallback_note,
     );
   }
+  enforce_promoted_candidate_consumer_expectations(manifest, &contract, promoted_candidate);
   for case in &mut matrix.cases {
     case
       .inputs
-      .entry(candidate_input_key.to_string())
+      .entry(contract.candidate_input_key.to_string())
       .or_insert_with(|| serialized.clone());
-    if let Some(fallback_input_key) = fallback_input_key
+    if let Some(fallback_input_key) = contract.fallback_input_key
       && let Some(anchor_text) = promoted_candidate.target_spec.anchor_text.as_ref()
     {
       case
@@ -1257,9 +1231,9 @@ fn inject_promoted_candidate_runtime_inputs(
     }
   }
   resolved_inputs
-    .entry(candidate_input_key.to_string())
+    .entry(contract.candidate_input_key.to_string())
     .or_insert(serialized);
-  if let Some(fallback_input_key) = fallback_input_key
+  if let Some(fallback_input_key) = contract.fallback_input_key
     && let Some(anchor_text) = promoted_candidate.target_spec.anchor_text.as_ref()
   {
     resolved_inputs
@@ -1268,6 +1242,107 @@ fn inject_promoted_candidate_runtime_inputs(
   }
 
   Ok(())
+}
+
+#[derive(Clone, Copy)]
+struct PromotedCandidateRuntimeContract {
+  candidate_input_key: &'static str,
+  candidate_note: &'static str,
+  fallback_input_key: Option<&'static str>,
+  fallback_note: &'static str,
+  consumer_signal_key: &'static str,
+  candidate_id_signal_key: &'static str,
+}
+
+fn promoted_candidate_runtime_contract(
+  taxonomy_id: &str,
+) -> Option<PromotedCandidateRuntimeContract> {
+  match taxonomy_id {
+    "search-entry.ax-text-input.clipboard-submit.capture-evidence" => {
+      Some(PromotedCandidateRuntimeContract {
+        candidate_input_key: "focus_candidate",
+        candidate_note: "Validate injects the promoted search-entry contract::Candidate here so debug.focusTextInput can consume the typed target without reopening app-only schema.",
+        fallback_input_key: Some("focus_query"),
+        fallback_note: "Legacy fallback for search-entry validate. TODO(app-search-entry-query-fallback-removal): remove once the query-only path is no longer needed by existing recipes.",
+        consumer_signal_key: "focusTextInput.consumer",
+        candidate_id_signal_key: "focusTextInput.candidateLocalId",
+      })
+    }
+    "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text" => {
+      Some(PromotedCandidateRuntimeContract {
+        candidate_input_key: "focus_candidate",
+        candidate_note: "Validate injects the promoted native-text contract::Candidate here so debug.focusTextInput can consume the typed target without reopening app-only schema.",
+        fallback_input_key: Some("focus_query"),
+        fallback_note: "Legacy fallback for native-text validate. TODO(app-native-text-query-fallback-removal): remove once the query-only path is no longer needed by existing recipes.",
+        consumer_signal_key: "focusTextInput.consumer",
+        candidate_id_signal_key: "focusTextInput.candidateLocalId",
+      })
+    }
+    "window-action.window-point.pointer-click.capture-evidence" => {
+      Some(PromotedCandidateRuntimeContract {
+        candidate_input_key: "click_candidate",
+        candidate_note: "Validate injects the promoted window-action contract::Candidate here so debug.clickWindowPoint can consume the typed target without reopening app-only schema.",
+        fallback_input_key: None,
+        fallback_note: "",
+        consumer_signal_key: "clickWindowPoint.consumer",
+        candidate_id_signal_key: "clickWindowPoint.candidateLocalId",
+      })
+    }
+    "result-selection.ocr-anchor.pointer-click.capture-evidence" => {
+      Some(PromotedCandidateRuntimeContract {
+        candidate_input_key: "click_candidate",
+        candidate_note: "Validate injects the promoted result-selection contract::Candidate here so debug.clickWindowText can consume the typed OCR anchor target without reopening app-only schema.",
+        fallback_input_key: Some("anchor_text"),
+        fallback_note: "Legacy fallback for result-selection validate. TODO(app-result-selection-anchor-fallback-removal): remove once the query-only path is no longer needed by existing recipes.",
+        consumer_signal_key: "clickWindowText.consumer",
+        candidate_id_signal_key: "clickWindowText.candidateLocalId",
+      })
+    }
+    _ => None,
+  }
+}
+
+fn enforce_promoted_candidate_consumer_expectations(
+  manifest: &mut SkillManifest,
+  contract: &PromotedCandidateRuntimeContract,
+  promoted_candidate: &crate::contract::Candidate,
+) {
+  for step in &mut manifest.steps {
+    if !step_references_input(step, contract.candidate_input_key) {
+      continue;
+    }
+    step
+      .expect
+      .signal_equals
+      .entry(contract.consumer_signal_key.to_string())
+      .or_insert_with(|| "contract-candidate".to_string());
+    step
+      .expect
+      .signal_equals
+      .entry(contract.candidate_id_signal_key.to_string())
+      .or_insert_with(|| promoted_candidate.candidate_local_id.clone());
+  }
+}
+
+fn step_references_input(step: &crate::skill::SkillStep, input_key: &str) -> bool {
+  step
+    .args
+    .values()
+    .any(|value| value_references_input(value, input_key))
+}
+
+fn value_references_input(value: &Value, input_key: &str) -> bool {
+  let placeholder = format!("${{{input_key}}}");
+  match value {
+    Value::String(string) => string == &placeholder,
+    Value::Array(values) => values
+      .iter()
+      .any(|nested| value_references_input(nested, input_key)),
+    Value::Object(map) => map
+      .values()
+      .any(|nested| value_references_input(nested, input_key)),
+    _ => false,
+  }
 }
 
 fn ensure_manifest_string_input(
@@ -1416,6 +1491,23 @@ mod tests {
             candidate.target_spec.anchor_text, expected_query
           ));
         }
+        return Ok(DriverResponse {
+          summary: format!("{} ok", call.operation),
+          artifacts: Vec::new(),
+          notes: Vec::new(),
+          signals: BTreeMap::from([
+            ("outcome".to_string(), "ok".to_string()),
+            (
+              "focusTextInput.consumer".to_string(),
+              "contract-candidate".to_string(),
+            ),
+            (
+              "focusTextInput.candidateLocalId".to_string(),
+              candidate.candidate_local_id,
+            ),
+          ]),
+          backend: None,
+        });
       }
 
       if call.operation == "test_operation"
@@ -1431,22 +1523,55 @@ mod tests {
           .ok_or_else(|| "expected click_candidate input".to_string())?;
         let candidate: crate::contract::Candidate = serde_json::from_str(raw_candidate)
           .map_err(|error| format!("click_candidate was not valid Candidate JSON: {error}"))?;
-        if candidate.target_spec.grounding != crate::contract::TargetGrounding::OcrAnchor {
-          return Err(format!(
-            "expected OcrAnchor click_candidate grounding, got {:?}",
-            candidate.target_spec.grounding
-          ));
-        }
-        let expected_query = call
-          .inputs
-          .get("anchor_text")
-          .ok_or_else(|| "expected anchor_text fallback input".to_string())?;
-        if candidate.target_spec.anchor_text.as_deref() != Some(expected_query.as_str()) {
-          return Err(format!(
-            "click_candidate anchor_text {:?} did not match anchor_text {}",
-            candidate.target_spec.anchor_text, expected_query
-          ));
-        }
+        let signals = match candidate.target_spec.grounding {
+          crate::contract::TargetGrounding::OcrAnchor => {
+            let expected_query = call
+              .inputs
+              .get("anchor_text")
+              .ok_or_else(|| "expected anchor_text fallback input".to_string())?;
+            if candidate.target_spec.anchor_text.as_deref() != Some(expected_query.as_str()) {
+              return Err(format!(
+                "click_candidate anchor_text {:?} did not match anchor_text {}",
+                candidate.target_spec.anchor_text, expected_query
+              ));
+            }
+            BTreeMap::from([
+              ("outcome".to_string(), "ok".to_string()),
+              (
+                "clickWindowText.consumer".to_string(),
+                "contract-candidate".to_string(),
+              ),
+              (
+                "clickWindowText.candidateLocalId".to_string(),
+                candidate.candidate_local_id,
+              ),
+            ])
+          }
+          crate::contract::TargetGrounding::Coordinate => BTreeMap::from([
+            ("outcome".to_string(), "ok".to_string()),
+            (
+              "clickWindowPoint.consumer".to_string(),
+              "contract-candidate".to_string(),
+            ),
+            (
+              "clickWindowPoint.candidateLocalId".to_string(),
+              candidate.candidate_local_id,
+            ),
+          ]),
+          other => {
+            return Err(format!(
+              "expected OcrAnchor or Coordinate click_candidate grounding, got {:?}",
+              other
+            ));
+          }
+        };
+        return Ok(DriverResponse {
+          summary: format!("{} ok", call.operation),
+          artifacts: Vec::new(),
+          notes: Vec::new(),
+          signals,
+          backend: None,
+        });
       }
 
       Ok(DriverResponse {
@@ -3141,7 +3266,21 @@ mod tests {
       .expect("candidate recipe should write");
     write_pretty_json(
       &case_matrix_path,
-      &test_window_action_candidate_matrix_value(),
+      &serde_json::json!({
+        "skill_id": "test.window.action",
+        "version": "0.1.0",
+        "status": "candidate-case-matrix",
+        "cases": [{
+          "case_id": "default-candidate",
+          "status": "candidate",
+          "inputs": {
+            "relative_x": "TODO_RELATIVE_X",
+            "relative_y": "TODO_RELATIVE_Y",
+            "require_click_candidate": "true"
+          },
+          "disturbance": "none"
+        }]
+      }),
     )
     .expect("candidate matrix should write");
     let candidate_shape = build_distilled_candidate_shape(
@@ -5619,8 +5758,10 @@ mod tests {
         "declared_classes": ["none"]
       },
       "inputs": {
+        "click_candidate": { "type": "string", "default": "" },
         "relative_x": { "type": "number" },
-        "relative_y": { "type": "number" }
+        "relative_y": { "type": "number" },
+        "require_click_candidate": { "type": "string", "default": "false" }
       },
       "steps": [{
         "id": "first",
@@ -5628,6 +5769,10 @@ mod tests {
         "disturbance": {
           "classes": ["none"],
           "max": "none"
+        },
+        "args": {
+          "click_candidate": "${click_candidate}",
+          "require_click_candidate": "${require_click_candidate}"
         },
         "expect": {
           "output_must_contain": ["outcome=ok"]
@@ -5650,7 +5795,8 @@ mod tests {
         "status": "candidate",
         "inputs": {
           "relative_x": "TODO_RELATIVE_X",
-          "relative_y": "TODO_RELATIVE_Y"
+          "relative_y": "TODO_RELATIVE_Y",
+          "require_click_candidate": "false"
         },
         "disturbance": "none"
       }]

@@ -185,17 +185,30 @@ auv-media-macos now-playing [--json | --json-out <path>]
 auv-media-macos play | pause | toggle | next | previous
 auv-media-macos seek <seconds>
 
-# the netease-music subcommands (delegate to the crate)
-auv-netease-music now-playing [--json | --json-out <path>]   (auv-wyy = identical)
-auv-netease-music play | pause | toggle | next | previous
-auv-netease-music seek <seconds>
+# the netease-music subcommands (delegate to the crate, scoped to one app)
+auv-netease-music now-playing [--json | --json-out <path>] [--app-id <bundle>]   (auv-wyy = identical)
+auv-netease-music play | pause | toggle | next | previous [--app-id <bundle>]
+auv-netease-music seek <seconds> [--app-id <bundle>]
 ```
 
-Transport/seek subcommands print `ok: <command>` and exit `0` on a successful
-send, non-zero on failure. Both front doors expose the same read + transport
-controls; the netease CLI delegates to `auv_media_macos::{send_command, seek}`.
-Note these controls act on the **system** now-playing app (not necessarily
-NetEase) — the same app-agnostic semantics as the read.
+**Scoping (the key difference between the two front doors).** `auv-media-macos`
+is app-agnostic — it reads/controls whatever owns the system slot.
+`auv-netease-music` is **scoped to a single app** via `--app-id`, defaulting to
+`com.netease.163music` (the crate's `DEFAULT_APP_ID`):
+
+- `now-playing` reports the track only when the scoped app owns the slot; when
+  another app (e.g. Chrome) owns it, it reports the **idle** state
+  (`NowPlayingState::default()`, exposed via `#[derive(Default)]`) — `Nothing
+  playing`, exit `0`.
+- transport/seek **refuse to act** unless the scoped app owns the slot: they
+  read now-playing first, and if the owner differs they print
+  `skipped: <app-id> is not the current now-playing app (current: <other>)` and
+  exit non-zero — so `auv-netease-music pause` never pauses some unrelated
+  browser tab. On a match they print `ok: <command>`, exit `0`.
+
+This makes `auv-netease-music` honestly NetEase-scoped while the generic
+capability stays in `auv-media-macos`. (There is a small TOCTOU window between
+the ownership check and the send; acceptable for this use.)
 
 The netease subcommand calls `auv_media_macos::now_playing()` then the crate's
 `build_now_playing_output` / `render_human_summary` — it does **not** reshape

@@ -142,9 +142,11 @@ pub(crate) enum SongsLsTarget {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct NowPlayingCommand {
   pub output: OutputMode,
+  /// Only report now-playing when this app owns the slot (NetEase by default).
+  pub app_id: String,
 }
 
-/// A transport command sent to whichever app owns the system now-playing slot.
+/// A transport command, scoped to act only when `app_id` owns the now-playing slot.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TransportControl {
   Play,
@@ -155,13 +157,25 @@ pub(crate) enum TransportControl {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub(crate) struct ControlCommand {
+  pub control: TransportControl,
+  pub app_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct SeekCommand {
+  pub seconds: f64,
+  pub app_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Command {
   PlaylistLs(PlaylistCommand),
   PlaylistPlayDailyRecommended(DailyRecommendedPlayCommand),
   PlaylistSongsLs(SongsLsCommand),
   NowPlaying(NowPlayingCommand),
-  Control(TransportControl),
-  Seek(f64),
+  Control(ControlCommand),
+  Seek(SeekCommand),
 }
 
 #[derive(Clone, Debug, Parser)]
@@ -182,17 +196,17 @@ enum CliSubcommand {
   /// Read the system now-playing state (via the macOS media API).
   #[command(name = "now-playing")]
   NowPlaying(NowPlayingArgs),
-  /// Start playback of the system now-playing app.
-  Play,
-  /// Pause the system now-playing app.
-  Pause,
-  /// Toggle play/pause on the system now-playing app.
-  Toggle,
-  /// Skip to the next track.
-  Next,
-  /// Return to the previous track.
-  Previous,
-  /// Seek the now-playing app to a position, in seconds from the track start.
+  /// Start playback (only when NetEase owns the now-playing slot).
+  Play(ControlArgs),
+  /// Pause (only when NetEase owns the now-playing slot).
+  Pause(ControlArgs),
+  /// Toggle play/pause (only when NetEase owns the now-playing slot).
+  Toggle(ControlArgs),
+  /// Skip to the next track (only when NetEase owns the now-playing slot).
+  Next(ControlArgs),
+  /// Return to the previous track (only when NetEase owns the now-playing slot).
+  Previous(ControlArgs),
+  /// Seek to a position in seconds (only when NetEase owns the now-playing slot).
   Seek(SeekArgs),
 }
 
@@ -202,12 +216,25 @@ struct NowPlayingArgs {
   json: bool,
   #[arg(long = "json-out")]
   json_out: Option<PathBuf>,
+  /// Only report now-playing when this app owns the slot (default: NetEase).
+  #[arg(long = "app-id")]
+  app_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Args)]
+struct ControlArgs {
+  /// Only act when this app owns the now-playing slot (default: NetEase).
+  #[arg(long = "app-id")]
+  app_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Args)]
 struct SeekArgs {
   #[arg(value_name = "seconds")]
   seconds: f64,
+  /// Only act when this app owns the now-playing slot (default: NetEase).
+  #[arg(long = "app-id")]
+  app_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Args)]
@@ -357,13 +384,25 @@ fn command_from_args(parsed: CliArgs) -> Result<Command, String> {
   match parsed.command {
     CliSubcommand::Playlist(args) => parse_playlist(args),
     CliSubcommand::NowPlaying(args) => parse_now_playing(args),
-    CliSubcommand::Play => Ok(Command::Control(TransportControl::Play)),
-    CliSubcommand::Pause => Ok(Command::Control(TransportControl::Pause)),
-    CliSubcommand::Toggle => Ok(Command::Control(TransportControl::Toggle)),
-    CliSubcommand::Next => Ok(Command::Control(TransportControl::Next)),
-    CliSubcommand::Previous => Ok(Command::Control(TransportControl::Previous)),
+    CliSubcommand::Play(args) => Ok(control(TransportControl::Play, args)),
+    CliSubcommand::Pause(args) => Ok(control(TransportControl::Pause, args)),
+    CliSubcommand::Toggle(args) => Ok(control(TransportControl::Toggle, args)),
+    CliSubcommand::Next(args) => Ok(control(TransportControl::Next, args)),
+    CliSubcommand::Previous(args) => Ok(control(TransportControl::Previous, args)),
     CliSubcommand::Seek(args) => parse_seek(args),
   }
+}
+
+/// Resolve an optional `--app-id` to the NetEase default when omitted.
+fn resolve_app_id(app_id: Option<String>) -> String {
+  app_id.unwrap_or_else(|| crate::DEFAULT_APP_ID.to_string())
+}
+
+fn control(control: TransportControl, args: ControlArgs) -> Command {
+  Command::Control(ControlCommand {
+    control,
+    app_id: resolve_app_id(args.app_id),
+  })
 }
 
 fn parse_now_playing(args: NowPlayingArgs) -> Result<Command, String> {
@@ -372,14 +411,20 @@ fn parse_now_playing(args: NowPlayingArgs) -> Result<Command, String> {
     None if args.json => OutputMode::Json,
     None => OutputMode::Human,
   };
-  Ok(Command::NowPlaying(NowPlayingCommand { output }))
+  Ok(Command::NowPlaying(NowPlayingCommand {
+    output,
+    app_id: resolve_app_id(args.app_id),
+  }))
 }
 
 fn parse_seek(args: SeekArgs) -> Result<Command, String> {
   if !args.seconds.is_finite() || args.seconds < 0.0 {
     return Err("seek position must be a non-negative number of seconds".to_string());
   }
-  Ok(Command::Seek(args.seconds))
+  Ok(Command::Seek(SeekCommand {
+    seconds: args.seconds,
+    app_id: resolve_app_id(args.app_id),
+  }))
 }
 
 fn parse_playlist(args: PlaylistArgs) -> Result<Command, String> {
@@ -590,8 +635,8 @@ pub fn run() -> ExitCode {
     Ok(Command::PlaylistPlayDailyRecommended(cmd)) => run_daily_recommended(cmd),
     Ok(Command::PlaylistSongsLs(cmd)) => run_songs_ls(cmd),
     Ok(Command::NowPlaying(cmd)) => run_now_playing(cmd),
-    Ok(Command::Control(control)) => run_control(control),
-    Ok(Command::Seek(seconds)) => run_seek(seconds),
+    Ok(Command::Control(cmd)) => run_control(cmd),
+    Ok(Command::Seek(cmd)) => run_seek(cmd),
     Err(error) => {
       if error.starts_with("error:") {
         eprint!("{error}");
@@ -1008,6 +1053,13 @@ fn run_now_playing(cmd: NowPlayingCommand) -> ExitCode {
       return ExitCode::from(1);
     }
   };
+  // Scope to NetEase (or the requested --app-id): when another app owns the
+  // slot, report the idle state rather than that app's track.
+  let state = if state.source_bundle_id.as_deref() == Some(cmd.app_id.as_str()) {
+    state
+  } else {
+    auv_media_macos::NowPlayingState::default()
+  };
   let output = auv_media_macos::output::build_now_playing_output(&state);
 
   match &cmd.output {
@@ -1048,9 +1100,35 @@ fn run_now_playing(_cmd: NowPlayingCommand) -> ExitCode {
   ExitCode::from(1)
 }
 
+/// Require that `app_id` currently owns the now-playing slot before acting on
+/// it. Returns `Err(exit_code)` (with a message) when it does not, so controls
+/// never act on some other app that happens to be playing.
 #[cfg(target_os = "macos")]
-fn run_control(control: TransportControl) -> ExitCode {
-  let command = match control {
+fn require_owner(app_id: &str) -> Result<(), ExitCode> {
+  let state = match auv_media_macos::now_playing() {
+    Ok(state) => state,
+    Err(error) => {
+      eprintln!("now-playing read failed: {error}");
+      return Err(ExitCode::from(1));
+    }
+  };
+  if state.source_bundle_id.as_deref() == Some(app_id) {
+    return Ok(());
+  }
+  let current = match state.source_bundle_id.as_deref() {
+    Some(other) => format!(" (current: {other})"),
+    None => " (nothing playing)".to_string(),
+  };
+  eprintln!("skipped: {app_id} is not the current now-playing app{current}");
+  Err(ExitCode::from(1))
+}
+
+#[cfg(target_os = "macos")]
+fn run_control(cmd: ControlCommand) -> ExitCode {
+  if let Err(code) = require_owner(&cmd.app_id) {
+    return code;
+  }
+  let command = match cmd.control {
     TransportControl::Play => auv_media_macos::MediaCommand::Play,
     TransportControl::Pause => auv_media_macos::MediaCommand::Pause,
     TransportControl::Toggle => auv_media_macos::MediaCommand::TogglePlayPause,
@@ -1059,7 +1137,7 @@ fn run_control(control: TransportControl) -> ExitCode {
   };
   match auv_media_macos::send_command(command) {
     Ok(()) => {
-      println!("ok: {}", control_label(control));
+      println!("ok: {}", control_label(cmd.control));
       ExitCode::SUCCESS
     }
     Err(error) => {
@@ -1070,16 +1148,19 @@ fn run_control(control: TransportControl) -> ExitCode {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn run_control(_control: TransportControl) -> ExitCode {
+fn run_control(_cmd: ControlCommand) -> ExitCode {
   eprintln!("media controls are only available on macOS");
   ExitCode::from(1)
 }
 
 #[cfg(target_os = "macos")]
-fn run_seek(seconds: f64) -> ExitCode {
-  match auv_media_macos::seek(std::time::Duration::from_secs_f64(seconds)) {
+fn run_seek(cmd: SeekCommand) -> ExitCode {
+  if let Err(code) = require_owner(&cmd.app_id) {
+    return code;
+  }
+  match auv_media_macos::seek(std::time::Duration::from_secs_f64(cmd.seconds)) {
     Ok(()) => {
-      println!("ok: seek {seconds}s");
+      println!("ok: seek {}s", cmd.seconds);
       ExitCode::SUCCESS
     }
     Err(error) => {
@@ -1090,7 +1171,7 @@ fn run_seek(seconds: f64) -> ExitCode {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn run_seek(_seconds: f64) -> ExitCode {
+fn run_seek(_cmd: SeekCommand) -> ExitCode {
   eprintln!("media controls are only available on macOS");
   ExitCode::from(1)
 }

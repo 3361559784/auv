@@ -17,7 +17,10 @@ pub mod output;
 pub use error::MediaError;
 
 /// A structured snapshot of the system now-playing state.
-#[derive(Clone, Debug, PartialEq)]
+///
+/// [`Default`] is the idle state (nothing owns the slot) — useful for callers
+/// that scope/filter the read to a specific app.
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct NowPlayingState {
   /// Whether an app currently owns the now-playing slot with valid content.
   pub present: bool,
@@ -32,24 +35,6 @@ pub struct NowPlayingState {
   /// Whether playback is currently active (from the adapter's `playing` flag).
   pub is_playing: bool,
   pub content_item_id: Option<String>,
-}
-
-impl NowPlayingState {
-  /// The idle state: nothing owns the now-playing slot.
-  fn idle() -> Self {
-    NowPlayingState {
-      present: false,
-      source_bundle_id: None,
-      title: None,
-      artist: None,
-      album: None,
-      duration_seconds: None,
-      elapsed_seconds: None,
-      playback_rate: None,
-      is_playing: false,
-      content_item_id: None,
-    }
-  }
 }
 
 /// The subset of the mediaremote-adapter `get` JSON we consume. The adapter
@@ -77,7 +62,7 @@ fn parse_get(json: &str) -> Result<NowPlayingState, MediaError> {
   let parsed: Option<AdapterGet> = serde_json::from_str(json.trim())
     .map_err(|error| MediaError::native(format!("invalid adapter JSON: {error}"), None))?;
   let Some(item) = parsed else {
-    return Ok(NowPlayingState::idle());
+    return Ok(NowPlayingState::default());
   };
   Ok(NowPlayingState {
     present: true,

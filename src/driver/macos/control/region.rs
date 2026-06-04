@@ -233,7 +233,8 @@ pub(crate) fn scroll_window_region(call: &DriverCall) -> AuvResult<DriverRespons
     "scroll_window_region requires --target <application-id> or --app".to_string()
   })?;
   let raw_direction = optional_string(call, "direction").unwrap_or_else(|| "down".to_string());
-  let direction = normalize_scroll_direction(&raw_direction)?.to_string();
+  let scroll_direction = normalize_scroll_direction(&raw_direction)?;
+  let direction = scroll_direction.as_str().to_string();
   let amount = optional_f64(call, "amount")?.unwrap_or(6.0).max(1.0);
   let settle_ms = optional_positive_u64(call, "settle_ms")?.unwrap_or(250);
   let input_policy = parse_input_policy(call)?;
@@ -262,7 +263,7 @@ pub(crate) fn scroll_window_region(call: &DriverCall) -> AuvResult<DriverRespons
   let resolution = resolve_display_point(&display_snapshot, x, y).ok_or_else(|| {
     format!("resolved scroll point ({x:.3}, {y:.3}) is outside all connected displays")
   })?;
-  let (delta_x, delta_y) = scan_scroll_delta(&direction, amount)?;
+  let (delta_x, delta_y) = scan_scroll_delta(scroll_direction, amount);
   let typed_window = auv_driver::Window {
     reference: auv_driver::WindowRef {
       id: window.window_number.to_string(),
@@ -395,22 +396,40 @@ pub(crate) fn scroll_window_region(call: &DriverCall) -> AuvResult<DriverRespons
   })
 }
 
-fn scan_scroll_delta(direction: &str, amount: f64) -> AuvResult<(f64, f64)> {
-  match normalize_scroll_direction(direction)? {
-    "down" => Ok((0.0, -amount)),
-    "up" => Ok((0.0, amount)),
-    "right" => Ok((-amount, 0.0)),
-    "left" => Ok((amount, 0.0)),
-    _ => unreachable!("normalize_scroll_direction only returns supported directions"),
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ScrollDirection {
+  Up,
+  Down,
+  Left,
+  Right,
+}
+
+impl ScrollDirection {
+  fn as_str(self) -> &'static str {
+    match self {
+      Self::Up => "up",
+      Self::Down => "down",
+      Self::Left => "left",
+      Self::Right => "right",
+    }
   }
 }
 
-fn normalize_scroll_direction(direction: &str) -> AuvResult<&'static str> {
+fn scan_scroll_delta(direction: ScrollDirection, amount: f64) -> (f64, f64) {
+  match direction {
+    ScrollDirection::Down => (0.0, -amount),
+    ScrollDirection::Up => (0.0, amount),
+    ScrollDirection::Right => (-amount, 0.0),
+    ScrollDirection::Left => (amount, 0.0),
+  }
+}
+
+fn normalize_scroll_direction(direction: &str) -> AuvResult<ScrollDirection> {
   match direction.trim().to_ascii_lowercase().as_str() {
-    "down" => Ok("down"),
-    "up" => Ok("up"),
-    "right" => Ok("right"),
-    "left" => Ok("left"),
+    "down" => Ok(ScrollDirection::Down),
+    "up" => Ok(ScrollDirection::Up),
+    "right" => Ok(ScrollDirection::Right),
+    "left" => Ok(ScrollDirection::Left),
     other => Err(format!(
       "invalid scroll direction {other:?}; expected down, up, left, or right"
     )),
@@ -945,28 +964,30 @@ mod tests {
 
   #[test]
   fn scan_scroll_delta_defaults_to_vertical_down() {
-    let (delta_x, delta_y) = scan_scroll_delta("down", 6.0).expect("delta");
+    let (delta_x, delta_y) = scan_scroll_delta(ScrollDirection::Down, 6.0);
     assert_eq!(delta_x, 0.0);
     assert!(delta_y < 0.0);
   }
 
   #[test]
-  fn scan_scroll_delta_normalizes_direction_case() {
-    let (delta_x, delta_y) = scan_scroll_delta("DOWN", 6.0).expect("delta");
-    assert_eq!((delta_x, delta_y), (0.0, -6.0));
+  fn normalize_scroll_direction_lowercases_input() {
+    assert_eq!(
+      normalize_scroll_direction("DOWN").expect("normalized"),
+      ScrollDirection::Down
+    );
   }
 
   #[test]
   fn scan_scroll_delta_maps_all_cardinal_directions() {
-    assert_eq!(scan_scroll_delta("up", 4.0).expect("up"), (0.0, 4.0));
-    assert_eq!(scan_scroll_delta("down", 4.0).expect("down"), (0.0, -4.0));
-    assert_eq!(scan_scroll_delta("left", 4.0).expect("left"), (4.0, 0.0));
-    assert_eq!(scan_scroll_delta("right", 4.0).expect("right"), (-4.0, 0.0));
+    assert_eq!(scan_scroll_delta(ScrollDirection::Up, 4.0), (0.0, 4.0));
+    assert_eq!(scan_scroll_delta(ScrollDirection::Down, 4.0), (0.0, -4.0));
+    assert_eq!(scan_scroll_delta(ScrollDirection::Left, 4.0), (4.0, 0.0));
+    assert_eq!(scan_scroll_delta(ScrollDirection::Right, 4.0), (-4.0, 0.0));
   }
 
   #[test]
-  fn scan_scroll_delta_rejects_unknown_direction() {
-    let error = scan_scroll_delta("diagonal", 4.0).expect_err("direction should fail");
+  fn normalize_scroll_direction_rejects_unknown_direction() {
+    let error = normalize_scroll_direction("diagonal").expect_err("direction should fail");
     assert!(error.contains("expected down, up, left, or right"));
   }
 

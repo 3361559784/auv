@@ -21,6 +21,10 @@ pub struct NowPlayingOutput {
   pub elapsed_seconds: Option<f64>,
   pub playback_rate: Option<f64>,
   pub content_item_id: Option<String>,
+  // Usually `null`: in practice only Apple Music catalog tracks report like
+  // state — never NetEase or local files. See `NowPlayingState::supports_like`.
+  pub supports_like: Option<bool>,
+  pub is_liked: Option<bool>,
 }
 
 /// Build the versioned output object from a [`NowPlayingState`].
@@ -37,6 +41,8 @@ pub fn build_now_playing_output(state: &NowPlayingState) -> NowPlayingOutput {
     elapsed_seconds: state.elapsed_seconds,
     playback_rate: state.playback_rate,
     content_item_id: state.content_item_id.clone(),
+    supports_like: state.supports_like,
+    is_liked: state.is_liked,
   }
 }
 
@@ -56,6 +62,9 @@ pub fn render_human_summary(state: &NowPlayingState) -> String {
   }
   if let Some(bundle) = non_empty(state.source_bundle_id.as_deref()) {
     line.push_str(&format!("  ({bundle})"));
+  }
+  if state.is_liked == Some(true) {
+    line.push_str("  ♥");
   }
   line
 }
@@ -80,6 +89,8 @@ mod tests {
       playback_rate: Some(1.0),
       is_playing: true,
       content_item_id: Some("abc".to_string()),
+      supports_like: Some(true),
+      is_liked: Some(false),
     }
   }
 
@@ -121,18 +132,16 @@ mod tests {
 
   #[test]
   fn human_summary_idle() {
-    let state = NowPlayingState {
-      present: false,
-      source_bundle_id: None,
-      title: None,
-      artist: None,
-      album: None,
-      duration_seconds: None,
-      elapsed_seconds: None,
-      playback_rate: None,
-      is_playing: false,
-      content_item_id: None,
-    };
-    assert_eq!(render_human_summary(&state), "Nothing playing");
+    assert_eq!(
+      render_human_summary(&NowPlayingState::default()),
+      "Nothing playing"
+    );
+  }
+
+  #[test]
+  fn human_summary_marks_liked_track() {
+    let mut state = playing_state();
+    state.is_liked = Some(true);
+    assert!(render_human_summary(&state).ends_with("♥"));
   }
 }

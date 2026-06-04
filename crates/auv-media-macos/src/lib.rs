@@ -35,6 +35,21 @@ pub struct NowPlayingState {
   /// Whether playback is currently active (from the adapter's `playing` flag).
   pub is_playing: bool,
   pub content_item_id: Option<String>,
+  /// Whether the now-playing app exposes a like/favorite affordance for this
+  /// track (`None` when unreported).
+  ///
+  /// LIMITATION: in practice only Apple Music **catalog/streaming** tracks
+  /// populate this. It is `None` for NetEase, for local files (verified even in
+  /// Music.app, even after pressing Favorite), and for apps that don't integrate
+  /// MediaRemote's like affordance. There is no general, free way to set a
+  /// "like" via MediaRemote (the vendored adapter doesn't expose `kMRLikeTrack`,
+  /// and it would need track/station identifiers). Verified empirically on
+  /// macOS 26.2 — see the design spec's "like/favorite" finding.
+  pub supports_like: Option<bool>,
+  /// Whether this track is currently liked/favorited (`None` when unreported).
+  /// Same limitation as [`Self::supports_like`] — effectively Apple Music
+  /// catalog only; never set for NetEase or local tracks.
+  pub is_liked: Option<bool>,
 }
 
 /// The subset of the mediaremote-adapter `get` JSON we consume. The adapter
@@ -54,6 +69,8 @@ struct AdapterGet {
   elapsed_time: Option<f64>,
   playback_rate: Option<f64>,
   content_item_identifier: Option<String>,
+  supports_is_liked: Option<bool>,
+  is_liked: Option<bool>,
 }
 
 /// Parse the adapter's `get` output into a [`NowPlayingState`]. Pure and
@@ -75,6 +92,8 @@ fn parse_get(json: &str) -> Result<NowPlayingState, MediaError> {
     playback_rate: item.playback_rate,
     is_playing: item.playing,
     content_item_id: item.content_item_identifier,
+    supports_like: item.supports_is_liked,
+    is_liked: item.is_liked,
   })
 }
 
@@ -189,6 +208,24 @@ mod tests {
     assert!(state.present);
     assert!(!state.is_playing);
     assert_eq!(state.playback_rate, Some(0.0));
+  }
+
+  #[test]
+  fn parse_get_maps_like_fields_when_present() {
+    // Apple Music catalog tracks report these; local files / NetEase omit them.
+    let json = r#"{"bundleIdentifier":"com.apple.Music","playing":true,"title":"X",
+      "supportsIsLiked":true,"isLiked":true}"#;
+    let state = parse_get(json).unwrap();
+    assert_eq!(state.supports_like, Some(true));
+    assert_eq!(state.is_liked, Some(true));
+  }
+
+  #[test]
+  fn parse_get_like_fields_default_to_none_when_absent() {
+    let json = r#"{"bundleIdentifier":"com.netease.163music","playing":true,"title":"X"}"#;
+    let state = parse_get(json).unwrap();
+    assert_eq!(state.supports_like, None);
+    assert_eq!(state.is_liked, None);
   }
 
   #[test]

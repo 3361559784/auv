@@ -131,6 +131,8 @@ pub struct NowPlayingState {
   pub playback_rate: Option<f64>,
   pub is_playing: bool,              // from the adapter's `playing` flag
   pub content_item_id: Option<String>,
+  pub supports_like: Option<bool>,   // app exposes a like/favorite affordance
+  pub is_liked: Option<bool>,        // current like state (None if unreported)
 }
 
 pub fn now_playing() -> Result<NowPlayingState, MediaError>;
@@ -191,6 +193,14 @@ auv-netease-music play | pause | toggle | next | previous [--app-id <bundle>]
 auv-netease-music seek <seconds> [--app-id <bundle>]
 ```
 
+**Contract divergence (intentional).** The two now-playing JSON outputs are *not*
+byte-identical: `auv-media-macos` includes the like fields
+(`supports_like` / `is_liked`), while `auv-netease-music` **omits** them — NetEase
+never reports like, so they would always be null there. The netease CLI builds
+its own subset output (`auv_netease_music::output::NowPlayingOutput`) rather than
+reusing the crate's. Both carry `schema_version: "now-playing-v0"`; the like
+fields are treated as optional extensions present only in the generic surface.
+
 **Scoping (the key difference between the two front doors).** `auv-media-macos`
 is app-agnostic — it reads/controls whatever owns the system slot.
 `auv-netease-music` is **scoped to a single app** via `--app-id`, defaulting to
@@ -227,9 +237,10 @@ non-zero. `auv-netease-music` depends on `auv-media-macos` as a
 ## Output contract (agent-facing)
 
 - `--json` / `--json-out` produce a stable object carrying
-  `schema_version: "now-playing-v0"` plus the `NowPlayingState` fields. The
-  contract type + builders live in `auv-media-macos::output` (crate-owned), so
-  the binary and the netease subcommand emit byte-identical JSON.
+  `schema_version: "now-playing-v0"` plus the `NowPlayingState` fields.
+  `auv-media-macos::output` owns the full contract (with like fields);
+  `auv-netease-music::output` owns its like-less subset (see Contract divergence
+  above).
 - Exit codes:
   - `0` — the read completed, **including the nothing-playing case**
     (`present: false`). "Nothing playing" is state, not an error — consistent
@@ -245,9 +256,10 @@ non-zero. `auv-netease-music` depends on `auv-media-macos` as a
 Pure-Rust unit tests (no live media, no perl required):
 
 - `parse_get`: `null` → idle; mapped object; paused (present, not playing);
-  garbage → error (4 tests).
+  garbage → error; like fields mapped when present and `None` when absent
+  (6 tests).
 - `output`: `now-playing-v0` JSON carries schema version + fields; human
-  summary playing / paused / idle / omitted-empty-fields (5 tests).
+  summary playing / paused / idle / omitted-empty-fields / liked-`♥` (6 tests).
 - `MediaCommand::command_id` maps to the adapter's MRCommand id table (1 test).
 
 The live adapter read/control is environmental and macOS-gated; not a CI unit
@@ -260,8 +272,9 @@ existing live-driver procedures are gated while their pure logic is unit-tested.
 Behavior change, so on completion run: `cargo fmt --check`, `cargo check`,
 `cargo test`, `git diff --check`, plus CLI smoke checks on **both** front doors
 (`auv-media-macos now-playing` and `auv-netease-music now-playing`, human +
-`--json`, `--help` listing subcommands) confirming identical `now-playing-v0`
-JSON, and that `auv-media-macos play`/`pause` flip playback (polling to settle).
+`--json`, `--help` listing subcommands) — confirming the media-macos JSON
+carries the like fields and the netease JSON omits them, and that
+`auv-media-macos play`/`pause` flip playback (polling to settle).
 
 ## Scope
 
@@ -280,6 +293,18 @@ Explicitly **not** in scope:
 - change subscription / streaming (the adapter's `stream` exists; deferred);
 - send-then-verify (controls are fire-and-forget; callers poll `now_playing()`
   if they need confirmation, accounting for the ~100 ms settle).
+
+## Finding: like/favorite is not available for NetEase via MediaRemote
+
+`supports_like` / `is_liked` are surfaced from the adapter's `supportsIsLiked` /
+`isLiked`. Verified empirically (NetEase playing on macOS 26.2): the adapter's
+raw `get` for `com.netease.163music` contains **no** like/ban/wishlist keys at
+all — NetEase does not integrate with MediaRemote's like affordance. So a
+favorite *control* via MediaRemote is a dead end for NetEase specifically
+(`kMRLikeTrack` isn't in the adapter allowlist anyway, and upstream's TODO notes
+it would need track/station identifiers). The like-state fields remain valid for
+apps that do report them (e.g. Apple Music). NetEase's 红心 would require the
+separate UI-automation seam (clicking the heart via AX), not this crate.
 
 ## Risks
 

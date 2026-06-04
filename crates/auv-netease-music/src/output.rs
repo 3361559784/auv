@@ -68,6 +68,42 @@ fn collect_matches_from_sidebar(sidebar: &SidebarView, keyword: Option<&str>) ->
     .collect()
 }
 
+/// Agent-facing now-playing JSON for the netease CLI. Deliberately a subset of
+/// `auv_media_macos`'s output: the like/favorite fields are omitted because
+/// NetEase never reports them, so they would always be null here.
+#[cfg(target_os = "macos")]
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct NowPlayingOutput {
+  pub schema_version: &'static str,
+  pub present: bool,
+  pub is_playing: bool,
+  pub source_bundle_id: Option<String>,
+  pub title: Option<String>,
+  pub artist: Option<String>,
+  pub album: Option<String>,
+  pub duration_seconds: Option<f64>,
+  pub elapsed_seconds: Option<f64>,
+  pub playback_rate: Option<f64>,
+  pub content_item_id: Option<String>,
+}
+
+#[cfg(target_os = "macos")]
+pub fn build_now_playing_output(state: &auv_media_macos::NowPlayingState) -> NowPlayingOutput {
+  NowPlayingOutput {
+    schema_version: "now-playing-v0",
+    present: state.present,
+    is_playing: state.is_playing,
+    source_bundle_id: state.source_bundle_id.clone(),
+    title: state.title.clone(),
+    artist: state.artist.clone(),
+    album: state.album.clone(),
+    duration_seconds: state.duration_seconds,
+    elapsed_seconds: state.elapsed_seconds,
+    playback_rate: state.playback_rate,
+    content_item_id: state.content_item_id.clone(),
+  }
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;

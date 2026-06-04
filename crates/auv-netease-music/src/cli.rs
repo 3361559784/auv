@@ -1060,7 +1060,8 @@ fn run_now_playing(cmd: NowPlayingCommand) -> ExitCode {
   } else {
     auv_media_macos::NowPlayingState::default()
   };
-  let output = auv_media_macos::output::build_now_playing_output(&state);
+  // netease's output omits the like fields (NetEase never reports them).
+  let output = crate::output::build_now_playing_output(&state);
 
   match &cmd.output {
     OutputMode::Human => {

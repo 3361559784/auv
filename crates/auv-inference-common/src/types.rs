@@ -62,6 +62,10 @@ pub struct Detection {
   pub confidence: f32,
   /// Bounding box in source-image pixel coordinates after upstream
   /// preprocessing/postprocessing has already been applied.
+  ///
+  /// NOTICE: This is inference evidence only. These coordinates are not
+  /// screen-space, window-space, or replayable click coordinates, and they do
+  /// not imply that AUV has capture/projection metadata for action delivery.
   pub bbox: BoundingBox,
 }
 
@@ -73,7 +77,10 @@ pub struct Detection {
 ///
 /// TODO(inference-candidate-bridge): If detections later need a runtime bridge,
 /// add it as a separate contract slice instead of growing action semantics
-/// directly into this type.
+/// directly into this type. The future bridge must attach durable source-image
+/// artifact identity, projection basis, freshness/liveness context, and known
+/// limits outside `DetectionSet`; see
+/// `docs/superpowers/specs/2026-06-05-detectionset-candidate-adapter-boundary.md`.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct DetectionSet {
   pub model_id: ModelId,

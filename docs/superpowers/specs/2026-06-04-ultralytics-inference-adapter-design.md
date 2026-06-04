@@ -325,4 +325,6 @@ Use the AUV inventory commands after the refactor:
 - OCR/RapidOCR remains deferred to an OCR-specific inference adapter.
 - Realtime capture and Swift overlay visualization remain deferred.
 - `DetectionSet -> Candidate` or `DetectionSet -> RecognitionResult` bridges
-  remain deferred to a separate contract slice.
+  remain deferred to a separate contract slice. The current deferred boundary
+  is written down in
+  `docs/superpowers/specs/2026-06-05-detectionset-candidate-adapter-boundary.md`.

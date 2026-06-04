@@ -55,6 +55,23 @@ fn detect_sidebar_region_falls_back_to_full_sidebar_without_playlist_marker() {
 }
 
 #[test]
+fn detect_sidebar_region_handles_negative_window_height_without_panic() {
+  let region = detect_sidebar_region(
+    None,
+    auv_driver::Size::new(1646.0, -1.0),
+    &fake_recognition(vec![
+      ("推荐", 8.0, 20.0, 40.0, 20.0),
+      ("创建的歌单", 8.0, 443.0, 110.0, 20.0),
+      ("Coding BGM", 32.0, 485.0, 120.0, 20.0),
+    ]),
+  )
+  .expect("negative window height should not crash sidebar detection");
+
+  let bounds = region.bounds.expect("bounds should still be produced");
+  assert!(bounds.y >= 0.0, "y must be floored to 0, got {}", bounds.y);
+}
+
+#[test]
 fn detect_sidebar_region_rejects_unanchored_playlist_like_rows() {
   let error = detect_sidebar_region(
     None,

@@ -50,13 +50,17 @@ pub(crate) fn detect_sidebar_region(
     .unwrap_or_default()
     .max(window_size.width * 0.18)
     .min(window_size.width * 0.42);
+  // Floor `window_size.height` at 0 before using it as the clamp upper
+  // bound. `f64::clamp(0.0, h)` panics on `min > max` when `h < 0`, the
+  // same shape fixed in `playlist_sidebar_bottom` for this module.
+  let usable_height = window_size.height.max(0.0);
   let y = markers
     .iter()
     .filter(|marker| is_playlist_section_marker(marker.2))
     .map(|marker| marker.1)
     .min_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal))
     .unwrap_or(0.0)
-    .clamp(0.0, window_size.height);
+    .clamp(0.0, usable_height);
 
   Ok(sidebar_region_record(ViewBounds::new(
     0.0,

@@ -291,26 +291,45 @@ impl AppVerificationMode {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum AppCandidateGroundingTaxonomy {
   SearchEntryAxTextInputClipboardSubmitCaptureEvidence,
-  NativeTextAxTextPointerFocusClipboardPasteVerifyAxText,
+  NativeTextAxTextAxPerformActionClipboardPasteVerifyAxText,
   ResultSelectionOcrAnchorPointerClickCaptureEvidence,
   WindowActionWindowPointPointerClickCaptureEvidence,
 }
 
+const SEARCH_ENTRY_TAXONOMY_ID: &str =
+  "search-entry.ax-text-input.clipboard-submit.capture-evidence";
+const NATIVE_TEXT_CANONICAL_TAXONOMY_ID: &str =
+  "native-text.ax-text.ax-perform-action-clipboard-paste.verify-ax-text";
+const NATIVE_TEXT_LEGACY_TAXONOMY_ID: &str =
+  "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text";
+const RESULT_SELECTION_TAXONOMY_ID: &str =
+  "result-selection.ocr-anchor.pointer-click.capture-evidence";
+const WINDOW_ACTION_TAXONOMY_ID: &str = "window-action.window-point.pointer-click.capture-evidence";
+
+fn is_native_text_taxonomy_id(raw: &str) -> bool {
+  matches!(
+    raw.trim(),
+    NATIVE_TEXT_CANONICAL_TAXONOMY_ID | NATIVE_TEXT_LEGACY_TAXONOMY_ID
+  )
+}
+
+fn canonicalize_app_candidate_grounding_taxonomy_id(raw: &str) -> &str {
+  if is_native_text_taxonomy_id(raw) {
+    NATIVE_TEXT_CANONICAL_TAXONOMY_ID
+  } else {
+    raw.trim()
+  }
+}
+
 impl AppCandidateGroundingTaxonomy {
   fn parse(raw: &str) -> AuvResult<Self> {
-    match raw.trim() {
-      "search-entry.ax-text-input.clipboard-submit.capture-evidence" => {
-        Ok(Self::SearchEntryAxTextInputClipboardSubmitCaptureEvidence)
+    match canonicalize_app_candidate_grounding_taxonomy_id(raw) {
+      SEARCH_ENTRY_TAXONOMY_ID => Ok(Self::SearchEntryAxTextInputClipboardSubmitCaptureEvidence),
+      NATIVE_TEXT_CANONICAL_TAXONOMY_ID => {
+        Ok(Self::NativeTextAxTextAxPerformActionClipboardPasteVerifyAxText)
       }
-      "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text" => {
-        Ok(Self::NativeTextAxTextPointerFocusClipboardPasteVerifyAxText)
-      }
-      "result-selection.ocr-anchor.pointer-click.capture-evidence" => {
-        Ok(Self::ResultSelectionOcrAnchorPointerClickCaptureEvidence)
-      }
-      "window-action.window-point.pointer-click.capture-evidence" => {
-        Ok(Self::WindowActionWindowPointPointerClickCaptureEvidence)
-      }
+      RESULT_SELECTION_TAXONOMY_ID => Ok(Self::ResultSelectionOcrAnchorPointerClickCaptureEvidence),
+      WINDOW_ACTION_TAXONOMY_ID => Ok(Self::WindowActionWindowPointPointerClickCaptureEvidence),
       other => Err(format!(
         "unsupported candidate grounding taxonomy {}. allowed values: {}",
         other,
@@ -321,10 +340,11 @@ impl AppCandidateGroundingTaxonomy {
 
   fn allowed_ids() -> &'static [&'static str] {
     &[
-      "search-entry.ax-text-input.clipboard-submit.capture-evidence",
-      "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text",
-      "result-selection.ocr-anchor.pointer-click.capture-evidence",
-      "window-action.window-point.pointer-click.capture-evidence",
+      SEARCH_ENTRY_TAXONOMY_ID,
+      NATIVE_TEXT_CANONICAL_TAXONOMY_ID,
+      NATIVE_TEXT_LEGACY_TAXONOMY_ID,
+      RESULT_SELECTION_TAXONOMY_ID,
+      WINDOW_ACTION_TAXONOMY_ID,
     ]
   }
 }
@@ -1288,47 +1308,39 @@ struct PromotedCandidateRuntimeContract {
 fn promoted_candidate_runtime_contract(
   taxonomy_id: &str,
 ) -> Option<PromotedCandidateRuntimeContract> {
-  match taxonomy_id {
-    "search-entry.ax-text-input.clipboard-submit.capture-evidence" => {
-      Some(PromotedCandidateRuntimeContract {
-        candidate_input_key: "focus_candidate",
-        candidate_note: "Validate injects the promoted search-entry contract::Candidate here so debug.focusTextInput can consume the typed target without reopening app-only schema.",
-        fallback_input_key: Some("focus_query"),
-        fallback_note: "Legacy fallback for search-entry validate. TODO(app-search-entry-query-fallback-removal): remove once the query-only path is no longer needed by existing recipes.",
-        consumer_signal_key: "focusTextInput.consumer",
-        candidate_id_signal_key: "focusTextInput.candidateLocalId",
-      })
-    }
-    "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text" => {
-      Some(PromotedCandidateRuntimeContract {
-        candidate_input_key: "focus_candidate",
-        candidate_note: "Validate injects the promoted native-text contract::Candidate here so debug.focusTextInput can consume the typed target without reopening app-only schema.",
-        fallback_input_key: Some("focus_query"),
-        fallback_note: "Legacy fallback for native-text validate. TODO(app-native-text-query-fallback-removal): remove once the query-only path is no longer needed by existing recipes.",
-        consumer_signal_key: "focusTextInput.consumer",
-        candidate_id_signal_key: "focusTextInput.candidateLocalId",
-      })
-    }
-    "window-action.window-point.pointer-click.capture-evidence" => {
-      Some(PromotedCandidateRuntimeContract {
-        candidate_input_key: "click_candidate",
-        candidate_note: "Validate injects the promoted window-action contract::Candidate here so debug.clickWindowPoint can consume the typed target without reopening app-only schema.",
-        fallback_input_key: None,
-        fallback_note: "",
-        consumer_signal_key: "clickWindowPoint.consumer",
-        candidate_id_signal_key: "clickWindowPoint.candidateLocalId",
-      })
-    }
-    "result-selection.ocr-anchor.pointer-click.capture-evidence" => {
-      Some(PromotedCandidateRuntimeContract {
-        candidate_input_key: "click_candidate",
-        candidate_note: "Validate injects the promoted result-selection contract::Candidate here so debug.clickWindowText can consume the typed OCR anchor target without reopening app-only schema.",
-        fallback_input_key: Some("anchor_text"),
-        fallback_note: "Legacy fallback for result-selection validate. TODO(app-result-selection-anchor-fallback-removal): remove once the query-only path is no longer needed by existing recipes.",
-        consumer_signal_key: "clickWindowText.consumer",
-        candidate_id_signal_key: "clickWindowText.candidateLocalId",
-      })
-    }
+  match canonicalize_app_candidate_grounding_taxonomy_id(taxonomy_id) {
+    SEARCH_ENTRY_TAXONOMY_ID => Some(PromotedCandidateRuntimeContract {
+      candidate_input_key: "focus_candidate",
+      candidate_note: "Validate injects the promoted search-entry contract::Candidate here so debug.focusTextInput can consume the typed target without reopening app-only schema.",
+      fallback_input_key: Some("focus_query"),
+      fallback_note: "Legacy fallback for search-entry validate. TODO(app-search-entry-query-fallback-removal): remove once the query-only path is no longer needed by existing recipes.",
+      consumer_signal_key: "focusTextInput.consumer",
+      candidate_id_signal_key: "focusTextInput.candidateLocalId",
+    }),
+    NATIVE_TEXT_CANONICAL_TAXONOMY_ID => Some(PromotedCandidateRuntimeContract {
+      candidate_input_key: "focus_candidate",
+      candidate_note: "Validate injects the promoted native-text contract::Candidate here so debug.focusTextInput can consume the typed target without reopening app-only schema.",
+      fallback_input_key: Some("focus_query"),
+      fallback_note: "Legacy fallback for native-text validate. TODO(app-native-text-query-fallback-removal): remove once the query-only path is no longer needed by existing recipes.",
+      consumer_signal_key: "focusTextInput.consumer",
+      candidate_id_signal_key: "focusTextInput.candidateLocalId",
+    }),
+    WINDOW_ACTION_TAXONOMY_ID => Some(PromotedCandidateRuntimeContract {
+      candidate_input_key: "click_candidate",
+      candidate_note: "Validate injects the promoted window-action contract::Candidate here so debug.clickWindowPoint can consume the typed target without reopening app-only schema.",
+      fallback_input_key: None,
+      fallback_note: "",
+      consumer_signal_key: "clickWindowPoint.consumer",
+      candidate_id_signal_key: "clickWindowPoint.candidateLocalId",
+    }),
+    RESULT_SELECTION_TAXONOMY_ID => Some(PromotedCandidateRuntimeContract {
+      candidate_input_key: "click_candidate",
+      candidate_note: "Validate injects the promoted result-selection contract::Candidate here so debug.clickWindowText can consume the typed OCR anchor target without reopening app-only schema.",
+      fallback_input_key: Some("anchor_text"),
+      fallback_note: "Legacy fallback for result-selection validate. TODO(app-result-selection-anchor-fallback-removal): remove once the query-only path is no longer needed by existing recipes.",
+      consumer_signal_key: "clickWindowText.consumer",
+      candidate_id_signal_key: "clickWindowText.candidateLocalId",
+    }),
     _ => None,
   }
 }
@@ -1432,7 +1444,7 @@ fn classify_successful_validation_outcome(
   // through debug.axFocusTextInput's promoted consumer signals, but recipe/app
   // adoption still needs to move the real consumer surface off the legacy
   // pointer-warp focus path where appropriate.
-  if taxonomy_id == "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text" {
+  if is_native_text_taxonomy_id(taxonomy_id) {
     return match observed_consumer {
       Some("contract-candidate") => SuccessfulValidationOutcome {
         status: AppValidationStatus::Validated,
@@ -1771,6 +1783,20 @@ mod tests {
       strategy.taxonomy_id,
       "search-entry.ax-text-input.clipboard-submit.capture-evidence"
     );
+  }
+
+  #[test]
+  fn recommended_native_text_strategy_uses_ax_backed_taxonomy_id() {
+    let strategy = recommended_strategy(
+      "native-text",
+      "ax-text",
+      "ax-perform-action-clipboard-paste",
+      "verifyAxText",
+      AssessmentStatus::Candidate,
+      "test rationale",
+    )
+    .expect("taxonomy should be valid");
+    assert_eq!(strategy.taxonomy_id, NATIVE_TEXT_CANONICAL_TAXONOMY_ID);
   }
 
   #[test]
@@ -2144,9 +2170,7 @@ mod tests {
 
   #[test]
   fn native_text_distillation_template_validates() {
-    let analysis = sample_analysis_with_strategy(
-      "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text",
-    );
+    let analysis = sample_analysis_with_strategy(NATIVE_TEXT_CANONICAL_TAXONOMY_ID);
     let candidate_shape =
       build_distilled_candidate_shape(&analysis, &analysis.recommended_strategies[0].taxonomy_id);
     let recipe = render_native_text_candidate_recipe(&analysis, &candidate_shape)
@@ -2164,9 +2188,7 @@ mod tests {
 
   #[test]
   fn native_text_distillation_template_keeps_query_scaffold_without_promotion() {
-    let analysis = sample_analysis_with_strategy(
-      "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text",
-    );
+    let analysis = sample_analysis_with_strategy(NATIVE_TEXT_CANONICAL_TAXONOMY_ID);
     let candidate_shape =
       build_distilled_candidate_shape(&analysis, &analysis.recommended_strategies[0].taxonomy_id);
     let recipe = render_native_text_candidate_recipe(&analysis, &candidate_shape)
@@ -2219,7 +2241,7 @@ mod tests {
     let analysis = sample_promotable_ax_focus_analysis(
       "native-text",
       "native-text-focus-ax",
-      "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text",
+      NATIVE_TEXT_CANONICAL_TAXONOMY_ID,
       "Editor",
       "Sample candidate satisfies the v0 native-text promotion seam.",
     );
@@ -2227,7 +2249,7 @@ mod tests {
       build_distilled_candidate_shape(&analysis, &analysis.recommended_strategies[0].taxonomy_id);
     let promoted_candidate = promoted_candidate_for_candidate_shape(
       &analysis,
-      "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text",
+      NATIVE_TEXT_CANONICAL_TAXONOMY_ID,
       &candidate_shape,
     )
     .expect("native-text candidate should promote");
@@ -2321,7 +2343,7 @@ mod tests {
     let analysis = sample_promotable_ax_focus_analysis(
       "native-text",
       "native-text-focus-ax",
-      "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text",
+      NATIVE_TEXT_CANONICAL_TAXONOMY_ID,
       "Editor",
       "Sample candidate satisfies the v0 native-text promotion seam.",
     );
@@ -2329,7 +2351,7 @@ mod tests {
       build_distilled_candidate_shape(&analysis, &analysis.recommended_strategies[0].taxonomy_id);
     let promoted_candidate = promoted_candidate_for_candidate_shape(
       &analysis,
-      "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text",
+      NATIVE_TEXT_CANONICAL_TAXONOMY_ID,
       &candidate_shape,
     )
     .expect("native-text candidate should promote");
@@ -2348,10 +2370,8 @@ mod tests {
       .signal_contains
       .insert("focusTextInput.debug".to_string(), "candidate".to_string());
     step.expect.artifact_count_at_least = Some(1);
-    let contract = promoted_candidate_runtime_contract(
-      "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text",
-    )
-    .expect("native-text contract should exist");
+    let contract = promoted_candidate_runtime_contract(NATIVE_TEXT_CANONICAL_TAXONOMY_ID)
+      .expect("native-text contract should exist");
 
     enforce_promoted_candidate_consumer_expectations(&mut manifest, &contract, &promoted_candidate);
 
@@ -2372,7 +2392,7 @@ mod tests {
     let analysis = sample_promotable_ax_focus_analysis(
       "native-text",
       "native-text-focus-ax",
-      "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text",
+      NATIVE_TEXT_CANONICAL_TAXONOMY_ID,
       "Editor",
       "Sample candidate satisfies the v0 native-text promotion seam.",
     );
@@ -2380,7 +2400,7 @@ mod tests {
       build_distilled_candidate_shape(&analysis, &analysis.recommended_strategies[0].taxonomy_id);
     let promoted_candidate = promoted_candidate_for_candidate_shape(
       &analysis,
-      "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text",
+      NATIVE_TEXT_CANONICAL_TAXONOMY_ID,
       &candidate_shape,
     )
     .expect("native-text candidate should promote");
@@ -2389,10 +2409,8 @@ mod tests {
         .expect("candidate recipe should render"),
     )
     .expect("candidate recipe should parse");
-    let contract = promoted_candidate_runtime_contract(
-      "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text",
-    )
-    .expect("native-text contract should exist");
+    let contract = promoted_candidate_runtime_contract(NATIVE_TEXT_CANONICAL_TAXONOMY_ID)
+      .expect("native-text contract should exist");
 
     enforce_promoted_candidate_consumer_expectations(&mut manifest, &contract, &promoted_candidate);
 
@@ -3321,17 +3339,15 @@ mod tests {
     let analysis = sample_promotable_ax_focus_analysis(
       "native-text",
       "native-text-focus-ax",
-      "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text",
+      NATIVE_TEXT_CANONICAL_TAXONOMY_ID,
       "Editor",
       "Sample candidate satisfies the v0 native-text promotion seam.",
     );
-    let candidate_shape = build_distilled_candidate_shape(
-      &analysis,
-      "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text",
-    );
+    let candidate_shape =
+      build_distilled_candidate_shape(&analysis, NATIVE_TEXT_CANONICAL_TAXONOMY_ID);
     let promoted = promoted_candidate_for_candidate_shape(
       &analysis,
-      "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text",
+      NATIVE_TEXT_CANONICAL_TAXONOMY_ID,
       &candidate_shape,
     )
     .expect("native-text candidate should promote");
@@ -3348,6 +3364,28 @@ mod tests {
       promoted.evidence.artifact_ref.artifact_id.as_str(),
       "artifact_0001"
     );
+  }
+
+  #[test]
+  fn legacy_native_text_taxonomy_alias_still_promotes_candidate() {
+    let analysis = sample_promotable_ax_focus_analysis(
+      "native-text",
+      "native-text-focus-ax",
+      NATIVE_TEXT_LEGACY_TAXONOMY_ID,
+      "Editor",
+      "Sample legacy native-text taxonomy still maps to the v0 promotion seam.",
+    );
+    let candidate_shape =
+      build_distilled_candidate_shape(&analysis, NATIVE_TEXT_CANONICAL_TAXONOMY_ID);
+    let promoted = promoted_candidate_for_candidate_shape(
+      &analysis,
+      NATIVE_TEXT_LEGACY_TAXONOMY_ID,
+      &candidate_shape,
+    )
+    .expect("legacy native-text taxonomy should still promote");
+
+    assert_eq!(promoted.candidate_local_id, "native-text-focus-ax");
+    assert_eq!(promoted.kind, "native_text");
   }
 
   #[test]
@@ -3509,9 +3547,7 @@ mod tests {
     let recipe_path = root.join("candidate.recipe.json");
     let case_matrix_path = root.join("candidate.cases.json");
 
-    let mut analysis = sample_analysis_with_strategy(
-      "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text",
-    );
+    let mut analysis = sample_analysis_with_strategy(NATIVE_TEXT_CANONICAL_TAXONOMY_ID);
     analysis.probe_path = root.join("missing-probe.json");
     write_pretty_json(&analysis_path, &analysis).expect("analysis should write");
 
@@ -3526,7 +3562,7 @@ mod tests {
       app_identity: analysis.app_identity.clone(),
       candidates: vec![AppDistilledCandidate {
         recipe_id: "test.recorded.skill".to_string(),
-        taxonomy_id: "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text".to_string(),
+        taxonomy_id: NATIVE_TEXT_CANONICAL_TAXONOMY_ID.to_string(),
         status: AssessmentStatus::Candidate,
         rationale: "test".to_string(),
         suggested_annotation_ids: Vec::new(),
@@ -3586,9 +3622,7 @@ mod tests {
     let recipe_path = root.join("candidate.recipe.json");
     let case_matrix_path = root.join("candidate.cases.json");
 
-    let mut analysis = sample_analysis_with_strategy(
-      "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text",
-    );
+    let mut analysis = sample_analysis_with_strategy(NATIVE_TEXT_CANONICAL_TAXONOMY_ID);
     analysis.probe_path = root.join("missing-probe.json");
     write_pretty_json(&analysis_path, &analysis).expect("analysis should write");
 
@@ -3605,7 +3639,7 @@ mod tests {
       app_identity: analysis.app_identity.clone(),
       candidates: vec![AppDistilledCandidate {
         recipe_id: "test.recorded.skill".to_string(),
-        taxonomy_id: "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text".to_string(),
+        taxonomy_id: NATIVE_TEXT_CANONICAL_TAXONOMY_ID.to_string(),
         status: AssessmentStatus::Candidate,
         rationale: "test".to_string(),
         suggested_annotation_ids: Vec::new(),
@@ -4060,7 +4094,7 @@ mod tests {
     let analysis = sample_promotable_ax_focus_analysis(
       "native-text",
       "native-text-focus-ax",
-      "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text",
+      NATIVE_TEXT_CANONICAL_TAXONOMY_ID,
       "Editor",
       "Sample candidate satisfies the v0 native-text promotion seam.",
     );
@@ -4086,13 +4120,11 @@ mod tests {
     )
     .expect("candidate matrix should write");
 
-    let candidate_shape = build_distilled_candidate_shape(
-      &analysis,
-      "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text",
-    );
+    let candidate_shape =
+      build_distilled_candidate_shape(&analysis, NATIVE_TEXT_CANONICAL_TAXONOMY_ID);
     let promoted_candidate = promoted_candidate_for_candidate_shape(
       &analysis,
-      "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text",
+      NATIVE_TEXT_CANONICAL_TAXONOMY_ID,
       &candidate_shape,
     )
     .expect("native-text candidate should promote");
@@ -4103,7 +4135,7 @@ mod tests {
       app_identity: analysis.app_identity.clone(),
       candidates: vec![AppDistilledCandidate {
         recipe_id: "test.recorded.skill".to_string(),
-        taxonomy_id: "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text".to_string(),
+        taxonomy_id: NATIVE_TEXT_CANONICAL_TAXONOMY_ID.to_string(),
         status: AssessmentStatus::Candidate,
         rationale: "test".to_string(),
         suggested_annotation_ids: vec!["native-text-focus-ax".to_string()],
@@ -4168,7 +4200,7 @@ mod tests {
     let analysis = sample_promotable_ax_focus_analysis(
       "native-text",
       "native-text-focus-ax",
-      "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text",
+      NATIVE_TEXT_CANONICAL_TAXONOMY_ID,
       "Editor",
       "Sample candidate satisfies the v0 native-text promotion seam.",
     );
@@ -4202,7 +4234,7 @@ mod tests {
       app_identity: analysis.app_identity.clone(),
       candidates: vec![AppDistilledCandidate {
         recipe_id: "test.recorded.skill".to_string(),
-        taxonomy_id: "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text".to_string(),
+        taxonomy_id: NATIVE_TEXT_CANONICAL_TAXONOMY_ID.to_string(),
         status: AssessmentStatus::Candidate,
         rationale: "test".to_string(),
         suggested_annotation_ids: vec!["native-text-focus-ax".to_string()],
@@ -4255,7 +4287,7 @@ mod tests {
   #[test]
   fn classify_native_text_ax_focus_contract_without_consumer_signal_stays_candidate() {
     let outcome = classify_successful_validation_outcome(
-      "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text",
+      NATIVE_TEXT_CANONICAL_TAXONOMY_ID,
       1,
       AppVerificationMode::MachineAsserted,
       None,
@@ -4273,7 +4305,7 @@ mod tests {
   #[test]
   fn classify_native_text_contract_candidate_consumer_is_validated() {
     let outcome = classify_successful_validation_outcome(
-      "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text",
+      NATIVE_TEXT_CANONICAL_TAXONOMY_ID,
       1,
       AppVerificationMode::MachineAsserted,
       Some("contract-candidate"),
@@ -4561,7 +4593,7 @@ mod tests {
     let strategy = recommended_strategy(
       "native-text",
       "ax-text",
-      "pointer-focus-clipboard-paste",
+      "ax-perform-action-clipboard-paste",
       "verifyAxText",
       AssessmentStatus::Candidate,
       "test",
@@ -4572,7 +4604,10 @@ mod tests {
       context_candidate_ids: vec!["visible-row-1".to_string()],
       provided_inputs: BTreeMap::new(),
       notes: vec![
-        "No direct candidate shape was available for taxonomy native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text during distill.".to_string(),
+        format!(
+          "No direct candidate shape was available for taxonomy {} during distill.",
+          NATIVE_TEXT_CANONICAL_TAXONOMY_ID
+        ),
         "Context-only candidates were recorded for later review, but they did not project directly into recipe inputs.".to_string(),
       ],
     };
@@ -4595,7 +4630,7 @@ mod tests {
       app_identity: analysis.app_identity.clone(),
       candidates: vec![AppDistilledCandidate {
         recipe_id: "test.recorded.skill".to_string(),
-        taxonomy_id: "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text".to_string(),
+        taxonomy_id: NATIVE_TEXT_CANONICAL_TAXONOMY_ID.to_string(),
         status: AssessmentStatus::Candidate,
         rationale: "test".to_string(),
         suggested_annotation_ids: vec!["visible-row-1".to_string()],
@@ -6293,7 +6328,7 @@ mod tests {
       "strategy": {
         "family": "native-text",
         "grounding": "ax-text",
-        "activation": "pointer-focus-clipboard-paste",
+        "activation": "ax-perform-action-clipboard-paste",
         "verificationContract": "verifyAxText"
       },
       "objective": "test app validation nesting",

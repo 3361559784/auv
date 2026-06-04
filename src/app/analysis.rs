@@ -42,6 +42,16 @@ use super::{
   AppVerificationMode, AppWindowContext, AssessmentStatus,
 };
 
+fn normalized_taxonomy_matches(candidate_taxonomy_id: &str, expected_taxonomy_id: &str) -> bool {
+  match (
+    AppCandidateGroundingTaxonomy::parse(candidate_taxonomy_id),
+    AppCandidateGroundingTaxonomy::parse(expected_taxonomy_id),
+  ) {
+    (Ok(candidate_taxonomy), Ok(expected_taxonomy)) => candidate_taxonomy == expected_taxonomy,
+    _ => candidate_taxonomy_id == expected_taxonomy_id,
+  }
+}
+
 #[derive(Clone, Debug)]
 struct CoordinateReadinessReport {
   ready_for_logical_input: bool,
@@ -327,7 +337,7 @@ pub(crate) fn build_app_analysis(probe_path: &Path, probe: &AppProbe) -> AuvResu
     recommended_strategies.push(recommended_strategy(
       "native-text",
       "ax-text",
-      "pointer-focus-clipboard-paste",
+      "ax-perform-action-clipboard-paste",
       "verifyAxText",
       AssessmentStatus::Candidate,
       "The sampled AX tree contains visible text-bearing nodes, which makes AX-based verification and native-text flows plausible candidates.",
@@ -474,7 +484,7 @@ pub(crate) fn apply_candidate_grounding(
           recipe_app_slug(&analysis.app_identity).to_ascii_uppercase()
         )),
         (
-          AppCandidateGroundingTaxonomy::NativeTextAxTextPointerFocusClipboardPasteVerifyAxText,
+          AppCandidateGroundingTaxonomy::NativeTextAxTextAxPerformActionClipboardPasteVerifyAxText,
           "focus_query",
         ) => {
           if let Some(candidate) = native_text_annotation {
@@ -631,7 +641,7 @@ pub(crate) fn build_annotation_candidates(
       "capture-ax-tree",
       artifact_refs_for_probe_step(probe_steps, "capture-ax-tree"),
       candidate_compatibility(
-        &["native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text"],
+        &["native-text.ax-text.ax-perform-action-clipboard-paste.verify-ax-text"],
         &[],
       ),
       "AX-exposed editable text-surface candidate.",
@@ -900,7 +910,10 @@ fn native_text_candidate_is_action_grade(candidate: &AppSurfaceCandidate) -> boo
       .compatibility
       .direct_taxonomy_ids
       .iter()
-      .any(|value| value == "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text")
+      .any(|value| AppCandidateGroundingTaxonomy::parse(value).is_ok_and(|taxonomy| {
+        taxonomy
+          == AppCandidateGroundingTaxonomy::NativeTextAxTextAxPerformActionClipboardPasteVerifyAxText
+      }))
 }
 
 fn window_action_candidate_is_action_grade(candidate: &AppSurfaceCandidate) -> bool {
@@ -1080,7 +1093,7 @@ pub(crate) fn build_distilled_candidate_shape(
       .compatibility
       .direct_taxonomy_ids
       .iter()
-      .any(|value| value == taxonomy_id)
+      .any(|value| normalized_taxonomy_matches(value, taxonomy_id))
     {
       direct_candidate_ids.push(candidate.candidate_id.clone());
       for (key, value) in &candidate.input_bindings {
@@ -1094,7 +1107,7 @@ pub(crate) fn build_distilled_candidate_shape(
       .compatibility
       .context_taxonomy_ids
       .iter()
-      .any(|value| value == taxonomy_id)
+      .any(|value| normalized_taxonomy_matches(value, taxonomy_id))
     {
       context_candidate_ids.push(candidate.candidate_id.clone());
     }
@@ -1226,7 +1239,8 @@ pub(crate) fn promoted_candidate_for_candidate_shape(
     "search-entry.ax-text-input.clipboard-submit.capture-evidence" => {
       promote_search_entry_candidate(analysis, direct_candidates[0])
     }
-    "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text" => {
+    "native-text.ax-text.ax-perform-action-clipboard-paste.verify-ax-text"
+    | "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text" => {
       promote_native_text_candidate(analysis, direct_candidates[0])
     }
     "window-action.window-point.pointer-click.capture-evidence" => {

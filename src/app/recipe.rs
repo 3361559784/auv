@@ -59,7 +59,7 @@ pub(crate) fn render_candidate_recipe(
     AppCandidateGroundingTaxonomy::SearchEntryAxTextInputClipboardSubmitCaptureEvidence => {
       Ok(render_search_entry_candidate_recipe(analysis))
     }
-    AppCandidateGroundingTaxonomy::NativeTextAxTextPointerFocusClipboardPasteVerifyAxText => {
+    AppCandidateGroundingTaxonomy::NativeTextAxTextAxPerformActionClipboardPasteVerifyAxText => {
       render_native_text_candidate_recipe(analysis, candidate_shape)
     }
     AppCandidateGroundingTaxonomy::ResultSelectionOcrAnchorPointerClickCaptureEvidence => {
@@ -80,7 +80,7 @@ pub(crate) fn render_candidate_case_matrix(
     AppCandidateGroundingTaxonomy::SearchEntryAxTextInputClipboardSubmitCaptureEvidence => Ok(
       render_search_entry_candidate_cases(analysis, candidate_shape),
     ),
-    AppCandidateGroundingTaxonomy::NativeTextAxTextPointerFocusClipboardPasteVerifyAxText => Ok(
+    AppCandidateGroundingTaxonomy::NativeTextAxTextAxPerformActionClipboardPasteVerifyAxText => Ok(
       render_native_text_candidate_cases(analysis, candidate_shape)?,
     ),
     AppCandidateGroundingTaxonomy::ResultSelectionOcrAnchorPointerClickCaptureEvidence => Ok(
@@ -195,7 +195,7 @@ pub(crate) fn render_native_text_candidate_recipe(
   let marker = format!("AUV_{}_MARKER", app_slug.to_ascii_uppercase());
   let promoted_candidate = promoted_candidate_for_candidate_shape(
     analysis,
-    "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text",
+    "native-text.ax-text.ax-perform-action-clipboard-paste.verify-ax-text",
     candidate_shape,
   );
   let focus_candidate_default = promoted_candidate
@@ -472,7 +472,7 @@ pub(crate) fn render_native_text_candidate_cases(
     .unwrap_or_else(|| "TODO_TEXT_SURFACE_QUERY".to_string());
   let promoted_candidate = promoted_candidate_for_candidate_shape(
     analysis,
-    "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text",
+    "native-text.ax-text.ax-perform-action-clipboard-paste.verify-ax-text",
     candidate_shape,
   );
   let focus_candidate_default = promoted_candidate

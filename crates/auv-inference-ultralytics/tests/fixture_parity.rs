@@ -67,10 +67,13 @@ fn balatro_golden_fixtures_are_well_formed() -> Result<(), Box<dyn Error>> {
   Ok(())
 }
 
+// NOTICE: This is a local/gated smoke test, not default CI proof of real model
+// execution. If the Balatro checkout is absent, the test must skip explicitly
+// instead of pretending that workspace `cargo test` validated model inference.
 #[test]
 fn balatro_golden_fixtures_match_ultralytics_detector() -> Result<(), Box<dyn Error>> {
   let balatro_repo = PathBuf::from(BALATRO_ROOT);
-  if !balatro_repo.exists() {
+  if should_skip_balatro_parity(&balatro_repo) {
     eprintln!(
       "skipping Balatro fixture parity; repo root does not exist: {}",
       balatro_repo.display()
@@ -83,6 +86,10 @@ fn balatro_golden_fixtures_match_ultralytics_detector() -> Result<(), Box<dyn Er
   }
 
   Ok(())
+}
+
+fn should_skip_balatro_parity(balatro_repo: &Path) -> bool {
+  !balatro_repo.exists()
 }
 
 fn assert_fixture_matches_detector(
@@ -275,4 +282,12 @@ fn summarize_actual_detections(detections: &[Detection]) -> String {
     })
     .collect::<Vec<_>>()
     .join("\n")
+}
+
+#[test]
+fn parity_skip_is_keyed_to_missing_local_repo() {
+  let missing = Path::new("/definitely-missing-auv-balatro-fixture-root");
+
+  assert!(should_skip_balatro_parity(missing));
+  assert!(!should_skip_balatro_parity(&balatro_fixture_dir()));
 }

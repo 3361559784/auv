@@ -135,7 +135,12 @@ pub(crate) fn click_default_screen_restore(
 }
 
 pub(crate) fn playlist_sidebar_bottom(window_size: auv_driver::Size) -> f64 {
-  (window_size.height - 82.0).clamp(0.0, window_size.height)
+  // Guard against non-positive / NaN heights before clamping. `f64::clamp`
+  // panics on `min > max` (and on NaN bounds), and `(h - 82).clamp(0, h)`
+  // becomes `clamp(_, 0, -h)` when `h < 0`. Treat such windows as having
+  // no usable sidebar area.
+  let height = window_size.height.max(0.0);
+  (height - 82.0).clamp(0.0, height)
 }
 
 pub(crate) fn broad_sidebar_probe_bounds(window_size: auv_driver::Size) -> ViewBounds {
@@ -205,4 +210,30 @@ pub(crate) fn detect_blocking_modal(recognition: &TextRecognition) -> Option<Par
     message: "blocking open or save dialog markers were detected".to_string(),
     node_id: None,
   })
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use auv_driver::Size;
+
+  #[test]
+  fn playlist_sidebar_bottom_subtracts_panel_height_when_window_has_room() {
+    assert_eq!(playlist_sidebar_bottom(Size::new(800.0, 600.0)), 518.0);
+  }
+
+  #[test]
+  fn playlist_sidebar_bottom_clamps_to_zero_when_window_smaller_than_panel() {
+    assert_eq!(playlist_sidebar_bottom(Size::new(800.0, 40.0)), 0.0);
+  }
+
+  #[test]
+  fn playlist_sidebar_bottom_returns_zero_when_window_height_is_zero() {
+    assert_eq!(playlist_sidebar_bottom(Size::new(800.0, 0.0)), 0.0);
+  }
+
+  #[test]
+  fn playlist_sidebar_bottom_returns_zero_when_window_height_is_negative() {
+    assert_eq!(playlist_sidebar_bottom(Size::new(800.0, -10.0)), 0.0);
+  }
 }

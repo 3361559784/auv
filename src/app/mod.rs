@@ -1430,6 +1430,11 @@ fn classify_successful_validation_outcome(
   // TODO(app-validate-consumer-status-v1): extend consumer-aware success
   // classification to the other promoted consumer seams once the owner asks for
   // the same tightening beyond native-text.
+  // TODO(app-native-text-ax-focus-consumer-v1): do not treat
+  // debug.axFocusTextInput's AX focus contract as a promoted consumer seam
+  // until that command emits explicit consumer/candidate-id signals for
+  // promoted candidate usage. Today it proves stronger query-time focus
+  // behavior, not end-to-end promoted consumer consumption.
   if taxonomy_id == "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text" {
     return match observed_consumer {
       Some("contract-candidate") => SuccessfulValidationOutcome {
@@ -2173,6 +2178,7 @@ mod tests {
       .iter()
       .find(|step| step.id == "focus-text-surface")
       .expect("focus-text-surface step should exist");
+    assert_eq!(step.command_id, "debug.focusTextInput");
     assert_eq!(
       step.expect.signal_equals.get("focusTextInput.consumer"),
       Some(&"query".to_string())
@@ -4015,6 +4021,24 @@ mod tests {
     );
 
     let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn classify_native_text_ax_focus_contract_without_consumer_signal_stays_candidate() {
+    let outcome = classify_successful_validation_outcome(
+      "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text",
+      1,
+      AppVerificationMode::MachineAsserted,
+      None,
+      true,
+    );
+
+    assert_eq!(outcome.status, AppValidationStatus::Candidate);
+    assert!(
+      outcome
+        .rationale
+        .contains("did not observe a native-text consumer signal")
+    );
   }
 
   #[test]

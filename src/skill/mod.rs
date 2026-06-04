@@ -2074,6 +2074,33 @@ mod tests {
   }
 
   #[test]
+  fn notes_create_and_verify_note_v2_recipe_requires_ax_focus_contract() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+      .join("recipes/macos/notes/create-and-verify-note.v2.json");
+    let raw = fs::read_to_string(&path).expect("recipe file should read");
+    let manifest: SkillManifest = serde_json::from_str(&raw).expect("recipe should parse");
+
+    validate_skill_manifest(&manifest).expect("recipe should validate");
+    let step = manifest
+      .steps
+      .iter()
+      .find(|step| step.id == "focus-body")
+      .expect("focus-body step should exist");
+    assert_eq!(
+      step.expect.signal_equals.get("cursorDisturbance"),
+      Some(&"none".to_string())
+    );
+    assert_eq!(
+      step.expect.signal_equals.get("focusMechanism"),
+      Some(&"ax-attribute".to_string())
+    );
+    assert_eq!(
+      step.expect.signal_equals.get("setAttribute"),
+      Some(&"AXFocused".to_string())
+    );
+  }
+
+  #[test]
   fn qqmusic_search_ocr_anchor_recipe_requires_query_focus_consumer() {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
       .join("recipes/macos/qqmusic/search-ocr-anchor.v0.json");
@@ -2123,6 +2150,41 @@ mod tests {
         .signal_equals
         .get("clickWindowText.consumer"),
       Some(&"query".to_string())
+    );
+  }
+
+  #[test]
+  fn dual_cursor_press_notes_recipe_requires_ax_focus_overlay_contract() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+      .join("recipes/macos/demo/dual-cursor-press-notes.v0.json");
+    let raw = fs::read_to_string(&path).expect("recipe file should read");
+    let manifest: SkillManifest = serde_json::from_str(&raw).expect("recipe should parse");
+
+    validate_skill_manifest(&manifest).expect("recipe should validate");
+    let step = manifest
+      .steps
+      .iter()
+      .find(|step| step.id == "focus-body")
+      .expect("focus-body step should exist");
+    assert_eq!(
+      step.expect.signal_equals.get("cursorDisturbance"),
+      Some(&"none".to_string())
+    );
+    assert_eq!(
+      step.expect.signal_equals.get("focusMechanism"),
+      Some(&"ax-attribute".to_string())
+    );
+    assert_eq!(
+      step.expect.signal_equals.get("setAttribute"),
+      Some(&"AXFocused".to_string())
+    );
+    assert_eq!(
+      step.expect.signal_equals.get("overlayPresentation"),
+      Some(&"dual-cursor-visual-only".to_string())
+    );
+    assert_eq!(
+      step.expect.signal_equals.get("dualCursor"),
+      Some(&"true".to_string())
     );
   }
 

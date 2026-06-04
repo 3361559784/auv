@@ -104,6 +104,13 @@ pub(crate) fn focus_text_input(call: &DriverCall) -> AuvResult<DriverResponse> {
   } else {
     signals.insert("focusTextInput.consumer".to_string(), "query".to_string());
   }
+  if let Some(window_number) = target.unverified_window_number {
+    signals.insert(
+      "focusTextInput.windowNumberPrecondition".to_string(),
+      "declared_but_unverified".to_string(),
+    );
+    notes.push(format!("windowNumberDeclaredButUnverified={window_number}"));
+  }
 
   Ok(DriverResponse {
     summary: if matched.title.is_empty() && matched.description.is_empty() {
@@ -145,6 +152,7 @@ struct FocusTextTarget<'a> {
   query: String,
   matched: &'a ObservedAxNode,
   consumed_candidate_local_id: Option<String>,
+  unverified_window_number: Option<i64>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -203,10 +211,12 @@ fn resolve_focus_text_target<'a>(
         candidate.candidate_local_id
       )
     })?;
+    let unverified_window_number = unverified_window_number(candidate.expected_window.as_ref());
     return Ok(FocusTextTarget {
       query: candidate.query,
       matched,
       consumed_candidate_local_id: Some(candidate.candidate_local_id),
+      unverified_window_number,
     });
   }
 
@@ -218,6 +228,7 @@ fn resolve_focus_text_target<'a>(
     query: query.to_string(),
     matched,
     consumed_candidate_local_id: None,
+    unverified_window_number: None,
   })
 }
 
@@ -409,14 +420,17 @@ fn focus_text_candidate_matches_window(
     }
   }
 
-  if expected_window.window_number.is_some() {
-    // TODO(app-candidate-window-number-v1): enforce exact AX window identity once
-    // AX snapshots carry a stable window number. Current AX snapshot contract has
-    // bundle/title only, so window_number remains a declared-but-unchecked part of
-    // the precondition for this slice.
-  }
-
+  // TODO(app-candidate-window-number-v1): enforce exact AX window identity once
+  // AX snapshots carry a stable window number. Until then the value is surfaced
+  // upstream via `unverified_window_number` so consumers see the silent-trust
+  // gap instead of inferring it from a missing check.
   true
+}
+
+fn unverified_window_number(
+  expected_window: Option<&crate::contract::WindowRefPrecondition>,
+) -> Option<i64> {
+  expected_window.and_then(|window| window.window_number)
 }
 
 fn non_empty_trimmed(raw: &str) -> Option<String> {
@@ -1785,6 +1799,43 @@ mod tests {
       .expect_err("mismatched window_ref title should reject candidate");
 
     assert!(error.contains("no matching text input-like node found"));
+  }
+
+  #[test]
+  fn resolve_focus_text_target_surfaces_unverified_window_number_precondition() {
+    let snapshot = sample_focus_snapshot();
+    let candidate_json = {
+      let mut value: serde_json::Value =
+        serde_json::from_str(&sample_focus_candidate_json()).expect("parse fixture");
+      value["liveness"]["preconditions"]["window_ref"]["window_number"] = serde_json::json!(42);
+      serde_json::to_string(&value).expect("serialize patched fixture")
+    };
+
+    let resolved = resolve_focus_text_target(&snapshot, Some(&candidate_json), None)
+      .expect("candidate should resolve");
+
+    assert_eq!(resolved.unverified_window_number, Some(42));
+  }
+
+  #[test]
+  fn resolve_focus_text_target_does_not_surface_window_number_when_precondition_omits_it() {
+    let snapshot = sample_focus_snapshot();
+    let candidate_json = sample_focus_candidate_json();
+
+    let resolved = resolve_focus_text_target(&snapshot, Some(&candidate_json), None)
+      .expect("candidate should resolve");
+
+    assert_eq!(resolved.unverified_window_number, None);
+  }
+
+  #[test]
+  fn resolve_focus_text_target_does_not_surface_window_number_on_query_only_path() {
+    let snapshot = sample_focus_snapshot();
+
+    let resolved = resolve_focus_text_target(&snapshot, None, Some("Search"))
+      .expect("query path should resolve");
+
+    assert_eq!(resolved.unverified_window_number, None);
   }
 
   #[test]

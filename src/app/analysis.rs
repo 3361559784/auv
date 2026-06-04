@@ -1252,6 +1252,26 @@ pub(crate) fn promoted_candidate_for_candidate_shape(
   }
 }
 
+fn observed_window_title(analysis: &AppAnalysis) -> Option<String> {
+  non_empty_trimmed(&analysis.window_context.frontmost_window_title)
+    .or_else(|| non_empty_trimmed(&analysis.window_context.primary_window_title))
+}
+
+fn unenforced_window_title_substring() -> Option<String> {
+  // NOTICE(app-candidate-window-title): Document-style macOS apps (TextEdit,
+  // Pages, browsers with tab-titled windows, etc.) mutate or localize their
+  // window title between probe and validate while the underlying AX target
+  // stays stable at the same role/path/bounds. Enforcing the probe-time title
+  // as a `window_title_substring` precondition then drops the candidate at
+  // `focus_text_candidate_matches_window` and the case-matrix surfaces a
+  // misleading "no structured signals" error. Keep the observed title in
+  // candidate evidence (see `observed_window_title`) but do not enforce it
+  // here until v1 carries a stable AX window identity such as a verified
+  // window number — see the matching TODO at
+  // src/driver/macos/control/ax.rs around `focus_text_candidate_matches_window`.
+  None
+}
+
 fn promote_search_entry_candidate(
   analysis: &AppAnalysis,
   candidate: &AppSurfaceCandidate,
@@ -1313,7 +1333,7 @@ fn promote_search_entry_candidate(
     })),
     "window_context": {
       "app_bundle_id": analysis.app_identity.bundle_id,
-      "window_title": analysis.window_context.primary_window_title,
+      "window_title": observed_window_title(analysis),
     }
   });
 
@@ -1335,7 +1355,7 @@ fn promote_search_entry_candidate(
       preconditions: LivenessPreconditions {
         window_ref: Some(WindowRefPrecondition {
           app_bundle_id: app_bundle_id.to_string(),
-          window_title_substring: non_empty_trimmed(&analysis.window_context.primary_window_title),
+          window_title_substring: unenforced_window_title_substring(),
           window_number: None,
         }),
         anchor_recheck: Some(AnchorRecheckPrecondition {
@@ -1424,7 +1444,7 @@ fn promote_native_text_candidate(
     })),
     "window_context": {
       "app_bundle_id": analysis.app_identity.bundle_id,
-      "window_title": analysis.window_context.primary_window_title,
+      "window_title": observed_window_title(analysis),
     }
   });
 
@@ -1446,7 +1466,7 @@ fn promote_native_text_candidate(
       preconditions: LivenessPreconditions {
         window_ref: Some(WindowRefPrecondition {
           app_bundle_id: app_bundle_id.to_string(),
-          window_title_substring: non_empty_trimmed(&analysis.window_context.primary_window_title),
+          window_title_substring: unenforced_window_title_substring(),
           window_number: None,
         }),
         anchor_recheck: Some(AnchorRecheckPrecondition {
@@ -1517,7 +1537,7 @@ fn promote_window_action_candidate(
     },
     "window_context": {
       "app_bundle_id": analysis.app_identity.bundle_id,
-      "window_title": analysis.window_context.primary_window_title,
+      "window_title": observed_window_title(analysis),
       "primary_window_bounds": {
         "x": primary_window_bounds.x,
         "y": primary_window_bounds.y,
@@ -1545,7 +1565,7 @@ fn promote_window_action_candidate(
       preconditions: LivenessPreconditions {
         window_ref: Some(WindowRefPrecondition {
           app_bundle_id: app_bundle_id.to_string(),
-          window_title_substring: non_empty_trimmed(&analysis.window_context.primary_window_title),
+          window_title_substring: unenforced_window_title_substring(),
           window_number: None,
         }),
         anchor_recheck: None,

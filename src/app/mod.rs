@@ -3440,6 +3440,127 @@ mod tests {
   }
 
   #[test]
+  fn promote_search_entry_candidate_leaves_window_title_substring_unenforced() {
+    let mut analysis = sample_promotable_ax_focus_analysis(
+      "search-entry",
+      "search-entry-focus-ax",
+      SEARCH_ENTRY_TAXONOMY_ID,
+      "Search",
+      "Sample candidate satisfies the v0 search-entry promotion seam.",
+    );
+    analysis.window_context.frontmost_window_title = "Untitled 5".to_string();
+    analysis.window_context.primary_window_title = "未命名3".to_string();
+    let candidate_shape = build_distilled_candidate_shape(&analysis, SEARCH_ENTRY_TAXONOMY_ID);
+    let promoted = promoted_candidate_for_candidate_shape(
+      &analysis,
+      SEARCH_ENTRY_TAXONOMY_ID,
+      &candidate_shape,
+    )
+    .expect("search-entry candidate should promote");
+
+    let window_ref = promoted
+      .liveness
+      .preconditions
+      .window_ref
+      .as_ref()
+      .expect("window_ref precondition should exist");
+    assert_eq!(
+      window_ref.window_title_substring, None,
+      "doc-style apps mutate or localize window titles between probe and validate; window_title_substring must stay unenforced",
+    );
+    let observed_title = promoted
+      .evidence
+      .observation
+      .get("window_context")
+      .and_then(|context| context.get("window_title"))
+      .and_then(|title| title.as_str());
+    assert_eq!(
+      observed_title,
+      Some("Untitled 5"),
+      "observation should record the frontmost window title as the observed signal",
+    );
+  }
+
+  #[test]
+  fn promote_native_text_candidate_leaves_window_title_substring_unenforced() {
+    let mut analysis = sample_promotable_ax_focus_analysis(
+      "native-text",
+      "native-text-focus-ax",
+      NATIVE_TEXT_CANONICAL_TAXONOMY_ID,
+      "Editor",
+      "Sample candidate satisfies the v0 native-text promotion seam.",
+    );
+    analysis.window_context.frontmost_window_title = "Untitled 5".to_string();
+    analysis.window_context.primary_window_title = "未命名3".to_string();
+    let candidate_shape =
+      build_distilled_candidate_shape(&analysis, NATIVE_TEXT_CANONICAL_TAXONOMY_ID);
+    let promoted = promoted_candidate_for_candidate_shape(
+      &analysis,
+      NATIVE_TEXT_CANONICAL_TAXONOMY_ID,
+      &candidate_shape,
+    )
+    .expect("native-text candidate should promote");
+
+    let window_ref = promoted
+      .liveness
+      .preconditions
+      .window_ref
+      .as_ref()
+      .expect("window_ref precondition should exist");
+    assert_eq!(
+      window_ref.window_title_substring, None,
+      "doc-style apps mutate or localize window titles between probe and validate; window_title_substring must stay unenforced",
+    );
+    let observed_title = promoted
+      .evidence
+      .observation
+      .get("window_context")
+      .and_then(|context| context.get("window_title"))
+      .and_then(|title| title.as_str());
+    assert_eq!(
+      observed_title,
+      Some("Untitled 5"),
+      "observation should record the frontmost window title as the observed signal",
+    );
+  }
+
+  #[test]
+  fn promote_window_action_candidate_leaves_window_title_substring_unenforced() {
+    let mut analysis = sample_promotable_window_action_analysis();
+    analysis.window_context.frontmost_window_title = "Untitled 5".to_string();
+    analysis.window_context.primary_window_title = "未命名3".to_string();
+    let candidate_shape = build_distilled_candidate_shape(&analysis, WINDOW_ACTION_TAXONOMY_ID);
+    let promoted = promoted_candidate_for_candidate_shape(
+      &analysis,
+      WINDOW_ACTION_TAXONOMY_ID,
+      &candidate_shape,
+    )
+    .expect("window-action candidate should promote");
+
+    let window_ref = promoted
+      .liveness
+      .preconditions
+      .window_ref
+      .as_ref()
+      .expect("window_ref precondition should exist");
+    assert_eq!(
+      window_ref.window_title_substring, None,
+      "doc-style apps mutate or localize window titles between probe and validate; window_title_substring must stay unenforced",
+    );
+    let observed_title = promoted
+      .evidence
+      .observation
+      .get("window_context")
+      .and_then(|context| context.get("window_title"))
+      .and_then(|title| title.as_str());
+    assert_eq!(
+      observed_title,
+      Some("Untitled 5"),
+      "observation should record the frontmost window title as the observed signal",
+    );
+  }
+
+  #[test]
   fn apply_candidate_grounding_marks_unresolved_search_entry_without_search_signal() {
     let analysis =
       sample_analysis_with_strategy("search-entry.ax-text-input.clipboard-submit.capture-evidence");

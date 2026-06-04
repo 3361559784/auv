@@ -148,10 +148,13 @@ pub(crate) fn playlist_sidebar_bottom(window_size: auv_driver::Size) -> f64 {
 }
 
 pub(crate) fn broad_sidebar_probe_bounds(window_size: auv_driver::Size) -> ViewBounds {
-  let width = (window_size.width * 0.24)
-    .max(280.0)
-    .min(window_size.width * 0.42);
-  ViewBounds::new(0.0, 0.0, width, playlist_sidebar_bottom(window_size))
+  // Floor window width at 0 before computing the probe. The
+  // `(.max(280)).min(width * 0.42)` shape silently yields a negative probe
+  // width when the input width is negative, which corrupts downstream
+  // ViewBounds. Same family as the y-clamp fix in `detect_sidebar_region`.
+  let width = window_size.width.max(0.0);
+  let probe_width = (width * 0.24).max(280.0).min(width * 0.42);
+  ViewBounds::new(0.0, 0.0, probe_width, playlist_sidebar_bottom(window_size))
 }
 
 pub(crate) fn fallback_playlist_sidebar_region(window_size: auv_driver::Size) -> ViewRegionRecord {
@@ -160,12 +163,17 @@ pub(crate) fn fallback_playlist_sidebar_region(window_size: auv_driver::Size) ->
   // "我喜欢的音乐". Start near the observed playlist section band instead;
   // replace this with AX/sidebar-scrollbar evidence when that preflight
   // contract is approved.
-  let y = (window_size.height * 0.30)
+  // Floor window dimensions at 0 before computing fallback bounds. The
+  // `(.max(constant)).min(dim * ratio)` shape silently emits negative y /
+  // width values when the underlying dimension is negative.
+  let usable_height = window_size.height.max(0.0);
+  let usable_width = window_size.width.max(0.0);
+  let y = (usable_height * 0.30)
     .max(220.0)
-    .min(window_size.height * 0.55);
-  let width = (window_size.width * 0.24)
+    .min(usable_height * 0.55);
+  let width = (usable_width * 0.24)
     .max(280.0)
-    .min(window_size.width * 0.42);
+    .min(usable_width * 0.42);
   sidebar_region_record(ViewBounds::new(
     0.0,
     y,

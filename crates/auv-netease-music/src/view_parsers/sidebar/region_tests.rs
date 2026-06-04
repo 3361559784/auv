@@ -1,6 +1,6 @@
 use crate::view_parsers::sidebar::region::{
-  DefaultScreenRestoreReason, detect_blocking_modal, detect_default_screen_restore,
-  detect_sidebar_region, fallback_playlist_sidebar_region,
+  DefaultScreenRestoreReason, broad_sidebar_probe_bounds, detect_blocking_modal,
+  detect_default_screen_restore, detect_sidebar_region, fallback_playlist_sidebar_region,
 };
 use crate::view_parsers::sidebar::test_support::fake_recognition;
 use crate::{RatioRect, ViewBounds};
@@ -116,6 +116,41 @@ fn fallback_playlist_sidebar_region_starts_below_library_rows() {
   assert!(bounds.y > 0.0);
   assert!(bounds.height > 0.0);
   assert!(bounds.width >= 280.0);
+}
+
+#[test]
+fn fallback_playlist_sidebar_region_handles_negative_window_without_silent_negative() {
+  let region = fallback_playlist_sidebar_region(auv_driver::Size::new(-10.0, -10.0));
+  let bounds = region.bounds.expect("bounds should still be produced");
+
+  assert!(bounds.x >= 0.0, "x must be ≥ 0, got {}", bounds.x);
+  assert!(bounds.y >= 0.0, "y must be ≥ 0, got {}", bounds.y);
+  assert!(
+    bounds.width >= 0.0,
+    "width must be ≥ 0, got {}",
+    bounds.width
+  );
+  assert!(
+    bounds.height >= 0.0,
+    "height must be ≥ 0, got {}",
+    bounds.height
+  );
+}
+
+#[test]
+fn broad_sidebar_probe_bounds_handles_negative_window_width_without_silent_negative() {
+  let bounds = broad_sidebar_probe_bounds(auv_driver::Size::new(-50.0, 800.0));
+
+  assert!(
+    bounds.width >= 0.0,
+    "probe width must be ≥ 0, got {}",
+    bounds.width
+  );
+  assert!(
+    bounds.height >= 0.0,
+    "probe height must be ≥ 0, got {}",
+    bounds.height
+  );
 }
 
 #[test]

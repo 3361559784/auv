@@ -21,3 +21,4 @@ image.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 auv-driver-macos = { path = "../auv-driver-macos" }
+auv-media-macos = { path = "../auv-media-macos" }

@@ -10,7 +10,9 @@
 #[cfg(target_os = "macos")]
 mod adapter;
 
+pub mod cli;
 mod error;
+pub mod output;
 
 pub use error::MediaError;
 
@@ -132,7 +134,10 @@ mod tests {
     let state = parse_get(json).unwrap();
     assert!(state.present);
     assert!(state.is_playing);
-    assert_eq!(state.source_bundle_id.as_deref(), Some("com.netease.163music"));
+    assert_eq!(
+      state.source_bundle_id.as_deref(),
+      Some("com.netease.163music")
+    );
     assert_eq!(state.title.as_deref(), Some("Song"));
     assert_eq!(state.duration_seconds, Some(200.0));
     assert_eq!(state.elapsed_seconds, Some(12.5));
@@ -142,7 +147,8 @@ mod tests {
 
   #[test]
   fn parse_get_paused_track_is_present_not_playing() {
-    let json = r#"{"bundleIdentifier":"com.google.Chrome","playing":false,"title":"X","playbackRate":0}"#;
+    let json =
+      r#"{"bundleIdentifier":"com.google.Chrome","playing":false,"title":"X","playbackRate":0}"#;
     let state = parse_get(json).unwrap();
     assert!(state.present);
     assert!(!state.is_playing);

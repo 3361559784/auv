@@ -51,10 +51,16 @@ fn ensure_unpacked() -> Result<(PathBuf, PathBuf), MediaError> {
   // concurrent readers never see a half-written cache.
   let staging = cache_root().join(format!("{}.tmp.{}", asset_key(), std::process::id()));
   let _ = std::fs::remove_dir_all(&staging);
-  fs_err(std::fs::create_dir_all(&staging), "create adapter cache dir")?;
+  fs_err(
+    std::fs::create_dir_all(&staging),
+    "create adapter cache dir",
+  )?;
 
   let tar_path = staging.join("framework.tar");
-  fs_err(std::fs::write(&tar_path, FRAMEWORK_TAR), "write framework tar")?;
+  fs_err(
+    std::fs::write(&tar_path, FRAMEWORK_TAR),
+    "write framework tar",
+  )?;
   let status = Command::new("/usr/bin/tar")
     .arg("-xf")
     .arg(&tar_path)
@@ -74,7 +80,10 @@ fn ensure_unpacked() -> Result<(PathBuf, PathBuf), MediaError> {
     "write adapter script",
   )?;
 
-  fs_err(std::fs::create_dir_all(cache_root()), "create adapter cache root")?;
+  fs_err(
+    std::fs::create_dir_all(cache_root()),
+    "create adapter cache root",
+  )?;
   if std::fs::rename(&staging, &dir).is_err() {
     // A concurrent process likely won the race; accept its result if valid.
     let _ = std::fs::remove_dir_all(&staging);
@@ -100,13 +109,16 @@ pub(crate) fn run_now_playing_get() -> Result<String, MediaError> {
     .map_err(|error| {
       MediaError::native(
         format!("spawn {PERL}: {error}"),
-        Some("the Swift/Perl toolchain path may be unavailable".to_string()),
+        Some("ensure /usr/bin/perl exists (it ships with macOS)".to_string()),
       )
     })?;
   if !output.status.success() {
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
     return Err(MediaError::native(
-      format!("mediaremote-adapter exited with {}: {stderr}", output.status),
+      format!(
+        "mediaremote-adapter exited with {}: {stderr}",
+        output.status
+      ),
       Some("the adapter may not be entitled to read MediaRemote on this macOS".to_string()),
     ));
   }

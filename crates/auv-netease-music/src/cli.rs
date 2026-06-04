@@ -140,10 +140,16 @@ pub(crate) enum SongsLsTarget {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub(crate) struct NowPlayingCommand {
+  pub output: OutputMode,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Command {
   PlaylistLs(PlaylistCommand),
   PlaylistPlayDailyRecommended(DailyRecommendedPlayCommand),
   PlaylistSongsLs(SongsLsCommand),
+  NowPlaying(NowPlayingCommand),
 }
 
 #[derive(Clone, Debug, Parser)]
@@ -161,6 +167,17 @@ struct CliArgs {
 enum CliSubcommand {
   /// Work with NetEase Cloud Music playlists.
   Playlist(PlaylistArgs),
+  /// Read the system now-playing state (via the macOS media API).
+  #[command(name = "now-playing")]
+  NowPlaying(NowPlayingArgs),
+}
+
+#[derive(Clone, Debug, Args)]
+struct NowPlayingArgs {
+  #[arg(long = "json")]
+  json: bool,
+  #[arg(long = "json-out")]
+  json_out: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, Args)]
@@ -309,7 +326,17 @@ struct PlaylistLsArgs {
 fn command_from_args(parsed: CliArgs) -> Result<Command, String> {
   match parsed.command {
     CliSubcommand::Playlist(args) => parse_playlist(args),
+    CliSubcommand::NowPlaying(args) => parse_now_playing(args),
   }
+}
+
+fn parse_now_playing(args: NowPlayingArgs) -> Result<Command, String> {
+  let output = match args.json_out {
+    Some(path) => OutputMode::JsonFile(path),
+    None if args.json => OutputMode::Json,
+    None => OutputMode::Human,
+  };
+  Ok(Command::NowPlaying(NowPlayingCommand { output }))
 }
 
 fn parse_playlist(args: PlaylistArgs) -> Result<Command, String> {
@@ -519,6 +546,7 @@ pub fn run() -> ExitCode {
     Ok(Command::PlaylistLs(cmd)) => run_playlist(cmd),
     Ok(Command::PlaylistPlayDailyRecommended(cmd)) => run_daily_recommended(cmd),
     Ok(Command::PlaylistSongsLs(cmd)) => run_songs_ls(cmd),
+    Ok(Command::NowPlaying(cmd)) => run_now_playing(cmd),
     Err(error) => {
       if error.starts_with("error:") {
         eprint!("{error}");
@@ -924,6 +952,55 @@ fn run_playlist(cmd: PlaylistCommand) -> ExitCode {
       ExitCode::SUCCESS
     }
   }
+}
+
+#[cfg(target_os = "macos")]
+fn run_now_playing(cmd: NowPlayingCommand) -> ExitCode {
+  let state = match auv_media_macos::now_playing() {
+    Ok(state) => state,
+    Err(error) => {
+      eprintln!("now-playing read failed: {error}");
+      return ExitCode::from(1);
+    }
+  };
+  let output = auv_media_macos::output::build_now_playing_output(&state);
+
+  match &cmd.output {
+    OutputMode::Human => {
+      println!("{}", auv_media_macos::output::render_human_summary(&state));
+      ExitCode::SUCCESS
+    }
+    OutputMode::Json => match serde_json::to_string_pretty(&output) {
+      Ok(json) => {
+        println!("{json}");
+        ExitCode::SUCCESS
+      }
+      Err(error) => {
+        eprintln!("encode failed: {error}");
+        ExitCode::from(1)
+      }
+    },
+    OutputMode::JsonFile(path) => {
+      let json = match serde_json::to_string_pretty(&output) {
+        Ok(json) => json,
+        Err(error) => {
+          eprintln!("encode failed: {error}");
+          return ExitCode::from(1);
+        }
+      };
+      if let Err(error) = std::fs::write(path, json) {
+        eprintln!("failed to write {}: {error}", path.display());
+        return ExitCode::from(1);
+      }
+      ExitCode::SUCCESS
+    }
+  }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn run_now_playing(_cmd: NowPlayingCommand) -> ExitCode {
+  eprintln!("now-playing is only available on macOS");
+  ExitCode::from(1)
 }
 
 fn run_daily_recommended(cmd: DailyRecommendedPlayCommand) -> ExitCode {

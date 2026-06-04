@@ -6,10 +6,11 @@ Status: v0 design spec, updated to the as-built architecture. A new leaf crate
 `auv-media-macos` reads the macOS system now-playing state via the vendored
 `mediaremote-adapter` (built from source), driven through Apple's
 `/usr/bin/perl`. The crate is **lib + binary**: it exposes the capability as a
-library, owns the agent-facing `now-playing-v0` output contract, and ships its
-own `auv-now-playing` binary. The existing `auv-netease-music` CLI gains a
-`now-playing` subcommand that **delegates** to the crate, so both front doors
-emit one identical contract.
+library, owns the agent-facing `now-playing-v0` output contract, and ships an
+`auv-media-macos` binary with `now-playing` (read) plus transport-control
+subcommands. The existing `auv-netease-music` CLI gains a `now-playing`
+subcommand that **delegates** to the crate, so both read front doors emit one
+identical contract.
 
 Audience: owner, reviewers, and any agent (Codex, Claude, others) implementing
 or reviewing the now-playing capability.
@@ -61,7 +62,7 @@ whichever app currently owns the Now Playing slot (NetEase, Spotify, Music, a
 browser tab — all identical). This capability does **not** filter to NetEase;
 it reports whatever is playing and includes the owning app's
 `source_bundle_id` so the caller can decide. The capability is therefore a
-generic crate with its own `auv-now-playing` binary; the netease-music
+generic crate with its own `auv-media-macos` binary; the netease-music
 `now-playing` subcommand is an additional convenience front door (that is the
 existing agent-facing product CLI), not because the read is NetEase-specific.
 
@@ -72,18 +73,18 @@ swift-bridge, no in-process FFI, no native static lib linked into the binary.
 
 ```text
 crates/auv-media-macos/
-  Cargo.toml               // one [[bin]]: auv-now-playing; deps: serde, serde_json, clap
+  Cargo.toml               // one [[bin]]: auv-media-macos; deps: serde, serde_json, clap
   build.rs                 // cmake-builds the vendored framework, tars it into OUT_DIR
   vendor/
     mediaremote-adapter/   // git submodule, pinned to upstream release v0.7.6 (BSD-3)
   src/
-    lib.rs                 // NowPlayingState, pure parse_get(), now_playing()
-    adapter.rs             // (macOS) embed framework+script, unpack to cache, run perl
+    lib.rs                 // NowPlayingState, parse_get(), now_playing(), MediaCommand, send_command(), seek()
+    adapter.rs             // (macOS) embed framework+script, unpack to cache, run perl get/send/seek
     output.rs              // now-playing-v0 contract type + JSON/human builders
-    cli.rs                 // argv -> output mode, run() -> ExitCode (the binary)
+    cli.rs                 // subcommands (now-playing + transport/seek), run() -> ExitCode
     error.rs               // MediaError
     bin/
-      auv-now-playing.rs   // thin main -> auv_media_macos::cli::run()
+      auv-media-macos.rs   // thin main -> auv_media_macos::cli::run()
 ```
 
 Build-time (`build.rs`, macOS only): runs `cmake` to build
@@ -142,6 +143,23 @@ pub fn now_playing() -> Result<NowPlayingState, MediaError>;
   `title`. `artworkData` and other keys are intentionally ignored.
 - **Non-macOS:** `now_playing()` returns `MediaError::Unsupported`.
 
+Transport controls (system-wide, app-agnostic — they act on whichever app owns
+the slot) run the adapter `send <MRCommand-id>` / `seek <microseconds>`:
+
+```rust
+pub enum MediaCommand { Play, Pause, TogglePlayPause, NextTrack, PreviousTrack }
+pub fn send_command(command: MediaCommand) -> Result<(), MediaError>;
+pub fn seek(position: std::time::Duration) -> Result<(), MediaError>;
+```
+
+`MediaCommand` maps to the MRCommand ids in
+`vendor/mediaremote-adapter/include/MediaRemoteAdapter.h` (Play=0, Pause=1,
+TogglePlayPause=2, NextTrack=4, PreviousTrack=5). Controls return a plain
+`Result<(), MediaError>` — **not** a new action-result schema. Fire-and-forget:
+a successful `send` does not re-read to verify. Note a ~100 ms async settle
+between a `send` and the read reflecting it, so a verifier must **poll**
+`now_playing()`, not read once.
+
 The crate also owns the agent-facing contract and the binary entry:
 
 ```rust
@@ -157,16 +175,23 @@ pub fn run() -> std::process::ExitCode;
 
 ## CLI surface (two front doors, one contract)
 
-Both surfaces parse the same flags and emit the identical `now-playing-v0`
-contract built in `auv-media-macos::output`.
+The crate binary `auv-media-macos` is subcommand-structured (read + controls);
+the netease subcommand and the binary's `now-playing` subcommand emit the
+identical `now-playing-v0` contract built in `auv-media-macos::output`.
 
 ```text
-# the crate's own binary
-auv-now-playing [--json | --json-out <path>]
+# the crate's own binary (read + transport controls)
+auv-media-macos now-playing [--json | --json-out <path>]
+auv-media-macos play | pause | toggle | next | previous
+auv-media-macos seek <seconds>
 
-# the netease-music subcommand (delegates to the crate)
+# the netease-music subcommand (read only; delegates to the crate)
 auv-netease-music now-playing [--json | --json-out <path>]   (auv-wyy = identical)
 ```
+
+Transport/seek subcommands print `ok: <command>` and exit `0` on a successful
+send, non-zero on failure. The netease CLI exposes only the read (controls are
+generic, not NetEase-specific).
 
 The netease subcommand calls `auv_media_macos::now_playing()` then the crate's
 `build_now_playing_output` / `render_human_summary` — it does **not** reshape
@@ -206,35 +231,38 @@ Pure-Rust unit tests (no live media, no perl required):
   garbage → error (4 tests).
 - `output`: `now-playing-v0` JSON carries schema version + fields; human
   summary playing / paused / idle / omitted-empty-fields (5 tests).
+- `MediaCommand::command_id` maps to the adapter's MRCommand id table (1 test).
 
-The live adapter read is environmental and macOS-gated; it is not a CI unit
-test — its mechanism is proven by running the compiled binary. This mirrors how
+The live adapter read/control is environmental and macOS-gated; not a CI unit
+test — proven by running the compiled binary (read confirmed; `play`/`pause`
+confirmed to flip `is_playing` after a ~100 ms settle). This mirrors how
 existing live-driver procedures are gated while their pure logic is unit-tested.
 
 ## Validation
 
 Behavior change, so on completion run: `cargo fmt --check`, `cargo check`,
 `cargo test`, `git diff --check`, plus CLI smoke checks on **both** front doors
-(`auv-now-playing` and `auv-netease-music now-playing`, human + `--json`, and
-`--help` listing it) confirming identical `now-playing-v0` JSON.
+(`auv-media-macos now-playing` and `auv-netease-music now-playing`, human +
+`--json`, `--help` listing subcommands) confirming identical `now-playing-v0`
+JSON, and that `auv-media-macos play`/`pause` flip playback (polling to settle).
 
-## Non-goals (v0) and the agreed next slice
+## Scope
 
-v0 is **read-only, one-shot**. Explicitly not in v0:
+Implemented: the now-playing **read** (one-shot) and **transport + seek
+controls** (play, pause, toggle, next, previous, seek) — the latter via the
+adapter's `send`/`seek`, exposed as `MediaCommand` + `send_command`/`seek`. This
+is the "media subsystem" the standalone crate was positioned to seed.
+
+Explicitly **not** in scope:
 
 - artwork bytes (the adapter emits `artworkData`; we ignore it — a suppress-
   artwork flag to keep the pipe small is a possible follow-up);
+- shuffle / repeat / speed controls (the adapter supports them; deferred);
 - NetEase-specific filtering (source is reported, not gated);
 - live-position extrapolation;
-- change subscription / streaming (the adapter's `stream` exists; deferred).
-
-**Agreed next slice — transport controls.** The same adapter exposes
-`send`/`seek`/`shuffle`/`repeat`/`speed`. The owner approved adding **transport
-+ seek** (play, pause, toggle, next, previous, seek) as a separate follow-up
-slice with its own mini-design: a typed `MediaCommand` enum → MRCommand IDs and
-`send_command(cmd) -> Result<(), MediaError>` (a plain `Result`, **not** a new
-action-result schema). This is the "media subsystem" the standalone crate was
-positioned to seed.
+- change subscription / streaming (the adapter's `stream` exists; deferred);
+- send-then-verify (controls are fire-and-forget; callers poll `now_playing()`
+  if they need confirmation, accounting for the ~100 ms settle).
 
 ## Risks
 

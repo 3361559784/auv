@@ -241,6 +241,9 @@ pub(crate) fn render_native_text_candidate_recipe(analysis: &AppAnalysis) -> Val
         "command_id": "debug.focusTextInput",
         "disturbance": { "classes": ["foreground_app", "keyboard", "pointer"], "max": "pointer" },
         "args": { "target": "${app_id}", "query": "${focus_query}", "candidate": "${focus_candidate}", "max_depth": 6, "max_children": 40 },
+        "expect": {
+          "signal_equals": { "focusTextInput.consumer": "query" }
+        },
         "purpose": "Focus a text-bearing surface through AX."
       },
       {

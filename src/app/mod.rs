@@ -2159,6 +2159,27 @@ mod tests {
   }
 
   #[test]
+  fn native_text_distillation_template_requires_query_focus_consumer() {
+    let analysis = sample_analysis_with_strategy(
+      "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text",
+    );
+    let recipe = render_native_text_candidate_recipe(&analysis);
+    let manifest: SkillManifest =
+      serde_json::from_value(recipe).expect("candidate recipe should parse");
+
+    validate_skill_manifest(&manifest).expect("candidate recipe should validate");
+    let step = manifest
+      .steps
+      .iter()
+      .find(|step| step.id == "focus-text-surface")
+      .expect("focus-text-surface step should exist");
+    assert_eq!(
+      step.expect.signal_equals.get("focusTextInput.consumer"),
+      Some(&"query".to_string())
+    );
+  }
+
+  #[test]
   fn window_action_distillation_template_validates() {
     let analysis =
       sample_analysis_with_strategy("window-action.window-point.pointer-click.capture-evidence");

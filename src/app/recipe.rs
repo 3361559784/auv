@@ -226,9 +226,9 @@ pub(crate) fn render_native_text_candidate_recipe(
     "The focus_query input must be grounded during validate."
   };
   let focus_note = if promoted_candidate.is_some() {
-    "This distilled candidate already carries a promoted contract::Candidate and should exercise the contract-candidate consumer seam by default."
+    "This distilled candidate already carries a promoted contract::Candidate and should exercise the AX-backed contract-candidate consumer seam by default."
   } else {
-    "The focus_query input must be validated against a real editable text surface."
+    "The focus_query input must be validated against a real editable text surface through AX-backed focus."
   };
   let mut focus_signal_equals = serde_json::Map::from_iter([(
     "focusTextInput.consumer".to_string(),
@@ -257,7 +257,7 @@ pub(crate) fn render_native_text_candidate_recipe(
     "strategy": {
       "family": "native-text",
       "grounding": "ax-text",
-      "activation": "pointer-focus-clipboard-paste",
+      "activation": "ax-perform-action-clipboard-paste",
       "verificationContract": "verifyAxText"
     },
     "objective": format!("Candidate native-text slice for {} distilled from app-surface analysis.", analysis.app_identity.app_name),
@@ -275,8 +275,8 @@ pub(crate) fn render_native_text_candidate_recipe(
       "Screen Recording and Accessibility permissions are already granted."
     ],
     "disturbance_policy": {
-      "max_disturbance": "pointer",
-      "declared_classes": ["none", "foreground_app", "keyboard", "clipboard", "pointer"],
+      "max_disturbance": "clipboard",
+      "declared_classes": ["none", "foreground_app", "keyboard", "clipboard"],
       "notes": [
         "This is a candidate distilled from probe/analyze output, not a validated skill.",
         focus_note
@@ -292,13 +292,13 @@ pub(crate) fn render_native_text_candidate_recipe(
       },
       {
         "id": "focus-text-surface",
-        "command_id": "debug.focusTextInput",
-        "disturbance": { "classes": ["foreground_app", "keyboard", "pointer"], "max": "pointer" },
+        "command_id": "debug.axFocusTextInput",
+        "disturbance": { "classes": ["foreground_app", "keyboard"], "max": "keyboard" },
         "args": { "target": "${app_id}", "query": "${focus_query}", "candidate": "${focus_candidate}", "max_depth": 6, "max_children": 40 },
         "expect": {
           "signal_equals": focus_signal_equals
         },
-        "purpose": "Focus a text-bearing surface through AX."
+        "purpose": "Focus a text-bearing surface through AX without pointer warp."
       },
       {
         "id": "paste-text",
@@ -323,7 +323,7 @@ pub(crate) fn render_native_text_candidate_recipe(
     "verification": {
       "expected_signals": [
         "The app can be foregrounded.",
-        "A text-bearing surface can be focused.",
+        "A text-bearing surface can be focused through AX without pointer warp.",
         "The target text can be written.",
         "The same marker can be matched through AX."
       ],
@@ -338,7 +338,8 @@ pub(crate) fn render_native_text_candidate_recipe(
     },
     "known_limits": {
       "candidate_only": "This recipe was distilled from analysis output and has not been validated yet.",
-      "focus_query": focus_query_limit
+      "focus_query": focus_query_limit,
+      "ax_focusability": "The generated path assumes the target text surface accepts AX-backed focus; apps that refuse AX focus may still need a separate pointer-backed fallback strategy."
     }
   }))
 }
@@ -485,9 +486,9 @@ pub(crate) fn render_native_text_candidate_cases(
     })?
     .unwrap_or_default();
   let fallback_note = if promoted_candidate.is_some() {
-    "Action-grade promoted candidate was embedded from analyze/distill, so the default case exercises contract-candidate by default while keeping focus_query as a manual fallback."
+    "Action-grade promoted candidate was embedded from analyze/distill, so the default case exercises the AX-backed contract-candidate path while keeping focus_query as a manual fallback."
   } else {
-    "Replace focus_query with a concrete editable text surface before validate."
+    "Replace focus_query with a concrete editable text surface before validate; the generated focus path now expects AX-backed focus."
   };
   Ok(json!({
     "skill_id": format!("macos.{}.native_text_candidate.v0", recipe_app_slug(&analysis.app_identity)),
@@ -501,7 +502,7 @@ pub(crate) fn render_native_text_candidate_cases(
           "focus_query": focus_query,
           "focus_candidate": focus_candidate_default
         },
-        "disturbance": "pointer",
+        "disturbance": "clipboard",
         "notes": [
           "Generated from app analyze output.",
           fallback_note

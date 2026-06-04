@@ -2175,12 +2175,25 @@ mod tests {
       serde_json::from_value(recipe).expect("candidate recipe should parse");
 
     validate_skill_manifest(&manifest).expect("candidate recipe should validate");
+    assert_eq!(
+      manifest.strategy.activation.as_str(),
+      "ax-perform-action-clipboard-paste"
+    );
+    assert_eq!(
+      manifest.disturbance_policy.max_disturbance.as_str(),
+      "clipboard"
+    );
     let step = manifest
       .steps
       .iter()
       .find(|step| step.id == "focus-text-surface")
       .expect("focus-text-surface step should exist");
-    assert_eq!(step.command_id, "debug.focusTextInput");
+    assert_eq!(step.command_id, "debug.axFocusTextInput");
+    assert_eq!(step.disturbance.max.as_str(), "keyboard");
+    assert_eq!(
+      step.disturbance.classes,
+      vec!["foreground_app".to_string(), "keyboard".to_string()]
+    );
     assert_eq!(
       manifest
         .inputs
@@ -2234,7 +2247,20 @@ mod tests {
       .iter()
       .find(|step| step.id == "focus-text-surface")
       .expect("focus-text-surface step should exist");
-    assert_eq!(step.command_id, "debug.focusTextInput");
+    assert_eq!(
+      manifest.strategy.activation.as_str(),
+      "ax-perform-action-clipboard-paste"
+    );
+    assert_eq!(
+      manifest.disturbance_policy.max_disturbance.as_str(),
+      "clipboard"
+    );
+    assert_eq!(step.command_id, "debug.axFocusTextInput");
+    assert_eq!(step.disturbance.max.as_str(), "keyboard");
+    assert_eq!(
+      step.disturbance.classes,
+      vec!["foreground_app".to_string(), "keyboard".to_string()]
+    );
     assert_eq!(
       step.expect.signal_equals.get("focusTextInput.consumer"),
       Some(&"contract-candidate".to_string())
@@ -2263,6 +2289,31 @@ mod tests {
       matrix.cases[0].inputs.get("focus_query"),
       Some(&"Editor".to_string())
     );
+  }
+
+  #[test]
+  fn search_entry_distillation_template_remains_pointer_focus_authoring() {
+    let analysis =
+      sample_analysis_with_strategy("search-entry.ax-text-input.clipboard-submit.capture-evidence");
+    let candidate_shape =
+      build_distilled_candidate_shape(&analysis, &analysis.recommended_strategies[0].taxonomy_id);
+    let recipe = render_candidate_recipe(
+      &analysis,
+      &analysis.recommended_strategies[0],
+      &candidate_shape,
+    )
+    .expect("candidate recipe should render");
+    let manifest: SkillManifest =
+      serde_json::from_value(recipe).expect("candidate recipe should parse");
+    let step = manifest
+      .steps
+      .iter()
+      .find(|step| step.id == "focus-search-input")
+      .expect("focus-search-input step should exist");
+
+    assert_eq!(manifest.strategy.activation.as_str(), "clipboard-submit");
+    assert_eq!(step.command_id, "debug.focusTextInput");
+    assert_eq!(step.disturbance.max.as_str(), "pointer");
   }
 
   #[test]

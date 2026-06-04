@@ -1430,11 +1430,10 @@ fn classify_successful_validation_outcome(
   // TODO(app-validate-consumer-status-v1): extend consumer-aware success
   // classification to the other promoted consumer seams once the owner asks for
   // the same tightening beyond native-text.
-  // TODO(app-native-text-ax-focus-consumer-v1): do not treat
-  // debug.axFocusTextInput's AX focus contract as a promoted consumer seam
-  // until that command emits explicit consumer/candidate-id signals for
-  // promoted candidate usage. Today it proves stronger query-time focus
-  // behavior, not end-to-end promoted consumer consumption.
+  // TODO(app-native-text-ax-focus-adoption-v1): native-text can now validate
+  // through debug.axFocusTextInput's promoted consumer signals, but recipe/app
+  // adoption still needs to move the real consumer surface off the legacy
+  // pointer-warp focus path where appropriate.
   if taxonomy_id == "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text" {
     return match observed_consumer {
       Some("contract-candidate") => SuccessfulValidationOutcome {
@@ -1609,23 +1608,23 @@ mod tests {
       {
         let raw_candidate = call
           .inputs
-          .get("focus_candidate")
-          .ok_or_else(|| "expected focus_candidate input".to_string())?;
+          .get("candidate")
+          .ok_or_else(|| "expected candidate input".to_string())?;
         let candidate: crate::contract::Candidate = serde_json::from_str(raw_candidate)
-          .map_err(|error| format!("focus_candidate was not valid Candidate JSON: {error}"))?;
+          .map_err(|error| format!("candidate was not valid Candidate JSON: {error}"))?;
         if candidate.target_spec.grounding != crate::contract::TargetGrounding::AxNode {
           return Err(format!(
-            "expected AxNode focus_candidate grounding, got {:?}",
+            "expected AxNode candidate grounding, got {:?}",
             candidate.target_spec.grounding
           ));
         }
         let expected_query = call
           .inputs
-          .get("focus_query")
-          .ok_or_else(|| "expected focus_query fallback input".to_string())?;
+          .get("query")
+          .ok_or_else(|| "expected query fallback input".to_string())?;
         if candidate.target_spec.anchor_text.as_deref() != Some(expected_query.as_str()) {
           return Err(format!(
-            "focus_candidate anchor_text {:?} did not match focus_query {}",
+            "candidate anchor_text {:?} did not match query {}",
             candidate.target_spec.anchor_text, expected_query
           ));
         }
@@ -1651,7 +1650,7 @@ mod tests {
       if call.operation == "test_operation"
         && call
           .inputs
-          .get("focus_query")
+          .get("query")
           .map(|query| !query.is_empty())
           .unwrap_or(false)
       {
@@ -4042,6 +4041,20 @@ mod tests {
   }
 
   #[test]
+  fn classify_native_text_contract_candidate_consumer_is_validated() {
+    let outcome = classify_successful_validation_outcome(
+      "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text",
+      1,
+      AppVerificationMode::MachineAsserted,
+      Some("contract-candidate"),
+      true,
+    );
+
+    assert_eq!(outcome.status, AppValidationStatus::Validated);
+    assert!(outcome.rationale.contains("shared runtime"));
+  }
+
+  #[test]
   fn validate_app_distillation_injects_result_selection_promoted_candidate_into_runtime_inputs() {
     let root = temp_dir("app-validate-result-selection-promoted-consumer");
     let runtime = test_runtime(root.clone());
@@ -6071,8 +6084,8 @@ mod tests {
           "max": "none"
         },
         "args": {
-          "focus_candidate": "${focus_candidate}",
-          "focus_query": "${focus_query}",
+          "candidate": "${focus_candidate}",
+          "query": "${focus_query}",
           "require_focus_candidate": "${require_focus_candidate}"
         },
         "expect": {

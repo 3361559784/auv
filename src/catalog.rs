@@ -326,7 +326,7 @@ pub fn default_command_catalog() -> CommandCatalog {
     CommandSpec {
       id: "debug.axFocusTextInput",
       namespace: ACTION,
-      summary: "Focus a text input by query via AXUIElementSetAttributeValue(kAXFocusedAttribute); does not warp the real cursor (cursorDisturbance=none, focusMechanism=ax-attribute). Pass --overlay true for the dual-cursor visual (auv replay cursor animates to the target while the real cursor stays put). Errors when the target does not accept programmatic focus; use debug.focusTextInput if pointer warp is acceptable.",
+      summary: "Focus a text input by query or promoted --candidate JSON via AXUIElementSetAttributeValue(kAXFocusedAttribute); does not warp the real cursor (cursorDisturbance=none, focusMechanism=ax-attribute). Pass --overlay true for the dual-cursor visual (auv replay cursor animates to the target while the real cursor stays put). Errors when the target does not accept programmatic focus; use debug.focusTextInput if pointer warp is acceptable.",
       driver_id: "macos.desktop",
       operation: "ax_focus_text_input",
       disturbance_classes: CAPTURE_AX_TREE_DISTURBANCE,

@@ -442,9 +442,38 @@ fn non_empty_trimmed(raw: &str) -> Option<String> {
   }
 }
 
+fn append_focus_text_consumer_signals(
+  target: &FocusTextTarget<'_>,
+  notes: &mut Vec<String>,
+  signals: &mut std::collections::BTreeMap<String, String>,
+) {
+  if let Some(candidate_local_id) = target.consumed_candidate_local_id.as_deref() {
+    notes.push(format!("consumedCandidateLocalId={candidate_local_id}"));
+    signals.insert(
+      "focusTextInput.consumer".to_string(),
+      "contract-candidate".to_string(),
+    );
+    signals.insert(
+      "focusTextInput.candidateLocalId".to_string(),
+      candidate_local_id.to_string(),
+    );
+  } else {
+    signals.insert("focusTextInput.consumer".to_string(), "query".to_string());
+  }
+
+  if let Some(window_number) = target.unverified_window_number {
+    signals.insert(
+      "focusTextInput.windowNumberPrecondition".to_string(),
+      "declared_but_unverified".to_string(),
+    );
+    notes.push(format!("windowNumberDeclaredButUnverified={window_number}"));
+  }
+}
+
 pub(crate) fn ax_focus_text_input(call: &DriverCall) -> AuvResult<DriverResponse> {
   let app = app_identifier(call).unwrap_or_default();
-  let query = required_non_empty_string(call, "query")?;
+  let query = optional_non_empty_string(call, "query");
+  let candidate_json = optional_non_empty_string(call, "candidate");
   let reveal_shortcut = optional_non_empty_string(call, "reveal_shortcut");
   let reveal_settle_ms = optional_positive_u64(call, "reveal_settle_ms")?.unwrap_or(250);
   let max_depth = optional_i64(call, "max_depth")?.unwrap_or(6).clamp(1, 10);
@@ -458,6 +487,9 @@ pub(crate) fn ax_focus_text_input(call: &DriverCall) -> AuvResult<DriverResponse
   let preview_ms =
     optional_positive_u64(call, "preview_ms")?.unwrap_or(if overlay { 250 } else { 0 });
   let settle_ms = optional_positive_u64(call, "settle_ms")?.unwrap_or(0);
+  if query.is_none() && candidate_json.is_none() {
+    return Err("operation requires --query <text> or --candidate <json>".to_string());
+  }
 
   if activate {
     activate_app_if_needed(&app)?;
@@ -473,8 +505,8 @@ pub(crate) fn ax_focus_text_input(call: &DriverCall) -> AuvResult<DriverResponse
       snapshot.app_name, capture.pid
     ));
   }
-  let matched = find_best_ax_node(snapshot, &query)
-    .ok_or_else(|| no_matching_ax_node_error(snapshot, &query, "text input-like"))?;
+  let target = resolve_focus_text_target(snapshot, candidate_json.as_deref(), query.as_deref())?;
+  let matched = target.matched;
   let (center_x, center_y) = ax_node_center(matched);
 
   let (focus_result, overlay_outcome) = if overlay {
@@ -504,7 +536,8 @@ pub(crate) fn ax_focus_text_input(call: &DriverCall) -> AuvResult<DriverResponse
     )
   };
 
-  let report = render_ax_interaction_report("ax-focus-text-input", snapshot, matched, &query);
+  let report =
+    render_ax_interaction_report("ax-focus-text-input", snapshot, matched, &target.query);
   let mut report = format!(
     "{report}setAttribute={set_attribute}\nwasAlreadyFocused={was_already_focused}\nfocusMechanism=ax-attribute\ncursorDisturbance=none\nactivatedApp={activate}\noverlayPresentation={}\n",
     if overlay {
@@ -528,16 +561,22 @@ pub(crate) fn ax_focus_text_input(call: &DriverCall) -> AuvResult<DriverResponse
   let artifact = build_text_artifact(
     "ax-focus-text-input",
     "txt",
-    &format!("ax-focus-text-input-{}", sanitize_file_component(&query)),
+    &format!(
+      "ax-focus-text-input-{}",
+      sanitize_file_component(&target.query)
+    ),
     report,
     "Focused a text input via AXUIElementSetAttributeValue(kAXFocusedAttribute); the real cursor is not moved.",
   )?;
-  let capture_label = format!("ax-focus-text-input-{}", sanitize_file_component(&query));
+  let capture_label = format!(
+    "ax-focus-text-input-{}",
+    sanitize_file_component(&target.query)
+  );
   let (mut overlay_artifacts, overlay_capture_note) = best_effort_ax_overlay_artifacts(
     call,
     &capture_label,
     "ax-focus-text-input",
-    &query,
+    &target.query,
     "ax-attribute",
     "ax-attribute",
     "none",
@@ -549,7 +588,7 @@ pub(crate) fn ax_focus_text_input(call: &DriverCall) -> AuvResult<DriverResponse
     matched,
   );
 
-  let mut notes = build_ax_click_notes(&query, matched, center_x, center_y);
+  let mut notes = build_ax_click_notes(&target.query, matched, center_x, center_y);
   notes.push("focusMechanism=ax-attribute".to_string());
   notes.push("cursorDisturbance=none".to_string());
   notes.push(format!("setAttribute={}", focus_result.set_attribute));
@@ -607,6 +646,7 @@ pub(crate) fn ax_focus_text_input(call: &DriverCall) -> AuvResult<DriverResponse
     signals.insert("dualCursor".to_string(), "true".to_string());
     signals.insert("userCursorTracking".to_string(), "polling-30hz".to_string());
   }
+  append_focus_text_consumer_signals(&target, &mut notes, &mut signals);
 
   Ok(DriverResponse {
     summary: if matched.title.is_empty() && matched.description.is_empty() {
@@ -617,7 +657,7 @@ pub(crate) fn ax_focus_text_input(call: &DriverCall) -> AuvResult<DriverResponse
         } else {
           &snapshot.app_name
         },
-        query,
+        target.query,
         matched.role
       )
     } else {
@@ -633,7 +673,7 @@ pub(crate) fn ax_focus_text_input(call: &DriverCall) -> AuvResult<DriverResponse
         } else {
           &snapshot.app_name
         },
-        query
+        target.query
       )
     },
     backend: Some(
@@ -1836,6 +1876,57 @@ mod tests {
       .expect("query path should resolve");
 
     assert_eq!(resolved.unverified_window_number, None);
+  }
+
+  #[test]
+  fn append_focus_text_consumer_signals_marks_contract_candidate_path() {
+    let snapshot = sample_focus_snapshot();
+    let candidate_json =
+      sample_focus_candidate_json_with_kind("native-text-focus-ax", "native_text", "Search");
+    let resolved = resolve_focus_text_target(&snapshot, Some(&candidate_json), None)
+      .expect("candidate should resolve");
+
+    let mut notes = Vec::new();
+    let mut signals = std::collections::BTreeMap::new();
+    append_focus_text_consumer_signals(&resolved, &mut notes, &mut signals);
+
+    assert_eq!(
+      signals.get("focusTextInput.consumer").map(String::as_str),
+      Some("contract-candidate")
+    );
+    assert_eq!(
+      signals
+        .get("focusTextInput.candidateLocalId")
+        .map(String::as_str),
+      Some("native-text-focus-ax")
+    );
+    assert!(
+      notes
+        .iter()
+        .any(|note| { note == "consumedCandidateLocalId=native-text-focus-ax" })
+    );
+  }
+
+  #[test]
+  fn append_focus_text_consumer_signals_marks_query_path() {
+    let snapshot = sample_focus_snapshot();
+    let resolved = resolve_focus_text_target(&snapshot, None, Some("Search"))
+      .expect("query path should resolve");
+
+    let mut notes = Vec::new();
+    let mut signals = std::collections::BTreeMap::new();
+    append_focus_text_consumer_signals(&resolved, &mut notes, &mut signals);
+
+    assert_eq!(
+      signals.get("focusTextInput.consumer").map(String::as_str),
+      Some("query")
+    );
+    assert!(!signals.contains_key("focusTextInput.candidateLocalId"));
+    assert!(
+      !notes
+        .iter()
+        .any(|note| note.starts_with("consumedCandidateLocalId="))
+    );
   }
 
   #[test]

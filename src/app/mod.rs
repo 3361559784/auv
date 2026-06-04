@@ -2147,13 +2147,15 @@ mod tests {
     let analysis = sample_analysis_with_strategy(
       "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text",
     );
-    let recipe = render_native_text_candidate_recipe(&analysis);
+    let candidate_shape =
+      build_distilled_candidate_shape(&analysis, &analysis.recommended_strategies[0].taxonomy_id);
+    let recipe = render_native_text_candidate_recipe(&analysis, &candidate_shape)
+      .expect("recipe should render");
     let manifest: SkillManifest =
       serde_json::from_value(recipe).expect("candidate recipe should parse");
     validate_skill_manifest(&manifest).expect("candidate recipe should validate");
-    let candidate_shape =
-      build_distilled_candidate_shape(&analysis, &analysis.recommended_strategies[0].taxonomy_id);
-    let matrix_value = render_native_text_candidate_cases(&analysis, &candidate_shape);
+    let matrix_value = render_native_text_candidate_cases(&analysis, &candidate_shape)
+      .expect("matrix should render");
     let matrix: SkillCaseMatrix =
       serde_json::from_value(matrix_value).expect("candidate matrix should parse");
     validate_case_matrix_manifest(&matrix).expect("candidate matrix should validate");
@@ -2161,11 +2163,14 @@ mod tests {
   }
 
   #[test]
-  fn native_text_distillation_template_requires_query_focus_consumer() {
+  fn native_text_distillation_template_keeps_query_scaffold_without_promotion() {
     let analysis = sample_analysis_with_strategy(
       "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text",
     );
-    let recipe = render_native_text_candidate_recipe(&analysis);
+    let candidate_shape =
+      build_distilled_candidate_shape(&analysis, &analysis.recommended_strategies[0].taxonomy_id);
+    let recipe = render_native_text_candidate_recipe(&analysis, &candidate_shape)
+      .expect("recipe should render");
     let manifest: SkillManifest =
       serde_json::from_value(recipe).expect("candidate recipe should parse");
 
@@ -2177,9 +2182,138 @@ mod tests {
       .expect("focus-text-surface step should exist");
     assert_eq!(step.command_id, "debug.focusTextInput");
     assert_eq!(
+      manifest
+        .inputs
+        .get("focus_candidate")
+        .and_then(|input| input.default.as_ref()),
+      Some(&serde_json::json!(""))
+    );
+    assert_eq!(
       step.expect.signal_equals.get("focusTextInput.consumer"),
       Some(&"query".to_string())
     );
+    assert_eq!(
+      step
+        .expect
+        .signal_equals
+        .get("focusTextInput.candidateLocalId"),
+      None
+    );
+  }
+
+  #[test]
+  fn native_text_distillation_template_defaults_to_contract_candidate_when_promotable() {
+    let analysis = sample_promotable_ax_focus_analysis(
+      "native-text",
+      "native-text-focus-ax",
+      "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text",
+      "Editor",
+      "Sample candidate satisfies the v0 native-text promotion seam.",
+    );
+    let candidate_shape =
+      build_distilled_candidate_shape(&analysis, &analysis.recommended_strategies[0].taxonomy_id);
+    let promoted_candidate = promoted_candidate_for_candidate_shape(
+      &analysis,
+      "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text",
+      &candidate_shape,
+    )
+    .expect("native-text candidate should promote");
+    let manifest: SkillManifest = serde_json::from_value(
+      render_native_text_candidate_recipe(&analysis, &candidate_shape)
+        .expect("candidate recipe should render"),
+    )
+    .expect("candidate recipe should parse");
+    let matrix: SkillCaseMatrix = serde_json::from_value(
+      render_native_text_candidate_cases(&analysis, &candidate_shape)
+        .expect("candidate matrix should render"),
+    )
+    .expect("candidate matrix should parse");
+
+    let step = manifest
+      .steps
+      .iter()
+      .find(|step| step.id == "focus-text-surface")
+      .expect("focus-text-surface step should exist");
+    assert_eq!(step.command_id, "debug.focusTextInput");
+    assert_eq!(
+      step.expect.signal_equals.get("focusTextInput.consumer"),
+      Some(&"contract-candidate".to_string())
+    );
+    assert_eq!(
+      step
+        .expect
+        .signal_equals
+        .get("focusTextInput.candidateLocalId"),
+      Some(&promoted_candidate.candidate_local_id)
+    );
+    let serialized_candidate = manifest
+      .inputs
+      .get("focus_candidate")
+      .and_then(|input| input.default.as_ref())
+      .and_then(|value| value.as_str())
+      .expect("focus_candidate default should be serialized candidate");
+    let parsed_candidate: crate::contract::Candidate = serde_json::from_str(serialized_candidate)
+      .expect("focus_candidate default should stay valid candidate JSON");
+    assert_eq!(parsed_candidate.candidate_local_id, "native-text-focus-ax");
+    assert_eq!(
+      matrix.cases[0].inputs.get("focus_candidate"),
+      Some(&serialized_candidate.to_string())
+    );
+    assert_eq!(
+      matrix.cases[0].inputs.get("focus_query"),
+      Some(&"Editor".to_string())
+    );
+  }
+
+  #[test]
+  fn promoted_candidate_consumer_expectations_preserve_unrelated_expect_fields() {
+    let analysis = sample_promotable_ax_focus_analysis(
+      "native-text",
+      "native-text-focus-ax",
+      "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text",
+      "Editor",
+      "Sample candidate satisfies the v0 native-text promotion seam.",
+    );
+    let candidate_shape =
+      build_distilled_candidate_shape(&analysis, &analysis.recommended_strategies[0].taxonomy_id);
+    let promoted_candidate = promoted_candidate_for_candidate_shape(
+      &analysis,
+      "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text",
+      &candidate_shape,
+    )
+    .expect("native-text candidate should promote");
+    let mut manifest: SkillManifest = serde_json::from_value(
+      render_native_text_candidate_recipe(&analysis, &candidate_shape)
+        .expect("candidate recipe should render"),
+    )
+    .expect("candidate recipe should parse");
+    let step = manifest
+      .steps
+      .iter_mut()
+      .find(|step| step.id == "focus-text-surface")
+      .expect("focus-text-surface step should exist");
+    step
+      .expect
+      .signal_contains
+      .insert("focusTextInput.debug".to_string(), "candidate".to_string());
+    step.expect.artifact_count_at_least = Some(1);
+    let contract = promoted_candidate_runtime_contract(
+      "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text",
+    )
+    .expect("native-text contract should exist");
+
+    enforce_promoted_candidate_consumer_expectations(&mut manifest, &contract, &promoted_candidate);
+
+    let step = manifest
+      .steps
+      .iter()
+      .find(|step| step.id == "focus-text-surface")
+      .expect("focus-text-surface step should exist");
+    assert_eq!(
+      step.expect.signal_contains.get("focusTextInput.debug"),
+      Some(&"candidate".to_string())
+    );
+    assert_eq!(step.expect.artifact_count_at_least, Some(1));
   }
 
   #[test]
@@ -2199,9 +2333,11 @@ mod tests {
       &candidate_shape,
     )
     .expect("native-text candidate should promote");
-    let mut manifest: SkillManifest =
-      serde_json::from_value(render_native_text_candidate_recipe(&analysis))
-        .expect("candidate recipe should parse");
+    let mut manifest: SkillManifest = serde_json::from_value(
+      render_native_text_candidate_recipe(&analysis, &candidate_shape)
+        .expect("candidate recipe should render"),
+    )
+    .expect("candidate recipe should parse");
     let contract = promoted_candidate_runtime_contract(
       "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text",
     )

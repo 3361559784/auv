@@ -11,7 +11,7 @@ use crate::model::AuvResult;
 
 use super::{
   AppAnalysis, AppCandidateGroundingTaxonomy, AppDistilledCandidateShape, AppIdentity,
-  AppRecommendedStrategy,
+  AppRecommendedStrategy, promoted_candidate_for_candidate_shape,
 };
 
 pub(crate) fn recipe_app_slug(app: &AppIdentity) -> String {
@@ -53,14 +53,14 @@ pub(crate) fn candidate_slug(taxonomy_id: &str) -> String {
 pub(crate) fn render_candidate_recipe(
   analysis: &AppAnalysis,
   strategy: &AppRecommendedStrategy,
-  _candidate_shape: &AppDistilledCandidateShape,
+  candidate_shape: &AppDistilledCandidateShape,
 ) -> AuvResult<Value> {
   match AppCandidateGroundingTaxonomy::parse(&strategy.taxonomy_id)? {
     AppCandidateGroundingTaxonomy::SearchEntryAxTextInputClipboardSubmitCaptureEvidence => {
       Ok(render_search_entry_candidate_recipe(analysis))
     }
     AppCandidateGroundingTaxonomy::NativeTextAxTextPointerFocusClipboardPasteVerifyAxText => {
-      Ok(render_native_text_candidate_recipe(analysis))
+      render_native_text_candidate_recipe(analysis, candidate_shape)
     }
     AppCandidateGroundingTaxonomy::ResultSelectionOcrAnchorPointerClickCaptureEvidence => {
       Ok(render_result_selection_candidate_recipe(analysis))
@@ -81,7 +81,7 @@ pub(crate) fn render_candidate_case_matrix(
       render_search_entry_candidate_cases(analysis, candidate_shape),
     ),
     AppCandidateGroundingTaxonomy::NativeTextAxTextPointerFocusClipboardPasteVerifyAxText => Ok(
-      render_native_text_candidate_cases(analysis, candidate_shape),
+      render_native_text_candidate_cases(analysis, candidate_shape)?,
     ),
     AppCandidateGroundingTaxonomy::ResultSelectionOcrAnchorPointerClickCaptureEvidence => Ok(
       render_result_selection_candidate_cases(analysis, candidate_shape),
@@ -187,10 +187,64 @@ pub(crate) fn render_search_entry_candidate_recipe(analysis: &AppAnalysis) -> Va
   })
 }
 
-pub(crate) fn render_native_text_candidate_recipe(analysis: &AppAnalysis) -> Value {
+pub(crate) fn render_native_text_candidate_recipe(
+  analysis: &AppAnalysis,
+  candidate_shape: &AppDistilledCandidateShape,
+) -> AuvResult<Value> {
   let app_slug = recipe_app_slug(&analysis.app_identity);
   let marker = format!("AUV_{}_MARKER", app_slug.to_ascii_uppercase());
-  json!({
+  let promoted_candidate = promoted_candidate_for_candidate_shape(
+    analysis,
+    "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text",
+    candidate_shape,
+  );
+  let focus_candidate_default = promoted_candidate
+    .as_ref()
+    .map(serde_json::to_string)
+    .transpose()
+    .map_err(|error| {
+      format!("failed to serialize promoted native-text candidate for recipe rendering: {error}")
+    })?
+    .unwrap_or_default();
+  // NOTICE(app-native-text-candidate-first-default): emit a contract-candidate
+  // default only when analyze/distill already produced an action-grade
+  // contract::Candidate. Otherwise keep the scaffold query-first so distill does
+  // not generate an empty-candidate recipe that fails before validate can help.
+  let focus_query_note = if promoted_candidate.is_some() {
+    "Fallback AX query kept for manual diagnosis or deliberate query-only reruns; the default distilled path should consume focus_candidate."
+  } else {
+    "Replace with the best known editable text-area AX query for this app."
+  };
+  let focus_candidate_note = if promoted_candidate.is_some() {
+    "Serialized promoted contract::Candidate emitted from app analyze/distill. Generated native-text runs should consume this by default."
+  } else {
+    "Optional serialized contract::Candidate injected during validate when an action-grade native-text promotion exists."
+  };
+  let focus_query_limit = if promoted_candidate.is_some() {
+    "focus_query remains a manual fallback and diagnosis hint; contract-candidate is the default distilled path when promotion succeeds."
+  } else {
+    "The focus_query input must be grounded during validate."
+  };
+  let focus_note = if promoted_candidate.is_some() {
+    "This distilled candidate already carries a promoted contract::Candidate and should exercise the contract-candidate consumer seam by default."
+  } else {
+    "The focus_query input must be validated against a real editable text surface."
+  };
+  let mut focus_signal_equals = serde_json::Map::from_iter([(
+    "focusTextInput.consumer".to_string(),
+    Value::String(if promoted_candidate.is_some() {
+      "contract-candidate".to_string()
+    } else {
+      "query".to_string()
+    }),
+  )]);
+  if let Some(promoted_candidate) = promoted_candidate.as_ref() {
+    focus_signal_equals.insert(
+      "focusTextInput.candidateLocalId".to_string(),
+      Value::String(promoted_candidate.candidate_local_id.clone()),
+    );
+  }
+  Ok(json!({
     "recipe_id": format!("macos.{app_slug}.native_text_candidate.v0"),
     "version": "0.1.0",
     "status": "candidate-recipe",
@@ -209,8 +263,8 @@ pub(crate) fn render_native_text_candidate_recipe(analysis: &AppAnalysis) -> Val
     "objective": format!("Candidate native-text slice for {} distilled from app-surface analysis.", analysis.app_identity.app_name),
     "inputs": {
       "app_id": { "type": "string", "default": analysis.app_identity.bundle_id },
-      "focus_query": { "type": "string", "note": "Replace with the best known editable text-area AX query for this app." },
-      "focus_candidate": { "type": "string", "default": "", "note": "Optional serialized contract::Candidate injected during validate when an action-grade native-text promotion exists." },
+      "focus_query": { "type": "string", "note": focus_query_note },
+      "focus_candidate": { "type": "string", "default": focus_candidate_default, "note": focus_candidate_note },
       "target_text": { "type": "string", "default": marker },
       "activate_settle_ms": { "type": "integer", "default": 250 },
       "type_settle_ms": { "type": "integer", "default": 250 }
@@ -225,7 +279,7 @@ pub(crate) fn render_native_text_candidate_recipe(analysis: &AppAnalysis) -> Val
       "declared_classes": ["none", "foreground_app", "keyboard", "clipboard", "pointer"],
       "notes": [
         "This is a candidate distilled from probe/analyze output, not a validated skill.",
-        "The focus_query input must be validated against a real editable text surface."
+        focus_note
       ]
     },
     "steps": [
@@ -242,7 +296,7 @@ pub(crate) fn render_native_text_candidate_recipe(analysis: &AppAnalysis) -> Val
         "disturbance": { "classes": ["foreground_app", "keyboard", "pointer"], "max": "pointer" },
         "args": { "target": "${app_id}", "query": "${focus_query}", "candidate": "${focus_candidate}", "max_depth": 6, "max_children": 40 },
         "expect": {
-          "signal_equals": { "focusTextInput.consumer": "query" }
+          "signal_equals": focus_signal_equals
         },
         "purpose": "Focus a text-bearing surface through AX."
       },
@@ -284,9 +338,9 @@ pub(crate) fn render_native_text_candidate_recipe(analysis: &AppAnalysis) -> Val
     },
     "known_limits": {
       "candidate_only": "This recipe was distilled from analysis output and has not been validated yet.",
-      "focus_query": "The focus_query input must be grounded during validate."
+      "focus_query": focus_query_limit
     }
-  })
+  }))
 }
 
 pub(crate) fn render_result_selection_candidate_recipe(analysis: &AppAnalysis) -> Value {
@@ -409,13 +463,33 @@ pub(crate) fn render_search_entry_candidate_cases(
 pub(crate) fn render_native_text_candidate_cases(
   analysis: &AppAnalysis,
   candidate_shape: &AppDistilledCandidateShape,
-) -> Value {
+) -> AuvResult<Value> {
   let focus_query = candidate_shape
     .provided_inputs
     .get("focus_query")
     .cloned()
     .unwrap_or_else(|| "TODO_TEXT_SURFACE_QUERY".to_string());
-  json!({
+  let promoted_candidate = promoted_candidate_for_candidate_shape(
+    analysis,
+    "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text",
+    candidate_shape,
+  );
+  let focus_candidate_default = promoted_candidate
+    .as_ref()
+    .map(serde_json::to_string)
+    .transpose()
+    .map_err(|error| {
+      format!(
+        "failed to serialize promoted native-text candidate for case matrix rendering: {error}"
+      )
+    })?
+    .unwrap_or_default();
+  let fallback_note = if promoted_candidate.is_some() {
+    "Action-grade promoted candidate was embedded from analyze/distill, so the default case exercises contract-candidate by default while keeping focus_query as a manual fallback."
+  } else {
+    "Replace focus_query with a concrete editable text surface before validate."
+  };
+  Ok(json!({
     "skill_id": format!("macos.{}.native_text_candidate.v0", recipe_app_slug(&analysis.app_identity)),
     "version": "0.1.0",
     "status": "candidate-case-matrix",
@@ -425,16 +499,16 @@ pub(crate) fn render_native_text_candidate_cases(
         "status": "candidate",
         "inputs": {
           "focus_query": focus_query,
-          "focus_candidate": ""
+          "focus_candidate": focus_candidate_default
         },
         "disturbance": "pointer",
         "notes": [
           "Generated from app analyze output.",
-          "Replace focus_query with a concrete editable text surface before validate."
+          fallback_note
         ]
       }
     ]
-  })
+  }))
 }
 
 pub(crate) fn render_result_selection_candidate_cases(

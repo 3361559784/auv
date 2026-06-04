@@ -4,7 +4,8 @@ use std::process::Command;
 use std::thread;
 use std::time::Duration;
 
-use auv_driver::capture::{Activation, Capture, CaptureOptions};
+use auv_driver::capture::{Activation, Capture, CaptureOptions, DisplayCapture, RegionCapture};
+use auv_driver::display::{Display, ObservedDisplays};
 use auv_driver::error::{DriverError, DriverResult};
 use auv_driver::geometry::{CoordinateSpace, Point, RatioRect, Rect, ScreenPoint, WindowPoint};
 use auv_driver::input::{
@@ -65,6 +66,11 @@ pub struct ClipboardApi<'a> {
 }
 
 #[derive(Clone, Copy, Debug)]
+pub struct DisplayApi<'a> {
+  session: &'a MacosDriverSession,
+}
+
+#[derive(Clone, Copy, Debug)]
 pub struct VisionApi<'a> {
   session: &'a MacosDriverSession,
 }
@@ -86,8 +92,55 @@ impl MacosDriverSession {
     ClipboardApi { session: self }
   }
 
+  pub fn display(&self) -> DisplayApi<'_> {
+    DisplayApi { session: self }
+  }
+
   pub fn vision(&self) -> VisionApi<'_> {
     VisionApi { session: self }
+  }
+}
+
+impl DisplayApi<'_> {
+  pub fn list(&self) -> DriverResult<ObservedDisplays> {
+    let _ = self.session;
+    Ok(ObservedDisplays {
+      displays: list_display_targets()?
+        .into_iter()
+        .map(|target| target.display)
+        .collect(),
+    })
+  }
+
+  pub fn capture(&self, options: CaptureOptions) -> DriverResult<DisplayCapture> {
+    if options.window.is_some() || options.region.is_some() {
+      return Err(invalid_input(
+        "display.capture does not accept window or region capture options",
+      ));
+    }
+    if let Activation::ActivateFirst { .. } = options.activation {
+      return Err(invalid_input(
+        "display.capture cannot activate an application without an application target",
+      ));
+    }
+    capture_display_xcap(options.display.as_deref())
+  }
+
+  pub fn capture_region(&self, options: CaptureOptions) -> DriverResult<RegionCapture> {
+    if options.window.is_some() {
+      return Err(invalid_input(
+        "display.capture_region does not accept nested window capture options",
+      ));
+    }
+    if let Activation::ActivateFirst { .. } = options.activation {
+      return Err(invalid_input(
+        "display.capture_region cannot activate an application without an application target",
+      ));
+    }
+    let region = options
+      .region
+      .ok_or_else(|| invalid_input("display.capture_region requires CaptureOptions.region"))?;
+    capture_region_xcap(options.display.as_deref(), region)
   }
 }
 
@@ -956,6 +1009,221 @@ fn activate_app_for_window(window: &Window) -> DriverResult<()> {
   }
 }
 
+#[derive(Clone, Debug)]
+struct MacosDisplayTarget {
+  index: usize,
+  display: Display,
+}
+
+fn resolve_display_target(
+  targets: &[MacosDisplayTarget],
+  selector: Option<&str>,
+) -> DriverResult<MacosDisplayTarget> {
+  if let Some(selector) = selector {
+    let selector = selector.trim();
+    return targets
+      .iter()
+      .find(|target| {
+        target.display.id == selector
+          || target
+            .display
+            .name
+            .as_deref()
+            .is_some_and(|display_ref| display_ref == selector)
+      })
+      .cloned()
+      .ok_or_else(|| not_found(format!("display {selector:?}")));
+  }
+
+  targets
+    .iter()
+    .find(|target| target.display.is_primary)
+    .or_else(|| targets.first())
+    .cloned()
+    .ok_or_else(|| not_found("primary display"))
+}
+
+#[cfg(target_os = "macos")]
+fn list_display_targets() -> DriverResult<Vec<MacosDisplayTarget>> {
+  let monitors = xcap::Monitor::all()
+    .map_err(|error| backend(format!("failed to enumerate displays: {error}")))?;
+  display_targets_from_monitors(&monitors)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn list_display_targets() -> DriverResult<Vec<MacosDisplayTarget>> {
+  Err(DriverError::unsupported("display.list"))
+}
+
+#[cfg(target_os = "macos")]
+fn capture_display_xcap(selector: Option<&str>) -> DriverResult<DisplayCapture> {
+  let monitors = xcap::Monitor::all()
+    .map_err(|error| backend(format!("failed to enumerate displays: {error}")))?;
+  let targets = display_targets_from_monitors(&monitors)?;
+  let target = resolve_display_target(&targets, selector)?;
+  let monitor = monitors
+    .get(target.index)
+    .ok_or_else(|| not_found(format!("display index {}", target.index)))?;
+  let image = monitor
+    .capture_image()
+    .map_err(|error| backend(format!("failed to capture display: {error}")))?;
+  let image = RgbaImage::from_raw(image.width(), image.height(), image.into_raw())
+    .ok_or_else(|| backend("failed to decode captured display RGBA image"))?;
+  let capture = Capture {
+    image,
+    bounds: target.display.frame,
+    scale_factor: target.display.scale_factor,
+    backend: "xcap.macos".to_string(),
+    fallback_reason: None,
+  };
+  Ok(DisplayCapture {
+    display: target.display,
+    capture,
+  })
+}
+
+#[cfg(not(target_os = "macos"))]
+fn capture_display_xcap(_selector: Option<&str>) -> DriverResult<DisplayCapture> {
+  Err(DriverError::unsupported("display.capture"))
+}
+
+#[cfg(target_os = "macos")]
+fn capture_region_xcap(selector: Option<&str>, region: Rect) -> DriverResult<RegionCapture> {
+  let monitors = xcap::Monitor::all()
+    .map_err(|error| backend(format!("failed to enumerate displays: {error}")))?;
+  let targets = display_targets_from_monitors(&monitors)?;
+  let target = resolve_display_for_global_region(&targets, selector, region)?;
+  let monitor = monitors
+    .get(target.index)
+    .ok_or_else(|| not_found(format!("display index {}", target.index)))?;
+  let local_x = integral_capture_dimension("x", region.origin.x - target.display.frame.origin.x)?;
+  let local_y = integral_capture_dimension("y", region.origin.y - target.display.frame.origin.y)?;
+  let width = integral_positive_capture_dimension("width", region.size.width)?;
+  let height = integral_positive_capture_dimension("height", region.size.height)?;
+  let image = monitor
+    .capture_region(local_x, local_y, width, height)
+    .map_err(|error| backend(format!("failed to capture display region: {error}")))?;
+  let image = RgbaImage::from_raw(image.width(), image.height(), image.into_raw())
+    .ok_or_else(|| backend("failed to decode captured region RGBA image"))?;
+  let capture = Capture {
+    image,
+    bounds: region,
+    scale_factor: target.display.scale_factor,
+    backend: "xcap.macos".to_string(),
+    fallback_reason: None,
+  };
+  Ok(RegionCapture {
+    display: target.display,
+    capture,
+  })
+}
+
+#[cfg(not(target_os = "macos"))]
+fn capture_region_xcap(_selector: Option<&str>, _region: Rect) -> DriverResult<RegionCapture> {
+  Err(DriverError::unsupported("display.capture_region"))
+}
+
+#[cfg(target_os = "macos")]
+fn display_targets_from_monitors(
+  monitors: &[xcap::Monitor],
+) -> DriverResult<Vec<MacosDisplayTarget>> {
+  if monitors.is_empty() {
+    return Err(not_found("display"));
+  }
+  monitors
+    .iter()
+    .enumerate()
+    .map(|(index, monitor)| {
+      let x = monitor
+        .x()
+        .map_err(|error| backend(format!("failed to read display x: {error}")))?
+        as f64;
+      let y = monitor
+        .y()
+        .map_err(|error| backend(format!("failed to read display y: {error}")))?
+        as f64;
+      let width = monitor
+        .width()
+        .map_err(|error| backend(format!("failed to read display width: {error}")))?
+        as f64;
+      let height = monitor
+        .height()
+        .map_err(|error| backend(format!("failed to read display height: {error}")))?
+        as f64;
+      let scale_factor = monitor
+        .scale_factor()
+        .map_err(|error| backend(format!("failed to read display scale: {error}")))?
+        as f64;
+      let is_builtin = monitor
+        .is_builtin()
+        .map_err(|error| backend(format!("failed to read display built-in flag: {error}")))?;
+      let native_id = monitor
+        .id()
+        .map_err(|error| backend(format!("failed to read display id: {error}")))?
+        .to_string();
+      Ok(MacosDisplayTarget {
+        index,
+        display: Display {
+          id: native_id,
+          name: Some(format!("display_{index}")),
+          frame: Rect::new(x, y, width, height),
+          coordinate_space: CoordinateSpace::Screen,
+          scale_factor,
+          is_primary: monitor
+            .is_primary()
+            .map_err(|error| backend(format!("failed to read display primary flag: {error}")))?,
+          is_builtin: Some(is_builtin),
+        },
+      })
+    })
+    .collect()
+}
+
+fn resolve_display_for_global_region(
+  targets: &[MacosDisplayTarget],
+  selector: Option<&str>,
+  region: Rect,
+) -> DriverResult<MacosDisplayTarget> {
+  let selected = if selector.is_some() {
+    vec![resolve_display_target(targets, selector)?]
+  } else {
+    targets.to_vec()
+  };
+  selected
+    .into_iter()
+    .find(|target| rect_contains_rect(target.display.frame, region))
+    .ok_or_else(|| not_found("display containing region"))
+}
+
+fn rect_contains_rect(container: Rect, candidate: Rect) -> bool {
+  candidate.origin.x >= container.origin.x
+    && candidate.origin.y >= container.origin.y
+    && candidate.origin.x + candidate.size.width <= container.origin.x + container.size.width
+    && candidate.origin.y + candidate.size.height <= container.origin.y + container.size.height
+}
+
+fn integral_capture_dimension(name: &str, value: f64) -> DriverResult<u32> {
+  if value.fract() != 0.0 {
+    return Err(invalid_input(format!(
+      "region {name} must be an integer in backend capture units"
+    )));
+  }
+  if value < 0.0 || value > u32::MAX as f64 {
+    return Err(invalid_input(format!(
+      "region {name} is outside the capture backend range"
+    )));
+  }
+  Ok(value as u32)
+}
+
+fn integral_positive_capture_dimension(name: &str, value: f64) -> DriverResult<u32> {
+  let integral = integral_capture_dimension(name, value)?;
+  if integral == 0 {
+    return Err(invalid_input(format!("region {name} must be positive")));
+  }
+  Ok(integral)
+}
+
 #[cfg(target_os = "macos")]
 fn capture_window(window: &Window) -> DriverResult<Capture> {
   // Prefer the Swift FFI ScreenCaptureKit path for typed window capture.
@@ -1527,6 +1795,42 @@ mod tests {
     assert_eq!(resolved.reference.id, "307");
   }
 
+  #[test]
+  fn display_selector_matches_native_id_and_compat_display_ref() {
+    let targets = vec![display_target(0, "100", "display_0", false)];
+
+    let by_native = resolve_display_target(&targets, Some("100")).unwrap();
+    let by_ref = resolve_display_target(&targets, Some("display_0")).unwrap();
+
+    assert_eq!(by_native.display.id, "100");
+    assert_eq!(by_ref.display.name.as_deref(), Some("display_0"));
+  }
+
+  #[test]
+  fn display_selector_defaults_to_primary_display() {
+    let targets = vec![
+      display_target(0, "100", "display_0", false),
+      display_target(1, "200", "display_1", true),
+    ];
+
+    let resolved = resolve_display_target(&targets, None).unwrap();
+
+    assert_eq!(resolved.display.id, "200");
+  }
+
+  #[test]
+  fn display_region_resolution_requires_contained_global_region() {
+    let targets = vec![display_target(0, "100", "display_0", true)];
+
+    let resolved =
+      resolve_display_for_global_region(&targets, None, Rect::new(10.0, 20.0, 40.0, 50.0)).unwrap();
+    let outside =
+      resolve_display_for_global_region(&targets, None, Rect::new(10.0, 20.0, 2000.0, 50.0));
+
+    assert_eq!(resolved.display.id, "100");
+    assert!(matches!(outside, Err(DriverError::NotFound { .. })));
+  }
+
   fn observed_windows(windows: Vec<ObservedWindow>) -> ObservedWindowSnapshot {
     ObservedWindowSnapshot {
       frontmost_app_name: String::new(),
@@ -1558,6 +1862,26 @@ mod tests {
         y: 0,
         width,
         height,
+      },
+    }
+  }
+
+  fn display_target(
+    index: usize,
+    native_id: &str,
+    display_ref: &str,
+    is_primary: bool,
+  ) -> MacosDisplayTarget {
+    MacosDisplayTarget {
+      index,
+      display: Display {
+        id: native_id.to_string(),
+        name: Some(display_ref.to_string()),
+        frame: Rect::new(0.0, 0.0, 1000.0, 800.0),
+        coordinate_space: CoordinateSpace::Screen,
+        scale_factor: 2.0,
+        is_primary,
+        is_builtin: Some(false),
       },
     }
   }

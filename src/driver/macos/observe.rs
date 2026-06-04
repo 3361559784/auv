@@ -50,7 +50,10 @@ pub(super) use super::typed::observe::{
   verify_ax_text_signals, verify_now_playing_title_signals, wait_ocr_detection_signals,
   wait_row_detection_signals,
 };
-use super::{DriverCall, DriverResponse, ObservedAxNode, ObservedWindowSnapshot, ProducedArtifact};
+use super::{
+  DriverCall, DriverResponse, ObservedAxNode, ObservedRect, ObservedWindowSnapshot,
+  ProducedArtifact,
+};
 use crate::contract::{
   ArtifactRef, FailureLayer, OPERATION_RESULT_API_VERSION, OperationOutput, OperationResult,
   OperationStatus, VERIFICATION_RESULT_API_VERSION, VerificationMethod, VerificationResult,
@@ -61,8 +64,9 @@ use crate::driver::macos::support::{
 };
 use crate::model::AuvResult;
 use crate::trace::RunId;
+use auv_driver_macos::types::ObservedWindow;
 #[cfg(test)]
-use auv_driver_macos::types::{ObservedWindow, ResolvedAppRef};
+use auv_driver_macos::types::ResolvedAppRef;
 
 const VERIFY_AX_TEXT_OPERATION_ID: &str = "verify.axText";
 const VERIFY_MUSIC_NOW_PLAYING_OPERATION_ID: &str = "verify.musicNowPlaying";
@@ -149,38 +153,78 @@ pub(super) fn probe_coordinate_readiness(call: &DriverCall) -> AuvResult<DriverR
 pub(super) fn list_windows(call: &DriverCall) -> AuvResult<DriverResponse> {
   let limit = optional_i64(call, "limit")?.unwrap_or(12).max(1);
   let app_filter = app_identifier(call).unwrap_or_default();
-  let snapshot = if app_filter.trim().is_empty() {
-    list_windows_snapshot(auv_driver_macos::native::window::ListWindowsOptions::all_visible(limit))?
-  } else {
-    list_windows_snapshot(auv_driver_macos::native::window::ListWindowsOptions::app(
-      limit,
-      app_filter.trim(),
-    ))?
-  };
+  if !app_filter.trim().is_empty() {
+    // TODO(auv-driver-app-scoped-window-list): app-filtered WindowServer
+    // queries can return windows absent from the all-visible snapshot. Keep the
+    // legacy app-scoped query and candidate metadata until `auv-driver` exposes
+    // an app-scoped typed list capability.
+    return list_windows_with_legacy_app_filter(app_filter.trim(), limit);
+  }
+
+  let typed_windows = super::typed::session::list_windows_bridge()?;
+  let typed_windows = select_typed_window_list(&typed_windows, limit);
+  let snapshot = typed_window_snapshot(&typed_windows)?;
+  let report = render_window_snapshot_report(&snapshot);
+  let window_count = snapshot.windows.len();
+  let candidate_resolution =
+    Some("typed-window-list: candidate and frontmost metadata unavailable in this bridge");
+  let json = render_window_list_json(&snapshot, &[], candidate_resolution)?;
+  let json_artifact = build_text_artifact(
+    "window-list",
+    "json",
+    "window-list",
+    json,
+    "Machine-readable macOS window candidate list.",
+  )?;
+  let text_artifact = build_text_artifact(
+    "window-list",
+    "txt",
+    "window-list-typed",
+    report.clone(),
+    "Human-readable macOS window candidate report.",
+  )?;
+  let mut notes = vec![
+    format!("observedAt={}", snapshot.observed_at),
+    "typedWindowListCompatibility=frontmost metadata unavailable".to_string(),
+  ];
+  if let Some(candidate_resolution) = candidate_resolution {
+    notes.push(format!("candidateResolution={candidate_resolution}"));
+  }
+  for line in report
+    .lines()
+    .filter(|line| line.starts_with("window\t"))
+    .take(5)
+  {
+    notes.push(line.to_string());
+  }
+  let summary = format!("Observed {} visible macOS window(s).", window_count);
+  Ok(DriverResponse {
+    summary,
+    backend: Some("macos.typed.window.list".to_string()),
+    signals: std::collections::BTreeMap::new(),
+    notes,
+    artifacts: vec![json_artifact, text_artifact],
+  })
+}
+
+fn list_windows_with_legacy_app_filter(app_filter: &str, limit: i64) -> AuvResult<DriverResponse> {
+  let snapshot = list_windows_snapshot(auv_driver_macos::native::window::ListWindowsOptions::app(
+    limit, app_filter,
+  ))?;
   let report = render_window_snapshot_report(&snapshot);
   let window_count = snapshot.windows.len();
   let frontmost_app = snapshot.frontmost_app_name.clone();
   let frontmost_window = snapshot.frontmost_window_title.clone();
-  let observed_at = snapshot.observed_at.clone();
   let displays = crate::driver::macos::capture::xcap_backend::list_displays()?;
-  let candidate_app = if app_filter.trim().is_empty() {
-    snapshot.frontmost_app_bundle_id.trim()
-  } else {
-    app_filter.trim()
-  };
   let mut candidate_note = None;
-  let rendered_candidates = if candidate_app.is_empty() {
-    Vec::new()
-  } else {
-    match parse_app_selector(candidate_app)
-      .and_then(|selector| resolve_app_ref(&snapshot, &selector))
-      .and_then(|resolved_app| build_window_candidates(&snapshot, &resolved_app, &displays))
-    {
-      Ok(candidates) => candidates,
-      Err(error) => {
-        candidate_note = Some(format!("candidateResolution={error}"));
-        Vec::new()
-      }
+  let rendered_candidates = match parse_app_selector(app_filter)
+    .and_then(|selector| resolve_app_ref(&snapshot, &selector))
+    .and_then(|resolved_app| build_window_candidates(&snapshot, &resolved_app, &displays))
+  {
+    Ok(candidates) => candidates,
+    Err(error) => {
+      candidate_note = Some(format!("candidateResolution={error}"));
+      Vec::new()
     }
   };
   let json = render_window_list_json(&snapshot, &rendered_candidates, candidate_note.as_deref())?;
@@ -194,11 +238,14 @@ pub(super) fn list_windows(call: &DriverCall) -> AuvResult<DriverResponse> {
   let text_artifact = build_text_artifact(
     "window-list",
     "txt",
-    &format!("window-list-{}", sanitize_file_component(&frontmost_app)),
+    &format!("window-list-{}", sanitize_file_component(app_filter)),
     report.clone(),
     "Human-readable macOS window candidate report.",
   )?;
-  let mut notes = vec![format!("observedAt={observed_at}")];
+  let mut notes = vec![
+    format!("observedAt={}", snapshot.observed_at),
+    format!("appFilter={app_filter}"),
+  ];
   if let Some(candidate_note) = candidate_note {
     notes.push(candidate_note);
   }
@@ -209,7 +256,70 @@ pub(super) fn list_windows(call: &DriverCall) -> AuvResult<DriverResponse> {
   {
     notes.push(line.to_string());
   }
-  let summary = if frontmost_app.is_empty() {
+
+  Ok(DriverResponse {
+    summary: list_windows_summary(window_count, &frontmost_app, &frontmost_window),
+    backend: Some("macos.swift.cgwindowlist".to_string()),
+    signals: std::collections::BTreeMap::new(),
+    notes,
+    artifacts: vec![json_artifact, text_artifact],
+  })
+}
+
+fn select_typed_window_list(windows: &[auv_driver::Window], limit: i64) -> Vec<auv_driver::Window> {
+  let limit = usize::try_from(limit.max(1)).unwrap_or(usize::MAX);
+  windows.iter().take(limit).cloned().collect()
+}
+
+fn observed_window_from_typed(window: &auv_driver::Window) -> AuvResult<ObservedWindow> {
+  let window_number = window.reference.id.parse::<i64>().map_err(|error| {
+    format!(
+      "typed window id {:?} cannot be represented as legacy numeric window_number: {error}",
+      window.reference.id
+    )
+  })?;
+  Ok(ObservedWindow {
+    window_number,
+    app_name: window.app_name.clone().unwrap_or_default(),
+    owner_pid: window.process_id.map(i64::from).unwrap_or_default(),
+    owner_bundle_id: window.app_bundle_id.clone().unwrap_or_default(),
+    // TODO(auv-driver-window-layer): typed `Window` does not expose the
+    // WindowServer layer yet. Keep the legacy column stable for this bridge and
+    // replace this default when `auv-driver` carries layer metadata.
+    layer: 0,
+    title: window.title.clone().unwrap_or_default(),
+    bounds: ObservedRect {
+      x: window.frame.origin.x.round() as i64,
+      y: window.frame.origin.y.round() as i64,
+      width: window.frame.size.width.round() as i64,
+      height: window.frame.size.height.round() as i64,
+    },
+  })
+}
+
+fn typed_window_snapshot(windows: &[auv_driver::Window]) -> AuvResult<ObservedWindowSnapshot> {
+  Ok(ObservedWindowSnapshot {
+    // TODO(auv-driver-window-frontmost): typed `Window::list` does not carry
+    // frontmost app/window metadata yet. Keep legacy fields empty so downstream
+    // readers do not mistake a sentinel for a real observation; replace when
+    // typed window listing exposes first-class frontmost evidence.
+    frontmost_app_name: String::new(),
+    frontmost_app_bundle_id: String::new(),
+    frontmost_window_title: String::new(),
+    observed_at: crate::model::now_millis().to_string(),
+    windows: windows
+      .iter()
+      .map(observed_window_from_typed)
+      .collect::<AuvResult<Vec<_>>>()?,
+  })
+}
+
+fn list_windows_summary(
+  window_count: usize,
+  frontmost_app: &str,
+  frontmost_window: &str,
+) -> String {
+  if frontmost_app.is_empty() {
     format!("Observed {} visible macOS window(s).", window_count)
   } else if frontmost_window.is_empty() {
     format!(
@@ -221,14 +331,14 @@ pub(super) fn list_windows(call: &DriverCall) -> AuvResult<DriverResponse> {
       "Observed {} visible macOS window(s); frontmost app is {} ({})",
       window_count, frontmost_app, frontmost_window
     )
-  };
-  Ok(DriverResponse {
-    summary,
-    backend: Some("macos.swift.cgwindowlist".to_string()),
-    signals: std::collections::BTreeMap::new(),
-    notes,
-    artifacts: vec![json_artifact, text_artifact],
-  })
+  }
+}
+
+#[cfg(test)]
+fn render_typed_window_list_report(windows: &[auv_driver::Window]) -> AuvResult<String> {
+  Ok(render_window_snapshot_report(&typed_window_snapshot(
+    windows,
+  )?))
 }
 
 pub(super) fn list_windows_snapshot(
@@ -1769,8 +1879,8 @@ mod tests {
     build_verify_ax_text_verification, build_verify_now_playing_title_no_match_verification,
     build_verify_now_playing_title_operation_result, build_verify_now_playing_title_verification,
     ocr_detection_signals, permission_probe_report, preferred_ax_signal_text,
-    row_detection_signals, verify_ax_text_signals, verify_now_playing_title_signals,
-    wait_ocr_detection_signals, wait_row_detection_signals,
+    render_typed_window_list_report, row_detection_signals, verify_ax_text_signals,
+    verify_now_playing_title_signals, wait_ocr_detection_signals, wait_row_detection_signals,
   };
   use crate::contract::{
     ArtifactRef, FailureLayer, OperationOutput, OperationStatus, VerificationMethod,
@@ -1820,6 +1930,49 @@ mod tests {
       report,
       "screenRecording=granted\nscreenCaptureKit=granted\naccessibility=missing\nautomationToSystemEvents=granted\nlaunchHostProcess=current-process\n"
     );
+  }
+
+  #[test]
+  fn typed_window_list_report_includes_window_identity() {
+    let report = render_typed_window_list_report(&[auv_driver::Window {
+      reference: auv_driver::WindowRef {
+        id: "42".to_string(),
+      },
+      title: Some("Inbox".to_string()),
+      app_name: Some("Example".to_string()),
+      app_bundle_id: Some("com.example.App".to_string()),
+      process_id: Some(123),
+      frame: auv_driver::Rect::new(10.0, 20.0, 300.0, 200.0),
+      coordinate_space: auv_driver::CoordinateSpace::Screen,
+      is_main: true,
+      is_visible: true,
+    }])
+    .expect("typed window report should render");
+
+    assert!(report.contains("windowCount=1"));
+    assert!(report.contains("frontmostAppName="));
+    assert!(report.contains("com.example.App"));
+    assert!(report.contains("Inbox"));
+  }
+
+  #[test]
+  fn typed_window_list_report_rejects_non_numeric_legacy_window_id() {
+    let error = render_typed_window_list_report(&[auv_driver::Window {
+      reference: auv_driver::WindowRef {
+        id: "opaque-window-id".to_string(),
+      },
+      title: Some("Inbox".to_string()),
+      app_name: Some("Example".to_string()),
+      app_bundle_id: Some("com.example.App".to_string()),
+      process_id: Some(123),
+      frame: auv_driver::Rect::new(10.0, 20.0, 300.0, 200.0),
+      coordinate_space: auv_driver::CoordinateSpace::Screen,
+      is_main: true,
+      is_visible: true,
+    }])
+    .expect_err("legacy report requires numeric window ids");
+
+    assert!(error.contains("cannot be represented as legacy numeric window_number"));
   }
 
   #[test]

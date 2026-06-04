@@ -10,6 +10,7 @@ pub struct Display {
   pub coordinate_space: CoordinateSpace,
   pub scale_factor: f64,
   pub is_primary: bool,
+  pub is_builtin: Option<bool>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]

@@ -2,7 +2,7 @@
 use super::artifact::{render_capture_contract_json, render_capture_contract_text};
 use super::types::{
   CaptureBackend, CaptureContract, CaptureSource, CoordinateSpace, DisplayDescriptor, Rect,
-  Scale2D, capture_error,
+  Scale2D, Size, capture_error,
 };
 use super::xcap_backend;
 use crate::driver::macos::support::{
@@ -21,14 +21,7 @@ pub(crate) fn capture_display(call: &DriverCall) -> AuvResult<DriverResponse> {
   let has_display_selector = display_ref.is_some() || display_id.is_some();
   let main = optional_bool(call, "main")?.unwrap_or(!has_display_selector);
   let activated_app = maybe_activate_target_app_for_observation(call)?;
-
-  let monitors = xcap::Monitor::all().map_err(|error| {
-    format!(
-      "{}: failed to enumerate displays before capture: {error}",
-      capture_error::BACKEND_FAILED
-    )
-  })?;
-  let displays = xcap_backend::descriptors_from_monitors(&monitors)?;
+  let displays = typed_display_descriptors()?;
   let display_index = xcap_backend::resolve_display_index(
     &displays,
     display_ref.as_deref(),
@@ -45,28 +38,12 @@ pub(crate) fn capture_display(call: &DriverCall) -> AuvResult<DriverResponse> {
       )
     })?
     .clone();
-
-  let monitor = monitors.get(display_index).ok_or_else(|| {
-    format!(
-      "{}: display {} disappeared before capture",
-      capture_error::STALE_DISPLAY_REF,
-      descriptor.display_ref
-    )
-  })?;
-  let image = monitor.capture_image().map_err(|error| {
-    format!(
-      "{}: failed to capture {} through xcap: {error}",
-      capture_error::BACKEND_FAILED,
-      descriptor.display_ref
-    )
-  })?;
+  let observation = crate::driver::macos::typed::session::capture_display_bridge(Some(
+    descriptor.native_display_id.clone(),
+  ))?;
+  let screenshot_pixel_size = typed_capture_size(&observation.capture)?;
   let screenshot_path = screenshot_temp_path(&label);
-  let screenshot_pixel_size = xcap_backend::save_rgba_image(image, &screenshot_path)?;
-  let (pixel_to_logical_scale, logical_to_pixel_scale) =
-    xcap_backend::scale_from_logical_and_physical(
-      &descriptor.global_logical_bounds,
-      &screenshot_pixel_size,
-    )?;
+  xcap_backend::save_rgba_image(observation.capture.image, &screenshot_path)?;
 
   let contract = CaptureContract {
     coordinate_contract_version: 1,
@@ -84,8 +61,8 @@ pub(crate) fn capture_display(call: &DriverCall) -> AuvResult<DriverResponse> {
       height: screenshot_pixel_size.height,
     },
     screenshot_pixel_size: screenshot_pixel_size.clone(),
-    pixel_to_logical_scale,
-    logical_to_pixel_scale,
+    pixel_to_logical_scale: descriptor.pixel_to_logical_scale.clone(),
+    logical_to_pixel_scale: descriptor.logical_to_pixel_scale.clone(),
     captured_at_unix_ms: now_millis(),
   };
 
@@ -147,13 +124,7 @@ pub(crate) fn capture_region(call: &DriverCall) -> AuvResult<DriverResponse> {
   };
   let activated_app = maybe_activate_target_app_for_observation(call)?;
 
-  let monitors = xcap::Monitor::all().map_err(|error| {
-    format!(
-      "{}: failed to enumerate displays before capture: {error}",
-      capture_error::BACKEND_FAILED
-    )
-  })?;
-  let displays = xcap_backend::descriptors_from_monitors(&monitors)?;
+  let displays = typed_display_descriptors()?;
   let resolved = xcap_backend::resolve_region(
     &displays,
     input,
@@ -171,25 +142,18 @@ pub(crate) fn capture_region(call: &DriverCall) -> AuvResult<DriverResponse> {
       )
     })?
     .clone();
-  let monitor = monitors.get(resolved.display_index).ok_or_else(|| {
-    format!(
-      "{}: display {} disappeared before region capture",
-      capture_error::STALE_DISPLAY_REF,
-      descriptor.display_ref
-    )
-  })?;
-  let capture_x = integral_capture_dimension("x", resolved.display_local_logical.x)?;
-  let capture_y = integral_capture_dimension("y", resolved.display_local_logical.y)?;
-  let capture_width =
-    integral_positive_capture_dimension("width", resolved.display_local_logical.width)?;
-  let capture_height =
-    integral_positive_capture_dimension("height", resolved.display_local_logical.height)?;
-
-  let image = monitor
-    .capture_region(capture_x, capture_y, capture_width, capture_height)
-    .map_err(xcap_backend::map_xcap_capture_error)?;
+  let observation = crate::driver::macos::typed::session::capture_region_bridge(
+    Some(descriptor.display_ref.clone()),
+    auv_driver::Rect::new(
+      resolved.source_global_logical_bounds.x,
+      resolved.source_global_logical_bounds.y,
+      resolved.source_global_logical_bounds.width,
+      resolved.source_global_logical_bounds.height,
+    ),
+  )?;
   let screenshot_path = screenshot_temp_path(&label);
-  let screenshot_pixel_size = xcap_backend::save_rgba_image(image, &screenshot_path)?;
+  let screenshot_pixel_size = typed_capture_size(&observation.capture)?;
+  xcap_backend::save_rgba_image(observation.capture.image, &screenshot_path)?;
   let pixel_to_logical_scale = Scale2D {
     x: resolved.source_global_logical_bounds.width / screenshot_pixel_size.width,
     y: resolved.source_global_logical_bounds.height / screenshot_pixel_size.height,
@@ -359,7 +323,7 @@ pub(crate) fn capture_window(call: &DriverCall) -> AuvResult<DriverResponse> {
 }
 
 pub(crate) fn list_displays(_call: &DriverCall) -> AuvResult<DriverResponse> {
-  let displays = xcap_backend::list_displays()?;
+  let displays = typed_display_descriptors()?;
   let main_display = displays
     .iter()
     .find(|display| display.is_main)
@@ -409,6 +373,62 @@ pub(crate) fn list_displays(_call: &DriverCall) -> AuvResult<DriverResponse> {
   })
 }
 
+fn typed_display_descriptors() -> AuvResult<Vec<DisplayDescriptor>> {
+  // TODO(remove-legacy-capture-descriptor-adapter): this converts typed
+  // `auv-driver` display records back into legacy capture descriptors only
+  // while root command handlers still produce old capture-contract artifacts.
+  // Delete it when capture commands are invoked through typed runtime APIs.
+  let typed = crate::driver::macos::typed::session::list_displays_bridge()?;
+  typed
+    .displays
+    .iter()
+    .map(|display| {
+      let physical_pixel_size = Size {
+        width: display.frame.size.width * display.scale_factor,
+        height: display.frame.size.height * display.scale_factor,
+      };
+      display_descriptor_from_typed(display, &physical_pixel_size)
+    })
+    .collect()
+}
+
+fn typed_capture_size(capture: &auv_driver::Capture) -> AuvResult<Size> {
+  Ok(Size {
+    width: capture.image.width() as f64,
+    height: capture.image.height() as f64,
+  })
+}
+
+fn display_descriptor_from_typed(
+  display: &auv_driver::Display,
+  physical_pixel_size: &Size,
+) -> AuvResult<DisplayDescriptor> {
+  let global_logical_bounds = Rect {
+    x: display.frame.origin.x,
+    y: display.frame.origin.y,
+    width: display.frame.size.width,
+    height: display.frame.size.height,
+  };
+  let (pixel_to_logical_scale, logical_to_pixel_scale) =
+    xcap_backend::scale_from_logical_and_physical(&global_logical_bounds, physical_pixel_size)?;
+  Ok(DisplayDescriptor {
+    display_ref: display
+      .name
+      .clone()
+      .unwrap_or_else(|| format!("display_{}", display.id)),
+    is_main: display.is_primary,
+    is_builtin: display.is_builtin.unwrap_or(false),
+    global_logical_bounds: global_logical_bounds.clone(),
+    visible_logical_bounds: global_logical_bounds,
+    physical_pixel_size: physical_pixel_size.clone(),
+    scale_factor: display.scale_factor,
+    pixel_to_logical_scale,
+    logical_to_pixel_scale,
+    native_display_id: display.id.clone(),
+    capture_backend: CaptureBackend::XcapMacos,
+  })
+}
+
 fn parse_coordinate_space(call: &DriverCall) -> AuvResult<CoordinateSpace> {
   match optional_string(call, "coordinate_space")
     .unwrap_or_else(|| "global_logical".to_string())
@@ -423,36 +443,6 @@ fn parse_coordinate_space(call: &DriverCall) -> AuvResult<CoordinateSpace> {
       other
     )),
   }
-}
-
-fn integral_capture_dimension(name: &str, value: f64) -> AuvResult<u32> {
-  if value.fract() != 0.0 {
-    return Err(format!(
-      "{}: region {} must be an integer in backend capture units",
-      capture_error::REGION_OUT_OF_BOUNDS,
-      name
-    ));
-  }
-  if value < 0.0 || value > u32::MAX as f64 {
-    return Err(format!(
-      "{}: region {} is outside the capture backend range",
-      capture_error::REGION_OUT_OF_BOUNDS,
-      name
-    ));
-  }
-  Ok(value as u32)
-}
-
-fn integral_positive_capture_dimension(name: &str, value: f64) -> AuvResult<u32> {
-  let integral = integral_capture_dimension(name, value)?;
-  if integral == 0 {
-    return Err(format!(
-      "{}: region {} must be positive",
-      capture_error::REGION_OUT_OF_BOUNDS,
-      name
-    ));
-  }
-  Ok(integral)
 }
 
 fn render_display_note(display: &DisplayDescriptor) -> String {

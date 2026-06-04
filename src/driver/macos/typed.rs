@@ -14,6 +14,10 @@ use crate::model::AuvResult;
 // surface. When it needs to borrow typed crate behavior, keep that borrowing
 // centralized here instead of letting command handlers talk to
 // `auv-driver-macos` directly.
+//
+// TODO(remove-legacy-driver-call-adapter): delete these compatibility shims
+// when `Runtime::invoke` no longer routes macOS commands through legacy
+// `DriverCall` handlers and can open typed `auv-driver` sessions directly.
 
 pub(crate) mod descriptor {
   pub(crate) fn legacy_descriptor_metadata() -> auv_driver_macos::MacosLegacyDescriptorMetadata {
@@ -121,6 +125,62 @@ pub(crate) mod session {
       })
       .map_err(|error| format!("typed macOS paste_text adapter failed: {error}"))?;
     Ok(PasteTextBridgeOutcome::UsedTypedSession)
+  }
+
+  pub(crate) fn list_windows_bridge() -> AuvResult<Vec<auv_driver::Window>> {
+    let driver = auv_driver_macos::MacosDriver::new();
+    let session = driver
+      .open_local()
+      .map_err(|error| format!("failed to open typed macOS driver session: {error}"))?;
+    session
+      .window()
+      .list()
+      .map_err(|error| format!("typed macOS window list adapter failed: {error}"))
+  }
+
+  pub(crate) fn list_displays_bridge() -> AuvResult<auv_driver::ObservedDisplays> {
+    let driver = auv_driver_macos::MacosDriver::new();
+    let session = driver
+      .open_local()
+      .map_err(|error| format!("failed to open typed macOS driver session: {error}"))?;
+    session
+      .display()
+      .list()
+      .map_err(|error| format!("typed macOS display list adapter failed: {error}"))
+  }
+
+  pub(crate) fn capture_display_bridge(
+    display: Option<String>,
+  ) -> AuvResult<auv_driver::DisplayCapture> {
+    let driver = auv_driver_macos::MacosDriver::new();
+    let session = driver
+      .open_local()
+      .map_err(|error| format!("failed to open typed macOS driver session: {error}"))?;
+    session
+      .display()
+      .capture(auv_driver::CaptureOptions {
+        display,
+        ..auv_driver::CaptureOptions::default()
+      })
+      .map_err(|error| format!("typed macOS display capture adapter failed: {error}"))
+  }
+
+  pub(crate) fn capture_region_bridge(
+    display: Option<String>,
+    region: auv_driver::Rect,
+  ) -> AuvResult<auv_driver::RegionCapture> {
+    let driver = auv_driver_macos::MacosDriver::new();
+    let session = driver
+      .open_local()
+      .map_err(|error| format!("failed to open typed macOS driver session: {error}"))?;
+    session
+      .display()
+      .capture_region(auv_driver::CaptureOptions {
+        display,
+        region: Some(region),
+        ..auv_driver::CaptureOptions::default()
+      })
+      .map_err(|error| format!("typed macOS region capture adapter failed: {error}"))
   }
 
   pub(crate) fn scroll_global_hid_bridge(

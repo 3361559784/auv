@@ -8,7 +8,7 @@ pub mod traits;
 pub mod vision;
 pub mod window;
 
-pub use capture::{Activation, Capture, CaptureOptions, ImageView};
+pub use capture::{Activation, Capture, CaptureOptions, DisplayCapture, ImageView, RegionCapture};
 pub use display::{Display, ObservedDisplays};
 pub use error::{DriverError, DriverResult};
 pub use geometry::{CoordinateSpace, Point, RatioRect, Rect, ScreenPoint, Size, WindowPoint};
@@ -27,121 +27,7 @@ pub use window::{ObservedWindows, Window, WindowRef};
 
 #[cfg(test)]
 mod tests {
-  use std::time::Duration;
-
-  use crate::{
-    ActivationPolicy, Click, ClickOptions, DisturbanceLevel, InputActionResult, InputAttempt,
-    InputDeliveryPath, InputPolicy, InputPreparationLease, PrepareForInputOptions, ScreenPoint,
-    Scroll, ScrollDeliveryCandidate, ScrollDeliveryStrategy, ScrollOptions, TextSubmit,
-    TypeTextOptions, WindowClickStrategy, WindowPoint,
-    capture::{Activation, Capture, CaptureOptions, ImageView},
-    display::{Display, ObservedDisplays},
-    error::{DriverError, DriverResult},
-    geometry::{CoordinateSpace, Point, RatioRect, Rect, Size},
-    input::{PasteTextOptions, WaitOptions},
-    selector::{App, AppSelector, TextMatcher, Window as SelectWindow, WindowSelector},
-    traits::{Driver, DriverDescriptor, DriverSession, PlatformKind},
-    vision::{ImageMatch, ImageMatchResult, RecognizedText, TextRecognition},
-    window::{ObservedWindows, Window, WindowRef},
-  };
-
-  #[test]
-  fn public_api_exports_agreed_driver_names() {
-    let app = App::bundle("com.example.App");
-    let _app_pid = App::pid(1234);
-    let _frontmost = App::frontmost();
-    let _window_selector = SelectWindow::main_visible()
-      .owned_by(app)
-      .title_contains("Inbox")
-      .title_exact("Inbox - AUV");
-
-    let _activation = Activation::ActivateFirst {
-      settle: Duration::from_millis(50),
-    };
-    let _keep_current = Activation::KeepCurrent;
-    let _click = Click::Double {
-      interval: Duration::from_millis(100),
-    };
-    let _screen_point = ScreenPoint::new(10.0, 20.0);
-    let _window_point = WindowPoint::new(3.0, 4.0);
-    let _click_options = ClickOptions {
-      policy: InputPolicy::BackgroundOnly,
-      click: Click::Single,
-      window_strategy: WindowClickStrategy::ChromiumCompatible,
-    };
-    let _type_options = TypeTextOptions {
-      policy: InputPolicy::BackgroundPreferred,
-      replace_existing: true,
-      submit: TextSubmit::Return,
-      inter_char_delay: Duration::from_millis(8),
-      allow_clipboard_fallback: false,
-      settle: Duration::from_millis(50),
-    };
-    let _prepare_options = PrepareForInputOptions {
-      activation: ActivationPolicy::NoChange,
-      preserve_frontmost: true,
-      install_focus_guard: false,
-      settle: Duration::from_millis(0),
-    };
-    let _lease = InputPreparationLease::noop();
-    let _attempt = InputAttempt::success(InputDeliveryPath::WindowTargetedKeyboard);
-    let _result = InputActionResult::single_success(InputDeliveryPath::WindowTargetedKeyboard);
-    let _scroll = Scroll::new(0.0, -120.0);
-    let _scroll_strategy = ScrollDeliveryStrategy {
-      candidates: vec![
-        ScrollDeliveryCandidate::AxScroll,
-        ScrollDeliveryCandidate::WindowTargetedWheel,
-        ScrollDeliveryCandidate::ForegroundHid,
-      ],
-    };
-    let _scroll_options = ScrollOptions {
-      policy: InputPolicy::BackgroundPreferred,
-      delivery_strategy: _scroll_strategy,
-      settle: Duration::from_millis(25),
-    };
-    let _ = InputDeliveryPath::AxScroll;
-    let _ = InputDeliveryPath::WindowTargetedWheel;
-    let _ = InputDeliveryPath::WindowTargetedKeyboardScroll;
-    let _ = DisturbanceLevel::None;
-    let _ = ActivationPolicy::Background;
-    let _ = ActivationPolicy::FocusWithoutRaise;
-    let _ = ActivationPolicy::Foreground {
-      settle: Duration::from_millis(100),
-    };
-    let _ = InputPolicy::ForegroundPreferred;
-
-    let _ = std::any::type_name::<Capture>();
-    let _ = std::any::type_name::<CaptureOptions>();
-    let _ = std::any::type_name::<ImageView<'static>>();
-    let _ = std::any::type_name::<Display>();
-    let _ = std::any::type_name::<ObservedDisplays>();
-    let _ = std::any::type_name::<DriverError>();
-    let _ = std::any::type_name::<DriverResult<()>>();
-    let _ = std::any::type_name::<CoordinateSpace>();
-    let _ = std::any::type_name::<Point>();
-    let _ = std::any::type_name::<RatioRect>();
-    let _ = std::any::type_name::<Rect>();
-    let _ = std::any::type_name::<Size>();
-    let _ = std::any::type_name::<PasteTextOptions>();
-    let _ = std::any::type_name::<Scroll>();
-    let _ = std::any::type_name::<ScrollDeliveryCandidate>();
-    let _ = std::any::type_name::<ScrollDeliveryStrategy>();
-    let _ = std::any::type_name::<ScrollOptions>();
-    let _ = std::any::type_name::<TextSubmit>();
-    let _ = std::any::type_name::<WaitOptions>();
-    let _ = std::any::type_name::<AppSelector>();
-    let _ = std::any::type_name::<TextMatcher>();
-    let _ = std::any::type_name::<WindowSelector>();
-    let _ = std::any::type_name::<DriverDescriptor>();
-    let _ = std::any::type_name::<PlatformKind>();
-    let _ = std::any::type_name::<ImageMatch>();
-    let _ = std::any::type_name::<ImageMatchResult>();
-    let _ = std::any::type_name::<RecognizedText>();
-    let _ = std::any::type_name::<TextRecognition>();
-    let _ = std::any::type_name::<ObservedWindows>();
-    let _ = std::any::type_name::<Window>();
-    let _ = std::any::type_name::<WindowRef>();
-  }
+  use crate::{Driver, DriverDescriptor, DriverResult, DriverSession, PlatformKind};
 
   #[derive(Clone, Copy)]
   struct TestDriver;

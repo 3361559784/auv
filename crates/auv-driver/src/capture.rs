@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use image::{RgbaImage, SubImage};
 
+use crate::display::Display;
 use crate::geometry::Rect;
 use crate::window::WindowRef;
 
@@ -34,4 +35,16 @@ pub struct Capture {
   pub scale_factor: f64,
   pub backend: String,
   pub fallback_reason: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct DisplayCapture {
+  pub display: Display,
+  pub capture: Capture,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct RegionCapture {
+  pub display: Display,
+  pub capture: Capture,
 }

@@ -126,11 +126,14 @@ fn run_send(command: MediaCommand) -> ExitCode {
 
 /// Seek to `seconds` from the start of the track.
 fn run_seek(seconds: f64) -> ExitCode {
-  if !seconds.is_finite() || seconds < 0.0 {
-    eprintln!("seek position must be a non-negative number of seconds");
-    return ExitCode::FAILURE;
-  }
-  match seek(Duration::from_secs_f64(seconds)) {
+  let duration = match seek_duration_from_seconds(seconds) {
+    Ok(duration) => duration,
+    Err(message) => {
+      eprintln!("{message}");
+      return ExitCode::FAILURE;
+    }
+  };
+  match seek(duration) {
     Ok(()) => {
       println!("ok: seek {seconds}s");
       ExitCode::SUCCESS
@@ -139,5 +142,53 @@ fn run_seek(seconds: f64) -> ExitCode {
       eprintln!("{error}");
       ExitCode::FAILURE
     }
+  }
+}
+
+/// Convert a CLI-supplied f64 seconds value into a [`Duration`] without
+/// panicking. `Duration::from_secs_f64` panics not only on NaN/Inf/negative
+/// (which the prior `is_finite` + `< 0` guard caught) but also on overflow
+/// past `Duration::MAX` (~5.85e11 years), and that overflow path was
+/// unguarded.
+fn seek_duration_from_seconds(seconds: f64) -> Result<Duration, &'static str> {
+  Duration::try_from_secs_f64(seconds).map_err(|_| {
+    "seek position must be a non-negative finite number of seconds within the representable range"
+  })
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn seek_duration_accepts_zero_and_normal_values() {
+    assert_eq!(seek_duration_from_seconds(0.0).unwrap(), Duration::ZERO);
+    assert_eq!(
+      seek_duration_from_seconds(1.5).unwrap(),
+      Duration::from_secs_f64(1.5)
+    );
+  }
+
+  #[test]
+  fn seek_duration_rejects_negative() {
+    assert!(seek_duration_from_seconds(-1.0).is_err());
+  }
+
+  #[test]
+  fn seek_duration_rejects_nan() {
+    assert!(seek_duration_from_seconds(f64::NAN).is_err());
+  }
+
+  #[test]
+  fn seek_duration_rejects_infinity() {
+    assert!(seek_duration_from_seconds(f64::INFINITY).is_err());
+  }
+
+  #[test]
+  fn seek_duration_rejects_overflow_past_duration_max() {
+    // `Duration::from_secs_f64` panics on values above `Duration::MAX`
+    // (~1.84e19 seconds). 1e20 is comfortably past that and would have
+    // panicked the CLI under the old code path.
+    assert!(seek_duration_from_seconds(1e20).is_err());
   }
 }

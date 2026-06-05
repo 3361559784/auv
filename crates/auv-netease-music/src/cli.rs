@@ -419,8 +419,14 @@ fn parse_now_playing(args: NowPlayingArgs) -> Result<Command, String> {
 }
 
 fn parse_seek(args: SeekArgs) -> Result<Command, String> {
-  if !args.seconds.is_finite() || args.seconds < 0.0 {
-    return Err("seek position must be a non-negative number of seconds".to_string());
+  // `Duration::try_from_secs_f64` rejects NaN, infinity, negative, and
+  // values past `Duration::MAX`. The old check missed the overflow case;
+  // `Duration::from_secs_f64` would have panicked on inputs like `1e20`.
+  if std::time::Duration::try_from_secs_f64(args.seconds).is_err() {
+    return Err(
+      "seek position must be a non-negative finite number of seconds within the representable range"
+        .to_string(),
+    );
   }
   Ok(Command::Seek(SeekCommand {
     seconds: args.seconds,
@@ -1001,6 +1007,42 @@ mod tests {
 
     assert_eq!(error, "unexpected extra argument \"extra\"");
   }
+
+  fn seek_args(seconds: f64) -> SeekArgs {
+    SeekArgs {
+      seconds,
+      app_id: None,
+    }
+  }
+
+  #[test]
+  fn parse_seek_accepts_normal_value() {
+    let command = parse_seek(seek_args(12.5)).expect("normal seek seconds should parse");
+    match command {
+      Command::Seek(cmd) => assert_eq!(cmd.seconds, 12.5),
+      other => panic!("expected Command::Seek, got {other:?}"),
+    }
+  }
+
+  #[test]
+  fn parse_seek_rejects_negative() {
+    parse_seek(seek_args(-1.0)).expect_err("negative seek seconds must be rejected");
+  }
+
+  #[test]
+  fn parse_seek_rejects_nan_and_infinity() {
+    parse_seek(seek_args(f64::NAN)).expect_err("NaN seek seconds must be rejected");
+    parse_seek(seek_args(f64::INFINITY)).expect_err("infinity seek seconds must be rejected");
+  }
+
+  #[test]
+  fn parse_seek_rejects_overflow_past_duration_max() {
+    // `Duration::from_secs_f64` panics on values above `Duration::MAX`
+    // (~1.84e19 seconds). The pre-fix parse_seek did not check overflow,
+    // so a 1e20 input would have hit that panic during run_seek's Duration
+    // construction.
+    parse_seek(seek_args(1e20)).expect_err("overflow seek seconds must be rejected");
+  }
 }
 
 fn run_playlist(cmd: PlaylistCommand) -> ExitCode {
@@ -1153,7 +1195,20 @@ fn run_seek(cmd: SeekCommand) -> ExitCode {
   if let Err(code) = require_owner(&cmd.app_id) {
     return code;
   }
-  match auv_media_macos::seek(std::time::Duration::from_secs_f64(cmd.seconds)) {
+  // Defense-in-depth: parse_seek already rejects out-of-range seconds, but
+  // a direct SeekCommand construction (tests, future callers) could still
+  // reach run_seek with overflow/NaN. `try_from_secs_f64` avoids the panic
+  // path inside `Duration::from_secs_f64`.
+  let duration = match std::time::Duration::try_from_secs_f64(cmd.seconds) {
+    Ok(duration) => duration,
+    Err(_) => {
+      eprintln!(
+        "seek failed: seek position must be a non-negative finite number of seconds within the representable range"
+      );
+      return ExitCode::from(1);
+    }
+  };
+  match auv_media_macos::seek(duration) {
     Ok(()) => {
       println!("ok: seek {}s", cmd.seconds);
       ExitCode::SUCCESS

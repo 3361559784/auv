@@ -370,11 +370,14 @@ version = "0.0.1"
 dependencies = [
  "auv-cli",
  "auv-inference-common",
+ "axum",
  "image",
  "ndarray",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
+ "tokio",
+ "tower",
  "ultralytics-inference",
 ]
 

@@ -1,17 +1,22 @@
-use auv_cli::contract::{
-  ArtifactRef, RatioRegion, RecognitionResult, RecognitionScope, RecognitionSurface,
-};
+use auv_cli::build_runtime_with_store_root;
+use auv_cli::contract::{RecognitionResult, RecognitionScope, RecognitionSurface};
 use auv_cli::inference_recognition::{
-  BestSelectionStrategy, DetectorRecognitionBridgePolicy, DetectorRecognitionRuntimeContext,
-  RuntimeProjection, RuntimeProjectionKind, map_detector_manifest_to_recognition_result,
+  BestSelectionStrategy, DetectorRecognitionArtifactRequest, DetectorRecognitionBridgePolicy,
+  RuntimeProjection, RuntimeProjectionKind, record_detector_manifest_recognition_artifact,
 };
-use auv_cli::trace::{ArtifactId, EventId, RunId, SpanId};
+use auv_cli::inspect_server;
+use auv_cli::recording::BroadcastRunRecorder;
+use auv_cli::run_builder::RunSpec;
+use auv_cli::store::LocalStore;
+use auv_cli::trace::RunType;
 use auv_inference_common::{
   BoundingBox, ClassLabelSource, Detection, DetectionCoordinateSpace, DetectionEvidenceManifest,
   DetectionOptions, DetectionSet, ModelId, ModelRunMetadata, ProjectionBasis, SourceImageEvidence,
   SourceImageRef, render_annotated_image,
 };
 use auv_inference_ultralytics::{InferenceDevice, UltralyticsDetector, UltralyticsModelConfig};
+use axum::body::{Body, to_bytes};
+use axum::http::{Request, StatusCode};
 use image::ImageReader;
 use serde::Deserialize;
 use serde_json::Value;
@@ -20,6 +25,8 @@ use std::ffi::OsString;
 use std::fs::{self, File};
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use tower::util::ServiceExt;
 
 const BALATRO_ROOT_ENV: &str = "AUV_BALATRO_ROOT";
 const CONFIDENCE_TOLERANCE: f32 = 0.01;
@@ -82,6 +89,8 @@ struct SmokeEvidencePaths {
   manifest_json: PathBuf,
   recognition_json: PathBuf,
   annotated_image: PathBuf,
+  runtime_store_root: PathBuf,
+  runtime_run_id: String,
 }
 
 #[test]
@@ -321,8 +330,9 @@ fn write_smoke_evidence(
 ) -> Result<SmokeEvidencePaths, Box<dyn Error>> {
   let json_path = output_dir.join(format!("{fixture_name}-detections.json"));
   let manifest_path = output_dir.join(format!("{fixture_name}-manifest.json"));
-  let recognition_path = output_dir.join(format!("{fixture_name}-recognition.json"));
   let image_path = output_dir.join(format!("{fixture_name}-annotated.png"));
+  let runtime_store_root = output_dir.join(format!("{fixture_name}-runtime-store"));
+  let runtime_project_root = output_dir.join(format!("{fixture_name}-runtime-project"));
 
   let file = File::create(&json_path)?;
   let mut writer = BufWriter::new(file);
@@ -363,30 +373,73 @@ fn write_smoke_evidence(
   manifest_writer.write_all(b"\n")?;
   manifest_writer.flush()?;
 
-  let recognition = map_detector_manifest_to_recognition_result(
-    &manifest,
-    &smoke_recognition_context(fixture_name, result.image_size),
-    &DetectorRecognitionBridgePolicy {
-      allowed_labels: None,
-      best_selection: BestSelectionStrategy::None,
-    },
-  )?;
-  let recognition_file = File::create(&recognition_path)?;
-  let mut recognition_writer = BufWriter::new(recognition_file);
-  serde_json::to_writer_pretty(&mut recognition_writer, &recognition)?;
-  recognition_writer.write_all(b"\n")?;
-  recognition_writer.flush()?;
-
   let source_image = ImageReader::open(source_image_path)?.decode()?.to_rgb8();
   let annotated = render_annotated_image(&source_image, &result.detections);
   annotated.save(&image_path)?;
 
+  fs::create_dir_all(&runtime_project_root)?;
+  let runtime = build_runtime_with_store_root(runtime_project_root, runtime_store_root.clone())?;
+  let recorded = runtime.run_recorded_operation(
+    RunSpec::new(RunType::Execute, "auv.inference.detector_smoke"),
+    format!("Balatro detector recognition smoke {fixture_name}"),
+    |context| {
+      let mut request = DetectorRecognitionArtifactRequest::new(format!(
+        "recognition_balatro_smoke_{fixture_name}"
+      ));
+      request.scope = RecognitionScope {
+        surface: RecognitionSurface::Region,
+        display_ref: None,
+        native_display_id: None,
+        app_bundle_id: None,
+        window_title: None,
+        window_number: None,
+        region_hint: Some(auv_cli::contract::RatioRegion {
+          left: 0.0,
+          top: 0.0,
+          right: 1.0,
+          bottom: 1.0,
+        }),
+        capture_artifact: None,
+        capture_contract_artifact: None,
+      };
+      request.projection = RuntimeProjection {
+        kind: RuntimeProjectionKind::IdentitySourceImagePixels,
+      };
+      request.policy = DetectorRecognitionBridgePolicy {
+        allowed_labels: None,
+        best_selection: BestSelectionStrategy::None,
+      };
+      request.artifact_label = format!("{fixture_name}-recognition");
+      request.artifact_note =
+        "Detector-backed RecognitionResult runtime artifact from gated Balatro smoke.".to_string();
+      record_detector_manifest_recognition_artifact(
+        context,
+        &manifest,
+        source_image_path,
+        "capture-image",
+        &format!("{fixture_name}-capture.png"),
+        Some("Balatro source image staged as capture artifact for detector smoke.".to_string()),
+        &request,
+      )
+    },
+  )?;
+  let recognition_path = {
+    let run = runtime.read_run(recorded.run_id.as_str())?;
+    let detector_artifact = run
+      .artifacts
+      .iter()
+      .find(|artifact| artifact.role == "detector-recognition")
+      .ok_or("detector-recognition artifact missing from recorded Balatro smoke run")?;
+    recorded.run_dir.join(&detector_artifact.path)
+  };
+
   eprintln!(
-    "{fixture_name}: wrote smoke evidence json={} manifest={} recognition={} annotated={}",
+    "{fixture_name}: wrote smoke evidence json={} manifest={} recognition={} annotated={} run_id={}",
     json_path.display(),
     manifest_path.display(),
     recognition_path.display(),
-    image_path.display()
+    image_path.display(),
+    recorded.run_id
   );
 
   Ok(SmokeEvidencePaths {
@@ -394,6 +447,8 @@ fn write_smoke_evidence(
     manifest_json: manifest_path,
     recognition_json: recognition_path,
     annotated_image: image_path,
+    runtime_store_root,
+    runtime_run_id: recorded.run_id.to_string(),
   })
 }
 
@@ -407,7 +462,6 @@ fn assert_smoke_evidence_outputs(
 ) -> Result<(), Box<dyn Error>> {
   let detections_name = format!("{fixture_name}-detections.json");
   let manifest_name = format!("{fixture_name}-manifest.json");
-  let recognition_name = format!("{fixture_name}-recognition.json");
   let annotated_name = format!("{fixture_name}-annotated.png");
 
   assert_eq!(
@@ -426,13 +480,14 @@ fn assert_smoke_evidence_outputs(
     Some(manifest_name.as_str()),
     "{fixture_name}: manifest evidence path should use the expected file name"
   );
-  assert_eq!(
+  assert!(
     evidence_paths
       .recognition_json
       .file_name()
-      .and_then(|name| name.to_str()),
-    Some(recognition_name.as_str()),
-    "{fixture_name}: recognition evidence path should use the expected file name"
+      .and_then(|name| name.to_str())
+      .map(|name| name.contains(fixture_name))
+      .unwrap_or(false),
+    "{fixture_name}: detector-recognition runtime artifact file name should retain fixture identity"
   );
   assert_eq!(
     evidence_paths
@@ -604,6 +659,166 @@ fn assert_smoke_evidence_outputs(
     &serde_json::to_value(&recognition)?,
     &["candidate", "candidate_ref", "action", "click"],
   );
+  let runtime = build_runtime_with_store_root(
+    evidence_paths
+      .runtime_store_root
+      .parent()
+      .unwrap()
+      .join(format!("{fixture_name}-runtime-project")),
+    evidence_paths.runtime_store_root.clone(),
+  )?;
+  let inspect_text = runtime.inspect(&evidence_paths.runtime_run_id)?;
+  assert!(
+    inspect_text.contains("Detector Recognition Lineage:"),
+    "{fixture_name}: inspect text must expose detector recognition lineage section"
+  );
+  assert!(
+    inspect_text.contains("backend=ultralytics-inference"),
+    "{fixture_name}: inspect text must expose detector backend provenance"
+  );
+  assert!(
+    inspect_text.contains("capture-image"),
+    "{fixture_name}: inspect text must mention capture-image lineage"
+  );
+  let lineage = runtime.list_detector_recognition_lineage(&evidence_paths.runtime_run_id)?;
+  assert_eq!(
+    lineage.len(),
+    1,
+    "{fixture_name}: runtime read-side should expose exactly one detector recognition lineage record"
+  );
+  let lineage = &lineage[0];
+  assert_eq!(
+    serde_json::to_value(&lineage.status)?,
+    Value::String("ready".to_string()),
+    "{fixture_name}: detector recognition lineage must be ready"
+  );
+  assert_eq!(
+    lineage.source,
+    Some(auv_cli::contract::RecognitionSource::Custom),
+    "{fixture_name}: lineage must preserve custom recognition source"
+  );
+  assert_eq!(
+    lineage.backend.as_deref(),
+    Some("ultralytics-inference"),
+    "{fixture_name}: lineage must preserve backend provenance"
+  );
+  assert_eq!(
+    lineage.model_id.as_deref(),
+    Some(result.model_id.0.as_str()),
+    "{fixture_name}: lineage must preserve model_id provenance"
+  );
+  assert_eq!(
+    lineage.runtime_projection_kind.as_deref(),
+    Some("identity_source_image_pixels"),
+    "{fixture_name}: lineage must preserve runtime projection policy"
+  );
+  assert_eq!(
+    lineage.filtered_count,
+    Some(result.detections.len()),
+    "{fixture_name}: lineage filtered_count must match accepted detections"
+  );
+  assert_eq!(
+    lineage.all_count,
+    Some(result.detections.len()),
+    "{fixture_name}: lineage all_count must match accepted detections"
+  );
+  assert!(
+    lineage
+      .capture_artifact
+      .as_ref()
+      .map(|artifact| artifact.resolved)
+      .unwrap_or(false),
+    "{fixture_name}: lineage capture_artifact must resolve to a real runtime artifact"
+  );
+  assert_eq!(
+    lineage
+      .capture_artifact
+      .as_ref()
+      .and_then(|artifact| artifact.role.as_deref()),
+    Some("capture-image"),
+    "{fixture_name}: lineage capture_artifact role must be capture-image"
+  );
+  assert!(
+    !lineage.evidence_artifacts.is_empty(),
+    "{fixture_name}: lineage evidence artifacts must not be empty"
+  );
+  assert!(
+    lineage.known_limits.contains(
+      &"detector RecognitionResult is recognition evidence only, not candidate-ready output"
+        .to_string()
+    ),
+    "{fixture_name}: lineage must preserve detector evidence-only known limit"
+  );
+  let store = LocalStore::new(evidence_paths.runtime_store_root.clone())?;
+  let app = inspect_server::router(store, Arc::new(BroadcastRunRecorder::new(16)));
+  let async_runtime = tokio::runtime::Runtime::new()?;
+  let response = async_runtime
+    .block_on(async {
+      app
+        .oneshot(
+          Request::builder()
+            .uri(format!("/runs/{}", evidence_paths.runtime_run_id))
+            .body(Body::empty())
+            .expect("request should build"),
+        )
+        .await
+    })
+    .expect("inspect_server /runs route should respond");
+  assert_eq!(
+    response.status(),
+    StatusCode::OK,
+    "{fixture_name}: inspect_server /runs route should return 200 for recorded smoke run"
+  );
+  let body = async_runtime
+    .block_on(async { to_bytes(response.into_body(), usize::MAX).await })
+    .expect("inspect_server /runs body should read");
+  let run: Value = serde_json::from_slice(&body)?;
+  assert_eq!(
+    run["run_id"],
+    Value::String(evidence_paths.runtime_run_id.clone()),
+    "{fixture_name}: inspect_server /runs JSON should preserve runtime run_id"
+  );
+  assert_eq!(
+    run["detector_recognition_lineage"][0]["status"],
+    Value::String("ready".to_string()),
+    "{fixture_name}: inspect_server /runs JSON should expose ready detector lineage"
+  );
+  assert_eq!(
+    run["detector_recognition_lineage"][0]["source"],
+    Value::String("custom".to_string()),
+    "{fixture_name}: inspect_server /runs JSON should expose custom recognition source"
+  );
+  assert_eq!(
+    run["detector_recognition_lineage"][0]["backend"],
+    Value::String("ultralytics-inference".to_string()),
+    "{fixture_name}: inspect_server /runs JSON should expose detector backend provenance"
+  );
+  assert_eq!(
+    run["detector_recognition_lineage"][0]["model_id"],
+    Value::String(result.model_id.0.clone()),
+    "{fixture_name}: inspect_server /runs JSON should expose detector model_id provenance"
+  );
+  assert_eq!(
+    run["detector_recognition_lineage"][0]["capture_artifact"]["role"],
+    Value::String("capture-image".to_string()),
+    "{fixture_name}: inspect_server /runs JSON should expose capture-image artifact role"
+  );
+  assert_eq!(
+    run["detector_recognition_lineage"][0]["filtered_count"],
+    Value::from(result.detections.len()),
+    "{fixture_name}: inspect_server /runs JSON should expose filtered_count"
+  );
+  assert_eq!(
+    run["detector_recognition_lineage"][0]["all_count"],
+    Value::from(result.detections.len()),
+    "{fixture_name}: inspect_server /runs JSON should expose all_count"
+  );
+  assert!(
+    run["detector_recognition_lineage"][0]
+      .get("best_item_id")
+      .is_some(),
+    "{fixture_name}: inspect_server /runs JSON should expose best_item_id field even when null"
+  );
 
   let annotated = ImageReader::open(&evidence_paths.annotated_image)?
     .decode()?
@@ -620,54 +835,6 @@ fn assert_smoke_evidence_outputs(
   );
 
   Ok(())
-}
-
-// NOTICE(detector-recognition-smoke-v0): this test-only runtime context is
-// intentionally synthetic. It proves that a real detector manifest can feed
-// the RecognitionResult mapper, but it is not runtime artifact recording or
-// driver capture integration.
-fn smoke_recognition_context(
-  fixture_name: &str,
-  image_size: auv_inference_common::ImageSize,
-) -> DetectorRecognitionRuntimeContext {
-  let capture_artifact = ArtifactRef {
-    run_id: RunId::new(format!("run_balatro_smoke_{fixture_name}")),
-    artifact_id: ArtifactId::new(format!("artifact_capture_{fixture_name}")),
-    span_id: SpanId::new("span_smoke"),
-    captured_event_id: Some(EventId::new(format!("event_capture_{fixture_name}"))),
-  };
-  let capture_contract_artifact = ArtifactRef {
-    run_id: RunId::new(format!("run_balatro_smoke_{fixture_name}")),
-    artifact_id: ArtifactId::new(format!("artifact_capture_contract_{fixture_name}")),
-    span_id: SpanId::new("span_smoke"),
-    captured_event_id: Some(EventId::new(format!(
-      "event_capture_contract_{fixture_name}"
-    ))),
-  };
-  DetectorRecognitionRuntimeContext {
-    recognition_id: format!("recognition_balatro_smoke_{fixture_name}"),
-    scope: RecognitionScope {
-      surface: RecognitionSurface::Region,
-      display_ref: None,
-      native_display_id: None,
-      app_bundle_id: None,
-      window_title: None,
-      window_number: None,
-      region_hint: Some(RatioRegion {
-        left: 0.0,
-        top: 0.0,
-        right: 1.0,
-        bottom: 1.0,
-      }),
-      capture_artifact: Some(capture_artifact.clone()),
-      capture_contract_artifact: Some(capture_contract_artifact.clone()),
-    },
-    evidence: vec![capture_artifact, capture_contract_artifact],
-    source_image_size: image_size,
-    projection: RuntimeProjection {
-      kind: RuntimeProjectionKind::IdentitySourceImagePixels,
-    },
-  }
 }
 
 fn assert_no_forbidden_keys(fixture_name: &str, value: &Value, forbidden_keys: &[&str]) {

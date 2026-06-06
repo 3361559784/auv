@@ -9,11 +9,15 @@
 //!   double-counting artifacts that also populate `OperationResult.verifications`
 
 use std::fs;
+use std::path::PathBuf;
 
 use serde::de::DeserializeOwned;
 
 use crate::app::AppValidation;
-use crate::contract::{ObservationSnapshot, OperationOutput, OperationResult, VerificationResult};
+use crate::contract::{
+  ArtifactRef, ObservationSnapshot, OperationOutput, OperationResult, RecognitionResult,
+  RecognitionSource, VerificationResult,
+};
 use crate::model::AuvResult;
 use crate::scroll_scan::ScrollScanArtifact;
 use crate::store::{CanonicalRun, LocalStore};
@@ -23,6 +27,7 @@ const NATIVE_TEXT_CANONICAL_TAXONOMY_ID: &str =
   "native-text.ax-text.ax-perform-action-clipboard-paste.verify-ax-text";
 const NATIVE_TEXT_LEGACY_TAXONOMY_ID: &str =
   "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text";
+const DETECTOR_RECOGNITION_ARTIFACT_ROLE: &str = "detector-recognition";
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct AppValidationLineage {
@@ -33,6 +38,49 @@ pub struct AppValidationLineage {
   pub observed_consumer: Option<String>,
   pub observed_candidate_local_id: Option<String>,
   pub candidate_source: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DetectorRecognitionLineageStatus {
+  Ready,
+  MissingCaptureArtifact,
+  MissingEvidence,
+  CaptureArtifactUnresolved,
+  Malformed,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct DetectorRecognitionArtifactRefLineage {
+  pub run_id: crate::trace::RunId,
+  pub artifact_id: crate::trace::ArtifactId,
+  pub span_id: crate::trace::SpanId,
+  pub captured_event_id: Option<crate::trace::EventId>,
+  pub role: Option<String>,
+  pub path: Option<String>,
+  pub summary: Option<String>,
+  pub resolved: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct DetectorRecognitionLineage {
+  pub artifact: DetectorRecognitionArtifactRefLineage,
+  pub status: DetectorRecognitionLineageStatus,
+  pub recognition_id: Option<String>,
+  pub source: Option<RecognitionSource>,
+  pub backend: Option<String>,
+  pub model_id: Option<String>,
+  pub execution_provider: Option<String>,
+  pub class_label_source_kind: Option<String>,
+  pub runtime_projection_kind: Option<String>,
+  pub capture_artifact: Option<DetectorRecognitionArtifactRefLineage>,
+  pub capture_contract_artifact: Option<DetectorRecognitionArtifactRefLineage>,
+  pub evidence_artifacts: Vec<DetectorRecognitionArtifactRefLineage>,
+  pub all_count: Option<usize>,
+  pub filtered_count: Option<usize>,
+  pub best_item_id: Option<String>,
+  pub known_limits: Vec<String>,
+  pub issue: Option<String>,
 }
 
 pub(crate) fn list_verifications(
@@ -97,6 +145,14 @@ pub(crate) fn list_app_validation_lineage(
   extract_app_validation_lineage(store, &run)
 }
 
+pub(crate) fn list_detector_recognition_lineage(
+  store: &LocalStore,
+  run_id: &str,
+) -> AuvResult<Vec<DetectorRecognitionLineage>> {
+  let run = store.read_run(run_id)?;
+  extract_detector_recognition_lineage(store, &run)
+}
+
 pub(crate) fn extract_app_validation_lineage(
   store: &LocalStore,
   run: &CanonicalRun,
@@ -129,6 +185,90 @@ pub(crate) fn extract_app_validation_lineage(
   Ok(lineage)
 }
 
+pub(crate) fn extract_detector_recognition_lineage(
+  store: &LocalStore,
+  run: &CanonicalRun,
+) -> AuvResult<Vec<DetectorRecognitionLineage>> {
+  let mut lineage = Vec::new();
+  for artifact in &run.artifacts {
+    if artifact.role != DETECTOR_RECOGNITION_ARTIFACT_ROLE {
+      continue;
+    }
+
+    let detector_artifact = artifact_record_lineage(run.run.run_id.clone(), artifact);
+    if !is_json_mime(&artifact.mime_type) {
+      lineage.push(DetectorRecognitionLineage {
+        artifact: detector_artifact,
+        status: DetectorRecognitionLineageStatus::Malformed,
+        recognition_id: None,
+        source: None,
+        backend: None,
+        model_id: None,
+        execution_provider: None,
+        class_label_source_kind: None,
+        runtime_projection_kind: None,
+        capture_artifact: None,
+        capture_contract_artifact: None,
+        evidence_artifacts: Vec::new(),
+        all_count: None,
+        filtered_count: None,
+        best_item_id: None,
+        known_limits: Vec::new(),
+        issue: Some(format!(
+          "detector-recognition artifact mime_type {} is not JSON",
+          artifact.mime_type
+        )),
+      });
+      continue;
+    }
+
+    let parsed = read_artifact_bytes(
+      store,
+      run.run.run_id.as_str(),
+      artifact,
+      DETECTOR_RECOGNITION_ARTIFACT_ROLE,
+    )
+    .and_then(|(bytes, artifact_path)| {
+      serde_json::from_slice::<RecognitionResult>(&bytes).map_err(|error| {
+        format!(
+          "failed to parse detector-recognition artifact {} for run {} from {}: {error}",
+          artifact.artifact_id,
+          run.run.run_id,
+          artifact_path.display()
+        )
+      })
+    });
+
+    match parsed {
+      Ok(recognition) => lineage.push(detector_recognition_lineage_entry(
+        run,
+        artifact,
+        recognition,
+      )),
+      Err(error) => lineage.push(DetectorRecognitionLineage {
+        artifact: detector_artifact,
+        status: DetectorRecognitionLineageStatus::Malformed,
+        recognition_id: None,
+        source: None,
+        backend: None,
+        model_id: None,
+        execution_provider: None,
+        class_label_source_kind: None,
+        runtime_projection_kind: None,
+        capture_artifact: None,
+        capture_contract_artifact: None,
+        evidence_artifacts: Vec::new(),
+        all_count: None,
+        filtered_count: None,
+        best_item_id: None,
+        known_limits: Vec::new(),
+        issue: Some(error),
+      }),
+    }
+  }
+  Ok(lineage)
+}
+
 fn is_json_mime(mime_type: &str) -> bool {
   mime_type == "application/json" || mime_type.ends_with("+json")
 }
@@ -142,12 +282,147 @@ fn canonicalize_taxonomy_id(raw: &str) -> &str {
   }
 }
 
+fn detector_recognition_lineage_entry(
+  run: &CanonicalRun,
+  artifact: &ArtifactRecordV1Alpha1,
+  recognition: RecognitionResult,
+) -> DetectorRecognitionLineage {
+  let capture_artifact = recognition
+    .scope
+    .capture_artifact
+    .as_ref()
+    .map(|reference| resolve_artifact_ref(run, reference));
+  let capture_contract_artifact = recognition
+    .scope
+    .capture_contract_artifact
+    .as_ref()
+    .map(|reference| resolve_artifact_ref(run, reference));
+  let evidence_artifacts = recognition
+    .evidence
+    .iter()
+    .map(|reference| resolve_artifact_ref(run, reference))
+    .collect::<Vec<_>>();
+  let (status, issue) =
+    classify_detector_recognition_lineage(&recognition, capture_artifact.as_ref());
+
+  DetectorRecognitionLineage {
+    artifact: artifact_record_lineage(run.run.run_id.clone(), artifact),
+    status,
+    recognition_id: Some(recognition.recognition_id.clone()),
+    source: Some(recognition.source),
+    backend: detail_string(&recognition.detail, &["backend"]),
+    model_id: detail_string(&recognition.detail, &["model_id"]),
+    execution_provider: detail_string(&recognition.detail, &["execution_provider"]),
+    class_label_source_kind: detail_string(&recognition.detail, &["class_label_source", "kind"]),
+    runtime_projection_kind: detail_string(&recognition.detail, &["runtime_projection", "kind"]),
+    capture_artifact,
+    capture_contract_artifact,
+    evidence_artifacts,
+    all_count: Some(recognition.all.len()),
+    filtered_count: Some(recognition.filtered.len()),
+    best_item_id: recognition.best.as_ref().map(|item| item.item_id.clone()),
+    known_limits: recognition.known_limits,
+    issue,
+  }
+}
+
+fn classify_detector_recognition_lineage(
+  recognition: &RecognitionResult,
+  capture_artifact: Option<&DetectorRecognitionArtifactRefLineage>,
+) -> (DetectorRecognitionLineageStatus, Option<String>) {
+  if recognition.scope.capture_artifact.is_none() {
+    return (
+      DetectorRecognitionLineageStatus::MissingCaptureArtifact,
+      Some("scope.capture_artifact is missing".to_string()),
+    );
+  }
+  if let Some(capture_artifact) = capture_artifact
+    && !capture_artifact.resolved
+  {
+    return (
+      DetectorRecognitionLineageStatus::CaptureArtifactUnresolved,
+      Some("scope.capture_artifact could not be resolved from recorded run artifacts".to_string()),
+    );
+  }
+  if recognition.evidence.is_empty() {
+    return (
+      DetectorRecognitionLineageStatus::MissingEvidence,
+      Some("recognition evidence list is empty".to_string()),
+    );
+  }
+  (DetectorRecognitionLineageStatus::Ready, None)
+}
+
+fn artifact_record_lineage(
+  run_id: crate::trace::RunId,
+  artifact: &ArtifactRecordV1Alpha1,
+) -> DetectorRecognitionArtifactRefLineage {
+  DetectorRecognitionArtifactRefLineage {
+    run_id,
+    artifact_id: artifact.artifact_id.clone(),
+    span_id: artifact.span_id.clone(),
+    captured_event_id: artifact.event_id.clone(),
+    role: Some(artifact.role.clone()),
+    path: Some(artifact.path.clone()),
+    summary: artifact.summary.clone(),
+    resolved: true,
+  }
+}
+
+fn resolve_artifact_ref(
+  run: &CanonicalRun,
+  reference: &ArtifactRef,
+) -> DetectorRecognitionArtifactRefLineage {
+  let resolved = if reference.run_id == run.run.run_id {
+    run.artifacts.iter().find(|artifact| {
+      artifact.artifact_id == reference.artifact_id && artifact.span_id == reference.span_id
+    })
+  } else {
+    None
+  };
+
+  DetectorRecognitionArtifactRefLineage {
+    run_id: reference.run_id.clone(),
+    artifact_id: reference.artifact_id.clone(),
+    span_id: reference.span_id.clone(),
+    captured_event_id: reference.captured_event_id.clone(),
+    role: resolved.map(|artifact| artifact.role.clone()),
+    path: resolved.map(|artifact| artifact.path.clone()),
+    summary: resolved.and_then(|artifact| artifact.summary.clone()),
+    resolved: resolved.is_some(),
+  }
+}
+
+fn detail_string(value: &serde_json::Value, path: &[&str]) -> Option<String> {
+  let mut cursor = value;
+  for key in path {
+    cursor = cursor.get(*key)?;
+  }
+  cursor.as_str().map(str::to_string)
+}
+
 fn read_artifact_json<T: DeserializeOwned>(
   store: &LocalStore,
   run_id: &str,
   artifact: &ArtifactRecordV1Alpha1,
   artifact_role: &str,
 ) -> AuvResult<T> {
+  let (bytes, artifact_path) = read_artifact_bytes(store, run_id, artifact, artifact_role)?;
+  serde_json::from_slice(&bytes).map_err(|error| {
+    format!(
+      "failed to parse {artifact_role} artifact {} for run {run_id} from {}: {error}",
+      artifact.artifact_id,
+      artifact_path.display()
+    )
+  })
+}
+
+fn read_artifact_bytes(
+  store: &LocalStore,
+  run_id: &str,
+  artifact: &ArtifactRecordV1Alpha1,
+  artifact_role: &str,
+) -> AuvResult<(Vec<u8>, PathBuf)> {
   let (_, artifact_path) = store.artifact_file_scoped(
     run_id,
     artifact.artifact_id.as_str(),
@@ -160,13 +435,7 @@ fn read_artifact_json<T: DeserializeOwned>(
       artifact_path.display()
     )
   })?;
-  serde_json::from_slice(&bytes).map_err(|error| {
-    format!(
-      "failed to parse {artifact_role} artifact {} for run {run_id} from {}: {error}",
-      artifact.artifact_id,
-      artifact_path.display()
-    )
-  })
+  Ok((bytes, artifact_path))
 }
 
 #[cfg(test)]
@@ -180,17 +449,20 @@ mod tests {
   use serde_json::json;
 
   use super::{
+    DETECTOR_RECOGNITION_ARTIFACT_ROLE, DetectorRecognitionLineageStatus,
     NATIVE_TEXT_CANONICAL_TAXONOMY_ID, NATIVE_TEXT_LEGACY_TAXONOMY_ID,
-    extract_app_validation_lineage, extract_observation_snapshots, extract_verifications,
-    list_app_validation_lineage, list_observation_snapshots, list_verifications,
+    extract_app_validation_lineage, extract_detector_recognition_lineage,
+    extract_observation_snapshots, extract_verifications, list_app_validation_lineage,
+    list_detector_recognition_lineage, list_observation_snapshots, list_verifications,
   };
   use crate::app::{
     AppIdentity, AppValidatedCandidate, AppValidation, AppValidationStatus, AppVerificationMode,
   };
   use crate::contract::{
-    OBSERVATION_SNAPSHOT_API_VERSION, OPERATION_RESULT_API_VERSION, ObservationSnapshot,
-    ObservationSource, OperationOutput, OperationResult, OperationStatus, RecognitionScope,
-    RecognitionSurface, VERIFICATION_RESULT_API_VERSION, VerificationMethod, VerificationResult,
+    ArtifactRef, OBSERVATION_SNAPSHOT_API_VERSION, OPERATION_RESULT_API_VERSION,
+    ObservationSnapshot, ObservationSource, OperationOutput, OperationResult, OperationStatus,
+    RecognitionResult, RecognitionScope, RecognitionSource, RecognitionSurface, RecognizedItem,
+    VERIFICATION_RESULT_API_VERSION, VerificationMethod, VerificationResult,
   };
   use crate::scroll_scan::{
     CollectionObservation, CompletenessClaim, HookDecisionRecord, ObservationCluster,
@@ -199,8 +471,8 @@ mod tests {
   };
   use crate::store::{ArtifactFileSource, CanonicalRun, LocalStore};
   use crate::trace::{
-    ArtifactRecordV1Alpha1, RUN_API_VERSION, RunId, RunRecordV1Alpha1, RunType, SPAN_API_VERSION,
-    SpanId, SpanRecordV1Alpha1, TraceId, TraceState, TraceStatusCode,
+    ArtifactId, ArtifactRecordV1Alpha1, EventId, RUN_API_VERSION, RunId, RunRecordV1Alpha1,
+    RunType, SPAN_API_VERSION, SpanId, SpanRecordV1Alpha1, TraceId, TraceState, TraceStatusCode,
   };
 
   #[test]
@@ -414,6 +686,197 @@ mod tests {
     let _ = fs::remove_dir_all(root);
   }
 
+  #[test]
+  fn detector_recognition_lineage_extracts_ready_and_error_states() {
+    let root = temp_dir("run-read-detector-recognition");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let run = dummy_run("run_read_detector_recognition");
+    let span = dummy_span(&run.root_span_id);
+
+    let capture_artifact = stage_text_artifact(
+      &store,
+      &root,
+      &run.run_id,
+      &span.span_id,
+      0,
+      "capture-image",
+      "capture.png",
+      "fake capture body",
+    );
+    let ready_recognition = detector_recognition_result(
+      &run.run_id,
+      &span.span_id,
+      Some(ArtifactRef {
+        run_id: run.run_id.clone(),
+        artifact_id: capture_artifact.artifact_id.clone(),
+        span_id: span.span_id.clone(),
+        captured_event_id: capture_artifact.event_id.clone(),
+      }),
+      vec![ArtifactRef {
+        run_id: run.run_id.clone(),
+        artifact_id: capture_artifact.artifact_id.clone(),
+        span_id: span.span_id.clone(),
+        captured_event_id: capture_artifact.event_id.clone(),
+      }],
+      "recognition_ready",
+    );
+    let missing_capture = detector_recognition_result(
+      &run.run_id,
+      &span.span_id,
+      None,
+      vec![ArtifactRef {
+        run_id: run.run_id.clone(),
+        artifact_id: capture_artifact.artifact_id.clone(),
+        span_id: span.span_id.clone(),
+        captured_event_id: capture_artifact.event_id.clone(),
+      }],
+      "recognition_missing_capture",
+    );
+    let missing_evidence = detector_recognition_result(
+      &run.run_id,
+      &span.span_id,
+      Some(ArtifactRef {
+        run_id: run.run_id.clone(),
+        artifact_id: capture_artifact.artifact_id.clone(),
+        span_id: span.span_id.clone(),
+        captured_event_id: capture_artifact.event_id.clone(),
+      }),
+      Vec::new(),
+      "recognition_missing_evidence",
+    );
+    let unresolved_capture = detector_recognition_result(
+      &run.run_id,
+      &span.span_id,
+      Some(ArtifactRef {
+        run_id: run.run_id.clone(),
+        artifact_id: ArtifactId::new("artifact_missing_capture"),
+        span_id: span.span_id.clone(),
+        captured_event_id: Some(EventId::new("event_missing_capture")),
+      }),
+      vec![ArtifactRef {
+        run_id: run.run_id.clone(),
+        artifact_id: ArtifactId::new("artifact_missing_capture"),
+        span_id: span.span_id.clone(),
+        captured_event_id: Some(EventId::new("event_missing_capture")),
+      }],
+      "recognition_unresolved_capture",
+    );
+
+    let artifacts = vec![
+      capture_artifact,
+      stage_json_artifact(
+        &store,
+        &root,
+        &run.run_id,
+        &span.span_id,
+        1,
+        DETECTOR_RECOGNITION_ARTIFACT_ROLE,
+        "detector-ready.json",
+        &ready_recognition,
+      ),
+      stage_json_artifact(
+        &store,
+        &root,
+        &run.run_id,
+        &span.span_id,
+        2,
+        DETECTOR_RECOGNITION_ARTIFACT_ROLE,
+        "detector-missing-capture.json",
+        &missing_capture,
+      ),
+      stage_json_artifact(
+        &store,
+        &root,
+        &run.run_id,
+        &span.span_id,
+        3,
+        DETECTOR_RECOGNITION_ARTIFACT_ROLE,
+        "detector-missing-evidence.json",
+        &missing_evidence,
+      ),
+      stage_json_artifact(
+        &store,
+        &root,
+        &run.run_id,
+        &span.span_id,
+        4,
+        DETECTOR_RECOGNITION_ARTIFACT_ROLE,
+        "detector-unresolved-capture.json",
+        &unresolved_capture,
+      ),
+      stage_text_artifact(
+        &store,
+        &root,
+        &run.run_id,
+        &span.span_id,
+        5,
+        DETECTOR_RECOGNITION_ARTIFACT_ROLE,
+        "detector-malformed.json",
+        "{ not valid json",
+      ),
+    ];
+
+    store
+      .write_run_snapshot(&CanonicalRun {
+        run,
+        spans: vec![span],
+        events: Vec::new(),
+        artifacts,
+      })
+      .expect("run snapshot should persist");
+
+    let canonical = store
+      .read_run("run_read_detector_recognition")
+      .expect("run should read back");
+    let extracted = extract_detector_recognition_lineage(&store, &canonical)
+      .expect("detector recognition lineage should extract");
+    assert_eq!(extracted.len(), 5);
+    assert_eq!(extracted[0].status, DetectorRecognitionLineageStatus::Ready);
+    assert_eq!(
+      extracted[0].backend.as_deref(),
+      Some("ultralytics-inference")
+    );
+    assert_eq!(extracted[0].model_id.as_deref(), Some("games-balatro-ui"));
+    assert_eq!(extracted[0].all_count, Some(2));
+    assert_eq!(extracted[0].filtered_count, Some(1));
+    assert_eq!(
+      extracted[0]
+        .capture_artifact
+        .as_ref()
+        .and_then(|artifact| artifact.role.as_deref()),
+      Some("capture-image")
+    );
+    assert_eq!(
+      extracted[1].status,
+      DetectorRecognitionLineageStatus::MissingCaptureArtifact
+    );
+    assert_eq!(
+      extracted[2].status,
+      DetectorRecognitionLineageStatus::MissingEvidence
+    );
+    assert_eq!(
+      extracted[3].status,
+      DetectorRecognitionLineageStatus::CaptureArtifactUnresolved
+    );
+    assert_eq!(
+      extracted[4].status,
+      DetectorRecognitionLineageStatus::Malformed
+    );
+    assert!(
+      extracted[4]
+        .issue
+        .as_deref()
+        .unwrap_or_default()
+        .contains("failed to parse detector-recognition artifact")
+    );
+
+    let listed = list_detector_recognition_lineage(&store, "run_read_detector_recognition")
+      .expect("detector recognition lineage should list");
+    assert_eq!(listed, extracted);
+
+    let _ = fs::remove_dir_all(root);
+  }
+
   fn temp_dir(label: &str) -> PathBuf {
     let path = env::temp_dir().join(format!("auv-{}-{}", label, crate::model::now_millis()));
     let _ = fs::remove_dir_all(&path);
@@ -531,5 +994,117 @@ mod tests {
         },
       )
       .expect("artifact should stage")
+  }
+
+  fn stage_text_artifact(
+    store: &LocalStore,
+    root: &Path,
+    run_id: &RunId,
+    span_id: &SpanId,
+    index: usize,
+    role: &str,
+    preferred_name: &str,
+    content: &str,
+  ) -> ArtifactRecordV1Alpha1 {
+    let source_path = root.join(format!("source-{index}-{preferred_name}"));
+    fs::write(&source_path, content).expect("artifact source should write");
+    store
+      .stage_artifact_file(
+        run_id,
+        index,
+        span_id,
+        None,
+        ArtifactFileSource {
+          role: role.to_string(),
+          source_path,
+          preferred_name: preferred_name.to_string(),
+          summary: None,
+        },
+      )
+      .expect("artifact should stage")
+  }
+
+  fn detector_recognition_result(
+    run_id: &RunId,
+    span_id: &SpanId,
+    capture_artifact: Option<ArtifactRef>,
+    evidence: Vec<ArtifactRef>,
+    recognition_id: &str,
+  ) -> RecognitionResult {
+    RecognitionResult {
+      recognition_id: recognition_id.to_string(),
+      source: RecognitionSource::Custom,
+      scope: RecognitionScope {
+        surface: RecognitionSurface::Region,
+        display_ref: Some("display-main".to_string()),
+        native_display_id: Some("69733248".to_string()),
+        app_bundle_id: Some("com.playstack.balatro".to_string()),
+        window_title: Some("Balatro".to_string()),
+        window_number: Some(7),
+        region_hint: None,
+        capture_artifact,
+        capture_contract_artifact: Some(ArtifactRef {
+          run_id: run_id.clone(),
+          artifact_id: ArtifactId::new("artifact_contract"),
+          span_id: span_id.clone(),
+          captured_event_id: Some(EventId::new("event_contract")),
+        }),
+      },
+      best: None,
+      filtered: vec![RecognizedItem {
+        item_id: "detector:games-balatro-ui:0".to_string(),
+        kind: "ui_button_play".to_string(),
+        box_: crate::contract::RecognitionBox {
+          x: 10,
+          y: 20,
+          width: 30,
+          height: 40,
+        },
+        text: None,
+        provider_score: Some(0.98),
+        detail: json!({}),
+      }],
+      all: vec![
+        RecognizedItem {
+          item_id: "detector:games-balatro-ui:0".to_string(),
+          kind: "ui_button_play".to_string(),
+          box_: crate::contract::RecognitionBox {
+            x: 10,
+            y: 20,
+            width: 30,
+            height: 40,
+          },
+          text: None,
+          provider_score: Some(0.98),
+          detail: json!({}),
+        },
+        RecognizedItem {
+          item_id: "detector:games-balatro-ui:1".to_string(),
+          kind: "ui_score".to_string(),
+          box_: crate::contract::RecognitionBox {
+            x: 50,
+            y: 60,
+            width: 70,
+            height: 80,
+          },
+          text: None,
+          provider_score: Some(0.87),
+          detail: json!({}),
+        },
+      ],
+      detail: json!({
+        "backend": "ultralytics-inference",
+        "model_id": "games-balatro-ui",
+        "execution_provider": "cpu",
+        "class_label_source": { "kind": "override_file" },
+        "runtime_projection": { "kind": "identity_source_image_pixels" },
+      }),
+      evidence,
+      known_limits: vec![
+        "projection basis is unavailable outside capture-integrated runtime".to_string(),
+        "detector RecognitionResult is recognition evidence only, not candidate-ready output"
+          .to_string(),
+      ],
+    }
   }
 }

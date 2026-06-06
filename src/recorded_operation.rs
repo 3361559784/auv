@@ -8,6 +8,7 @@
 use std::fmt::Display;
 use std::path::{Path, PathBuf};
 
+use crate::contract::ArtifactRef;
 use crate::model::{AuvResult, now_millis};
 use crate::run_builder::{Attributes, RecordingRun, RunFinish, RunSpec, SpanFinish, SpanRef};
 use crate::runtime::Runtime;
@@ -74,6 +75,35 @@ impl<'a> RecordedOperationContext<'a> {
     self
       .runtime
       .stage_artifact_file(self.run, span, role, source_path, preferred_name, summary)
+  }
+
+  pub fn stage_artifact_file_with_ref(
+    &mut self,
+    role: impl Into<String>,
+    source_path: &Path,
+    preferred_name: impl Into<String>,
+    summary: Option<String>,
+  ) -> AuvResult<(PathBuf, ArtifactRef)> {
+    let current = self.current.clone();
+    self.stage_artifact_file_with_ref_in_span(&current, role, source_path, preferred_name, summary)
+  }
+
+  pub fn stage_artifact_file_with_ref_in_span(
+    &mut self,
+    span: &SpanRef,
+    role: impl Into<String>,
+    source_path: &Path,
+    preferred_name: impl Into<String>,
+    summary: Option<String>,
+  ) -> AuvResult<(PathBuf, ArtifactRef)> {
+    self.runtime.stage_artifact_file_with_ref(
+      self.run,
+      span,
+      role,
+      source_path,
+      preferred_name,
+      summary,
+    )
   }
 
   pub fn in_span<T, E, F>(&mut self, name: impl Into<String>, operation: F) -> Result<T, E>

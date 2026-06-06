@@ -1,4 +1,6 @@
 use std::collections::BTreeSet;
+use std::fs;
+use std::path::Path;
 
 use auv_inference_common::{
   BoundingBox, ClassLabelSource, DetectionCoordinateSpace, DetectionEvidenceManifest, ImageSize,
@@ -11,8 +13,11 @@ use crate::contract::{
   ArtifactRef, RecognitionBox, RecognitionResult, RecognitionScope, RecognitionSource,
   RecognizedItem,
 };
+use crate::model::AuvResult;
+use crate::recorded_operation::RecordedOperationContext;
 
 const BRIDGE_POLICY_VERSION: &str = "detector-manifest-recognitionresult.v0";
+const DETECTOR_RECOGNITION_ARTIFACT_ROLE: &str = "detector-recognition";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -104,6 +109,110 @@ impl std::fmt::Display for DetectorRecognitionMappingError {
 }
 
 impl std::error::Error for DetectorRecognitionMappingError {}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DetectorRecognitionArtifactRequest {
+  pub recognition_id: String,
+  pub scope: RecognitionScope,
+  pub projection: RuntimeProjection,
+  pub policy: DetectorRecognitionBridgePolicy,
+  pub artifact_role: String,
+  pub artifact_label: String,
+  pub artifact_note: String,
+}
+
+impl DetectorRecognitionArtifactRequest {
+  pub fn new(recognition_id: impl Into<String>) -> Self {
+    let recognition_id = recognition_id.into();
+    Self {
+      artifact_label: recognition_id.clone(),
+      recognition_id,
+      scope: RecognitionScope {
+        surface: crate::contract::RecognitionSurface::Region,
+        display_ref: None,
+        native_display_id: None,
+        app_bundle_id: None,
+        window_title: None,
+        window_number: None,
+        region_hint: None,
+        capture_artifact: None,
+        capture_contract_artifact: None,
+      },
+      projection: RuntimeProjection {
+        kind: RuntimeProjectionKind::IdentitySourceImagePixels,
+      },
+      policy: DetectorRecognitionBridgePolicy::default(),
+      artifact_role: DETECTOR_RECOGNITION_ARTIFACT_ROLE.to_string(),
+      artifact_note: "Detector-backed RecognitionResult runtime artifact.".to_string(),
+    }
+  }
+}
+
+pub fn record_detector_manifest_recognition_artifact(
+  context: &mut RecordedOperationContext<'_>,
+  manifest: &DetectionEvidenceManifest,
+  capture_artifact_path: &Path,
+  capture_artifact_role: &str,
+  capture_artifact_name: &str,
+  capture_artifact_summary: Option<String>,
+  request: &DetectorRecognitionArtifactRequest,
+) -> AuvResult<(ArtifactRef, ArtifactRef, RecognitionResult)> {
+  let (_, capture_artifact_ref) = context.stage_artifact_file_with_ref(
+    capture_artifact_role,
+    capture_artifact_path,
+    capture_artifact_name,
+    capture_artifact_summary,
+  )?;
+
+  let mut scope = request.scope.clone();
+  scope.capture_artifact = Some(capture_artifact_ref.clone());
+  let runtime_context = DetectorRecognitionRuntimeContext {
+    recognition_id: request.recognition_id.clone(),
+    scope,
+    evidence: detector_runtime_evidence(
+      &capture_artifact_ref,
+      request.scope.capture_contract_artifact.as_ref(),
+    ),
+    source_image_size: manifest.detection_set.image_size,
+    projection: request.projection.clone(),
+  };
+  let recognition =
+    map_detector_manifest_to_recognition_result(manifest, &runtime_context, &request.policy)
+      .map_err(|error| {
+        format!("failed to map detector manifest into recognition result: {error}")
+      })?;
+
+  let recognition_json = serde_json::to_string_pretty(&recognition)
+    .map(|mut rendered| {
+      rendered.push('\n');
+      rendered
+    })
+    .map_err(|error| format!("failed to encode detector recognition result JSON: {error}"))?;
+  let recognition_source_path = detector_recognition_temp_json_path(&request.artifact_label);
+  fs::write(&recognition_source_path, recognition_json).map_err(|error| {
+    format!(
+      "failed to write detector recognition temp artifact {}: {error}",
+      recognition_source_path.display()
+    )
+  })?;
+
+  let (_, recognition_artifact_ref) = context.stage_artifact_file_with_ref(
+    &request.artifact_role,
+    &recognition_source_path,
+    format!("{}.json", sanitize_artifact_label(&request.artifact_label)),
+    Some(request.artifact_note.clone()),
+  )?;
+  let _ = fs::remove_file(&recognition_source_path);
+
+  context.record_event(
+    "detector.recognition.artifact_recorded",
+    Some(format!(
+      "recorded {} from detector manifest {}",
+      recognition_artifact_ref.artifact_id, manifest.detection_set.model_id.0
+    )),
+  );
+  Ok((capture_artifact_ref, recognition_artifact_ref, recognition))
+}
 
 pub fn map_detector_manifest_to_recognition_result(
   manifest: &DetectionEvidenceManifest,
@@ -278,9 +387,47 @@ fn class_label_source_detail(source: &ClassLabelSource) -> serde_json::Value {
   }
 }
 
+fn detector_runtime_evidence(
+  capture_artifact: &ArtifactRef,
+  capture_contract_artifact: Option<&ArtifactRef>,
+) -> Vec<ArtifactRef> {
+  let mut evidence = vec![capture_artifact.clone()];
+  if let Some(capture_contract_artifact) = capture_contract_artifact {
+    evidence.push(capture_contract_artifact.clone());
+  }
+  evidence
+}
+
+fn detector_recognition_temp_json_path(label: &str) -> std::path::PathBuf {
+  std::env::temp_dir().join(format!(
+    "auv-detector-recognition-{}-{}-{}.json",
+    sanitize_artifact_label(label),
+    crate::model::now_millis(),
+    std::process::id()
+  ))
+}
+
+fn sanitize_artifact_label(raw: &str) -> String {
+  let sanitized = raw
+    .chars()
+    .map(|character| match character {
+      'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' => character,
+      _ => '-',
+    })
+    .collect::<String>()
+    .trim_matches('-')
+    .to_string();
+  if sanitized.is_empty() {
+    "artifact".to_string()
+  } else {
+    sanitized
+  }
+}
+
 #[cfg(test)]
 mod tests {
   use std::collections::BTreeSet;
+  use std::fs;
   use std::path::PathBuf;
 
   use auv_inference_common::{
@@ -291,12 +438,16 @@ mod tests {
   use serde_json::json;
 
   use super::{
-    BestSelectionStrategy, DetectorRecognitionBridgePolicy, DetectorRecognitionMappingError,
-    DetectorRecognitionRuntimeContext, RuntimeProjection, RuntimeProjectionKind,
-    map_detector_manifest_to_recognition_result,
+    BestSelectionStrategy, DetectorRecognitionArtifactRequest, DetectorRecognitionBridgePolicy,
+    DetectorRecognitionMappingError, DetectorRecognitionRuntimeContext, RuntimeProjection,
+    RuntimeProjectionKind, map_detector_manifest_to_recognition_result,
+    record_detector_manifest_recognition_artifact,
   };
+  use crate::build_runtime_with_store_root;
   use crate::contract::{ArtifactRef, RatioRegion, RecognitionScope, RecognitionSurface};
+  use crate::run_builder::RunSpec;
   use crate::trace::{ArtifactId, EventId, RunId, SpanId};
+  use crate::trace::{RunType, TraceStatusCode};
 
   fn sample_manifest() -> DetectionEvidenceManifest {
     DetectionEvidenceManifest {
@@ -599,5 +750,141 @@ mod tests {
 
     assert!(result.best.is_none());
     assert_eq!(result.filtered, result.all);
+  }
+
+  #[test]
+  fn recorded_operation_can_persist_detector_backed_recognition_result_artifact() {
+    let project_root = temp_dir("detector-recognition-record-project");
+    let store_root = temp_dir("detector-recognition-record-store");
+    fs::create_dir_all(&project_root).expect("project root should exist");
+    let capture_path = project_root.join("capture.png");
+    fs::write(&capture_path, "fake png bytes").expect("capture source should write");
+
+    let runtime = build_runtime_with_store_root(project_root.clone(), store_root.clone())
+      .expect("runtime should build");
+    let manifest = sample_manifest();
+    let request = DetectorRecognitionArtifactRequest {
+      recognition_id: "recognition_detector_runtime_recorded".to_string(),
+      scope: RecognitionScope {
+        surface: RecognitionSurface::Region,
+        display_ref: Some("display-main".to_string()),
+        native_display_id: Some("69733248".to_string()),
+        app_bundle_id: Some("com.playstack.balatro".to_string()),
+        window_title: Some("Balatro".to_string()),
+        window_number: Some(7),
+        region_hint: Some(RatioRegion {
+          left: 0.0,
+          top: 0.0,
+          right: 1.0,
+          bottom: 1.0,
+        }),
+        capture_artifact: None,
+        capture_contract_artifact: Some(ArtifactRef {
+          run_id: RunId::new("run_contract_seed"),
+          artifact_id: ArtifactId::new("artifact_contract_seed"),
+          span_id: SpanId::new("span_contract_seed"),
+          captured_event_id: Some(EventId::new("event_contract_seed")),
+        }),
+      },
+      projection: RuntimeProjection {
+        kind: RuntimeProjectionKind::IdentitySourceImagePixels,
+      },
+      policy: DetectorRecognitionBridgePolicy::default(),
+      artifact_role: "detector-recognition".to_string(),
+      artifact_label: "balatro-ui-detection-runtime".to_string(),
+      artifact_note: "Recorded detector-backed RecognitionResult artifact.".to_string(),
+    };
+
+    let output = runtime
+      .run_recorded_operation(
+        RunSpec::new(RunType::Execute, "auv.detector.recognition"),
+        "Detector recognition artifact recording",
+        |context| {
+          record_detector_manifest_recognition_artifact(
+            context,
+            &manifest,
+            &capture_path,
+            "capture-image",
+            "capture.png",
+            Some("Source capture artifact for detector recognition.".to_string()),
+            &request,
+          )
+        },
+      )
+      .expect("recorded detector recognition operation should succeed");
+
+    let run = runtime
+      .read_run(output.run_id.as_str())
+      .expect("recorded run should persist");
+    assert_eq!(run.run.status_code, TraceStatusCode::Ok);
+    assert_eq!(run.artifacts.len(), 2);
+    assert_eq!(run.artifacts[0].role, "capture-image");
+    assert_eq!(run.artifacts[1].role, "detector-recognition");
+
+    let (_, recognition_ref, recognition) = output.value;
+    assert_eq!(recognition_ref.run_id, output.run_id);
+    assert_eq!(recognition_ref.artifact_id.as_str(), "artifact_0002");
+    assert_eq!(
+      recognition
+        .scope
+        .capture_artifact
+        .as_ref()
+        .map(|reference| reference.artifact_id.as_str()),
+      Some("artifact_0001")
+    );
+    assert_eq!(recognition.evidence.len(), 2);
+    assert_eq!(
+      recognition.evidence[0].artifact_id.as_str(),
+      "artifact_0001"
+    );
+    assert_eq!(
+      recognition.evidence[1].artifact_id.as_str(),
+      "artifact_contract_seed"
+    );
+    assert_eq!(
+      recognition.detail["runtime_projection"]["kind"],
+      json!("identity_source_image_pixels")
+    );
+
+    let recognition_artifact = run
+      .artifacts
+      .iter()
+      .find(|artifact| artifact.artifact_id == recognition_ref.artifact_id)
+      .expect("recognition artifact should exist in recorded run");
+    let recognition_path = output.run_dir.join(&recognition_artifact.path);
+    let recorded_recognition: crate::contract::RecognitionResult = serde_json::from_slice(
+      &fs::read(&recognition_path).expect("recognition artifact bytes should read"),
+    )
+    .expect("recognition artifact JSON should decode");
+    assert_eq!(
+      recorded_recognition
+        .scope
+        .capture_artifact
+        .as_ref()
+        .map(|reference| reference.artifact_id.as_str()),
+      Some("artifact_0001")
+    );
+    assert_eq!(
+      recorded_recognition.evidence[0].artifact_id.as_str(),
+      "artifact_0001"
+    );
+    assert_eq!(
+      recorded_recognition.source,
+      crate::contract::RecognitionSource::Custom
+    );
+    assert_eq!(recorded_recognition.best, None);
+    assert!(
+      run
+        .events
+        .iter()
+        .any(|event| event.name == "detector.recognition.artifact_recorded")
+    );
+
+    let _ = fs::remove_dir_all(project_root);
+    let _ = fs::remove_dir_all(store_root);
+  }
+
+  fn temp_dir(label: &str) -> PathBuf {
+    std::env::temp_dir().join(format!("auv-{}-{}", label, crate::model::now_millis()))
   }
 }

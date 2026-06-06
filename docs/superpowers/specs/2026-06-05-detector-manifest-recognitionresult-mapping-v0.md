@@ -2,7 +2,7 @@
 
 Date: 2026-06-05
 
-Status: partial implementation landed
+Status: partial implementation landed with gated Balatro runtime-artifact smoke
 
 Base: `origin/main` after `1dff479`
 
@@ -54,15 +54,19 @@ Implemented in this slice:
 - `RecognitionSource::Custom` bridge policy
 - carry-forward of detector-side `known_limits`
 - synthetic tests for failure and success cases
-- gated Balatro smoke now proves `DetectionEvidenceManifest -> RecognitionResult -> JSON evidence`
+- gated Balatro smoke now proves `Balatro source image -> capture-image runtime artifact -> DetectionEvidenceManifest -> RecognitionResult -> detector-recognition runtime artifact -> read-side lineage`
 
 Still not implemented:
 
 - runtime capture production
 - display/window projection beyond caller-declared identity mapping
 - Candidate promotion
-- runtime artifact recording
-- driver/app/runtime integration
+- driver/app/runtime integration beyond gated smoke recording
+
+New in this slice:
+
+- runtime-side recorded-operation helper can now persist a detector-backed `RecognitionResult` artifact with honest runtime `ArtifactRef` evidence
+- focused regression proves `capture-image -> detector-recognition` artifact recording without opening Candidate integration
 
 ## Convergence Rule
 

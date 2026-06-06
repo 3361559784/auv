@@ -8,13 +8,14 @@
 use crate::contract::{
   FailureLayer, ObservationSnapshot, ObservationSource, VerificationMethod, VerificationResult,
 };
-use crate::run_read::AppValidationLineage;
+use crate::run_read::{AppValidationLineage, DetectorRecognitionLineage};
 use crate::store::CanonicalRun;
 
 pub fn render_text(
   run: &CanonicalRun,
   verifications: &[VerificationResult],
   observation_snapshots: &[ObservationSnapshot],
+  detector_recognition_lineage: &[DetectorRecognitionLineage],
   validation_lineage: &[AppValidationLineage],
 ) -> String {
   let mut output = format!(
@@ -107,6 +108,48 @@ pub fn render_text(
     }
   }
 
+  output.push_str("\nDetector Recognition Lineage:\n");
+  if detector_recognition_lineage.is_empty() {
+    output.push_str("- none\n");
+  } else {
+    for lineage in detector_recognition_lineage {
+      output.push_str(&format!(
+        "- artifact={} status={} source={} model={} backend={} items={}/{} best={} projection={} capture={} limits={}\n",
+        lineage.artifact.artifact_id,
+        render_detector_status(&lineage.status),
+        lineage
+          .source
+          .map(render_recognition_source)
+          .unwrap_or("n/a"),
+        lineage.model_id.as_deref().unwrap_or("n/a"),
+        lineage.backend.as_deref().unwrap_or("n/a"),
+        lineage.filtered_count.map(|value| value.to_string()).unwrap_or_else(|| "n/a".to_string()),
+        lineage.all_count.map(|value| value.to_string()).unwrap_or_else(|| "n/a".to_string()),
+        lineage.best_item_id.as_deref().unwrap_or("n/a"),
+        lineage.runtime_projection_kind.as_deref().unwrap_or("n/a"),
+        lineage
+          .capture_artifact
+          .as_ref()
+          .and_then(|artifact| artifact.path.as_deref())
+          .unwrap_or("n/a"),
+        lineage.known_limits.len()
+      ));
+      output.push_str(&format!(
+        "  evidence={} class_label_source={} provider={} issue={}\n",
+        lineage.evidence_artifacts.len(),
+        lineage.class_label_source_kind.as_deref().unwrap_or("n/a"),
+        lineage.execution_provider.as_deref().unwrap_or("n/a"),
+        lineage.issue.as_deref().unwrap_or("n/a")
+      ));
+      if !lineage.known_limits.is_empty() {
+        output.push_str(&format!(
+          "  known_limits={}\n",
+          lineage.known_limits.join(" | ")
+        ));
+      }
+    }
+  }
+
   output.push_str("\nValidation Lineage:\n");
   if validation_lineage.is_empty() {
     output.push_str("- none\n");
@@ -129,6 +172,22 @@ pub fn render_text(
   }
 
   output
+}
+
+fn render_detector_status(
+  status: &crate::run_read::DetectorRecognitionLineageStatus,
+) -> &'static str {
+  match status {
+    crate::run_read::DetectorRecognitionLineageStatus::Ready => "ready",
+    crate::run_read::DetectorRecognitionLineageStatus::MissingCaptureArtifact => {
+      "missing_capture_artifact"
+    }
+    crate::run_read::DetectorRecognitionLineageStatus::MissingEvidence => "missing_evidence",
+    crate::run_read::DetectorRecognitionLineageStatus::CaptureArtifactUnresolved => {
+      "capture_artifact_unresolved"
+    }
+    crate::run_read::DetectorRecognitionLineageStatus::Malformed => "malformed",
+  }
 }
 
 fn render_optional_bool(value: Option<bool>) -> &'static str {
@@ -172,6 +231,17 @@ fn render_observation_source(source: ObservationSource) -> &'static str {
   }
 }
 
+fn render_recognition_source(source: crate::contract::RecognitionSource) -> &'static str {
+  match source {
+    crate::contract::RecognitionSource::OcrText => "ocr_text",
+    crate::contract::RecognitionSource::OcrRow => "ocr_row",
+    crate::contract::RecognitionSource::VisualRow => "visual_row",
+    crate::contract::RecognitionSource::SegmentedRegion => "segmented_region",
+    crate::contract::RecognitionSource::IconMatch => "icon_match",
+    crate::contract::RecognitionSource::Custom => "custom",
+  }
+}
+
 #[cfg(test)]
 mod tests {
   use std::collections::BTreeMap;
@@ -179,9 +249,13 @@ mod tests {
   use super::render_text;
   use crate::contract::{
     OBSERVATION_SNAPSHOT_API_VERSION, ObservationSnapshot, ObservationSource, RecognitionScope,
-    RecognitionSurface, VERIFICATION_RESULT_API_VERSION, VerificationMethod, VerificationResult,
+    RecognitionSource, RecognitionSurface, VERIFICATION_RESULT_API_VERSION, VerificationMethod,
+    VerificationResult,
   };
-  use crate::run_read::AppValidationLineage;
+  use crate::run_read::{
+    AppValidationLineage, DetectorRecognitionArtifactRefLineage, DetectorRecognitionLineage,
+    DetectorRecognitionLineageStatus,
+  };
   use crate::store::CanonicalRun;
   use crate::trace::{
     ARTIFACT_API_VERSION, ArtifactId, ArtifactRecordV1Alpha1, EVENT_API_VERSION, EventId,
@@ -295,11 +369,83 @@ mod tests {
       observed_candidate_local_id: Some("native-text-focus-ax".to_string()),
       candidate_source: Some("promoted_candidate".to_string()),
     }];
+    let detector_recognition_lineage = vec![DetectorRecognitionLineage {
+      artifact: DetectorRecognitionArtifactRefLineage {
+        run_id: run_id.clone(),
+        artifact_id: ArtifactId::new("artifact_detector_recognition"),
+        span_id: SpanId::new("span_root"),
+        captured_event_id: Some(EventId::new("event_detector_recognition")),
+        role: Some("detector-recognition".to_string()),
+        path: Some("artifacts/detector-recognition.json".to_string()),
+        summary: Some("detector recognition".to_string()),
+        resolved: true,
+      },
+      status: DetectorRecognitionLineageStatus::Ready,
+      recognition_id: Some("recognition_detector_1".to_string()),
+      source: Some(RecognitionSource::Custom),
+      backend: Some("ultralytics-inference".to_string()),
+      model_id: Some("games-balatro-ui".to_string()),
+      execution_provider: Some("cpu".to_string()),
+      class_label_source_kind: Some("override_file".to_string()),
+      runtime_projection_kind: Some("identity_source_image_pixels".to_string()),
+      capture_artifact: Some(DetectorRecognitionArtifactRefLineage {
+        run_id: run_id.clone(),
+        artifact_id: ArtifactId::new("artifact_capture"),
+        span_id: SpanId::new("span_root"),
+        captured_event_id: Some(EventId::new("event_capture")),
+        role: Some("capture-image".to_string()),
+        path: Some("artifacts/capture.png".to_string()),
+        summary: Some("capture".to_string()),
+        resolved: true,
+      }),
+      capture_contract_artifact: Some(DetectorRecognitionArtifactRefLineage {
+        run_id: run_id.clone(),
+        artifact_id: ArtifactId::new("artifact_contract"),
+        span_id: SpanId::new("span_root"),
+        captured_event_id: Some(EventId::new("event_contract")),
+        role: Some("capture-contract".to_string()),
+        path: Some("artifacts/capture-contract.json".to_string()),
+        summary: Some("contract".to_string()),
+        resolved: true,
+      }),
+      evidence_artifacts: vec![
+        DetectorRecognitionArtifactRefLineage {
+          run_id: run_id.clone(),
+          artifact_id: ArtifactId::new("artifact_capture"),
+          span_id: SpanId::new("span_root"),
+          captured_event_id: Some(EventId::new("event_capture")),
+          role: Some("capture-image".to_string()),
+          path: Some("artifacts/capture.png".to_string()),
+          summary: Some("capture".to_string()),
+          resolved: true,
+        },
+        DetectorRecognitionArtifactRefLineage {
+          run_id: run_id.clone(),
+          artifact_id: ArtifactId::new("artifact_contract"),
+          span_id: SpanId::new("span_root"),
+          captured_event_id: Some(EventId::new("event_contract")),
+          role: Some("capture-contract".to_string()),
+          path: Some("artifacts/capture-contract.json".to_string()),
+          summary: Some("contract".to_string()),
+          resolved: true,
+        },
+      ],
+      all_count: Some(2),
+      filtered_count: Some(1),
+      best_item_id: None,
+      known_limits: vec![
+        "projection basis is unavailable outside capture-integrated runtime".to_string(),
+        "detector RecognitionResult is recognition evidence only, not candidate-ready output"
+          .to_string(),
+      ],
+      issue: None,
+    }];
 
     let output = render_text(
       &run,
       &verifications,
       &observation_snapshots,
+      &detector_recognition_lineage,
       &validation_lineage,
     );
 
@@ -313,6 +459,13 @@ mod tests {
     assert!(output.contains("method=semantic_match"));
     assert!(output.contains("Observations:"));
     assert!(output.contains("snapshot_1"));
+    assert!(output.contains("Detector Recognition Lineage:"));
+    assert!(output.contains("artifact=artifact_detector_recognition"));
+    assert!(output.contains("status=ready"));
+    assert!(output.contains("model=games-balatro-ui"));
+    assert!(output.contains("backend=ultralytics-inference"));
+    assert!(output.contains("capture=artifacts/capture.png"));
+    assert!(output.contains("known_limits=projection basis is unavailable outside capture-integrated runtime | detector RecognitionResult is recognition evidence only, not candidate-ready output"));
     assert!(output.contains("Validation Lineage:"));
     assert!(
       output

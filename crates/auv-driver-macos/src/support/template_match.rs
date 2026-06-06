@@ -26,6 +26,24 @@ pub struct TemplateMatchOutput {
 const MAX_SEARCH_PIXELS: u64 = 10_000_000;
 const MAX_RESULTS: usize = 16;
 
+fn compute_search_window(
+  search_region: Option<&ObservedRect>,
+  img_w: u32,
+  img_h: u32,
+) -> (u32, u32, u32, u32) {
+  if let Some(region) = search_region {
+    let x = region.x.max(0) as u32;
+    let y = region.y.max(0) as u32;
+    let max_x = ((region.x + region.width) as u32).min(img_w);
+    let max_y = ((region.y + region.height) as u32).min(img_h);
+    let width = max_x.saturating_sub(x);
+    let height = max_y.saturating_sub(y);
+    (x, y, width, height)
+  } else {
+    (0, 0, img_w, img_h)
+  }
+}
+
 /// Normalized cross-correlation template matching on grayscale images.
 ///
 /// Required workflow:
@@ -68,17 +86,7 @@ pub fn match_template(
   let (img_w, img_h) = screenshot.dimensions();
   let (tw, th) = template.dimensions();
 
-  let (sx, sy, sw, sh) = if let Some(r) = search_region {
-    let x = r.x.max(0) as u32;
-    let y = r.y.max(0) as u32;
-    let max_x = ((r.x + r.width) as u32).min(img_w);
-    let max_y = ((r.y + r.height) as u32).min(img_h);
-    let w = max_x.saturating_sub(x);
-    let h = max_y.saturating_sub(y);
-    (x, y, w, h)
-  } else {
-    (0, 0, img_w, img_h)
-  };
+  let (sx, sy, sw, sh) = compute_search_window(search_region, img_w, img_h);
 
   let search_pixels = sw as u64 * sh as u64;
   let template_pixels = tw as u64 * th as u64;

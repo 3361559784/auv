@@ -52,3 +52,6 @@ ultralytics-inference.workspace = true
 [dev-dependencies]
 auv-cli = { path = "../.." }
 ndarray.workspace = true
+axum = { version = "0.8", features = ["ws"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tower = { version = "0.5", features = ["util"] }

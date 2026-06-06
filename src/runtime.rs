@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::catalog::CommandCatalog;
+use crate::contract::ArtifactRef;
 use crate::driver::DriverRegistry;
 use crate::model::{
   AuvResult, DriverCall, DriverDescriptor, DriverRunContext, InvokeRequest, InvokeResult,
@@ -65,12 +66,15 @@ impl Runtime {
     let verifications = crate::run_read::extract_verifications(self.recording.store(), &canonical)?;
     let observation_snapshots =
       crate::run_read::extract_observation_snapshots(self.recording.store(), &canonical)?;
+    let detector_recognition_lineage =
+      crate::run_read::extract_detector_recognition_lineage(self.recording.store(), &canonical)?;
     let validation_lineage =
       crate::run_read::extract_app_validation_lineage(self.recording.store(), &canonical)?;
     Ok(crate::inspect::render_text(
       &canonical,
       &verifications,
       &observation_snapshots,
+      &detector_recognition_lineage,
       &validation_lineage,
     ))
   }
@@ -98,6 +102,13 @@ impl Runtime {
     run_id: &str,
   ) -> AuvResult<Vec<crate::run_read::AppValidationLineage>> {
     crate::run_read::list_app_validation_lineage(self.recording.store(), run_id)
+  }
+
+  pub fn list_detector_recognition_lineage(
+    &self,
+    run_id: &str,
+  ) -> AuvResult<Vec<crate::run_read::DetectorRecognitionLineage>> {
+    crate::run_read::list_detector_recognition_lineage(self.recording.store(), run_id)
   }
 
   pub fn run_dir(&self, run_id: impl AsRef<str>) -> AuvResult<PathBuf> {
@@ -495,6 +506,50 @@ impl Runtime {
       .recording
       .record_artifact_bytes(run.id(), &artifact, &staged_path)?;
     Ok(staged_path)
+  }
+
+  pub fn stage_artifact_file_with_ref(
+    &self,
+    run: &mut crate::run_builder::RecordingRun,
+    span: &crate::run_builder::SpanRef,
+    role: impl Into<String>,
+    source_path: &Path,
+    preferred_name: impl Into<String>,
+    summary: Option<String>,
+  ) -> AuvResult<(PathBuf, ArtifactRef)> {
+    let event_id = new_event_id();
+    let artifact = self.recording.stage_artifact_file(
+      run.id(),
+      run.artifact_count(),
+      span.id(),
+      Some(event_id.clone()),
+      ArtifactFileSource {
+        role: role.into(),
+        source_path: source_path.to_path_buf(),
+        preferred_name: preferred_name.into(),
+        summary,
+      },
+    )?;
+    record_event_with_id(
+      run,
+      span.id(),
+      event_id.clone(),
+      "artifact.captured",
+      Some(render_artifact_event(&artifact)),
+      vec![artifact.artifact_id.clone()],
+    );
+    let staged_path = self.recording.run_dir(run.id())?.join(&artifact.path);
+    let artifact_ref = ArtifactRef {
+      run_id: run.id().clone(),
+      artifact_id: artifact.artifact_id.clone(),
+      span_id: span.id().clone(),
+      captured_event_id: Some(event_id),
+    };
+    run.record_artifact(artifact.clone());
+    self
+      .recording
+      .record_artifact_bytes(run.id(), &artifact, &staged_path)?;
+    Ok((staged_path, artifact_ref))
   }
 }
 

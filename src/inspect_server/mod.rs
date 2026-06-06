@@ -34,7 +34,7 @@ use tokio::sync::{Mutex, OwnedMutexGuard};
 use crate::contract::{ObservationSnapshot, VerificationResult};
 use crate::model::AuvResult;
 use crate::recording::{BroadcastRunRecorder, RunRecorder, RunUpdate, WireUpdate};
-use crate::run_read::AppValidationLineage;
+use crate::run_read::{AppValidationLineage, DetectorRecognitionLineage};
 use crate::store::{CanonicalRun, LocalStore};
 use crate::trace::{RunId, RunRecordV1Alpha1, TraceState};
 
@@ -319,6 +319,9 @@ async fn get_run(
   let observation_snapshots =
     crate::run_read::extract_observation_snapshots(state.store.as_ref(), &run)
       .map_err(InspectHttpError::from_store)?;
+  let detector_recognition_lineage =
+    crate::run_read::extract_detector_recognition_lineage(state.store.as_ref(), &run)
+      .map_err(InspectHttpError::from_store)?;
   let validation_lineage =
     crate::run_read::extract_app_validation_lineage(state.store.as_ref(), &run)
       .map_err(InspectHttpError::from_store)?;
@@ -327,6 +330,7 @@ async fn get_run(
       run: run.run,
       verifications,
       observation_snapshots,
+      detector_recognition_lineage,
       validation_lineage,
     })
     .into_response(),
@@ -501,6 +505,8 @@ struct InspectRunResponse {
   verifications: Vec<VerificationResult>,
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   observation_snapshots: Vec<ObservationSnapshot>,
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  detector_recognition_lineage: Vec<DetectorRecognitionLineage>,
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   validation_lineage: Vec<AppValidationLineage>,
 }
@@ -875,9 +881,10 @@ mod tests {
     AppIdentity, AppValidatedCandidate, AppValidation, AppValidationStatus, AppVerificationMode,
   };
   use crate::contract::{
-    OBSERVATION_SNAPSHOT_API_VERSION, OPERATION_RESULT_API_VERSION, ObservationSnapshot,
-    ObservationSource, OperationOutput, OperationResult, OperationStatus, RecognitionScope,
-    RecognitionSurface, VERIFICATION_RESULT_API_VERSION, VerificationMethod, VerificationResult,
+    ArtifactRef, OBSERVATION_SNAPSHOT_API_VERSION, OPERATION_RESULT_API_VERSION,
+    ObservationSnapshot, ObservationSource, OperationOutput, OperationResult, OperationStatus,
+    RecognitionResult, RecognitionScope, RecognitionSource, RecognitionSurface, RecognizedItem,
+    VERIFICATION_RESULT_API_VERSION, VerificationMethod, VerificationResult,
   };
   use crate::model::now_millis;
   use crate::recording::{BroadcastRunRecorder, RunRecorder, RunUpdate};
@@ -1825,6 +1832,22 @@ mod tests {
       run["validation_lineage"][0]["candidate_source"],
       "promoted_candidate"
     );
+    assert_eq!(run["detector_recognition_lineage"][0]["status"], "ready");
+    assert_eq!(run["detector_recognition_lineage"][0]["source"], "custom");
+    assert_eq!(
+      run["detector_recognition_lineage"][0]["backend"],
+      "ultralytics-inference"
+    );
+    assert_eq!(
+      run["detector_recognition_lineage"][0]["model_id"],
+      "games-balatro-ui"
+    );
+    assert_eq!(
+      run["detector_recognition_lineage"][0]["capture_artifact"]["role"],
+      "capture-image"
+    );
+    assert_eq!(run["detector_recognition_lineage"][0]["filtered_count"], 1);
+    assert_eq!(run["detector_recognition_lineage"][0]["all_count"], 2);
     assert!(
       run.get("spans").is_none(),
       "/runs/{run_id} should not inline spans even when enriched"
@@ -2716,6 +2739,105 @@ mod tests {
             resolved_inputs: BTreeMap::new(),
           }],
           known_boundaries: Vec::new(),
+        },
+      ),
+      stage_json_artifact(
+        store,
+        root,
+        &run_id,
+        &span_id,
+        3,
+        "capture-image",
+        "capture.json",
+        &serde_json::json!({"capture": "artifact"}),
+      ),
+      stage_json_artifact(
+        store,
+        root,
+        &run_id,
+        &span_id,
+        4,
+        "detector-recognition",
+        "detector-recognition.json",
+        &RecognitionResult {
+          recognition_id: "recognition_detector_server_test".to_string(),
+          source: RecognitionSource::Custom,
+          scope: RecognitionScope {
+            surface: RecognitionSurface::Region,
+            display_ref: Some("display-main".to_string()),
+            native_display_id: Some("69733248".to_string()),
+            app_bundle_id: Some("com.playstack.balatro".to_string()),
+            window_title: Some("Balatro".to_string()),
+            window_number: Some(7),
+            region_hint: None,
+            capture_artifact: Some(ArtifactRef {
+              run_id: run_id.clone(),
+              artifact_id: ArtifactId::new("artifact_0004"),
+              span_id: span_id.clone(),
+              captured_event_id: None,
+            }),
+            capture_contract_artifact: None,
+          },
+          best: None,
+          filtered: vec![RecognizedItem {
+            item_id: "detector:games-balatro-ui:0".to_string(),
+            kind: "ui_button_play".to_string(),
+            box_: crate::contract::RecognitionBox {
+              x: 10,
+              y: 20,
+              width: 30,
+              height: 40,
+            },
+            text: None,
+            provider_score: Some(0.98),
+            detail: serde_json::json!({}),
+          }],
+          all: vec![
+            RecognizedItem {
+              item_id: "detector:games-balatro-ui:0".to_string(),
+              kind: "ui_button_play".to_string(),
+              box_: crate::contract::RecognitionBox {
+                x: 10,
+                y: 20,
+                width: 30,
+                height: 40,
+              },
+              text: None,
+              provider_score: Some(0.98),
+              detail: serde_json::json!({}),
+            },
+            RecognizedItem {
+              item_id: "detector:games-balatro-ui:1".to_string(),
+              kind: "ui_score".to_string(),
+              box_: crate::contract::RecognitionBox {
+                x: 50,
+                y: 60,
+                width: 70,
+                height: 80,
+              },
+              text: None,
+              provider_score: Some(0.87),
+              detail: serde_json::json!({}),
+            },
+          ],
+          detail: serde_json::json!({
+            "backend": "ultralytics-inference",
+            "model_id": "games-balatro-ui",
+            "execution_provider": "cpu",
+            "class_label_source": { "kind": "override_file" },
+            "runtime_projection": { "kind": "identity_source_image_pixels" },
+          }),
+          evidence: vec![ArtifactRef {
+            run_id: run_id.clone(),
+            artifact_id: ArtifactId::new("artifact_0004"),
+            span_id: span_id.clone(),
+            captured_event_id: None,
+          }],
+          known_limits: vec![
+            "projection basis is unavailable outside capture-integrated runtime".to_string(),
+            "detector RecognitionResult is recognition evidence only, not candidate-ready output"
+              .to_string(),
+          ],
         },
       ),
     ];

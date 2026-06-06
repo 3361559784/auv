@@ -2,7 +2,7 @@
 
 Date: 2026-06-05
 
-Status: inference-scoped design + test boundary
+Status: inference-scoped design + test boundary with gated Balatro runtime-artifact smoke consumer
 
 Base: `origin/main` after `809c787`
 
@@ -14,12 +14,17 @@ discussed.
 
 This slice does **not** implement:
 
-- `DetectionSet -> RecognitionResult`
+- `DetectionSet -> RecognitionResult` as a generic runtime production path
 - `DetectionSet -> contract::Candidate`
-- runtime artifact recording
 - driver capture integration
-- window/display projection
+- window/display projection beyond identity source-image smoke projection
 - app validation or action consumption
+
+A gated Balatro smoke now proves one narrow real path:
+
+- local Balatro source image can be staged as `capture-image` runtime artifact
+- `DetectionEvidenceManifest` can feed detector-backed `RecognitionResult` artifact recording
+- read-side lineage can resolve the resulting `detector-recognition` artifact
 
 It only introduces an inference evidence manifest that answers:
 

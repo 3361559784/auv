@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::candidate_promotion::{
-  ActionPermission, CandidatePromotion, PromotionContext, PromotionProjection,
-  promote_recognition_to_candidates,
+  ActionConsentRecord, ActionPermission, CandidatePromotion, ConsentAction, ConsentScope,
+  PromotionContext, PromotionProjection, promote_recognition_to_candidates,
 };
 use crate::contract::{ArtifactRef, FreshnessBasis, RecognitionResult};
 use crate::model::{AuvResult, now_millis};
@@ -71,6 +71,8 @@ pub struct CandidatePromotionArtifact {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CandidatePromotionArtifactError {
   NoRecognitionFrames,
+  MissingCaptureArtifactForFreshness,
+  MissingCaptureArtifactForConsent,
 }
 
 impl std::fmt::Display for CandidatePromotionArtifactError {
@@ -82,11 +84,77 @@ impl std::fmt::Display for CandidatePromotionArtifactError {
           "candidate promotion recording requires at least one RecognitionResult"
         )
       }
+      Self::MissingCaptureArtifactForFreshness => {
+        write!(
+          f,
+          "candidate promotion freshness requires recognition.scope.capture_artifact"
+        )
+      }
+      Self::MissingCaptureArtifactForConsent => {
+        write!(
+          f,
+          "candidate promotion consent requires recognition.scope.capture_artifact"
+        )
+      }
     }
   }
 }
 
 impl std::error::Error for CandidatePromotionArtifactError {}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CandidatePromotionConsentInput {
+  pub granted_by: String,
+  pub scope_note: String,
+  pub evidence_note: String,
+  pub approved_at_millis: u64,
+}
+
+pub fn freshness_from_capture_backed_recognition(
+  recognition: &RecognitionResult,
+  source_operation_id: impl Into<String>,
+  note: impl Into<String>,
+) -> Result<FreshnessBasis, CandidatePromotionArtifactError> {
+  let Some(capture_artifact) = recognition.scope.capture_artifact.clone() else {
+    return Err(CandidatePromotionArtifactError::MissingCaptureArtifactForFreshness);
+  };
+
+  Ok(FreshnessBasis {
+    source_artifact: Some(capture_artifact),
+    source_operation_id: Some(source_operation_id.into()),
+    notes: vec![
+      note.into(),
+      format!(
+        "freshness derived from capture-backed recognition {}",
+        recognition.recognition_id
+      ),
+    ],
+  })
+}
+
+pub fn explicit_consent_for_candidate_promotion(
+  promotion_id: &str,
+  recognition: &RecognitionResult,
+  input: CandidatePromotionConsentInput,
+) -> Result<ActionPermission, CandidatePromotionArtifactError> {
+  let Some(capture_artifact) = recognition.scope.capture_artifact.as_ref() else {
+    return Err(CandidatePromotionArtifactError::MissingCaptureArtifactForConsent);
+  };
+
+  Ok(ActionPermission {
+    granted_by: input.granted_by,
+    scope_note: input.scope_note,
+    consent: Some(ActionConsentRecord {
+      consent_id: format!("consent-{promotion_id}-{}", recognition.recognition_id),
+      recognition_id: recognition.recognition_id.clone(),
+      run_id: capture_artifact.run_id.as_str().to_string(),
+      scope: ConsentScope::CandidatePromotionOnly,
+      approved_action: ConsentAction::PromoteRecognitionToCandidate,
+      approved_at_millis: input.approved_at_millis,
+      evidence_note: input.evidence_note,
+    }),
+  })
+}
 
 pub fn build_candidate_promotion_artifact(
   observations: &[RecognitionResult],
@@ -128,6 +196,20 @@ pub fn build_candidate_promotion_artifact(
       "observed_frame_count": observations.len(),
       "decision_kind": decision_kind(&decision),
       "source_recognition_artifact_present": request.source_recognition_artifact.is_some(),
+      "freshness_source_artifact_present": request
+        .freshness
+        .as_ref()
+        .and_then(|freshness| freshness.source_artifact.as_ref())
+        .is_some(),
+      "permission_consent_present": request
+        .permission
+        .as_ref()
+        .and_then(|permission| permission.consent.as_ref())
+        .is_some(),
+      "permission_granted_by": request
+        .permission
+        .as_ref()
+        .map(|permission| permission.granted_by.as_str()),
     }),
     known_limits: artifact_known_limits(recognition, &decision),
   })
@@ -280,15 +362,15 @@ mod tests {
 
   use super::{
     CandidatePromotionArtifactError, CandidatePromotionArtifactRequest,
-    build_candidate_promotion_artifact, record_candidate_promotion_artifact,
+    CandidatePromotionConsentInput, build_candidate_promotion_artifact,
+    explicit_consent_for_candidate_promotion, freshness_from_capture_backed_recognition,
+    record_candidate_promotion_artifact,
   };
   use crate::build_runtime_with_store_root;
-  use crate::candidate_promotion::{
-    ActionPermission, CandidatePromotion, PromotionProjection, PromotionRefusal,
-  };
+  use crate::candidate_promotion::{CandidatePromotion, PromotionProjection, PromotionRefusal};
   use crate::contract::{
-    ArtifactRef, FreshnessBasis, RecognitionBox, RecognitionResult, RecognitionScope,
-    RecognitionSource, RecognitionSurface, RecognizedItem,
+    ArtifactRef, RecognitionBox, RecognitionResult, RecognitionScope, RecognitionSource,
+    RecognitionSurface, RecognizedItem,
   };
   use crate::run_builder::RunSpec;
   use crate::stability::StabilityPolicy;
@@ -387,6 +469,7 @@ mod tests {
   }
 
   fn sample_request() -> CandidatePromotionArtifactRequest {
+    let latest_recognition = sample_frame("recognition_frame_3", 1643, 796);
     CandidatePromotionArtifactRequest {
       promotion_id: "promotion_end_turn".to_string(),
       source_recognition_artifact: Some(ArtifactRef {
@@ -401,15 +484,27 @@ mod tests {
         require_stable_text: true,
       },
       projection: PromotionProjection::IdentityWindowAddressable,
-      freshness: Some(FreshnessBasis {
-        source_artifact: Some(sample_artifact_ref()),
-        source_operation_id: Some("observe.window.capture".to_string()),
-        notes: vec!["fixture freshness seed".to_string()],
-      }),
-      permission: Some(ActionPermission {
-        granted_by: "human-review".to_string(),
-        scope_note: "single end-turn action".to_string(),
-      }),
+      freshness: Some(
+        freshness_from_capture_backed_recognition(
+          &latest_recognition,
+          "observe.window.capture",
+          "fixture freshness seed",
+        )
+        .expect("sample recognition is capture-backed"),
+      ),
+      permission: Some(
+        explicit_consent_for_candidate_promotion(
+          "promotion_end_turn",
+          &latest_recognition,
+          CandidatePromotionConsentInput {
+            granted_by: "human-review".to_string(),
+            scope_note: "single end-turn action".to_string(),
+            evidence_note: "unit test consent".to_string(),
+            approved_at_millis: 1,
+          },
+        )
+        .expect("sample recognition is capture-backed"),
+      ),
       artifact_role: "candidate-promotion".to_string(),
       artifact_label: "slay-the-spire-end-turn-promotion".to_string(),
       artifact_note: "Candidate-promotion gate decision for Slay the Spire fixture.".to_string(),
@@ -448,6 +543,16 @@ mod tests {
         .map(|permission| permission.granted_by.as_str()),
       Some("human-review")
     );
+    assert_eq!(
+      artifact
+        .promotion_context
+        .permission
+        .as_ref()
+        .and_then(|permission| permission.consent.as_ref())
+        .map(|consent| consent.recognition_id.as_str()),
+      Some("recognition_frame_3")
+    );
+    assert_eq!(artifact.detail["permission_consent_present"], json!(true));
     match artifact.decision {
       CandidatePromotion::Promoted { candidates, .. } => {
         assert_eq!(candidates.len(), 1);
@@ -649,6 +754,81 @@ mod tests {
     }
   }
 
+  #[test]
+  fn producer_helpers_require_capture_backed_recognition() {
+    let mut recognition = sample_frame("recognition_no_capture", 10, 20);
+    recognition.scope.capture_artifact = None;
+
+    let freshness_error =
+      freshness_from_capture_backed_recognition(&recognition, "observe.window.capture", "fresh")
+        .expect_err("freshness producer should require capture artifact");
+    assert_eq!(
+      freshness_error,
+      CandidatePromotionArtifactError::MissingCaptureArtifactForFreshness
+    );
+
+    let consent_error = explicit_consent_for_candidate_promotion(
+      "promotion_no_capture",
+      &recognition,
+      CandidatePromotionConsentInput {
+        granted_by: "human-review".to_string(),
+        scope_note: "candidate promotion only".to_string(),
+        evidence_note: "consent evidence".to_string(),
+        approved_at_millis: 1,
+      },
+    )
+    .expect_err("consent producer should require capture artifact");
+    assert_eq!(
+      consent_error,
+      CandidatePromotionArtifactError::MissingCaptureArtifactForConsent
+    );
+  }
+
+  #[test]
+  fn explicit_consent_flips_permission_refusal_without_implying_action_execution() {
+    let observations = vec![
+      sample_frame("recognition_frame_1", 1638, 792),
+      sample_frame("recognition_frame_2", 1641, 794),
+      sample_frame("recognition_frame_3", 1643, 796),
+    ];
+    let mut request = sample_request();
+    request.permission = None;
+    let refused = build_candidate_promotion_artifact(&observations, &request)
+      .expect("artifact should build without permission");
+    assert!(matches!(
+      refused.decision,
+      CandidatePromotion::Refused { ref reasons }
+        if reasons.iter().any(|reason| matches!(reason, PromotionRefusal::PermissionMissing))
+    ));
+
+    let latest = observations.last().expect("latest frame should exist");
+    request.permission = Some(
+      explicit_consent_for_candidate_promotion(
+        &request.promotion_id,
+        latest,
+        CandidatePromotionConsentInput {
+          granted_by: "human-review".to_string(),
+          scope_note: "candidate promotion only, no action execution".to_string(),
+          evidence_note: "approved by fixture reviewer".to_string(),
+          approved_at_millis: crate::model::now_millis(),
+        },
+      )
+      .expect("latest recognition is capture-backed"),
+    );
+    let promoted = build_candidate_promotion_artifact(&observations, &request)
+      .expect("artifact should build with explicit consent");
+    assert!(matches!(
+      promoted.decision,
+      CandidatePromotion::Promoted { .. }
+    ));
+    assert!(
+      promoted
+        .known_limits
+        .iter()
+        .any(|limit| limit.contains("runtime action consumption remains deferred"))
+    );
+  }
+
   #[cfg(target_os = "macos")]
   #[test]
   fn gated_ax_report_records_projection_satisfied_candidate_promotion_lineage() {
@@ -714,6 +894,27 @@ mod tests {
           request.projection = PromotionProjection::Unavailable {
             reason: "smoke starts without caller-supplied projection".to_string(),
           };
+          request.freshness = Some(
+            freshness_from_capture_backed_recognition(
+              &recognition,
+              "debug.captureAxTree",
+              "same-run AX tree capture freshness for promotion smoke",
+            )
+            .map_err(|error| error.to_string())?,
+          );
+          request.permission = Some(
+            explicit_consent_for_candidate_promotion(
+              &request.promotion_id,
+              &recognition,
+              CandidatePromotionConsentInput {
+                granted_by: "gated-test-human-consent".to_string(),
+                scope_note: "candidate promotion only; no action execution".to_string(),
+                evidence_note: "AUV_AX_TREE_REPORT gated smoke approval".to_string(),
+                approved_at_millis: crate::model::now_millis(),
+              },
+            )
+            .map_err(|error| error.to_string())?,
+          );
 
           record_candidate_promotion_artifact_with_recognition_projection(
             context,
@@ -729,12 +930,20 @@ mod tests {
       artifact.promotion_context.projection,
       PromotionProjection::IdentityWindowAddressable
     );
+    assert!(matches!(
+      artifact.decision,
+      CandidatePromotion::Promoted { .. }
+    ));
     let inspect = runtime
       .inspect(output.run_id.as_str())
       .expect("recorded smoke run should inspect");
     assert!(inspect.contains("Candidate Promotion Lineage:"));
     assert!(inspect.contains("projection=identity_window_addressable"));
+    assert!(inspect.contains("decision=promoted"));
+    assert!(inspect.contains("consent_scope=candidate_promotion_only"));
     assert!(!inspect.contains("projection_unavailable"));
+    assert!(!inspect.contains("permission_missing"));
+    assert!(!inspect.contains("freshness_unknown"));
 
     let _ = fs::remove_dir_all(project_root);
     let _ = fs::remove_dir_all(store_root);

@@ -189,7 +189,7 @@ pub fn render_text(
         }
       ));
       output.push_str(&format!(
-        "  recognition={} observed_frames={} freshness_present={} permission_granted={} issue={}\n",
+        "  recognition={} observed_frames={} freshness_present={} freshness_source={} permission_granted={} consent_id={} consent_scope={} permission_by={} issue={}\n",
         lineage
           .promotion_input_recognition_id
           .as_deref()
@@ -203,9 +203,17 @@ pub fn render_text(
           .map(|value| if value { "true" } else { "false" })
           .unwrap_or("n/a"),
         lineage
+          .freshness_source_artifact
+          .as_ref()
+          .and_then(|artifact| artifact.path.as_deref())
+          .unwrap_or("n/a"),
+        lineage
           .permission_granted
           .map(|value| if value { "true" } else { "false" })
           .unwrap_or("n/a"),
+        lineage.consent_id.as_deref().unwrap_or("n/a"),
+        lineage.consent_scope.as_deref().unwrap_or("n/a"),
+        lineage.permission_granted_by.as_deref().unwrap_or("n/a"),
         lineage.issue.as_deref().unwrap_or("n/a")
       ));
       if let Some(stability_reason) = &lineage.stability_reason {
@@ -571,7 +579,24 @@ mod tests {
       stability_observed_frames: Some(2),
       stability_reason: None,
       freshness_present: Some(true),
+      freshness_source_artifact: Some(ArtifactRefLineage {
+        run_id: run_id.clone(),
+        artifact_id: ArtifactId::new("artifact_capture"),
+        span_id: SpanId::new("span_root"),
+        captured_event_id: Some(EventId::new("event_capture")),
+        role: Some("capture-image".to_string()),
+        path: Some("artifacts/capture.png".to_string()),
+        summary: Some("capture".to_string()),
+        resolved: true,
+      }),
+      freshness_source_operation_id: Some("observe.window.capture".to_string()),
       permission_granted: Some(true),
+      permission_granted_by: Some("human-review".to_string()),
+      permission_scope_note: Some("fixture promotion".to_string()),
+      consent_id: Some("consent_promotion_end_turn".to_string()),
+      consent_scope: Some("candidate_promotion_only".to_string()),
+      consent_approved_action: Some("promote_recognition_to_candidate".to_string()),
+      consent_recognition_id: Some("recognition_detector_1".to_string()),
       decision_kind: Some("promoted".to_string()),
       refusal_reasons: Vec::new(),
       promoted_candidate_local_ids: vec!["promoted-item_end_turn".to_string()],
@@ -613,6 +638,9 @@ mod tests {
     assert!(output.contains("decision=promoted"));
     assert!(output.contains("projection=identity_window_addressable"));
     assert!(output.contains("source_recognition=artifacts/detector-recognition.json"));
+    assert!(output.contains("freshness_source=artifacts/capture.png"));
+    assert!(output.contains("consent_scope=candidate_promotion_only"));
+    assert!(output.contains("permission_by=human-review"));
     assert!(output.contains("Validation Lineage:"));
     assert!(
       output

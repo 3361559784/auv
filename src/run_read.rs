@@ -116,7 +116,15 @@ pub struct CandidatePromotionLineage {
   pub stability_observed_frames: Option<u32>,
   pub stability_reason: Option<String>,
   pub freshness_present: Option<bool>,
+  pub freshness_source_artifact: Option<ArtifactRefLineage>,
+  pub freshness_source_operation_id: Option<String>,
   pub permission_granted: Option<bool>,
+  pub permission_granted_by: Option<String>,
+  pub permission_scope_note: Option<String>,
+  pub consent_id: Option<String>,
+  pub consent_scope: Option<String>,
+  pub consent_approved_action: Option<String>,
+  pub consent_recognition_id: Option<String>,
   pub decision_kind: Option<String>,
   pub refusal_reasons: Vec<String>,
   pub promoted_candidate_local_ids: Vec<String>,
@@ -344,7 +352,15 @@ pub(crate) fn extract_candidate_promotion_lineage(
         stability_observed_frames: None,
         stability_reason: None,
         freshness_present: None,
+        freshness_source_artifact: None,
+        freshness_source_operation_id: None,
         permission_granted: None,
+        permission_granted_by: None,
+        permission_scope_note: None,
+        consent_id: None,
+        consent_scope: None,
+        consent_approved_action: None,
+        consent_recognition_id: None,
         decision_kind: None,
         refusal_reasons: Vec::new(),
         promoted_candidate_local_ids: Vec::new(),
@@ -390,7 +406,15 @@ pub(crate) fn extract_candidate_promotion_lineage(
         stability_observed_frames: None,
         stability_reason: None,
         freshness_present: None,
+        freshness_source_artifact: None,
+        freshness_source_operation_id: None,
         permission_granted: None,
+        permission_granted_by: None,
+        permission_scope_note: None,
+        consent_id: None,
+        consent_scope: None,
+        consent_approved_action: None,
+        consent_recognition_id: None,
         decision_kind: None,
         refusal_reasons: Vec::new(),
         promoted_candidate_local_ids: Vec::new(),
@@ -474,6 +498,14 @@ fn candidate_promotion_lineage_entry(
     .capture_artifact
     .as_ref()
     .map(|reference| resolve_artifact_ref(run, reference));
+  let freshness_source_artifact = promotion
+    .promotion_context
+    .freshness
+    .as_ref()
+    .and_then(|freshness| freshness.source_artifact.as_ref())
+    .map(|reference| resolve_artifact_ref(run, reference));
+  let permission = promotion.promotion_context.permission.as_ref();
+  let consent = permission.and_then(|permission| permission.consent.as_ref());
   let (status, issue) = classify_candidate_promotion_lineage(
     &promotion,
     source_recognition_artifact.as_ref(),
@@ -498,7 +530,19 @@ fn candidate_promotion_lineage_entry(
     stability_observed_frames,
     stability_reason,
     freshness_present: Some(promotion.promotion_context.freshness.is_some()),
+    freshness_source_artifact,
+    freshness_source_operation_id: promotion
+      .promotion_context
+      .freshness
+      .as_ref()
+      .and_then(|freshness| freshness.source_operation_id.clone()),
     permission_granted: Some(promotion.promotion_context.permission.is_some()),
+    permission_granted_by: permission.map(|permission| permission.granted_by.clone()),
+    permission_scope_note: permission.map(|permission| permission.scope_note.clone()),
+    consent_id: consent.map(|consent| consent.consent_id.clone()),
+    consent_scope: consent.map(|consent| consent_scope_string(&consent.scope)),
+    consent_approved_action: consent.map(|consent| consent_action_string(&consent.approved_action)),
+    consent_recognition_id: consent.map(|consent| consent.recognition_id.clone()),
     decision_kind: Some(decision_kind),
     refusal_reasons,
     promoted_candidate_local_ids,
@@ -633,6 +677,22 @@ fn projection_kind(projection: &PromotionProjection) -> String {
   match projection {
     PromotionProjection::Unavailable { .. } => "unavailable".to_string(),
     PromotionProjection::IdentityWindowAddressable => "identity_window_addressable".to_string(),
+  }
+}
+
+fn consent_scope_string(scope: &crate::candidate_promotion::ConsentScope) -> String {
+  match scope {
+    crate::candidate_promotion::ConsentScope::CandidatePromotionOnly => {
+      "candidate_promotion_only".to_string()
+    }
+  }
+}
+
+fn consent_action_string(action: &crate::candidate_promotion::ConsentAction) -> String {
+  match action {
+    crate::candidate_promotion::ConsentAction::PromoteRecognitionToCandidate => {
+      "promote_recognition_to_candidate".to_string()
+    }
   }
 }
 
@@ -771,8 +831,8 @@ mod tests {
     AppIdentity, AppValidatedCandidate, AppValidation, AppValidationStatus, AppVerificationMode,
   };
   use crate::candidate_promotion::{
-    ActionPermission, CandidatePromotion, PromotionContext, PromotionProjection, PromotionRefusal,
-    StabilityInput,
+    ActionConsentRecord, ActionPermission, CandidatePromotion, ConsentAction, ConsentScope,
+    PromotionContext, PromotionProjection, PromotionRefusal, StabilityInput,
   };
   use crate::candidate_promotion_recording::CandidatePromotionArtifact;
   use crate::contract::{
@@ -1423,6 +1483,22 @@ mod tests {
     assert_eq!(extracted[0].status, CandidatePromotionLineageStatus::Ready);
     assert_eq!(extracted[0].decision_kind.as_deref(), Some("promoted"));
     assert_eq!(
+      extracted[0].freshness_source_operation_id.as_deref(),
+      Some("observe.window.capture")
+    );
+    assert_eq!(
+      extracted[0].consent_scope.as_deref(),
+      Some("candidate_promotion_only")
+    );
+    assert_eq!(
+      extracted[0].consent_approved_action.as_deref(),
+      Some("promote_recognition_to_candidate")
+    );
+    assert_eq!(
+      extracted[0].consent_recognition_id.as_deref(),
+      Some("promotion_ready_frame_1")
+    );
+    assert_eq!(
       extracted[0].promoted_candidate_local_ids,
       vec!["promoted-item_end_turn".to_string()]
     );
@@ -1814,6 +1890,15 @@ mod tests {
         permission: Some(ActionPermission {
           granted_by: "human-review".to_string(),
           scope_note: "fixture promotion".to_string(),
+          consent: Some(ActionConsentRecord {
+            consent_id: format!("consent_{promotion_id}"),
+            recognition_id: format!("{promotion_id}_frame_1"),
+            run_id: run_id.as_str().to_string(),
+            scope: ConsentScope::CandidatePromotionOnly,
+            approved_action: ConsentAction::PromoteRecognitionToCandidate,
+            approved_at_millis: 1,
+            evidence_note: "fixture consent".to_string(),
+          }),
         }),
       },
       decision,

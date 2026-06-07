@@ -889,7 +889,8 @@ mod tests {
     AppIdentity, AppValidatedCandidate, AppValidation, AppValidationStatus, AppVerificationMode,
   };
   use crate::candidate_promotion::{
-    ActionPermission, CandidatePromotion, PromotionContext, PromotionProjection, StabilityInput,
+    ActionConsentRecord, ActionPermission, CandidatePromotion, ConsentAction, ConsentScope,
+    PromotionContext, PromotionProjection, StabilityInput,
   };
   use crate::candidate_promotion_recording::CandidatePromotionArtifact;
   use crate::contract::{
@@ -1878,6 +1879,26 @@ mod tests {
     assert_eq!(
       run["candidate_promotion_lineage"][0]["promoted_candidate_local_ids"][0],
       "promoted-item_end_turn"
+    );
+    assert_eq!(
+      run["candidate_promotion_lineage"][0]["freshness_source_artifact"]["role"],
+      "capture-image"
+    );
+    assert_eq!(
+      run["candidate_promotion_lineage"][0]["freshness_source_operation_id"],
+      "observe.window.capture"
+    );
+    assert_eq!(
+      run["candidate_promotion_lineage"][0]["consent_scope"],
+      "candidate_promotion_only"
+    );
+    assert_eq!(
+      run["candidate_promotion_lineage"][0]["consent_approved_action"],
+      "promote_recognition_to_candidate"
+    );
+    assert_eq!(
+      run["candidate_promotion_lineage"][0]["permission_granted_by"],
+      "human-review"
     );
     assert!(
       run.get("spans").is_none(),
@@ -2921,6 +2942,15 @@ mod tests {
             permission: Some(ActionPermission {
               granted_by: "human-review".to_string(),
               scope_note: "single end-turn action".to_string(),
+              consent: Some(ActionConsentRecord {
+                consent_id: "consent_promotion_end_turn".to_string(),
+                recognition_id: "recognition_detector_server_test".to_string(),
+                run_id: run_id.as_str().to_string(),
+                scope: ConsentScope::CandidatePromotionOnly,
+                approved_action: ConsentAction::PromoteRecognitionToCandidate,
+                approved_at_millis: 1,
+                evidence_note: "server fixture consent".to_string(),
+              }),
             }),
           },
           decision: CandidatePromotion::Promoted {

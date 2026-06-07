@@ -50,6 +50,31 @@ pub enum StabilityInput {
 pub struct ActionPermission {
   pub granted_by: String,
   pub scope_note: String,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub consent: Option<ActionConsentRecord>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ActionConsentRecord {
+  pub consent_id: String,
+  pub recognition_id: String,
+  pub run_id: String,
+  pub scope: ConsentScope,
+  pub approved_action: ConsentAction,
+  pub approved_at_millis: u64,
+  pub evidence_note: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConsentScope {
+  CandidatePromotionOnly,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConsentAction {
+  PromoteRecognitionToCandidate,
 }
 
 /// 闸门决定。不是 action-result schema。
@@ -107,10 +132,10 @@ pub fn promote_recognition_to_candidates(
       reason: reason.clone(),
     });
   }
-  if context.freshness.is_none() {
+  if !freshness_is_capture_backed_for_recognition(context.freshness.as_ref(), recognition) {
     reasons.push(PromotionRefusal::FreshnessUnknown);
   }
-  if context.permission.is_none() {
+  if !permission_is_explicit_for_recognition(context.permission.as_ref(), recognition) {
     reasons.push(PromotionRefusal::PermissionMissing);
   }
 
@@ -179,13 +204,58 @@ fn window_ref_from_scope(scope: &RecognitionScope) -> Option<WindowRefPreconditi
   })
 }
 
+fn freshness_is_capture_backed_for_recognition(
+  freshness: Option<&FreshnessBasis>,
+  recognition: &RecognitionResult,
+) -> bool {
+  let Some(freshness) = freshness else {
+    return false;
+  };
+  let Some(source_artifact) = freshness.source_artifact.as_ref() else {
+    return false;
+  };
+  recognition
+    .scope
+    .capture_artifact
+    .as_ref()
+    .is_some_and(|capture_artifact| capture_artifact == source_artifact)
+    && freshness
+      .source_operation_id
+      .as_deref()
+      .is_some_and(|operation_id| !operation_id.trim().is_empty())
+}
+
+fn permission_is_explicit_for_recognition(
+  permission: Option<&ActionPermission>,
+  recognition: &RecognitionResult,
+) -> bool {
+  let Some(permission) = permission else {
+    return false;
+  };
+  let Some(consent) = &permission.consent else {
+    return false;
+  };
+  !permission.granted_by.trim().is_empty()
+    && !permission.scope_note.trim().is_empty()
+    && !consent.consent_id.trim().is_empty()
+    && consent.recognition_id == recognition.recognition_id
+    && recognition
+      .scope
+      .capture_artifact
+      .as_ref()
+      .is_some_and(|artifact| artifact.run_id.as_str() == consent.run_id)
+    && consent.scope == ConsentScope::CandidatePromotionOnly
+    && consent.approved_action == ConsentAction::PromoteRecognitionToCandidate
+}
+
 #[cfg(test)]
 mod tests {
   use serde_json::json;
 
   use super::{
-    ActionPermission, CandidatePromotion, PromotionContext, PromotionProjection, PromotionRefusal,
-    StabilityInput, promote_recognition_to_candidates,
+    ActionConsentRecord, ActionPermission, CandidatePromotion, ConsentAction, ConsentScope,
+    PromotionContext, PromotionProjection, PromotionRefusal, StabilityInput,
+    promote_recognition_to_candidates,
   };
   use crate::contract::{
     ArtifactRef, Candidate, FreshnessBasis, RecognitionBox, RecognitionResult, RecognitionScope,
@@ -283,6 +353,15 @@ mod tests {
       permission: Some(ActionPermission {
         granted_by: "unit-test".to_string(),
         scope_note: "synthetic promotion proof".to_string(),
+        consent: Some(ActionConsentRecord {
+          consent_id: "consent_unit_test".to_string(),
+          recognition_id: "recognition_candidate_promotion".to_string(),
+          run_id: "run_candidate_promotion".to_string(),
+          scope: ConsentScope::CandidatePromotionOnly,
+          approved_action: ConsentAction::PromoteRecognitionToCandidate,
+          approved_at_millis: 1,
+          evidence_note: "unit test explicit consent".to_string(),
+        }),
       }),
     }
   }
@@ -424,6 +503,80 @@ mod tests {
       &recognition,
       &PromotionContext {
         permission: None,
+        ..sample_context()
+      },
+    );
+
+    assert_eq!(
+      decision,
+      CandidatePromotion::Refused {
+        reasons: vec![PromotionRefusal::PermissionMissing]
+      }
+    );
+  }
+
+  #[test]
+  fn freshness_without_capture_binding_refuses() {
+    let recognition = sample_recognition();
+    let decision = promote_recognition_to_candidates(
+      &recognition,
+      &PromotionContext {
+        freshness: Some(FreshnessBasis {
+          source_artifact: None,
+          source_operation_id: Some("observe.slay.fixture".to_string()),
+          notes: vec!["unbound freshness is not enough".to_string()],
+        }),
+        ..sample_context()
+      },
+    );
+
+    assert_eq!(
+      decision,
+      CandidatePromotion::Refused {
+        reasons: vec![PromotionRefusal::FreshnessUnknown]
+      }
+    );
+  }
+
+  #[test]
+  fn legacy_permission_without_consent_record_refuses() {
+    let recognition = sample_recognition();
+    let decision = promote_recognition_to_candidates(
+      &recognition,
+      &PromotionContext {
+        permission: Some(ActionPermission {
+          granted_by: "unit-test".to_string(),
+          scope_note: "legacy implicit bool-like permission".to_string(),
+          consent: None,
+        }),
+        ..sample_context()
+      },
+    );
+
+    assert_eq!(
+      decision,
+      CandidatePromotion::Refused {
+        reasons: vec![PromotionRefusal::PermissionMissing]
+      }
+    );
+  }
+
+  #[test]
+  fn permission_bound_to_other_recognition_refuses() {
+    let recognition = sample_recognition();
+    let mut permission = sample_context()
+      .permission
+      .expect("sample context should carry permission");
+    permission
+      .consent
+      .as_mut()
+      .expect("sample permission should carry consent")
+      .recognition_id = "recognition_other".to_string();
+
+    let decision = promote_recognition_to_candidates(
+      &recognition,
+      &PromotionContext {
+        permission: Some(permission),
         ..sample_context()
       },
     );

@@ -2,6 +2,7 @@
 pub mod app;
 pub mod bundle;
 pub mod candidate_promotion;
+pub mod candidate_promotion_recording;
 pub mod catalog;
 pub mod contract;
 pub mod driver;

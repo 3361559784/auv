@@ -8,7 +8,10 @@
 use crate::contract::{
   FailureLayer, ObservationSnapshot, ObservationSource, VerificationMethod, VerificationResult,
 };
-use crate::run_read::{AppValidationLineage, DetectorRecognitionLineage};
+use crate::run_read::{
+  AppValidationLineage, CandidatePromotionLineage, CandidatePromotionLineageStatus,
+  DetectorRecognitionLineage,
+};
 use crate::store::CanonicalRun;
 
 pub fn render_text(
@@ -16,6 +19,7 @@ pub fn render_text(
   verifications: &[VerificationResult],
   observation_snapshots: &[ObservationSnapshot],
   detector_recognition_lineage: &[DetectorRecognitionLineage],
+  candidate_promotion_lineage: &[CandidatePromotionLineage],
   validation_lineage: &[AppValidationLineage],
 ) -> String {
   let mut output = format!(
@@ -150,6 +154,72 @@ pub fn render_text(
     }
   }
 
+  output.push_str("\nCandidate Promotion Lineage:\n");
+  if candidate_promotion_lineage.is_empty() {
+    output.push_str("- none\n");
+  } else {
+    for lineage in candidate_promotion_lineage {
+      output.push_str(&format!(
+        "- artifact={} status={} promotion_id={} decision={} stability={} projection={} source_recognition={} capture={} promoted={} refusals={}\n",
+        lineage.artifact.artifact_id,
+        render_candidate_promotion_status(&lineage.status),
+        lineage.promotion_id.as_deref().unwrap_or("n/a"),
+        lineage.decision_kind.as_deref().unwrap_or("n/a"),
+        lineage.stability_kind.as_deref().unwrap_or("n/a"),
+        lineage.projection_kind.as_deref().unwrap_or("n/a"),
+        lineage
+          .source_recognition_artifact
+          .as_ref()
+          .and_then(|artifact| artifact.path.as_deref())
+          .unwrap_or("n/a"),
+        lineage
+          .capture_artifact
+          .as_ref()
+          .and_then(|artifact| artifact.path.as_deref())
+          .unwrap_or("n/a"),
+        if lineage.promoted_candidate_local_ids.is_empty() {
+          "none".to_string()
+        } else {
+          lineage.promoted_candidate_local_ids.join(",")
+        },
+        if lineage.refusal_reasons.is_empty() {
+          "none".to_string()
+        } else {
+          lineage.refusal_reasons.join(" | ")
+        }
+      ));
+      output.push_str(&format!(
+        "  recognition={} observed_frames={} freshness_present={} permission_granted={} issue={}\n",
+        lineage
+          .promotion_input_recognition_id
+          .as_deref()
+          .unwrap_or("n/a"),
+        lineage
+          .stability_observed_frames
+          .map(|value| value.to_string())
+          .unwrap_or_else(|| "n/a".to_string()),
+        lineage
+          .freshness_present
+          .map(|value| if value { "true" } else { "false" })
+          .unwrap_or("n/a"),
+        lineage
+          .permission_granted
+          .map(|value| if value { "true" } else { "false" })
+          .unwrap_or("n/a"),
+        lineage.issue.as_deref().unwrap_or("n/a")
+      ));
+      if let Some(stability_reason) = &lineage.stability_reason {
+        output.push_str(&format!("  stability_reason={stability_reason}\n"));
+      }
+      if !lineage.known_limits.is_empty() {
+        output.push_str(&format!(
+          "  known_limits={}\n",
+          lineage.known_limits.join(" | ")
+        ));
+      }
+    }
+  }
+
   output.push_str("\nValidation Lineage:\n");
   if validation_lineage.is_empty() {
     output.push_str("- none\n");
@@ -187,6 +257,22 @@ fn render_detector_status(
       "capture_artifact_unresolved"
     }
     crate::run_read::DetectorRecognitionLineageStatus::Malformed => "malformed",
+  }
+}
+
+fn render_candidate_promotion_status(status: &CandidatePromotionLineageStatus) -> &'static str {
+  match status {
+    CandidatePromotionLineageStatus::Ready => "ready",
+    CandidatePromotionLineageStatus::MissingSourceRecognitionArtifact => {
+      "missing_source_recognition_artifact"
+    }
+    CandidatePromotionLineageStatus::SourceRecognitionArtifactUnresolved => {
+      "source_recognition_artifact_unresolved"
+    }
+    CandidatePromotionLineageStatus::MissingCaptureArtifact => "missing_capture_artifact",
+    CandidatePromotionLineageStatus::CaptureArtifactUnresolved => "capture_artifact_unresolved",
+    CandidatePromotionLineageStatus::MissingRecognitionEvidence => "missing_recognition_evidence",
+    CandidatePromotionLineageStatus::Malformed => "malformed",
   }
 }
 
@@ -253,8 +339,9 @@ mod tests {
     VerificationResult,
   };
   use crate::run_read::{
-    AppValidationLineage, DetectorRecognitionArtifactRefLineage, DetectorRecognitionLineage,
-    DetectorRecognitionLineageStatus,
+    AppValidationLineage, ArtifactRefLineage, CandidatePromotionLineage,
+    CandidatePromotionLineageStatus, DetectorRecognitionArtifactRefLineage,
+    DetectorRecognitionLineage, DetectorRecognitionLineageStatus,
   };
   use crate::store::CanonicalRun;
   use crate::trace::{
@@ -440,12 +527,66 @@ mod tests {
       ],
       issue: None,
     }];
+    let candidate_promotion_lineage = vec![CandidatePromotionLineage {
+      artifact: ArtifactRefLineage {
+        run_id: run_id.clone(),
+        artifact_id: ArtifactId::new("artifact_candidate_promotion"),
+        span_id: SpanId::new("span_root"),
+        captured_event_id: Some(EventId::new("event_candidate_promotion")),
+        role: Some("candidate-promotion".to_string()),
+        path: Some("artifacts/candidate-promotion.json".to_string()),
+        summary: Some("candidate promotion".to_string()),
+        resolved: true,
+      },
+      status: CandidatePromotionLineageStatus::Ready,
+      promotion_id: Some("promotion_end_turn".to_string()),
+      source_recognition_artifact: Some(ArtifactRefLineage {
+        run_id: run_id.clone(),
+        artifact_id: ArtifactId::new("artifact_detector_recognition"),
+        span_id: SpanId::new("span_root"),
+        captured_event_id: Some(EventId::new("event_detector_recognition")),
+        role: Some("detector-recognition".to_string()),
+        path: Some("artifacts/detector-recognition.json".to_string()),
+        summary: Some("detector recognition".to_string()),
+        resolved: true,
+      }),
+      capture_artifact: Some(ArtifactRefLineage {
+        run_id: run_id.clone(),
+        artifact_id: ArtifactId::new("artifact_capture"),
+        span_id: SpanId::new("span_root"),
+        captured_event_id: Some(EventId::new("event_capture")),
+        role: Some("capture-image".to_string()),
+        path: Some("artifacts/capture.png".to_string()),
+        summary: Some("capture".to_string()),
+        resolved: true,
+      }),
+      promotion_input_recognition_id: Some("recognition_detector_1".to_string()),
+      observed_recognition_ids: vec![
+        "recognition_detector_0".to_string(),
+        "recognition_detector_1".to_string(),
+      ],
+      recognition_source: Some(RecognitionSource::Custom),
+      projection_kind: Some("identity_window_addressable".to_string()),
+      stability_kind: Some("stable".to_string()),
+      stability_observed_frames: Some(2),
+      stability_reason: None,
+      freshness_present: Some(true),
+      permission_granted: Some(true),
+      decision_kind: Some("promoted".to_string()),
+      refusal_reasons: Vec::new(),
+      promoted_candidate_local_ids: vec!["promoted-item_end_turn".to_string()],
+      known_limits: vec![
+        "candidate promotion artifact records gate decisions only; runtime action consumption remains deferred".to_string(),
+      ],
+      issue: None,
+    }];
 
     let output = render_text(
       &run,
       &verifications,
       &observation_snapshots,
       &detector_recognition_lineage,
+      &candidate_promotion_lineage,
       &validation_lineage,
     );
 
@@ -466,6 +607,12 @@ mod tests {
     assert!(output.contains("backend=ultralytics-inference"));
     assert!(output.contains("capture=artifacts/capture.png"));
     assert!(output.contains("known_limits=projection basis is unavailable outside capture-integrated runtime | detector RecognitionResult is recognition evidence only, not candidate-ready output"));
+    assert!(output.contains("Candidate Promotion Lineage:"));
+    assert!(output.contains("artifact=artifact_candidate_promotion"));
+    assert!(output.contains("promotion_id=promotion_end_turn"));
+    assert!(output.contains("decision=promoted"));
+    assert!(output.contains("projection=identity_window_addressable"));
+    assert!(output.contains("source_recognition=artifacts/detector-recognition.json"));
     assert!(output.contains("Validation Lineage:"));
     assert!(
       output

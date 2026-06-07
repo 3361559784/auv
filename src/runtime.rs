@@ -68,6 +68,8 @@ impl Runtime {
       crate::run_read::extract_observation_snapshots(self.recording.store(), &canonical)?;
     let detector_recognition_lineage =
       crate::run_read::extract_detector_recognition_lineage(self.recording.store(), &canonical)?;
+    let candidate_promotion_lineage =
+      crate::run_read::extract_candidate_promotion_lineage(self.recording.store(), &canonical)?;
     let validation_lineage =
       crate::run_read::extract_app_validation_lineage(self.recording.store(), &canonical)?;
     Ok(crate::inspect::render_text(
@@ -75,6 +77,7 @@ impl Runtime {
       &verifications,
       &observation_snapshots,
       &detector_recognition_lineage,
+      &candidate_promotion_lineage,
       &validation_lineage,
     ))
   }
@@ -109,6 +112,13 @@ impl Runtime {
     run_id: &str,
   ) -> AuvResult<Vec<crate::run_read::DetectorRecognitionLineage>> {
     crate::run_read::list_detector_recognition_lineage(self.recording.store(), run_id)
+  }
+
+  pub fn list_candidate_promotion_lineage(
+    &self,
+    run_id: &str,
+  ) -> AuvResult<Vec<crate::run_read::CandidatePromotionLineage>> {
+    crate::run_read::list_candidate_promotion_lineage(self.recording.store(), run_id)
   }
 
   pub fn run_dir(&self, run_id: impl AsRef<str>) -> AuvResult<PathBuf> {

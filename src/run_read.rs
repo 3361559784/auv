@@ -14,12 +14,15 @@ use std::path::PathBuf;
 use serde::de::DeserializeOwned;
 
 use crate::app::AppValidation;
+use crate::candidate_promotion::{CandidatePromotion, PromotionProjection, PromotionRefusal};
+use crate::candidate_promotion_recording::CandidatePromotionArtifact;
 use crate::contract::{
   ArtifactRef, ObservationSnapshot, OperationOutput, OperationResult, RecognitionResult,
   RecognitionSource, VerificationResult,
 };
 use crate::model::AuvResult;
 use crate::scroll_scan::ScrollScanArtifact;
+use crate::stability::{StabilityAssessment, StabilityRejection};
 use crate::store::{CanonicalRun, LocalStore};
 use crate::trace::ArtifactRecordV1Alpha1;
 
@@ -28,6 +31,7 @@ const NATIVE_TEXT_CANONICAL_TAXONOMY_ID: &str =
 const NATIVE_TEXT_LEGACY_TAXONOMY_ID: &str =
   "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text";
 const DETECTOR_RECOGNITION_ARTIFACT_ROLE: &str = "detector-recognition";
+const CANDIDATE_PROMOTION_ARTIFACT_ROLE: &str = "candidate-promotion";
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct AppValidationLineage {
@@ -62,6 +66,8 @@ pub struct DetectorRecognitionArtifactRefLineage {
   pub resolved: bool,
 }
 
+pub type ArtifactRefLineage = DetectorRecognitionArtifactRefLineage;
+
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct DetectorRecognitionLineage {
   pub artifact: DetectorRecognitionArtifactRefLineage,
@@ -79,6 +85,41 @@ pub struct DetectorRecognitionLineage {
   pub all_count: Option<usize>,
   pub filtered_count: Option<usize>,
   pub best_item_id: Option<String>,
+  pub known_limits: Vec<String>,
+  pub issue: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CandidatePromotionLineageStatus {
+  Ready,
+  MissingSourceRecognitionArtifact,
+  SourceRecognitionArtifactUnresolved,
+  MissingCaptureArtifact,
+  CaptureArtifactUnresolved,
+  MissingRecognitionEvidence,
+  Malformed,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct CandidatePromotionLineage {
+  pub artifact: ArtifactRefLineage,
+  pub status: CandidatePromotionLineageStatus,
+  pub promotion_id: Option<String>,
+  pub source_recognition_artifact: Option<ArtifactRefLineage>,
+  pub capture_artifact: Option<ArtifactRefLineage>,
+  pub promotion_input_recognition_id: Option<String>,
+  pub observed_recognition_ids: Vec<String>,
+  pub recognition_source: Option<RecognitionSource>,
+  pub projection_kind: Option<String>,
+  pub stability_kind: Option<String>,
+  pub stability_observed_frames: Option<u32>,
+  pub stability_reason: Option<String>,
+  pub freshness_present: Option<bool>,
+  pub permission_granted: Option<bool>,
+  pub decision_kind: Option<String>,
+  pub refusal_reasons: Vec<String>,
+  pub promoted_candidate_local_ids: Vec<String>,
   pub known_limits: Vec<String>,
   pub issue: Option<String>,
 }
@@ -151,6 +192,14 @@ pub(crate) fn list_detector_recognition_lineage(
 ) -> AuvResult<Vec<DetectorRecognitionLineage>> {
   let run = store.read_run(run_id)?;
   extract_detector_recognition_lineage(store, &run)
+}
+
+pub(crate) fn list_candidate_promotion_lineage(
+  store: &LocalStore,
+  run_id: &str,
+) -> AuvResult<Vec<CandidatePromotionLineage>> {
+  let run = store.read_run(run_id)?;
+  extract_candidate_promotion_lineage(store, &run)
 }
 
 pub(crate) fn extract_app_validation_lineage(
@@ -269,6 +318,90 @@ pub(crate) fn extract_detector_recognition_lineage(
   Ok(lineage)
 }
 
+pub(crate) fn extract_candidate_promotion_lineage(
+  store: &LocalStore,
+  run: &CanonicalRun,
+) -> AuvResult<Vec<CandidatePromotionLineage>> {
+  let mut lineage = Vec::new();
+  for artifact in &run.artifacts {
+    if artifact.role != CANDIDATE_PROMOTION_ARTIFACT_ROLE {
+      continue;
+    }
+
+    let promotion_artifact = artifact_record_lineage(run.run.run_id.clone(), artifact);
+    if !is_json_mime(&artifact.mime_type) {
+      lineage.push(CandidatePromotionLineage {
+        artifact: promotion_artifact,
+        status: CandidatePromotionLineageStatus::Malformed,
+        promotion_id: None,
+        source_recognition_artifact: None,
+        capture_artifact: None,
+        promotion_input_recognition_id: None,
+        observed_recognition_ids: Vec::new(),
+        recognition_source: None,
+        projection_kind: None,
+        stability_kind: None,
+        stability_observed_frames: None,
+        stability_reason: None,
+        freshness_present: None,
+        permission_granted: None,
+        decision_kind: None,
+        refusal_reasons: Vec::new(),
+        promoted_candidate_local_ids: Vec::new(),
+        known_limits: Vec::new(),
+        issue: Some(format!(
+          "candidate-promotion artifact mime_type {} is not JSON",
+          artifact.mime_type
+        )),
+      });
+      continue;
+    }
+
+    let parsed = read_artifact_bytes(
+      store,
+      run.run.run_id.as_str(),
+      artifact,
+      CANDIDATE_PROMOTION_ARTIFACT_ROLE,
+    )
+    .and_then(|(bytes, artifact_path)| {
+      serde_json::from_slice::<CandidatePromotionArtifact>(&bytes).map_err(|error| {
+        format!(
+          "failed to parse candidate-promotion artifact {} for run {} from {}: {error}",
+          artifact.artifact_id,
+          run.run.run_id,
+          artifact_path.display()
+        )
+      })
+    });
+
+    match parsed {
+      Ok(promotion) => lineage.push(candidate_promotion_lineage_entry(run, artifact, promotion)),
+      Err(error) => lineage.push(CandidatePromotionLineage {
+        artifact: promotion_artifact,
+        status: CandidatePromotionLineageStatus::Malformed,
+        promotion_id: None,
+        source_recognition_artifact: None,
+        capture_artifact: None,
+        promotion_input_recognition_id: None,
+        observed_recognition_ids: Vec::new(),
+        recognition_source: None,
+        projection_kind: None,
+        stability_kind: None,
+        stability_observed_frames: None,
+        stability_reason: None,
+        freshness_present: None,
+        permission_granted: None,
+        decision_kind: None,
+        refusal_reasons: Vec::new(),
+        promoted_candidate_local_ids: Vec::new(),
+        known_limits: Vec::new(),
+        issue: Some(error),
+      }),
+    }
+  }
+  Ok(lineage)
+}
+
 fn is_json_mime(mime_type: &str) -> bool {
   mime_type == "application/json" || mime_type.ends_with("+json")
 }
@@ -326,6 +459,54 @@ fn detector_recognition_lineage_entry(
   }
 }
 
+fn candidate_promotion_lineage_entry(
+  run: &CanonicalRun,
+  artifact: &ArtifactRecordV1Alpha1,
+  promotion: CandidatePromotionArtifact,
+) -> CandidatePromotionLineage {
+  let source_recognition_artifact = promotion
+    .source_recognition_artifact
+    .as_ref()
+    .map(|reference| resolve_artifact_ref(run, reference));
+  let capture_artifact = promotion
+    .recognition
+    .scope
+    .capture_artifact
+    .as_ref()
+    .map(|reference| resolve_artifact_ref(run, reference));
+  let (status, issue) = classify_candidate_promotion_lineage(
+    &promotion,
+    source_recognition_artifact.as_ref(),
+    capture_artifact.as_ref(),
+  );
+  let (decision_kind, refusal_reasons, promoted_candidate_local_ids) =
+    promotion_decision_summary(&promotion.decision);
+  let (stability_kind, stability_observed_frames, stability_reason) =
+    stability_summary(&promotion.stability_assessment);
+
+  CandidatePromotionLineage {
+    artifact: artifact_record_lineage(run.run.run_id.clone(), artifact),
+    status,
+    promotion_id: Some(promotion.promotion_id),
+    source_recognition_artifact,
+    capture_artifact,
+    promotion_input_recognition_id: Some(promotion.promotion_input_recognition_id),
+    observed_recognition_ids: promotion.observed_recognition_ids,
+    recognition_source: Some(promotion.recognition.source),
+    projection_kind: Some(projection_kind(&promotion.promotion_context.projection)),
+    stability_kind: Some(stability_kind),
+    stability_observed_frames,
+    stability_reason,
+    freshness_present: Some(promotion.promotion_context.freshness.is_some()),
+    permission_granted: Some(promotion.promotion_context.permission.is_some()),
+    decision_kind: Some(decision_kind),
+    refusal_reasons,
+    promoted_candidate_local_ids,
+    known_limits: promotion.known_limits,
+    issue,
+  }
+}
+
 fn classify_detector_recognition_lineage(
   recognition: &RecognitionResult,
   capture_artifact: Option<&DetectorRecognitionArtifactRefLineage>,
@@ -351,6 +532,53 @@ fn classify_detector_recognition_lineage(
     );
   }
   (DetectorRecognitionLineageStatus::Ready, None)
+}
+
+fn classify_candidate_promotion_lineage(
+  promotion: &CandidatePromotionArtifact,
+  source_recognition_artifact: Option<&ArtifactRefLineage>,
+  capture_artifact: Option<&ArtifactRefLineage>,
+) -> (CandidatePromotionLineageStatus, Option<String>) {
+  if promotion.source_recognition_artifact.is_none() {
+    return (
+      CandidatePromotionLineageStatus::MissingSourceRecognitionArtifact,
+      Some("source_recognition_artifact is missing".to_string()),
+    );
+  }
+  if let Some(source_recognition_artifact) = source_recognition_artifact
+    && !source_recognition_artifact.resolved
+  {
+    return (
+      CandidatePromotionLineageStatus::SourceRecognitionArtifactUnresolved,
+      Some(
+        "source_recognition_artifact could not be resolved from recorded run artifacts".to_string(),
+      ),
+    );
+  }
+  if promotion.recognition.scope.capture_artifact.is_none() {
+    return (
+      CandidatePromotionLineageStatus::MissingCaptureArtifact,
+      Some("recognition.scope.capture_artifact is missing".to_string()),
+    );
+  }
+  if let Some(capture_artifact) = capture_artifact
+    && !capture_artifact.resolved
+  {
+    return (
+      CandidatePromotionLineageStatus::CaptureArtifactUnresolved,
+      Some(
+        "recognition.scope.capture_artifact could not be resolved from recorded run artifacts"
+          .to_string(),
+      ),
+    );
+  }
+  if promotion.recognition.evidence.is_empty() {
+    return (
+      CandidatePromotionLineageStatus::MissingRecognitionEvidence,
+      Some("embedded recognition evidence list is empty".to_string()),
+    );
+  }
+  (CandidatePromotionLineageStatus::Ready, None)
 }
 
 fn artifact_record_lineage(
@@ -401,6 +629,88 @@ fn detail_string(value: &serde_json::Value, path: &[&str]) -> Option<String> {
   cursor.as_str().map(str::to_string)
 }
 
+fn projection_kind(projection: &PromotionProjection) -> String {
+  match projection {
+    PromotionProjection::Unavailable { .. } => "unavailable".to_string(),
+    PromotionProjection::IdentityWindowAddressable => "identity_window_addressable".to_string(),
+  }
+}
+
+fn stability_summary(assessment: &StabilityAssessment) -> (String, Option<u32>, Option<String>) {
+  match assessment {
+    StabilityAssessment::Stable {
+      observed_frames, ..
+    } => ("stable".to_string(), Some(*observed_frames), None),
+    StabilityAssessment::Unstable { reason } => (
+      "unstable".to_string(),
+      None,
+      Some(stability_rejection_string(reason)),
+    ),
+  }
+}
+
+fn stability_rejection_string(reason: &StabilityRejection) -> String {
+  match reason {
+    StabilityRejection::NoFrames => "no_frames".to_string(),
+    StabilityRejection::InsufficientFrames { have, need } => {
+      format!("insufficient_frames: have={have} need={need}")
+    }
+    StabilityRejection::TargetMissingInFrame { frame_index } => {
+      format!("target_missing_in_frame: frame_index={frame_index}")
+    }
+    StabilityRejection::UnstableKind {
+      first,
+      offending_frame,
+    } => format!("unstable_kind: first={first} offending_frame={offending_frame}"),
+    StabilityRejection::UnstableText { offending_frame } => {
+      format!("unstable_text: offending_frame={offending_frame}")
+    }
+    StabilityRejection::DriftExceeded {
+      observed_px,
+      allowed_px,
+      between_frames,
+    } => format!(
+      "drift_exceeded: observed_px={observed_px:.3} allowed_px={allowed_px:.3} between_frames={}..{}",
+      between_frames.0, between_frames.1
+    ),
+  }
+}
+
+fn promotion_decision_summary(decision: &CandidatePromotion) -> (String, Vec<String>, Vec<String>) {
+  match decision {
+    CandidatePromotion::Refused { reasons } => (
+      "refused".to_string(),
+      reasons.iter().map(promotion_refusal_string).collect(),
+      Vec::new(),
+    ),
+    CandidatePromotion::Promoted { candidates, .. } => (
+      "promoted".to_string(),
+      Vec::new(),
+      candidates
+        .iter()
+        .map(|candidate| candidate.candidate_local_id.clone())
+        .collect(),
+    ),
+  }
+}
+
+fn promotion_refusal_string(reason: &PromotionRefusal) -> String {
+  match reason {
+    PromotionRefusal::EmptyRecognition => "empty_recognition".to_string(),
+    PromotionRefusal::NoUnambiguousTarget => "no_unambiguous_target".to_string(),
+    PromotionRefusal::NoRuntimeEvidence => "no_runtime_evidence".to_string(),
+    PromotionRefusal::MissingCaptureArtifact => "missing_capture_artifact".to_string(),
+    PromotionRefusal::ProjectionUnavailable { reason } => {
+      format!("projection_unavailable: {reason}")
+    }
+    PromotionRefusal::StabilityUnproven { reason } => {
+      format!("stability_unproven: {reason}")
+    }
+    PromotionRefusal::FreshnessUnknown => "freshness_unknown".to_string(),
+    PromotionRefusal::PermissionMissing => "permission_missing".to_string(),
+  }
+}
+
 fn read_artifact_json<T: DeserializeOwned>(
   store: &LocalStore,
   run_id: &str,
@@ -449,26 +759,35 @@ mod tests {
   use serde_json::json;
 
   use super::{
+    CANDIDATE_PROMOTION_ARTIFACT_ROLE, CandidatePromotionLineageStatus,
     DETECTOR_RECOGNITION_ARTIFACT_ROLE, DetectorRecognitionLineageStatus,
     NATIVE_TEXT_CANONICAL_TAXONOMY_ID, NATIVE_TEXT_LEGACY_TAXONOMY_ID,
-    extract_app_validation_lineage, extract_detector_recognition_lineage,
-    extract_observation_snapshots, extract_verifications, list_app_validation_lineage,
+    extract_app_validation_lineage, extract_candidate_promotion_lineage,
+    extract_detector_recognition_lineage, extract_observation_snapshots, extract_verifications,
+    list_app_validation_lineage, list_candidate_promotion_lineage,
     list_detector_recognition_lineage, list_observation_snapshots, list_verifications,
   };
   use crate::app::{
     AppIdentity, AppValidatedCandidate, AppValidation, AppValidationStatus, AppVerificationMode,
   };
+  use crate::candidate_promotion::{
+    ActionPermission, CandidatePromotion, PromotionContext, PromotionProjection, PromotionRefusal,
+    StabilityInput,
+  };
+  use crate::candidate_promotion_recording::CandidatePromotionArtifact;
   use crate::contract::{
     ArtifactRef, OBSERVATION_SNAPSHOT_API_VERSION, OPERATION_RESULT_API_VERSION,
     ObservationSnapshot, ObservationSource, OperationOutput, OperationResult, OperationStatus,
     RecognitionResult, RecognitionScope, RecognitionSource, RecognitionSurface, RecognizedItem,
-    VERIFICATION_RESULT_API_VERSION, VerificationMethod, VerificationResult,
+    TargetGrounding, TargetSpec, VERIFICATION_RESULT_API_VERSION, VerificationMethod,
+    VerificationResult,
   };
   use crate::scroll_scan::{
     CollectionObservation, CompletenessClaim, HookDecisionRecord, ObservationCluster,
     ScanPageRecord, ScanRegion, ScanTarget, ScrollBoundaryCandidate, ScrollScanArtifact,
     SectionCandidate, StopEvidence, StopPolicy, StopReason,
   };
+  use crate::stability::{StabilityAssessment, StabilityPolicy, StabilityRejection};
   use crate::store::{ArtifactFileSource, CanonicalRun, LocalStore};
   use crate::trace::{
     ArtifactId, ArtifactRecordV1Alpha1, EventId, RUN_API_VERSION, RunId, RunRecordV1Alpha1,
@@ -877,6 +1196,269 @@ mod tests {
     let _ = fs::remove_dir_all(root);
   }
 
+  #[test]
+  fn candidate_promotion_lineage_extracts_ready_and_error_states() {
+    let root = temp_dir("run-read-candidate-promotion");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let run = dummy_run("run_read_candidate_promotion");
+    let span = dummy_span(&run.root_span_id);
+
+    let capture_artifact = stage_text_artifact(
+      &store,
+      &root,
+      &run.run_id,
+      &span.span_id,
+      0,
+      "capture-image",
+      "capture.png",
+      "fake capture body",
+    );
+    let source_recognition_artifact = stage_json_artifact(
+      &store,
+      &root,
+      &run.run_id,
+      &span.span_id,
+      1,
+      "detector-recognition",
+      "detector-recognition.json",
+      &detector_recognition_result(
+        &run.run_id,
+        &span.span_id,
+        Some(ArtifactRef {
+          run_id: run.run_id.clone(),
+          artifact_id: capture_artifact.artifact_id.clone(),
+          span_id: span.span_id.clone(),
+          captured_event_id: capture_artifact.event_id.clone(),
+        }),
+        vec![ArtifactRef {
+          run_id: run.run_id.clone(),
+          artifact_id: capture_artifact.artifact_id.clone(),
+          span_id: span.span_id.clone(),
+          captured_event_id: capture_artifact.event_id.clone(),
+        }],
+        "recognition_ready",
+      ),
+    );
+
+    let ready_promotion = candidate_promotion_artifact(
+      &run.run_id,
+      &span.span_id,
+      Some(ArtifactRef {
+        run_id: run.run_id.clone(),
+        artifact_id: source_recognition_artifact.artifact_id.clone(),
+        span_id: span.span_id.clone(),
+        captured_event_id: source_recognition_artifact.event_id.clone(),
+      }),
+      Some(ArtifactRef {
+        run_id: run.run_id.clone(),
+        artifact_id: capture_artifact.artifact_id.clone(),
+        span_id: span.span_id.clone(),
+        captured_event_id: capture_artifact.event_id.clone(),
+      }),
+      vec![ArtifactRef {
+        run_id: run.run_id.clone(),
+        artifact_id: capture_artifact.artifact_id.clone(),
+        span_id: span.span_id.clone(),
+        captured_event_id: capture_artifact.event_id.clone(),
+      }],
+      CandidatePromotion::Promoted {
+        candidates: vec![sample_candidate(
+          &run.run_id,
+          &span.span_id,
+          &capture_artifact,
+          "promoted-item_end_turn",
+        )],
+        residual_known_limits: vec!["fixture-backed candidate".to_string()],
+      },
+      "promotion_ready",
+    );
+    let refused_promotion = candidate_promotion_artifact(
+      &run.run_id,
+      &span.span_id,
+      Some(ArtifactRef {
+        run_id: run.run_id.clone(),
+        artifact_id: source_recognition_artifact.artifact_id.clone(),
+        span_id: span.span_id.clone(),
+        captured_event_id: source_recognition_artifact.event_id.clone(),
+      }),
+      Some(ArtifactRef {
+        run_id: run.run_id.clone(),
+        artifact_id: capture_artifact.artifact_id.clone(),
+        span_id: span.span_id.clone(),
+        captured_event_id: capture_artifact.event_id.clone(),
+      }),
+      vec![ArtifactRef {
+        run_id: run.run_id.clone(),
+        artifact_id: capture_artifact.artifact_id.clone(),
+        span_id: span.span_id.clone(),
+        captured_event_id: capture_artifact.event_id.clone(),
+      }],
+      CandidatePromotion::Refused {
+        reasons: vec![PromotionRefusal::StabilityUnproven {
+          reason: "InsufficientFrames { have: 1, need: 3 }".to_string(),
+        }],
+      },
+      "promotion_refused",
+    );
+    let missing_source_promotion = candidate_promotion_artifact(
+      &run.run_id,
+      &span.span_id,
+      None,
+      Some(ArtifactRef {
+        run_id: run.run_id.clone(),
+        artifact_id: capture_artifact.artifact_id.clone(),
+        span_id: span.span_id.clone(),
+        captured_event_id: capture_artifact.event_id.clone(),
+      }),
+      vec![ArtifactRef {
+        run_id: run.run_id.clone(),
+        artifact_id: capture_artifact.artifact_id.clone(),
+        span_id: span.span_id.clone(),
+        captured_event_id: capture_artifact.event_id.clone(),
+      }],
+      CandidatePromotion::Refused {
+        reasons: vec![PromotionRefusal::PermissionMissing],
+      },
+      "promotion_missing_source",
+    );
+    let unresolved_capture_promotion = candidate_promotion_artifact(
+      &run.run_id,
+      &span.span_id,
+      Some(ArtifactRef {
+        run_id: run.run_id.clone(),
+        artifact_id: source_recognition_artifact.artifact_id.clone(),
+        span_id: span.span_id.clone(),
+        captured_event_id: source_recognition_artifact.event_id.clone(),
+      }),
+      Some(ArtifactRef {
+        run_id: run.run_id.clone(),
+        artifact_id: ArtifactId::new("artifact_missing_capture"),
+        span_id: span.span_id.clone(),
+        captured_event_id: Some(EventId::new("event_missing_capture")),
+      }),
+      vec![ArtifactRef {
+        run_id: run.run_id.clone(),
+        artifact_id: ArtifactId::new("artifact_missing_capture"),
+        span_id: span.span_id.clone(),
+        captured_event_id: Some(EventId::new("event_missing_capture")),
+      }],
+      CandidatePromotion::Refused {
+        reasons: vec![PromotionRefusal::ProjectionUnavailable {
+          reason: "projection missing".to_string(),
+        }],
+      },
+      "promotion_unresolved_capture",
+    );
+
+    let artifacts = vec![
+      capture_artifact,
+      source_recognition_artifact,
+      stage_json_artifact(
+        &store,
+        &root,
+        &run.run_id,
+        &span.span_id,
+        2,
+        CANDIDATE_PROMOTION_ARTIFACT_ROLE,
+        "candidate-promotion-ready.json",
+        &ready_promotion,
+      ),
+      stage_json_artifact(
+        &store,
+        &root,
+        &run.run_id,
+        &span.span_id,
+        3,
+        CANDIDATE_PROMOTION_ARTIFACT_ROLE,
+        "candidate-promotion-refused.json",
+        &refused_promotion,
+      ),
+      stage_json_artifact(
+        &store,
+        &root,
+        &run.run_id,
+        &span.span_id,
+        4,
+        CANDIDATE_PROMOTION_ARTIFACT_ROLE,
+        "candidate-promotion-missing-source.json",
+        &missing_source_promotion,
+      ),
+      stage_json_artifact(
+        &store,
+        &root,
+        &run.run_id,
+        &span.span_id,
+        5,
+        CANDIDATE_PROMOTION_ARTIFACT_ROLE,
+        "candidate-promotion-unresolved-capture.json",
+        &unresolved_capture_promotion,
+      ),
+      stage_text_artifact(
+        &store,
+        &root,
+        &run.run_id,
+        &span.span_id,
+        6,
+        CANDIDATE_PROMOTION_ARTIFACT_ROLE,
+        "candidate-promotion-malformed.json",
+        "{ not valid json",
+      ),
+    ];
+
+    store
+      .write_run_snapshot(&CanonicalRun {
+        run,
+        spans: vec![span],
+        events: Vec::new(),
+        artifacts,
+      })
+      .expect("run snapshot should persist");
+
+    let canonical = store
+      .read_run("run_read_candidate_promotion")
+      .expect("run should read back");
+    let extracted = extract_candidate_promotion_lineage(&store, &canonical)
+      .expect("candidate promotion lineage should extract");
+    assert_eq!(extracted.len(), 5);
+    assert_eq!(extracted[0].status, CandidatePromotionLineageStatus::Ready);
+    assert_eq!(extracted[0].decision_kind.as_deref(), Some("promoted"));
+    assert_eq!(
+      extracted[0].promoted_candidate_local_ids,
+      vec!["promoted-item_end_turn".to_string()]
+    );
+    assert_eq!(extracted[1].status, CandidatePromotionLineageStatus::Ready);
+    assert_eq!(extracted[1].decision_kind.as_deref(), Some("refused"));
+    assert_eq!(
+      extracted[1].refusal_reasons,
+      vec!["stability_unproven: InsufficientFrames { have: 1, need: 3 }".to_string()]
+    );
+    assert_eq!(
+      extracted[2].status,
+      CandidatePromotionLineageStatus::MissingSourceRecognitionArtifact
+    );
+    assert_eq!(
+      extracted[3].status,
+      CandidatePromotionLineageStatus::CaptureArtifactUnresolved
+    );
+    assert_eq!(
+      extracted[4].status,
+      CandidatePromotionLineageStatus::Malformed
+    );
+    assert!(
+      extracted[4]
+        .issue
+        .as_deref()
+        .unwrap_or_default()
+        .contains("failed to parse candidate-promotion artifact")
+    );
+
+    let listed = list_candidate_promotion_lineage(&store, "run_read_candidate_promotion")
+      .expect("candidate promotion lineage should list");
+    assert_eq!(listed, extracted);
+
+    let _ = fs::remove_dir_all(root);
+  }
+
   fn temp_dir(label: &str) -> PathBuf {
     let path = env::temp_dir().join(format!("auv-{}-{}", label, crate::model::now_millis()));
     let _ = fs::remove_dir_all(&path);
@@ -1104,6 +1686,210 @@ mod tests {
         "projection basis is unavailable outside capture-integrated runtime".to_string(),
         "detector RecognitionResult is recognition evidence only, not candidate-ready output"
           .to_string(),
+      ],
+    }
+  }
+
+  fn sample_candidate(
+    run_id: &RunId,
+    span_id: &SpanId,
+    capture_artifact: &ArtifactRecordV1Alpha1,
+    candidate_local_id: &str,
+  ) -> crate::contract::Candidate {
+    crate::contract::Candidate {
+      candidate_local_id: candidate_local_id.to_string(),
+      kind: "button".to_string(),
+      label: Some("End Turn".to_string()),
+      target_spec: TargetSpec {
+        grounding: TargetGrounding::Coordinate,
+        anchor_text: Some("End Turn".to_string()),
+        region_hint: None,
+        row_index: None,
+      },
+      evidence: crate::contract::CandidateEvidence {
+        artifact_ref: ArtifactRef {
+          run_id: run_id.clone(),
+          artifact_id: capture_artifact.artifact_id.clone(),
+          span_id: span_id.clone(),
+          captured_event_id: capture_artifact.event_id.clone(),
+        },
+        observation: json!({"item_id": "item_end_turn"}),
+      },
+      liveness: crate::contract::CandidateLiveness {
+        preconditions: crate::contract::LivenessPreconditions {
+          window_ref: Some(crate::contract::WindowRefPrecondition {
+            app_bundle_id: "com.megacrit.cardcrawl".to_string(),
+            window_title_substring: Some("Slay the Spire".to_string()),
+            window_number: Some(7),
+          }),
+          anchor_recheck: None,
+        },
+        ttl_hint_ms: None,
+      },
+      control: crate::contract::ControlRequirements {
+        requires_app_frontmost: true,
+        requires_window_focus: true,
+      },
+      known_limits: vec!["fixture-backed candidate".to_string()],
+    }
+  }
+
+  fn candidate_promotion_artifact(
+    run_id: &RunId,
+    span_id: &SpanId,
+    source_recognition_artifact: Option<ArtifactRef>,
+    capture_artifact: Option<ArtifactRef>,
+    evidence: Vec<ArtifactRef>,
+    decision: CandidatePromotion,
+    promotion_id: &str,
+  ) -> CandidatePromotionArtifact {
+    let stability_assessment = match &decision {
+      CandidatePromotion::Promoted { .. } => StabilityAssessment::Stable {
+        observed_frames: 2,
+        max_observed_drift_px: 2.0,
+      },
+      CandidatePromotion::Refused { reasons }
+        if reasons
+          .iter()
+          .any(|reason| matches!(reason, PromotionRefusal::StabilityUnproven { .. })) =>
+      {
+        StabilityAssessment::Unstable {
+          reason: StabilityRejection::InsufficientFrames { have: 1, need: 3 },
+        }
+      }
+      CandidatePromotion::Refused { .. } => StabilityAssessment::Stable {
+        observed_frames: 2,
+        max_observed_drift_px: 2.0,
+      },
+    };
+    let projection = match &decision {
+      CandidatePromotion::Refused { reasons }
+        if reasons
+          .iter()
+          .any(|reason| matches!(reason, PromotionRefusal::ProjectionUnavailable { .. })) =>
+      {
+        PromotionProjection::Unavailable {
+          reason: "projection missing".to_string(),
+        }
+      }
+      _ => PromotionProjection::IdentityWindowAddressable,
+    };
+    let stability_input = match &decision {
+      CandidatePromotion::Refused { reasons }
+        if reasons
+          .iter()
+          .any(|reason| matches!(reason, PromotionRefusal::StabilityUnproven { .. })) =>
+      {
+        StabilityInput::Unproven {
+          reason: "InsufficientFrames { have: 1, need: 3 }".to_string(),
+        }
+      }
+      _ => StabilityInput::Proven { observed_frames: 2 },
+    };
+
+    CandidatePromotionArtifact {
+      artifact_version: "candidate_promotion_artifact_v0".to_string(),
+      promotion_id: promotion_id.to_string(),
+      source_recognition_artifact,
+      observed_recognition_ids: vec![
+        format!("{promotion_id}_frame_0"),
+        format!("{promotion_id}_frame_1"),
+      ],
+      promotion_input_recognition_id: format!("{promotion_id}_frame_1"),
+      promotion_input_frame_index: 1,
+      stability_policy: StabilityPolicy {
+        min_frames: 2,
+        max_centroid_drift_px: 8.0,
+        require_stable_text: true,
+      },
+      stability_assessment,
+      promotion_context: PromotionContext {
+        projection,
+        stability: stability_input,
+        freshness: Some(crate::contract::FreshnessBasis {
+          source_artifact: capture_artifact.clone(),
+          source_operation_id: Some("observe.window.capture".to_string()),
+          notes: vec!["fixture freshness".to_string()],
+        }),
+        permission: Some(ActionPermission {
+          granted_by: "human-review".to_string(),
+          scope_note: "fixture promotion".to_string(),
+        }),
+      },
+      decision,
+      recognition: RecognitionResult {
+        recognition_id: format!("{promotion_id}_frame_1"),
+        source: RecognitionSource::Custom,
+        scope: RecognitionScope {
+          surface: RecognitionSurface::Window,
+          display_ref: Some("display-main".to_string()),
+          native_display_id: Some("69733248".to_string()),
+          app_bundle_id: Some("com.megacrit.cardcrawl".to_string()),
+          window_title: Some("Slay the Spire".to_string()),
+          window_number: Some(7),
+          region_hint: None,
+          capture_artifact,
+          capture_contract_artifact: Some(ArtifactRef {
+            run_id: run_id.clone(),
+            artifact_id: ArtifactId::new("artifact_contract"),
+            span_id: span_id.clone(),
+            captured_event_id: Some(EventId::new("event_contract")),
+          }),
+        },
+        best: Some(RecognizedItem {
+          item_id: "item_end_turn".to_string(),
+          kind: "button".to_string(),
+          box_: crate::contract::RecognitionBox {
+            x: 1638,
+            y: 792,
+            width: 228,
+            height: 178,
+          },
+          text: Some("End Turn".to_string()),
+          provider_score: Some(0.99),
+          detail: json!({"backend": "fixture"}),
+        }),
+        filtered: vec![RecognizedItem {
+          item_id: "item_end_turn".to_string(),
+          kind: "button".to_string(),
+          box_: crate::contract::RecognitionBox {
+            x: 1638,
+            y: 792,
+            width: 228,
+            height: 178,
+          },
+          text: Some("End Turn".to_string()),
+          provider_score: Some(0.99),
+          detail: json!({"backend": "fixture"}),
+        }],
+        all: vec![RecognizedItem {
+          item_id: "item_end_turn".to_string(),
+          kind: "button".to_string(),
+          box_: crate::contract::RecognitionBox {
+            x: 1638,
+            y: 792,
+            width: 228,
+            height: 178,
+          },
+          text: Some("End Turn".to_string()),
+          provider_score: Some(0.99),
+          detail: json!({"backend": "fixture"}),
+        }],
+        detail: json!({
+          "backend": "fixture",
+          "model_id": "slay-the-spire-observe-only",
+        }),
+        evidence,
+        known_limits: vec![
+          "candidate promotion artifact records gate decisions only; runtime action consumption remains deferred".to_string(),
+        ],
+      },
+      detail: json!({
+        "artifact_version": "candidate_promotion_artifact_v0",
+        "decision_kind": "fixture",
+      }),
+      known_limits: vec![
+        "candidate promotion artifact records gate decisions only; runtime action consumption remains deferred".to_string(),
       ],
     }
   }

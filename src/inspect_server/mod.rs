@@ -34,7 +34,9 @@ use tokio::sync::{Mutex, OwnedMutexGuard};
 use crate::contract::{ObservationSnapshot, VerificationResult};
 use crate::model::AuvResult;
 use crate::recording::{BroadcastRunRecorder, RunRecorder, RunUpdate, WireUpdate};
-use crate::run_read::{AppValidationLineage, DetectorRecognitionLineage};
+use crate::run_read::{
+  AppValidationLineage, CandidatePromotionLineage, DetectorRecognitionLineage,
+};
 use crate::store::{CanonicalRun, LocalStore};
 use crate::trace::{RunId, RunRecordV1Alpha1, TraceState};
 
@@ -322,6 +324,9 @@ async fn get_run(
   let detector_recognition_lineage =
     crate::run_read::extract_detector_recognition_lineage(state.store.as_ref(), &run)
       .map_err(InspectHttpError::from_store)?;
+  let candidate_promotion_lineage =
+    crate::run_read::extract_candidate_promotion_lineage(state.store.as_ref(), &run)
+      .map_err(InspectHttpError::from_store)?;
   let validation_lineage =
     crate::run_read::extract_app_validation_lineage(state.store.as_ref(), &run)
       .map_err(InspectHttpError::from_store)?;
@@ -331,6 +336,7 @@ async fn get_run(
       verifications,
       observation_snapshots,
       detector_recognition_lineage,
+      candidate_promotion_lineage,
       validation_lineage,
     })
     .into_response(),
@@ -507,6 +513,8 @@ struct InspectRunResponse {
   observation_snapshots: Vec<ObservationSnapshot>,
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   detector_recognition_lineage: Vec<DetectorRecognitionLineage>,
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  candidate_promotion_lineage: Vec<CandidatePromotionLineage>,
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   validation_lineage: Vec<AppValidationLineage>,
 }
@@ -880,11 +888,16 @@ mod tests {
   use crate::app::{
     AppIdentity, AppValidatedCandidate, AppValidation, AppValidationStatus, AppVerificationMode,
   };
+  use crate::candidate_promotion::{
+    ActionPermission, CandidatePromotion, PromotionContext, PromotionProjection, StabilityInput,
+  };
+  use crate::candidate_promotion_recording::CandidatePromotionArtifact;
   use crate::contract::{
     ArtifactRef, OBSERVATION_SNAPSHOT_API_VERSION, OPERATION_RESULT_API_VERSION,
     ObservationSnapshot, ObservationSource, OperationOutput, OperationResult, OperationStatus,
     RecognitionResult, RecognitionScope, RecognitionSource, RecognitionSurface, RecognizedItem,
-    VERIFICATION_RESULT_API_VERSION, VerificationMethod, VerificationResult,
+    TargetGrounding, TargetSpec, VERIFICATION_RESULT_API_VERSION, VerificationMethod,
+    VerificationResult,
   };
   use crate::model::now_millis;
   use crate::recording::{BroadcastRunRecorder, RunRecorder, RunUpdate};
@@ -893,6 +906,7 @@ mod tests {
     ScanPageRecord, ScanRegion, ScanTarget, ScrollBoundaryCandidate, ScrollScanArtifact,
     SectionCandidate, StopEvidence, StopPolicy, StopReason,
   };
+  use crate::stability::{StabilityAssessment, StabilityPolicy};
   use crate::store::{ArtifactFileSource, CanonicalRun, LocalStore};
   use crate::trace::{
     ARTIFACT_API_VERSION, ArtifactId, ArtifactRecordV1Alpha1, EVENT_API_VERSION, EventId,
@@ -1848,6 +1862,23 @@ mod tests {
     );
     assert_eq!(run["detector_recognition_lineage"][0]["filtered_count"], 1);
     assert_eq!(run["detector_recognition_lineage"][0]["all_count"], 2);
+    assert_eq!(run["candidate_promotion_lineage"][0]["status"], "ready");
+    assert_eq!(
+      run["candidate_promotion_lineage"][0]["promotion_id"],
+      "promotion_end_turn"
+    );
+    assert_eq!(
+      run["candidate_promotion_lineage"][0]["decision_kind"],
+      "promoted"
+    );
+    assert_eq!(
+      run["candidate_promotion_lineage"][0]["projection_kind"],
+      "identity_window_addressable"
+    );
+    assert_eq!(
+      run["candidate_promotion_lineage"][0]["promoted_candidate_local_ids"][0],
+      "promoted-item_end_turn"
+    );
     assert!(
       run.get("spans").is_none(),
       "/runs/{run_id} should not inline spans even when enriched"
@@ -2837,6 +2868,178 @@ mod tests {
             "projection basis is unavailable outside capture-integrated runtime".to_string(),
             "detector RecognitionResult is recognition evidence only, not candidate-ready output"
               .to_string(),
+          ],
+        },
+      ),
+      stage_json_artifact(
+        store,
+        root,
+        &run_id,
+        &span_id,
+        5,
+        "candidate-promotion",
+        "candidate-promotion.json",
+        &CandidatePromotionArtifact {
+          artifact_version: "candidate_promotion_artifact_v0".to_string(),
+          promotion_id: "promotion_end_turn".to_string(),
+          source_recognition_artifact: Some(ArtifactRef {
+            run_id: run_id.clone(),
+            artifact_id: ArtifactId::new("artifact_0005"),
+            span_id: span_id.clone(),
+            captured_event_id: None,
+          }),
+          observed_recognition_ids: vec![
+            "recognition_detector_server_test_prev".to_string(),
+            "recognition_detector_server_test".to_string(),
+          ],
+          promotion_input_recognition_id: "recognition_detector_server_test".to_string(),
+          promotion_input_frame_index: 1,
+          stability_policy: StabilityPolicy {
+            min_frames: 2,
+            max_centroid_drift_px: 8.0,
+            require_stable_text: false,
+          },
+          stability_assessment: StabilityAssessment::Stable {
+            observed_frames: 2,
+            max_observed_drift_px: 2.0,
+          },
+          promotion_context: PromotionContext {
+            projection: PromotionProjection::IdentityWindowAddressable,
+            stability: StabilityInput::Proven {
+              observed_frames: 2,
+            },
+            freshness: Some(crate::contract::FreshnessBasis {
+              source_artifact: Some(ArtifactRef {
+                run_id: run_id.clone(),
+                artifact_id: ArtifactId::new("artifact_0004"),
+                span_id: span_id.clone(),
+                captured_event_id: None,
+              }),
+              source_operation_id: Some("observe.window.capture".to_string()),
+              notes: vec!["fixture freshness".to_string()],
+            }),
+            permission: Some(ActionPermission {
+              granted_by: "human-review".to_string(),
+              scope_note: "single end-turn action".to_string(),
+            }),
+          },
+          decision: CandidatePromotion::Promoted {
+            candidates: vec![crate::contract::Candidate {
+              candidate_local_id: "promoted-item_end_turn".to_string(),
+              kind: "button".to_string(),
+              label: Some("End Turn".to_string()),
+              target_spec: TargetSpec {
+                grounding: TargetGrounding::Coordinate,
+                anchor_text: Some("End Turn".to_string()),
+                region_hint: None,
+                row_index: None,
+              },
+              evidence: crate::contract::CandidateEvidence {
+                artifact_ref: ArtifactRef {
+                  run_id: run_id.clone(),
+                  artifact_id: ArtifactId::new("artifact_0004"),
+                  span_id: span_id.clone(),
+                  captured_event_id: None,
+                },
+                observation: serde_json::json!({"item_id": "item_end_turn"}),
+              },
+              liveness: crate::contract::CandidateLiveness {
+                preconditions: crate::contract::LivenessPreconditions {
+                  window_ref: Some(crate::contract::WindowRefPrecondition {
+                    app_bundle_id: "com.playstack.balatro".to_string(),
+                    window_title_substring: Some("Balatro".to_string()),
+                    window_number: Some(7),
+                  }),
+                  anchor_recheck: None,
+                },
+                ttl_hint_ms: None,
+              },
+              control: crate::contract::ControlRequirements {
+                requires_app_frontmost: true,
+                requires_window_focus: true,
+              },
+              known_limits: vec!["fixture-backed candidate".to_string()],
+            }],
+            residual_known_limits: vec!["fixture-backed candidate".to_string()],
+          },
+          recognition: RecognitionResult {
+            recognition_id: "recognition_detector_server_test".to_string(),
+            source: RecognitionSource::Custom,
+            scope: RecognitionScope {
+              surface: RecognitionSurface::Region,
+              display_ref: Some("display-main".to_string()),
+              native_display_id: Some("69733248".to_string()),
+              app_bundle_id: Some("com.playstack.balatro".to_string()),
+              window_title: Some("Balatro".to_string()),
+              window_number: Some(7),
+              region_hint: None,
+              capture_artifact: Some(ArtifactRef {
+                run_id: run_id.clone(),
+                artifact_id: ArtifactId::new("artifact_0004"),
+                span_id: span_id.clone(),
+                captured_event_id: None,
+              }),
+              capture_contract_artifact: None,
+            },
+            best: Some(RecognizedItem {
+              item_id: "item_end_turn".to_string(),
+              kind: "button".to_string(),
+              box_: crate::contract::RecognitionBox {
+                x: 1638,
+                y: 792,
+                width: 228,
+                height: 178,
+              },
+              text: Some("End Turn".to_string()),
+              provider_score: Some(0.99),
+              detail: serde_json::json!({"backend": "fixture"}),
+            }),
+            filtered: vec![RecognizedItem {
+              item_id: "item_end_turn".to_string(),
+              kind: "button".to_string(),
+              box_: crate::contract::RecognitionBox {
+                x: 1638,
+                y: 792,
+                width: 228,
+                height: 178,
+              },
+              text: Some("End Turn".to_string()),
+              provider_score: Some(0.99),
+              detail: serde_json::json!({"backend": "fixture"}),
+            }],
+            all: vec![RecognizedItem {
+              item_id: "item_end_turn".to_string(),
+              kind: "button".to_string(),
+              box_: crate::contract::RecognitionBox {
+                x: 1638,
+                y: 792,
+                width: 228,
+                height: 178,
+              },
+              text: Some("End Turn".to_string()),
+              provider_score: Some(0.99),
+              detail: serde_json::json!({"backend": "fixture"}),
+            }],
+            detail: serde_json::json!({
+              "backend": "ultralytics-inference",
+              "model_id": "games-balatro-ui",
+            }),
+            evidence: vec![ArtifactRef {
+              run_id: run_id.clone(),
+              artifact_id: ArtifactId::new("artifact_0004"),
+              span_id: span_id.clone(),
+              captured_event_id: None,
+            }],
+            known_limits: vec![
+              "candidate promotion artifact records gate decisions only; runtime action consumption remains deferred".to_string(),
+            ],
+          },
+          detail: serde_json::json!({
+            "artifact_version": "candidate_promotion_artifact_v0",
+            "producer": "candidate_promotion_recording",
+          }),
+          known_limits: vec![
+            "candidate promotion artifact records gate decisions only; runtime action consumption remains deferred".to_string(),
           ],
         },
       ),

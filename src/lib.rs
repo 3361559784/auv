@@ -1,5 +1,7 @@
 // File: src/lib.rs
 pub mod app;
+#[cfg(target_os = "macos")]
+pub mod ax_recognition;
 pub mod bundle;
 pub mod candidate_promotion;
 pub mod candidate_promotion_recording;

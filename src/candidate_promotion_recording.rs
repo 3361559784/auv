@@ -133,6 +133,19 @@ pub fn build_candidate_promotion_artifact(
   })
 }
 
+#[cfg(target_os = "macos")]
+pub fn build_candidate_promotion_artifact_with_recognition_projection(
+  observations: &[RecognitionResult],
+  request: &CandidatePromotionArtifactRequest,
+) -> Result<CandidatePromotionArtifact, CandidatePromotionArtifactError> {
+  let Some((_, recognition)) = observations.iter().enumerate().last() else {
+    return Err(CandidatePromotionArtifactError::NoRecognitionFrames);
+  };
+  let mut request = request.clone();
+  request.projection = crate::ax_recognition::promotion_projection_for_recognition(recognition);
+  build_candidate_promotion_artifact(observations, &request)
+}
+
 pub fn record_candidate_promotion_artifact(
   context: &mut RecordedOperationContext<'_>,
   observations: &[RecognitionResult],
@@ -140,7 +153,26 @@ pub fn record_candidate_promotion_artifact(
 ) -> AuvResult<(ArtifactRef, CandidatePromotionArtifact)> {
   let artifact = build_candidate_promotion_artifact(observations, request)
     .map_err(|error| format!("failed to build candidate-promotion artifact: {error}"))?;
+  record_built_candidate_promotion_artifact(context, artifact, request)
+}
 
+#[cfg(target_os = "macos")]
+pub fn record_candidate_promotion_artifact_with_recognition_projection(
+  context: &mut RecordedOperationContext<'_>,
+  observations: &[RecognitionResult],
+  request: &CandidatePromotionArtifactRequest,
+) -> AuvResult<(ArtifactRef, CandidatePromotionArtifact)> {
+  let artifact =
+    build_candidate_promotion_artifact_with_recognition_projection(observations, request)
+      .map_err(|error| format!("failed to build candidate-promotion artifact: {error}"))?;
+  record_built_candidate_promotion_artifact(context, artifact, request)
+}
+
+fn record_built_candidate_promotion_artifact(
+  context: &mut RecordedOperationContext<'_>,
+  artifact: CandidatePromotionArtifact,
+  request: &CandidatePromotionArtifactRequest,
+) -> AuvResult<(ArtifactRef, CandidatePromotionArtifact)> {
   let rendered = serde_json::to_string_pretty(&artifact)
     .map(|mut rendered| {
       rendered.push('\n');
@@ -251,7 +283,9 @@ mod tests {
     build_candidate_promotion_artifact, record_candidate_promotion_artifact,
   };
   use crate::build_runtime_with_store_root;
-  use crate::candidate_promotion::{ActionPermission, CandidatePromotion, PromotionProjection};
+  use crate::candidate_promotion::{
+    ActionPermission, CandidatePromotion, PromotionProjection, PromotionRefusal,
+  };
   use crate::contract::{
     ArtifactRef, FreshnessBasis, RecognitionBox, RecognitionResult, RecognitionScope,
     RecognitionSource, RecognitionSurface, RecognizedItem,
@@ -514,6 +548,193 @@ mod tests {
         .iter()
         .any(|event| event.name == "candidate.promotion.artifact_recorded")
     );
+
+    let _ = fs::remove_dir_all(project_root);
+    let _ = fs::remove_dir_all(store_root);
+  }
+
+  #[cfg(target_os = "macos")]
+  #[test]
+  fn ax_backed_recognition_satisfies_projection_without_manual_context() {
+    use super::build_candidate_promotion_artifact_with_recognition_projection;
+    use crate::ax_recognition::{
+      AxBestSelectionStrategy, AxRecognitionPolicy, AxRecognitionRuntimeContext,
+      map_ax_tree_to_recognition_result,
+    };
+    use auv_driver_macos::types::{ObservedAxNode, ObservedAxTreeSnapshot, ObservedRect};
+
+    fn ax_node(path: &str, title: &str, x: i64, y: i64) -> ObservedAxNode {
+      ObservedAxNode {
+        depth: path.matches('.').count(),
+        path: path.to_string(),
+        role: "AXButton".to_string(),
+        subrole: String::new(),
+        title: title.to_string(),
+        description: String::new(),
+        help: String::new(),
+        identifier: String::new(),
+        placeholder: String::new(),
+        value: String::new(),
+        bounds: ObservedRect {
+          x,
+          y,
+          width: 120,
+          height: 40,
+        },
+      }
+    }
+
+    let snapshot = ObservedAxTreeSnapshot {
+      observed_at: "2026-06-07T10:00:00Z".to_string(),
+      app_name: "Notes".to_string(),
+      bundle_id: "com.apple.Notes".to_string(),
+      pid: 42,
+      window_title: "Notes".to_string(),
+      nodes: vec![ax_node("0.0", "Done", 100, 200)],
+    };
+    let ax_recognition = map_ax_tree_to_recognition_result(
+      &snapshot,
+      &AxRecognitionRuntimeContext {
+        recognition_id: "recognition_ax_done".to_string(),
+        source_artifact: sample_artifact_ref(),
+      },
+      &AxRecognitionPolicy {
+        query: Some("Done".to_string()),
+        role: Some("AXButton".to_string()),
+        require_bounds: true,
+        best_selection: AxBestSelectionStrategy::SingleFilteredItem,
+      },
+    )
+    .expect("AX snapshot should map to addressable RecognitionResult");
+
+    let mut request = sample_request();
+    request.projection = PromotionProjection::Unavailable {
+      reason: "caller did not provide projection".to_string(),
+    };
+    request.freshness = None;
+    request.permission = None;
+
+    let artifact =
+      build_candidate_promotion_artifact_with_recognition_projection(&[ax_recognition], &request)
+        .expect("AX-backed recognition should build promotion artifact");
+
+    assert_eq!(
+      artifact.promotion_context.projection,
+      PromotionProjection::IdentityWindowAddressable
+    );
+    match artifact.decision {
+      CandidatePromotion::Refused { reasons } => {
+        assert!(
+          !reasons
+            .iter()
+            .any(|reason| matches!(reason, PromotionRefusal::ProjectionUnavailable { .. })),
+          "AX projection should not remain refused: {reasons:?}"
+        );
+        assert!(
+          reasons
+            .iter()
+            .any(|reason| matches!(reason, PromotionRefusal::FreshnessUnknown)),
+          "freshness remains intentionally deferred for the next slice"
+        );
+        assert!(
+          reasons
+            .iter()
+            .any(|reason| matches!(reason, PromotionRefusal::PermissionMissing)),
+          "permission remains intentionally deferred for the next slice"
+        );
+      }
+      CandidatePromotion::Promoted { .. } => {
+        panic!("freshness and permission are intentionally absent in this slice");
+      }
+    }
+  }
+
+  #[cfg(target_os = "macos")]
+  #[test]
+  fn gated_ax_report_records_projection_satisfied_candidate_promotion_lineage() {
+    use super::record_candidate_promotion_artifact_with_recognition_projection;
+    use crate::ax_recognition::{
+      AxBestSelectionStrategy, AxRecognitionArtifactRequest, AxRecognitionPolicy,
+      record_ax_tree_recognition_artifact,
+    };
+    use auv_driver_macos::support::parse_observed_ax_tree;
+
+    let Ok(ax_report_path) = std::env::var("AUV_AX_TREE_REPORT") else {
+      eprintln!("skipping gated AX projection smoke: AUV_AX_TREE_REPORT is not set");
+      return;
+    };
+    let ax_report_path = PathBuf::from(ax_report_path);
+    let report = fs::read_to_string(&ax_report_path)
+      .expect("AUV_AX_TREE_REPORT should point at a readable AX tree report");
+    let snapshot = parse_observed_ax_tree(&report).expect("AX tree report should parse");
+    let query = std::env::var("AUV_AX_QUERY").unwrap_or_else(|_| "First Text View".to_string());
+    let role = std::env::var("AUV_AX_ROLE").unwrap_or_else(|_| "AXTextArea".to_string());
+    let project_root = temp_dir("ax-projection-live-smoke-project");
+    let store_root = temp_dir("ax-projection-live-smoke-store");
+    fs::create_dir_all(&project_root).expect("project root should exist");
+    let runtime = build_runtime_with_store_root(project_root.clone(), store_root.clone())
+      .expect("runtime should build");
+
+    let output = runtime
+      .run_recorded_operation(
+        RunSpec::new(RunType::Execute, "auv.ax.projection.smoke"),
+        "AX projection candidate-promotion smoke",
+        |context| {
+          let (_, recognition_ref, recognition) = record_ax_tree_recognition_artifact(
+            context,
+            &snapshot,
+            &ax_report_path,
+            "ax-tree",
+            "ax-tree.txt",
+            Some("Source AX tree artifact for projection smoke.".to_string()),
+            &AxRecognitionArtifactRequest {
+              recognition_id: "recognition_ax_projection_smoke".to_string(),
+              policy: AxRecognitionPolicy {
+                query: Some(query.clone()),
+                role: Some(role.clone()),
+                require_bounds: true,
+                best_selection: AxBestSelectionStrategy::SingleFilteredItem,
+              },
+              artifact_role: "ax-recognition".to_string(),
+              artifact_label: "ax-projection-smoke-recognition".to_string(),
+              artifact_note: "AX-backed RecognitionResult for projection smoke.".to_string(),
+            },
+          )?;
+
+          let mut request = CandidatePromotionArtifactRequest::new(
+            "promotion_ax_projection_smoke",
+            "ax-projection-smoke-promotion",
+          );
+          request.source_recognition_artifact = Some(recognition_ref);
+          request.stability_policy = StabilityPolicy {
+            min_frames: 1,
+            max_centroid_drift_px: 0.0,
+            require_stable_text: false,
+          };
+          request.projection = PromotionProjection::Unavailable {
+            reason: "smoke starts without caller-supplied projection".to_string(),
+          };
+
+          record_candidate_promotion_artifact_with_recognition_projection(
+            context,
+            &[recognition],
+            &request,
+          )
+        },
+      )
+      .expect("gated AX projection smoke should record artifacts");
+
+    let (_promotion_ref, artifact) = output.value;
+    assert_eq!(
+      artifact.promotion_context.projection,
+      PromotionProjection::IdentityWindowAddressable
+    );
+    let inspect = runtime
+      .inspect(output.run_id.as_str())
+      .expect("recorded smoke run should inspect");
+    assert!(inspect.contains("Candidate Promotion Lineage:"));
+    assert!(inspect.contains("projection=identity_window_addressable"));
+    assert!(!inspect.contains("projection_unavailable"));
 
     let _ = fs::remove_dir_all(project_root);
     let _ = fs::remove_dir_all(store_root);

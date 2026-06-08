@@ -168,6 +168,23 @@ impl Runtime {
     crate::run_read::list_candidate_action_execution_lineage(self.recording.store(), run_id)
   }
 
+  pub fn run_candidate_action_command(
+    &self,
+    request: crate::candidate_action_command::CandidateActionCommandRequest,
+  ) -> AuvResult<
+    crate::recorded_operation::RecordedOperationOutput<
+      crate::candidate_action_command::CandidateActionCommandOutput,
+    >,
+  > {
+    self.run_recorded_operation(
+      crate::run_builder::RunSpec::new(RunType::Execute, "auv.candidate.action.command"),
+      "Consent-gated candidate action command",
+      |context| {
+        crate::candidate_action_command::execute_candidate_action_command(context, &request)
+      },
+    )
+  }
+
   pub fn record_candidate_action_execution(
     &self,
     promotion: &crate::candidate_promotion_recording::CandidatePromotionArtifact,

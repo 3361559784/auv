@@ -62,6 +62,10 @@ pub enum CliCommand {
   PermissionCheck {
     json: bool,
   },
+  CandidateActionRun {
+    request: CandidateActionCommandRequest,
+    inspect: InspectClientOptions,
+  },
   ListCommands,
   ListDrivers,
   AppProbe {
@@ -153,6 +157,27 @@ pub enum CliCommand {
   XtaskGenerateSwiftBridge,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct CandidateActionCommandRequest {
+  pub app_bundle_id: String,
+  pub query: String,
+  pub role: String,
+  pub reveal_shortcut: Option<String>,
+  pub reveal_settle_ms: u64,
+  pub stable_frames: u32,
+  pub stable_frame_delay_ms: u64,
+  pub max_centroid_drift_px: f64,
+  pub require_stable_text: bool,
+  pub promotion_id: String,
+  pub decision_id: String,
+  pub execution_id: String,
+  pub granted_by: String,
+  pub promotion_scope_note: String,
+  pub promotion_evidence_note: String,
+  pub execution_scope_note: String,
+  pub execution_evidence_note: String,
+}
+
 pub fn parse_cli(arguments: &[String]) -> AuvResult<CliCommand> {
   if arguments.is_empty() {
     return Ok(CliCommand::Help);
@@ -163,6 +188,7 @@ pub fn parse_cli(arguments: &[String]) -> AuvResult<CliCommand> {
     "doctor" => parse_permission_check(arguments),
     "permissions" => parse_permissions(arguments),
     "--xtask" => parse_xtask(arguments),
+    "candidate-action" => parse_candidate_action(arguments),
     "list-commands" => Ok(CliCommand::ListCommands),
     "list-drivers" => Ok(CliCommand::ListDrivers),
     "app" => parse_app(arguments),
@@ -199,6 +225,7 @@ USAGE
   auv-cli list-drivers
   auv-cli doctor [--json]
   auv-cli permissions check [--json]
+  auv-cli candidate-action run --target-app <bundle-id> --query <text> --role <ax-role> --granted-by <who> [--reveal-shortcut <shortcut>] [--reveal-settle-ms <ms>] [--stable-frames <n>] [--stable-frame-delay-ms <ms>] [--max-centroid-drift-px <px>] [--require-stable-text true|false] [--promotion-id <id>] [--decision-id <id>] [--execution-id <id>] [--promotion-scope-note <text>] [--promotion-evidence-note <text>] [--execution-scope-note <text>] [--execution-evidence-note <text>] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
   auv-cli app probe <bundle-id> [--output-dir <dir>]
   auv-cli app analyze <probe-dir-or-probe-json>
   auv-cli app distill <analysis-dir-or-analysis-json> [--output-dir <dir>]
@@ -227,6 +254,7 @@ NOTES
   - `debug.captureDisplay`, `debug.listDisplays`, `debug.listWindows`, `debug.projectScreenshotPoint`, `debug.identifyPoint`, `debug.probeCoordinateReadiness`, `debug.captureAxTree`, `debug.probePermissions`, `debug.focusTextInput`, `debug.pressButton`, `verify.musicNowPlaying`, `verify.axText`, `debug.clickPoint`, and `debug.scrollPoint` are the current desktop donor entrypoints.
   - `debug.overlayShowCursor`, `debug.overlayHideCursor`, and `debug.overlayShutdown` are visual-only macOS overlay probes; standalone `invoke` calls run in separate Rust processes, so use `--hold_ms` on show when manually observing the overlay.
   - `debug.captureAxTree`, `debug.focusTextInput`, and `debug.pressButton` accept `--reveal_shortcut cmd+f`-style hints when an app hides the target UI until a keyboard shortcut reveals it.
+  - `candidate-action run` is the first formal consent-gated single-action orchestration entrypoint. It captures AX evidence, promotes one candidate, records decide-only lineage, executes one approved action, and records semantic verification in one run.
   - `--reveal_settle_ms <millis>` can be used to make the reveal step explicit instead of depending on hard-coded timing assumptions.
   - `debug.typeText` supports `--replace_existing true`, `--submit_key return`, and `--submit_settle_ms 800` for repeatable text-entry flows.
   - `debug.pressKey` supports both special keys like `Return` and shortcuts like `cmd+f`, with optional `--settle_ms`.
@@ -263,6 +291,149 @@ fn parse_permission_check(arguments: &[String]) -> AuvResult<CliCommand> {
   }
 
   Ok(CliCommand::PermissionCheck { json })
+}
+
+fn parse_candidate_action(arguments: &[String]) -> AuvResult<CliCommand> {
+  if arguments.len() < 2 || arguments[1] != "run" {
+    return Err("usage: auv-cli candidate-action run --target-app <bundle-id> --query <text> --role <ax-role> --granted-by <who> [--reveal-shortcut <shortcut>] [--reveal-settle-ms <ms>] [--stable-frames <n>] [--stable-frame-delay-ms <ms>] [--max-centroid-drift-px <px>] [--require-stable-text true|false] [--promotion-id <id>] [--decision-id <id>] [--execution-id <id>] [--promotion-scope-note <text>] [--promotion-evidence-note <text>] [--execution-scope-note <text>] [--execution-evidence-note <text>] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]".to_string());
+  }
+
+  let mut request = CandidateActionCommandRequest {
+    app_bundle_id: String::new(),
+    query: String::new(),
+    role: String::new(),
+    reveal_shortcut: None,
+    reveal_settle_ms: 250,
+    stable_frames: 3,
+    stable_frame_delay_ms: 150,
+    max_centroid_drift_px: 4.0,
+    require_stable_text: true,
+    promotion_id: "candidate_promotion".to_string(),
+    decision_id: "candidate_decision".to_string(),
+    execution_id: "candidate_execution".to_string(),
+    granted_by: String::new(),
+    promotion_scope_note: "candidate promotion only".to_string(),
+    promotion_evidence_note: "explicit candidate promotion consent".to_string(),
+    execution_scope_note: "execute exactly one approved candidate action".to_string(),
+    execution_evidence_note: "explicit single-action execution consent".to_string(),
+  };
+  let mut inspect = InspectClientOptions::default();
+  let mut index = 2;
+
+  while index < arguments.len() {
+    if let Some(consumed) = parse_inspect_client_option(
+      arguments[index].as_str(),
+      arguments.get(index + 1),
+      &mut inspect,
+    )? {
+      index += consumed;
+      continue;
+    }
+
+    match arguments[index].as_str() {
+      "--target-app" => {
+        request.app_bundle_id = required_flag_value(arguments, index, "--target-app")?;
+        index += 2;
+      }
+      "--query" => {
+        request.query = required_flag_value(arguments, index, "--query")?;
+        index += 2;
+      }
+      "--role" => {
+        request.role = required_flag_value(arguments, index, "--role")?;
+        index += 2;
+      }
+      "--granted-by" => {
+        request.granted_by = required_flag_value(arguments, index, "--granted-by")?;
+        index += 2;
+      }
+      "--reveal-shortcut" => {
+        request.reveal_shortcut = Some(required_flag_value(arguments, index, "--reveal-shortcut")?);
+        index += 2;
+      }
+      "--reveal-settle-ms" => {
+        request.reveal_settle_ms = required_flag_value(arguments, index, "--reveal-settle-ms")?
+          .parse::<u64>()
+          .map_err(|error| format!("invalid --reveal-settle-ms: {error}"))?;
+        index += 2;
+      }
+      "--stable-frames" => {
+        request.stable_frames = required_flag_value(arguments, index, "--stable-frames")?
+          .parse::<u32>()
+          .map_err(|error| format!("invalid --stable-frames: {error}"))?;
+        index += 2;
+      }
+      "--stable-frame-delay-ms" => {
+        request.stable_frame_delay_ms =
+          required_flag_value(arguments, index, "--stable-frame-delay-ms")?
+            .parse::<u64>()
+            .map_err(|error| format!("invalid --stable-frame-delay-ms: {error}"))?;
+        index += 2;
+      }
+      "--max-centroid-drift-px" => {
+        request.max_centroid_drift_px =
+          required_flag_value(arguments, index, "--max-centroid-drift-px")?
+            .parse::<f64>()
+            .map_err(|error| format!("invalid --max-centroid-drift-px: {error}"))?;
+        index += 2;
+      }
+      "--require-stable-text" => {
+        request.require_stable_text =
+          required_flag_value(arguments, index, "--require-stable-text")?
+            .parse::<bool>()
+            .map_err(|error| format!("invalid --require-stable-text: {error}"))?;
+        index += 2;
+      }
+      "--promotion-id" => {
+        request.promotion_id = required_flag_value(arguments, index, "--promotion-id")?;
+        index += 2;
+      }
+      "--decision-id" => {
+        request.decision_id = required_flag_value(arguments, index, "--decision-id")?;
+        index += 2;
+      }
+      "--execution-id" => {
+        request.execution_id = required_flag_value(arguments, index, "--execution-id")?;
+        index += 2;
+      }
+      "--promotion-scope-note" => {
+        request.promotion_scope_note =
+          required_flag_value(arguments, index, "--promotion-scope-note")?;
+        index += 2;
+      }
+      "--promotion-evidence-note" => {
+        request.promotion_evidence_note =
+          required_flag_value(arguments, index, "--promotion-evidence-note")?;
+        index += 2;
+      }
+      "--execution-scope-note" => {
+        request.execution_scope_note =
+          required_flag_value(arguments, index, "--execution-scope-note")?;
+        index += 2;
+      }
+      "--execution-evidence-note" => {
+        request.execution_evidence_note =
+          required_flag_value(arguments, index, "--execution-evidence-note")?;
+        index += 2;
+      }
+      other => return Err(format!("unexpected candidate-action argument {other}")),
+    }
+  }
+
+  if request.app_bundle_id.trim().is_empty() {
+    return Err("--target-app is required".to_string());
+  }
+  if request.query.trim().is_empty() {
+    return Err("--query is required".to_string());
+  }
+  if request.role.trim().is_empty() {
+    return Err("--role is required".to_string());
+  }
+  if request.granted_by.trim().is_empty() {
+    return Err("--granted-by is required".to_string());
+  }
+
+  Ok(CliCommand::CandidateActionRun { request, inspect })
 }
 
 fn parse_permissions(arguments: &[String]) -> AuvResult<CliCommand> {
@@ -1275,6 +1446,48 @@ mod tests {
 
     match command {
       CliCommand::PermissionCheck { json } => assert!(json),
+      other => panic!("unexpected command: {other:?}"),
+    }
+  }
+
+  #[test]
+  fn parse_candidate_action_run_command() {
+    let command = parse_cli(&[
+      "candidate-action".to_string(),
+      "run".to_string(),
+      "--target-app".to_string(),
+      "com.apple.TextEdit".to_string(),
+      "--query".to_string(),
+      "Body".to_string(),
+      "--role".to_string(),
+      "AXTextArea".to_string(),
+      "--granted-by".to_string(),
+      "human-review".to_string(),
+      "--stable-frames".to_string(),
+      "3".to_string(),
+      "--max-centroid-drift-px".to_string(),
+      "5.5".to_string(),
+      "--require-stable-text".to_string(),
+      "false".to_string(),
+      "--reveal-shortcut".to_string(),
+      "cmd+f".to_string(),
+      "--store-root".to_string(),
+      "/tmp/auv-store".to_string(),
+    ])
+    .expect("candidate-action run should parse");
+
+    match command {
+      CliCommand::CandidateActionRun { request, inspect } => {
+        assert_eq!(request.app_bundle_id, "com.apple.TextEdit");
+        assert_eq!(request.query, "Body");
+        assert_eq!(request.role, "AXTextArea");
+        assert_eq!(request.granted_by, "human-review");
+        assert_eq!(request.stable_frames, 3);
+        assert_eq!(request.max_centroid_drift_px, 5.5);
+        assert!(!request.require_stable_text);
+        assert_eq!(request.reveal_shortcut.as_deref(), Some("cmd+f"));
+        assert_eq!(inspect.store_root.as_deref(), Some("/tmp/auv-store"));
+      }
       other => panic!("unexpected command: {other:?}"),
     }
   }

@@ -286,7 +286,7 @@ pub fn render_text(
   } else {
     for lineage in candidate_action_execution_lineage {
       output.push_str(&format!(
-        "- artifact={} status={} execution_id={} source_decision={} operation_result_artifact={} candidate={} resolver={} selected={} input_delivery={} selected_path={} operation_status={} verification={} semantic_matched={} side_effect={} consent={} by={} issue={}\n",
+        "- artifact={} status={} execution_id={} source_decision={} operation_result_artifact={} candidate={} resolver={} selected={} input_delivery={} selected_path={} operation_status={} verification={} semantic_matched={} readiness={} blocker={} side_effect={} consent={} by={} issue={}\n",
         lineage.artifact.artifact_id,
         render_candidate_action_execution_status(&lineage.status),
         lineage.execution_id.as_deref().unwrap_or("n/a"),
@@ -308,6 +308,8 @@ pub fn render_text(
         lineage.operation_status.as_deref().unwrap_or("n/a"),
         lineage.verification.as_deref().unwrap_or("n/a"),
         render_optional_bool(lineage.semantic_matched),
+        lineage.readiness.as_deref().unwrap_or("n/a"),
+        lineage.readiness_blocker.as_deref().unwrap_or("n/a"),
         lineage.side_effect.as_deref().unwrap_or("n/a"),
         lineage.consent_id.as_deref().unwrap_or("n/a"),
         lineage.consent_granted_by.as_deref().unwrap_or("n/a"),
@@ -409,6 +411,7 @@ fn render_candidate_action_execution_status(
 ) -> &'static str {
   match status {
     CandidateActionExecutionLineageStatus::Ready => "ready",
+    CandidateActionExecutionLineageStatus::BlockedNotReady => "blocked_not_ready",
     CandidateActionExecutionLineageStatus::MissingSourceCandidateActionDecisionArtifact => {
       "missing_source_candidate_action_decision_artifact"
     }
@@ -837,6 +840,8 @@ mod tests {
       operation_status: Some("completed".to_string()),
       verification: Some("activation_only".to_string()),
       semantic_matched: None,
+      readiness: Some("ready".to_string()),
+      readiness_blocker: None,
       consent_id: Some("consent_execute_end_turn".to_string()),
       consent_granted_by: Some("human-review".to_string()),
       side_effect: Some("single_input_delivered".to_string()),

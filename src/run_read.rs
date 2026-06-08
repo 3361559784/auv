@@ -175,6 +175,7 @@ pub struct CandidateActionDecisionLineage {
 #[serde(rename_all = "snake_case")]
 pub enum CandidateActionExecutionLineageStatus {
   Ready,
+  BlockedNotReady,
   MissingSourceCandidateActionDecisionArtifact,
   SourceCandidateActionDecisionArtifactUnresolved,
   MissingOperationResultArtifact,
@@ -202,6 +203,8 @@ pub struct CandidateActionExecutionLineage {
   pub operation_status: Option<String>,
   pub verification: Option<String>,
   pub semantic_matched: Option<bool>,
+  pub readiness: Option<String>,
+  pub readiness_blocker: Option<String>,
   pub consent_id: Option<String>,
   pub consent_granted_by: Option<String>,
   pub side_effect: Option<String>,
@@ -870,6 +873,8 @@ fn candidate_action_execution_lineage_entry(
       .find(|verification| verification.semantic_matched.is_some())
       .or_else(|| execution.operation_result.verifications.first())
       .and_then(|verification| verification.semantic_matched),
+    readiness: detail_string(&execution.detail, &["readiness"]),
+    readiness_blocker: detail_string(&execution.detail, &["readiness_blocker"]),
     consent_id: Some(execution.consent.consent_id),
     consent_granted_by: Some(execution.consent.granted_by),
     side_effect: Some(candidate_action_execution_side_effect_string(
@@ -903,6 +908,8 @@ fn malformed_candidate_action_execution_lineage(
     operation_status: None,
     verification: None,
     semantic_matched: None,
+    readiness: None,
+    readiness_blocker: None,
     consent_id: None,
     consent_granted_by: None,
     side_effect: None,
@@ -1039,6 +1046,22 @@ fn classify_candidate_action_execution_lineage(
       ),
     );
   }
+  if execution
+    .detail
+    .get("readiness")
+    .and_then(|value| value.as_str())
+    == Some("not_ready")
+  {
+    return (
+      CandidateActionExecutionLineageStatus::BlockedNotReady,
+      execution
+        .detail
+        .get("readiness_blocker")
+        .and_then(|value| value.as_str())
+        .map(str::to_string)
+        .or_else(|| Some("candidate action execution blocked by readiness".to_string())),
+    );
+  }
   (CandidateActionExecutionLineageStatus::Ready, None)
 }
 
@@ -1129,6 +1152,9 @@ fn candidate_action_execution_side_effect_string(
   match side_effect {
     crate::candidate_action_decision::CandidateActionExecutionSideEffect::SingleInputDelivered => {
       "single_input_delivered".to_string()
+    }
+    crate::candidate_action_decision::CandidateActionExecutionSideEffect::BlockedNotReady => {
+      "blocked_not_ready".to_string()
     }
   }
 }
@@ -2569,6 +2595,10 @@ mod tests {
         approved_at_millis: 2,
         evidence_note: "unit test execution consent".to_string(),
       },
+      readiness: auv_driver::ReadinessReport::ready(vec![auv_driver::ReadinessCheck::pass(
+        "target_window_present",
+        "target window present",
+      )]),
       input_action_result: auv_driver::InputActionResult::single_success(
         auv_driver::InputDeliveryPath::WindowTargetedMouse,
       ),
@@ -2612,6 +2642,8 @@ mod tests {
         "operation_status": "completed",
         "verification": "activation_only",
         "semantic_matched": null,
+        "readiness": "ready",
+        "readiness_blocker": null,
       }),
       known_limits: vec![
         "activation_only verification records input delivery, not semantic success".to_string(),

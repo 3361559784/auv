@@ -4,6 +4,7 @@ pub mod error;
 pub mod geometry;
 pub mod input;
 pub mod permission;
+pub mod readiness;
 pub mod selector;
 pub mod traits;
 pub mod vision;
@@ -20,6 +21,9 @@ pub use input::{
   TextSubmit, TypeTextOptions, WaitOptions, WindowClickStrategy,
 };
 pub use permission::{PermissionProbe, PermissionStatus};
+pub use readiness::{
+  ReadinessCheck, ReadinessCheckStatus, ReadinessProbeInput, ReadinessReport, ReadinessStatus,
+};
 pub use selector::{App, AppSelector, TextMatcher, WindowSelector};
 pub use traits::{Driver, DriverDescriptor, DriverSession, PlatformKind};
 pub use vision::{

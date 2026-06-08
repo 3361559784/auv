@@ -1999,6 +1999,14 @@ mod tests {
       serde_json::Value::Null
     );
     assert_eq!(
+      run["candidate_action_execution_lineage"][0]["readiness"],
+      "ready"
+    );
+    assert_eq!(
+      run["candidate_action_execution_lineage"][0]["readiness_blocker"],
+      serde_json::Value::Null
+    );
+    assert_eq!(
       run["candidate_action_execution_lineage"][0]["side_effect"],
       "single_input_delivered"
     );
@@ -3330,6 +3338,10 @@ mod tests {
             approved_at_millis: 2,
             evidence_note: "server fixture execution consent".to_string(),
           },
+          readiness: auv_driver::ReadinessReport::ready(vec![auv_driver::ReadinessCheck::pass(
+            "target_window_present",
+            "target window present",
+          )]),
           input_action_result: auv_driver::InputActionResult::single_success(
             auv_driver::InputDeliveryPath::WindowTargetedMouse,
           ),
@@ -3387,6 +3399,8 @@ mod tests {
             "operation_status": "completed",
             "verification": "activation_only",
             "semantic_matched": null,
+            "readiness": "ready",
+            "readiness_blocker": null,
           }),
           known_limits: vec![
             "activation_only verification records input delivery, not semantic success".to_string(),

@@ -81,6 +81,8 @@ pub struct CandidateActionExecutionRequest {
   pub(crate) execution_id: String,
   pub(crate) source_candidate_action_decision_artifact: Option<ArtifactRef>,
   pub(crate) consent: Option<CandidateActionExecutionConsent>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub(crate) readiness: Option<auv_driver::ReadinessReport>,
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   pub(crate) post_action_verifications: Vec<VerificationResult>,
   pub(crate) artifact_role: String,
@@ -95,6 +97,7 @@ impl CandidateActionExecutionRequest {
       execution_id: execution_id.clone(),
       source_candidate_action_decision_artifact: None,
       consent: None,
+      readiness: None,
       post_action_verifications: Vec::new(),
       artifact_role: CANDIDATE_ACTION_EXECUTION_ARTIFACT_ROLE.to_string(),
       artifact_label: artifact_label.into(),
@@ -109,6 +112,11 @@ impl CandidateActionExecutionRequest {
 
   pub fn with_consent(mut self, consent: CandidateActionExecutionConsent) -> Self {
     self.consent = Some(consent);
+    self
+  }
+
+  pub fn with_readiness(mut self, readiness: auv_driver::ReadinessReport) -> Self {
+    self.readiness = Some(readiness);
     self
   }
 
@@ -150,6 +158,8 @@ pub struct CandidateActionExecutionArtifact {
   pub(crate) candidate_local_id: String,
   pub(crate) action_resolver_decision: ActionResolverDecision,
   pub(crate) consent: CandidateActionExecutionConsent,
+  #[serde(default = "default_legacy_readiness_report")]
+  pub(crate) readiness: auv_driver::ReadinessReport,
   pub(crate) input_action_result: auv_driver::InputActionResult,
   pub(crate) operation_result: OperationResult,
   pub(crate) verification_result: VerificationResult,
@@ -162,6 +172,7 @@ pub struct CandidateActionExecutionArtifact {
 #[serde(rename_all = "snake_case")]
 pub enum CandidateActionExecutionSideEffect {
   SingleInputDelivered,
+  BlockedNotReady,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -172,12 +183,23 @@ pub struct CandidateActionDeliveryPlan {
   pub window_number: Option<i64>,
   pub window_title: Option<String>,
   pub app_bundle_id: Option<String>,
+  pub expected_window_frame: Option<auv_driver::Rect>,
   pub window_x: f64,
   pub window_y: f64,
   pub click_count: u32,
 }
 
 pub trait CandidateActionExecutor {
+  fn readiness(
+    &mut self,
+    plan: &CandidateActionDeliveryPlan,
+  ) -> AuvResult<auv_driver::ReadinessReport> {
+    let _ = plan;
+    Ok(auv_driver::ReadinessReport::ready(vec![
+      auv_driver::ReadinessCheck::pass("fixture_readiness", "fixture executor is ready"),
+    ]))
+  }
+
   fn execute(
     &mut self,
     plan: &CandidateActionDeliveryPlan,
@@ -195,6 +217,7 @@ pub enum CandidateActionDecisionError {
   MissingSourceCandidateActionDecisionArtifact,
   MissingExecutionConsent,
   ExecutionConsentMismatch { reason: String },
+  NotReady { reason: String },
   ExecutionFailed { reason: String },
 }
 
@@ -242,6 +265,12 @@ impl std::fmt::Display for CandidateActionDecisionError {
       }
       Self::ExecutionConsentMismatch { reason } => {
         write!(f, "candidate action execution consent mismatch: {reason}")
+      }
+      Self::NotReady { reason } => {
+        write!(
+          f,
+          "candidate action execution blocked by readiness: {reason}"
+        )
       }
       Self::ExecutionFailed { reason } => {
         write!(
@@ -342,6 +371,9 @@ pub fn build_candidate_action_execution_artifact(
   execution_run_id: RunId,
   input_action_result: auv_driver::InputActionResult,
 ) -> Result<CandidateActionExecutionArtifact, CandidateActionDecisionError> {
+  let readiness = request.readiness.clone().unwrap_or_else(|| {
+    auv_driver::ReadinessReport::blocked("execution readiness was not supplied")
+  });
   let source_candidate_action_decision_artifact = request
     .source_candidate_action_decision_artifact
     .clone()
@@ -369,6 +401,17 @@ pub fn build_candidate_action_execution_artifact(
     &source_candidate_action_decision_artifact,
   )?;
 
+  let readiness_ready = readiness.is_ready();
+  let input_action_result = if readiness_ready {
+    input_action_result
+  } else {
+    blocked_input_action_result(
+      readiness
+        .selected_blocker
+        .as_deref()
+        .unwrap_or("candidate action execution readiness failed"),
+    )
+  };
   let succeeded = input_action_result
     .attempts
     .iter()
@@ -396,7 +439,7 @@ pub fn build_candidate_action_execution_artifact(
   let semantic_matched = primary_verification.semantic_matched;
   let verification_summary =
     execution_verification_summary(&verification_result, &request.post_action_verifications);
-  let operation_completed = succeeded && semantic_matched != Some(false);
+  let operation_completed = readiness_ready && succeeded && semantic_matched != Some(false);
   let operation_result = OperationResult {
     api_version: crate::contract::OPERATION_RESULT_API_VERSION.to_string(),
     run_id: execution_run_id,
@@ -409,6 +452,7 @@ pub fn build_candidate_action_execution_artifact(
     evidence_artifacts: evidence_artifacts.clone(),
     output: OperationOutput::Acknowledged {
       message: Some(execution_message(
+        readiness_ready,
         succeeded,
         semantic_matched,
         !request.post_action_verifications.is_empty(),
@@ -429,7 +473,10 @@ pub fn build_candidate_action_execution_artifact(
     "artifact_version": CANDIDATE_ACTION_EXECUTION_ARTIFACT_VERSION,
     "producer": "candidate_action_execution",
     "mode": "execute_single",
-    "input_delivery": if succeeded { "attempted" } else { "failed" },
+    "input_delivery": input_delivery_summary(readiness_ready, succeeded),
+    "readiness": readiness_status_label(&readiness.status),
+    "readiness_blocker": readiness.selected_blocker,
+    "readiness_checks": readiness.checks,
     "selected_path": selected_path,
     "attempt_count": input_action_result.attempts.len(),
     "attempts_succeeded": attempts_succeeded,
@@ -454,10 +501,15 @@ pub fn build_candidate_action_execution_artifact(
     candidate_local_id: candidate.candidate_local_id.clone(),
     action_resolver_decision: decision.action_resolver_decision.clone(),
     consent,
+    readiness,
     input_action_result,
     operation_result,
     verification_result: primary_verification,
-    side_effect: CandidateActionExecutionSideEffect::SingleInputDelivered,
+    side_effect: if readiness_ready {
+      CandidateActionExecutionSideEffect::SingleInputDelivered
+    } else {
+      CandidateActionExecutionSideEffect::BlockedNotReady
+    },
     detail,
     known_limits: execution_known_limits(promotion, candidate),
   })
@@ -522,11 +574,12 @@ pub fn execute_and_record_single_candidate_action<E: CandidateActionExecutor>(
     context.run_id().clone(),
   )
   .map_err(|error| format!("failed to execute single candidate action: {error}"))?;
+  let request = request.clone().with_readiness(artifact.readiness.clone());
   record_candidate_action_execution_artifact(
     context,
     promotion,
     decision,
-    request,
+    &request,
     artifact.input_action_result,
   )
 }
@@ -565,6 +618,27 @@ pub fn execute_single_candidate_action<E: CandidateActionExecutor>(
     source_candidate_action_decision_artifact,
   )?;
   let plan = delivery_plan(candidate, decision)?;
+  let readiness =
+    executor
+      .readiness(&plan)
+      .map_err(|error| CandidateActionDecisionError::NotReady {
+        reason: error.to_string(),
+      })?;
+  let request = request.clone().with_readiness(readiness.clone());
+  if !readiness.is_ready() {
+    return build_candidate_action_execution_artifact(
+      promotion,
+      decision,
+      &request,
+      execution_run_id,
+      blocked_input_action_result(
+        readiness
+          .selected_blocker
+          .as_deref()
+          .unwrap_or("candidate action execution readiness failed"),
+      ),
+    );
+  }
   let input_action_result =
     executor
       .execute(&plan)
@@ -574,7 +648,7 @@ pub fn execute_single_candidate_action<E: CandidateActionExecutor>(
   build_candidate_action_execution_artifact(
     promotion,
     decision,
-    request,
+    &request,
     execution_run_id,
     input_action_result,
   )
@@ -596,6 +670,7 @@ pub fn delivery_plan(
     .as_ref()
     .ok_or(CandidateActionDecisionError::MissingWindowReference)?;
   let (window_x, window_y) = candidate_box_center(candidate)?;
+  let expected_window_frame = candidate_expected_window_frame(candidate);
 
   Ok(CandidateActionDeliveryPlan {
     selected_method: decision.action_resolver_decision.selected_method.clone(),
@@ -604,6 +679,7 @@ pub fn delivery_plan(
     window_number: window_ref.window_number,
     window_title: window_ref.window_title_substring.clone(),
     app_bundle_id: Some(window_ref.app_bundle_id.clone()),
+    expected_window_frame,
     window_x,
     window_y,
     click_count: 1,
@@ -637,11 +713,104 @@ fn candidate_box_center(candidate: &Candidate) -> Result<(f64, f64), CandidateAc
   ))
 }
 
+fn candidate_expected_window_frame(candidate: &Candidate) -> Option<auv_driver::Rect> {
+  rect_from_value(
+    candidate
+      .evidence
+      .observation
+      .pointer("/detail/window_frame"),
+  )
+  .or_else(|| {
+    rect_from_value(
+      candidate
+        .evidence
+        .observation
+        .pointer("/detail/windowFrame"),
+    )
+  })
+  .or_else(|| {
+    rect_from_value(
+      candidate
+        .evidence
+        .observation
+        .pointer("/detail/source_global_logical_bounds"),
+    )
+  })
+  .or_else(|| {
+    rect_from_value(
+      candidate
+        .evidence
+        .observation
+        .pointer("/detail/capture_contract/source_global_logical_bounds"),
+    )
+  })
+}
+
+fn rect_from_value(value: Option<&serde_json::Value>) -> Option<auv_driver::Rect> {
+  let value = value?;
+  Some(auv_driver::Rect::new(
+    number_field(value, "x")?,
+    number_field(value, "y")?,
+    number_field(value, "width")?,
+    number_field(value, "height")?,
+  ))
+}
+
+fn number_field(value: &serde_json::Value, key: &str) -> Option<f64> {
+  value.get(key).and_then(|value| {
+    value
+      .as_f64()
+      .or_else(|| value.as_i64().map(|value| value as f64))
+  })
+}
+
 #[cfg(target_os = "macos")]
 pub struct MacosCandidateActionExecutor;
 
 #[cfg(target_os = "macos")]
 impl CandidateActionExecutor for MacosCandidateActionExecutor {
+  fn readiness(
+    &mut self,
+    plan: &CandidateActionDeliveryPlan,
+  ) -> AuvResult<auv_driver::ReadinessReport> {
+    use auv_driver::Driver;
+
+    let driver = auv_driver_macos::MacosDriver::new();
+    let session = driver
+      .open_local()
+      .map_err(|error| format!("failed to open typed macOS driver session: {error}"))?;
+    let permissions = session
+      .permission()
+      .probe()
+      .map_err(|error| format!("failed to probe macOS readiness permissions: {error}"))?;
+    let windows = session
+      .window()
+      .list()
+      .map_err(|error| format!("failed to list macOS windows for readiness: {error}"))?;
+    let frontmost = session
+      .window()
+      .resolve(auv_driver::WindowSelector {
+        app: Some(auv_driver::App::frontmost()),
+        title: None,
+        main_visible: true,
+      })
+      .ok();
+    let input = auv_driver::ReadinessProbeInput::for_window_target(
+      plan.window_number,
+      plan.window_title.clone(),
+      plan.app_bundle_id.clone(),
+      plan.window_x,
+      plan.window_y,
+    )
+    .with_expected_window_frame(plan.expected_window_frame);
+    Ok(auv_driver_macos::assess_readiness(
+      &permissions,
+      &windows,
+      frontmost.as_ref(),
+      &input,
+    ))
+  }
+
   fn execute(
     &mut self,
     plan: &CandidateActionDeliveryPlan,
@@ -892,6 +1061,27 @@ fn activation_only_verification(
   }
 }
 
+fn default_legacy_readiness_report() -> auv_driver::ReadinessReport {
+  auv_driver::ReadinessReport::ready(vec![auv_driver::ReadinessCheck::unknown(
+    "legacy_readiness",
+    "readiness report missing from legacy candidate-action-execution artifact",
+  )])
+}
+
+fn blocked_input_action_result(reason: &str) -> auv_driver::InputActionResult {
+  auv_driver::InputActionResult {
+    selected_path: auv_driver::InputDeliveryPath::Unsupported,
+    attempts: vec![auv_driver::InputAttempt::failure(
+      auv_driver::InputDeliveryPath::Unsupported,
+      reason,
+    )],
+    fallback_reason: Some(reason.to_string()),
+    mouse_disturbance: auv_driver::DisturbanceLevel::None,
+    focus_disturbance: auv_driver::DisturbanceLevel::None,
+    clipboard_disturbance: auv_driver::DisturbanceLevel::None,
+  }
+}
+
 fn primary_execution_verification(
   activation_only: &VerificationResult,
   post_action_verifications: &[VerificationResult],
@@ -921,10 +1111,15 @@ fn execution_verification_summary(
 }
 
 fn execution_message(
+  readiness_ready: bool,
   delivery_succeeded: bool,
   semantic_matched: Option<bool>,
   has_post_action_verification: bool,
 ) -> String {
+  if !readiness_ready {
+    return "single candidate action blocked by readiness; input delivery not attempted"
+      .to_string();
+  }
   if !delivery_succeeded {
     return "single candidate action delivery failed".to_string();
   }
@@ -941,6 +1136,23 @@ fn execution_message(
     (None, false) => {
       "single candidate action activated; semantic verification remains activation_only".to_string()
     }
+  }
+}
+
+fn input_delivery_summary(readiness_ready: bool, delivery_succeeded: bool) -> &'static str {
+  if !readiness_ready {
+    "not_attempted"
+  } else if delivery_succeeded {
+    "attempted"
+  } else {
+    "failed"
+  }
+}
+
+fn readiness_status_label(status: &auv_driver::ReadinessStatus) -> &'static str {
+  match status {
+    auv_driver::ReadinessStatus::Ready => "ready",
+    auv_driver::ReadinessStatus::NotReady => "not_ready",
   }
 }
 
@@ -971,6 +1183,10 @@ fn execution_known_limits(
   push_known_limit(
     &mut known_limits,
     "activation_only verification records input delivery, not semantic success",
+  );
+  push_known_limit(
+    &mut known_limits,
+    "L8b execution is blocked before input delivery when readiness is not ready",
   );
   known_limits
 }
@@ -1082,10 +1298,10 @@ mod tests {
     CandidateActionDecisionArtifact, CandidateActionDecisionError, CandidateActionDecisionRequest,
     CandidateActionDeliveryPlan, CandidateActionExecutionConsent,
     CandidateActionExecutionConsentAction, CandidateActionExecutionRequest,
-    CandidateActionExecutor, build_candidate_action_decision_artifact,
-    build_candidate_action_execution_artifact, execute_and_record_single_candidate_action,
-    execute_single_candidate_action, record_candidate_action_decision_artifact,
-    record_candidate_action_execution_artifact,
+    CandidateActionExecutionSideEffect, CandidateActionExecutor,
+    build_candidate_action_decision_artifact, build_candidate_action_execution_artifact,
+    execute_and_record_single_candidate_action, execute_single_candidate_action,
+    record_candidate_action_decision_artifact, record_candidate_action_execution_artifact,
   };
   use crate::AuvResult;
   use crate::build_runtime_with_store_root;
@@ -1114,6 +1330,25 @@ mod tests {
   }
 
   fn sample_frame(recognition_id: &str, x: i64, y: i64) -> RecognitionResult {
+    sample_frame_with_window_frame(
+      recognition_id,
+      x,
+      y,
+      serde_json::json!({
+        "x": 0.0,
+        "y": 0.0,
+        "width": 500.0,
+        "height": 300.0
+      }),
+    )
+  }
+
+  fn sample_frame_with_window_frame(
+    recognition_id: &str,
+    x: i64,
+    y: i64,
+    source_global_logical_bounds: serde_json::Value,
+  ) -> RecognitionResult {
     let capture_artifact = sample_artifact_ref();
     RecognitionResult {
       recognition_id: recognition_id.to_string(),
@@ -1140,7 +1375,10 @@ mod tests {
         },
         text: Some("Text Area".to_string()),
         provider_score: Some(0.99),
-        detail: json!({"backend": "ax-fixture"}),
+        detail: json!({
+          "backend": "ax-fixture",
+          "source_global_logical_bounds": source_global_logical_bounds,
+        }),
       }),
       filtered: vec![RecognizedItem {
         item_id: "item_text_area".to_string(),
@@ -1153,7 +1391,10 @@ mod tests {
         },
         text: Some("Text Area".to_string()),
         provider_score: Some(0.99),
-        detail: json!({"backend": "ax-fixture"}),
+        detail: json!({
+          "backend": "ax-fixture",
+          "source_global_logical_bounds": source_global_logical_bounds,
+        }),
       }],
       all: vec![RecognizedItem {
         item_id: "item_text_area".to_string(),
@@ -1166,7 +1407,10 @@ mod tests {
         },
         text: Some("Text Area".to_string()),
         provider_score: Some(0.99),
-        detail: json!({"backend": "ax-fixture"}),
+        detail: json!({
+          "backend": "ax-fixture",
+          "source_global_logical_bounds": source_global_logical_bounds,
+        }),
       }],
       detail: json!({"backend": "ax-fixture"}),
       evidence: vec![capture_artifact],
@@ -1259,17 +1503,46 @@ mod tests {
 
   struct FakeExecutor {
     result: auv_driver::InputActionResult,
+    readiness: auv_driver::ReadinessReport,
     observed_plan: Option<CandidateActionDeliveryPlan>,
+    executed: bool,
   }
 
   impl CandidateActionExecutor for FakeExecutor {
+    fn readiness(
+      &mut self,
+      plan: &CandidateActionDeliveryPlan,
+    ) -> AuvResult<auv_driver::ReadinessReport> {
+      self.observed_plan = Some(plan.clone());
+      Ok(self.readiness.clone())
+    }
+
     fn execute(
       &mut self,
       plan: &CandidateActionDeliveryPlan,
     ) -> AuvResult<auv_driver::InputActionResult> {
       self.observed_plan = Some(plan.clone());
+      self.executed = true;
       Ok(self.result.clone())
     }
+  }
+
+  fn ready_report() -> auv_driver::ReadinessReport {
+    auv_driver::ReadinessReport::ready(vec![
+      auv_driver::ReadinessCheck::pass("accessibility", "accessibility permission granted"),
+      auv_driver::ReadinessCheck::pass("target_window_present", "target window is present"),
+    ])
+  }
+
+  fn not_ready_report(reason: &str) -> auv_driver::ReadinessReport {
+    auv_driver::ReadinessReport::blocked(reason)
+  }
+
+  fn execution_request() -> CandidateActionExecutionRequest {
+    CandidateActionExecutionRequest::new("execution_text_area", "text-area-action-execution")
+      .with_source_candidate_action_decision_artifact(source_decision_ref())
+      .with_consent(execution_consent())
+      .with_readiness(ready_report())
   }
 
   fn decision_artifact() -> CandidateActionDecisionArtifact {
@@ -1431,10 +1704,7 @@ mod tests {
   fn build_execution_artifact_records_input_result_and_activation_only_verification() {
     let promotion = promoted_artifact();
     let decision = decision_artifact();
-    let request =
-      CandidateActionExecutionRequest::new("execution_text_area", "text-area-action-execution")
-        .with_source_candidate_action_decision_artifact(source_decision_ref())
-        .with_consent(execution_consent());
+    let request = execution_request();
 
     let artifact = build_candidate_action_execution_artifact(
       &promotion,
@@ -1475,6 +1745,7 @@ mod tests {
       }
     );
     assert_eq!(artifact.detail["input_delivery"], json!("attempted"));
+    assert_eq!(artifact.detail["readiness"], json!("ready"));
     assert_eq!(artifact.detail["verification"], json!("activation_only"));
     assert_eq!(artifact.detail["verification_count"], json!(1));
     assert_eq!(artifact.detail["post_action_verification_count"], json!(0));
@@ -1494,11 +1765,7 @@ mod tests {
   fn build_execution_artifact_records_post_action_semantic_verification() {
     let promotion = promoted_artifact();
     let decision = decision_artifact();
-    let request =
-      CandidateActionExecutionRequest::new("execution_text_area", "text-area-action-execution")
-        .with_source_candidate_action_decision_artifact(source_decision_ref())
-        .with_consent(execution_consent())
-        .with_post_action_verification(semantic_verification(true));
+    let request = execution_request().with_post_action_verification(semantic_verification(true));
 
     let artifact = build_candidate_action_execution_artifact(
       &promotion,
@@ -1531,11 +1798,7 @@ mod tests {
   fn build_execution_artifact_marks_semantic_mismatch_failed() {
     let promotion = promoted_artifact();
     let decision = decision_artifact();
-    let request =
-      CandidateActionExecutionRequest::new("execution_text_area", "text-area-action-execution")
-        .with_source_candidate_action_decision_artifact(source_decision_ref())
-        .with_consent(execution_consent())
-        .with_post_action_verification(semantic_verification(false));
+    let request = execution_request().with_post_action_verification(semantic_verification(false));
 
     let artifact = build_candidate_action_execution_artifact(
       &promotion,
@@ -1566,10 +1829,7 @@ mod tests {
   fn failed_execution_artifact_records_control_failed_activation_only() {
     let promotion = promoted_artifact();
     let decision = decision_artifact();
-    let request =
-      CandidateActionExecutionRequest::new("execution_text_area", "text-area-action-execution")
-        .with_source_candidate_action_decision_artifact(source_decision_ref())
-        .with_consent(execution_consent());
+    let request = execution_request();
 
     let artifact = build_candidate_action_execution_artifact(
       &promotion,
@@ -1626,6 +1886,50 @@ mod tests {
   }
 
   #[test]
+  fn execute_single_candidate_action_blocks_not_ready_before_executor_delivery() {
+    let promotion = promoted_artifact();
+    let decision = decision_artifact();
+    let request =
+      CandidateActionExecutionRequest::new("execution_text_area", "text-area-action-execution")
+        .with_source_candidate_action_decision_artifact(source_decision_ref())
+        .with_consent(execution_consent());
+    let mut executor = FakeExecutor {
+      result: auv_driver::InputActionResult::single_success(
+        auv_driver::InputDeliveryPath::WindowTargetedMouse,
+      ),
+      readiness: not_ready_report("accessibility permission is missing"),
+      observed_plan: None,
+      executed: false,
+    };
+
+    let artifact = execute_single_candidate_action(
+      &mut executor,
+      &promotion,
+      &decision,
+      &request,
+      RunId::new("run_l8b_execution"),
+    )
+    .expect("not-ready path should still produce an audit artifact");
+
+    assert!(executor.observed_plan.is_some());
+    assert!(
+      !executor.executed,
+      "executor must not deliver input when readiness is not ready"
+    );
+    assert_eq!(
+      artifact.side_effect,
+      CandidateActionExecutionSideEffect::BlockedNotReady
+    );
+    assert_eq!(artifact.detail["readiness"], json!("not_ready"));
+    assert_eq!(artifact.detail["input_delivery"], json!("not_attempted"));
+    assert_eq!(
+      artifact.input_action_result.selected_path,
+      auv_driver::InputDeliveryPath::Unsupported
+    );
+    assert_eq!(artifact.operation_result.status, OperationStatus::Failed);
+  }
+
+  #[test]
   fn execute_single_candidate_action_refuses_before_executor_without_consent() {
     let promotion = promoted_artifact();
     let decision = decision_artifact();
@@ -1636,7 +1940,9 @@ mod tests {
       result: auv_driver::InputActionResult::single_success(
         auv_driver::InputDeliveryPath::WindowTargetedMouse,
       ),
+      readiness: ready_report(),
       observed_plan: None,
+      executed: false,
     };
 
     let error = execute_single_candidate_action(
@@ -1653,6 +1959,7 @@ mod tests {
       executor.observed_plan.is_none(),
       "executor must not be called before L8b consent is validated"
     );
+    assert!(!executor.executed);
   }
 
   #[test]
@@ -1690,7 +1997,8 @@ mod tests {
           .with_consent(CandidateActionExecutionConsent {
             run_id: source_decision_ref.run_id.as_str().to_string(),
             ..execution_consent()
-          });
+          })
+          .with_readiness(ready_report());
           record_candidate_action_execution_artifact(
             context,
             &promotion,
@@ -1744,7 +2052,9 @@ mod tests {
       result: auv_driver::InputActionResult::single_success(
         auv_driver::InputDeliveryPath::WindowTargetedMouse,
       ),
+      readiness: ready_report(),
       observed_plan: None,
+      executed: false,
     };
 
     let output = runtime
@@ -1815,7 +2125,9 @@ mod tests {
       result: auv_driver::InputActionResult::single_success(
         auv_driver::InputDeliveryPath::WindowTargetedMouse,
       ),
+      readiness: ready_report(),
       observed_plan: None,
+      executed: false,
     };
 
     let artifact = execute_single_candidate_action(
@@ -1839,6 +2151,7 @@ mod tests {
       artifact.input_action_result.selected_path,
       auv_driver::InputDeliveryPath::WindowTargetedMouse
     );
+    assert!(executor.executed);
     assert_eq!(
       artifact.verification_result.method,
       VerificationMethod::Custom {
@@ -1874,17 +2187,32 @@ mod tests {
       .and_then(|value| value.parse::<f64>().ok())
       .unwrap_or(10.0);
     let mut executor = MacosCandidateActionExecutor;
-    let result = executor.execute(&CandidateActionDeliveryPlan {
+    let Some(expected_window_frame) = smoke_expected_window_frame() else {
+      eprintln!(
+        "skip: AUV_L8B_WINDOW_FRAME_X/Y/WIDTH/HEIGHT are required for readiness-gated L8b smoke"
+      );
+      return;
+    };
+    let plan = CandidateActionDeliveryPlan {
       selected_method: "pointer-click".to_string(),
       target_grounding: TargetGrounding::Coordinate,
       target_query: "env-gated-smoke".to_string(),
       window_number: Some(window_number),
       window_title: std::env::var("AUV_L8B_WINDOW_TITLE").ok(),
       app_bundle_id: std::env::var("AUV_L8B_APP_BUNDLE_ID").ok(),
+      expected_window_frame: Some(expected_window_frame),
       window_x,
       window_y,
       click_count: 1,
-    });
+    };
+    let readiness = executor
+      .readiness(&plan)
+      .expect("L8b smoke readiness should probe");
+    assert!(
+      readiness.is_ready(),
+      "L8b smoke readiness failed: {readiness:?}"
+    );
+    let result = executor.execute(&plan);
 
     assert!(result.is_ok(), "L8b smoke delivery failed: {result:?}");
   }
@@ -1915,14 +2243,36 @@ mod tests {
       .ok()
       .and_then(|value| value.parse::<i64>().ok())
       .unwrap_or(60);
+    let Some(expected_window_frame) = smoke_expected_window_frame() else {
+      eprintln!(
+        "skip: AUV_L8B_WINDOW_FRAME_X/Y/WIDTH/HEIGHT are required for readiness-gated recorded L8b smoke"
+      );
+      return;
+    };
+    let expected_window_frame = serde_json::json!({
+      "x": expected_window_frame.origin.x,
+      "y": expected_window_frame.origin.y,
+      "width": expected_window_frame.size.width,
+      "height": expected_window_frame.size.height,
+    });
 
     let project_root = temp_dir("candidate-action-execute-recorded-smoke-project");
     let store_root = temp_dir("candidate-action-execute-recorded-smoke-store");
     fs::create_dir_all(&project_root).expect("project root should exist");
     let runtime = build_runtime_with_store_root(project_root.clone(), store_root.clone())
       .expect("runtime should build");
-    let mut recognition_1 = sample_frame("recognition_frame_1", window_x, window_y);
-    let mut recognition_2 = sample_frame("recognition_frame_2", window_x, window_y);
+    let mut recognition_1 = sample_frame_with_window_frame(
+      "recognition_frame_1",
+      window_x,
+      window_y,
+      expected_window_frame.clone(),
+    );
+    let mut recognition_2 = sample_frame_with_window_frame(
+      "recognition_frame_2",
+      window_x,
+      window_y,
+      expected_window_frame,
+    );
     for recognition in [&mut recognition_1, &mut recognition_2] {
       recognition.scope.app_bundle_id = Some(app_bundle_id.clone());
       recognition.scope.window_title = window_title.clone();
@@ -2031,5 +2381,21 @@ mod tests {
 
   fn temp_dir(label: &str) -> PathBuf {
     std::env::temp_dir().join(format!("auv-{}-{}", label, crate::model::now_millis()))
+  }
+
+  #[cfg(target_os = "macos")]
+  fn smoke_expected_window_frame() -> Option<auv_driver::Rect> {
+    Some(auv_driver::Rect::new(
+      std::env::var("AUV_L8B_WINDOW_FRAME_X").ok()?.parse().ok()?,
+      std::env::var("AUV_L8B_WINDOW_FRAME_Y").ok()?.parse().ok()?,
+      std::env::var("AUV_L8B_WINDOW_FRAME_WIDTH")
+        .ok()?
+        .parse()
+        .ok()?,
+      std::env::var("AUV_L8B_WINDOW_FRAME_HEIGHT")
+        .ok()?
+        .parse()
+        .ok()?,
+    ))
   }
 }

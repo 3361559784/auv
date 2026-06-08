@@ -1,5 +1,6 @@
 mod descriptor;
 mod driver;
+mod readiness;
 mod session;
 
 // TODO(driver-crates): These modules are temporarily public so the root
@@ -25,6 +26,7 @@ pub use descriptor::{MacosDriverDescriptor, macos_driver_descriptor};
 #[doc(hidden)]
 pub use descriptor::{MacosLegacyDescriptorMetadata, macos_legacy_descriptor_metadata};
 pub use driver::{MacosDriver, MacosDriverSession};
+pub use readiness::assess_readiness;
 pub use session::{
   ClipboardApi, InputApi, OcrMatch, OcrMatches, PermissionApi, VisionApi, WindowApi,
 };

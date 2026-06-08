@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::candidate_promotion::{
-  ActionConsentRecord, ActionPermission, CandidatePromotion, ConsentAction, ConsentScope,
-  PromotionContext, PromotionProjection, promote_recognition_to_candidates,
+  ActionConsentRecord, ActionPermission, CandidatePromotion, ConsentAction, ConsentProvenance,
+  ConsentScope, PromotionContext, PromotionProjection, promote_recognition_to_candidates,
 };
 use crate::contract::{ArtifactRef, FreshnessBasis, RecognitionResult};
 use crate::model::{AuvResult, now_millis};
@@ -108,6 +108,7 @@ pub struct CandidatePromotionConsentInput {
   pub scope_note: String,
   pub evidence_note: String,
   pub approved_at_millis: u64,
+  pub provenance: ConsentProvenance,
 }
 
 pub fn freshness_from_capture_backed_recognition(
@@ -150,6 +151,8 @@ pub fn explicit_consent_for_candidate_promotion(
       run_id: capture_artifact.run_id.as_str().to_string(),
       scope: ConsentScope::CandidatePromotionOnly,
       approved_action: ConsentAction::PromoteRecognitionToCandidate,
+      grade: input.provenance.expected_grade(),
+      provenance: input.provenance,
       approved_at_millis: input.approved_at_millis,
       evidence_note: input.evidence_note,
     }),
@@ -171,6 +174,7 @@ pub fn build_candidate_promotion_artifact(
     stability: stability_assessment.to_promotion_stability_input(),
     freshness: request.freshness.clone(),
     permission: request.permission.clone(),
+    allow_dev_self_minted_consent: false,
   };
   let decision = promote_recognition_to_candidates(recognition, &promotion_context);
 
@@ -367,7 +371,9 @@ mod tests {
     record_candidate_promotion_artifact,
   };
   use crate::build_runtime_with_store_root;
-  use crate::candidate_promotion::{CandidatePromotion, PromotionProjection, PromotionRefusal};
+  use crate::candidate_promotion::{
+    CandidatePromotion, ConsentProvenance, PromotionProjection, PromotionRefusal,
+  };
   use crate::contract::{
     ArtifactRef, RecognitionBox, RecognitionResult, RecognitionScope, RecognitionSource,
     RecognitionSurface, RecognizedItem,
@@ -501,6 +507,7 @@ mod tests {
             scope_note: "single end-turn action".to_string(),
             evidence_note: "unit test consent".to_string(),
             approved_at_millis: 1,
+            provenance: ConsentProvenance::HumanGesture,
           },
         )
         .expect("sample recognition is capture-backed"),
@@ -777,6 +784,7 @@ mod tests {
         scope_note: "candidate promotion only".to_string(),
         evidence_note: "consent evidence".to_string(),
         approved_at_millis: 1,
+        provenance: ConsentProvenance::HumanGesture,
       },
     )
     .expect_err("consent producer should require capture artifact");
@@ -813,6 +821,7 @@ mod tests {
           scope_note: "candidate promotion only, no action execution".to_string(),
           evidence_note: "approved by fixture reviewer".to_string(),
           approved_at_millis: crate::model::now_millis(),
+          provenance: ConsentProvenance::HumanGesture,
         },
       )
       .expect("latest recognition is capture-backed"),
@@ -913,6 +922,7 @@ mod tests {
                 scope_note: "candidate promotion only; no action execution".to_string(),
                 evidence_note: "AUV_AX_TREE_REPORT gated smoke approval".to_string(),
                 approved_at_millis: crate::model::now_millis(),
+                provenance: ConsentProvenance::HumanGesture,
               },
             )
             .map_err(|error| error.to_string())?,

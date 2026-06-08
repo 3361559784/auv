@@ -192,7 +192,7 @@ pub fn render_text(
         }
       ));
       output.push_str(&format!(
-        "  recognition={} observed_frames={} freshness_present={} freshness_source={} permission_granted={} consent_id={} consent_scope={} permission_by={} issue={}\n",
+        "  recognition={} observed_frames={} freshness_present={} freshness_source={} permission_granted={} consent_id={} consent_provenance={} consent_grade={} consent_scope={} permission_by={} issue={}\n",
         lineage
           .promotion_input_recognition_id
           .as_deref()
@@ -215,6 +215,8 @@ pub fn render_text(
           .map(|value| if value { "true" } else { "false" })
           .unwrap_or("n/a"),
         lineage.consent_id.as_deref().unwrap_or("n/a"),
+        lineage.consent_provenance.as_deref().unwrap_or("n/a"),
+        lineage.consent_grade.as_deref().unwrap_or("n/a"),
         lineage.consent_scope.as_deref().unwrap_or("n/a"),
         lineage.permission_granted_by.as_deref().unwrap_or("n/a"),
         lineage.issue.as_deref().unwrap_or("n/a")
@@ -286,7 +288,7 @@ pub fn render_text(
   } else {
     for lineage in candidate_action_execution_lineage {
       output.push_str(&format!(
-        "- artifact={} status={} execution_id={} source_decision={} operation_result_artifact={} candidate={} resolver={} selected={} input_delivery={} selected_path={} operation_status={} verification={} semantic_matched={} readiness={} blocker={} side_effect={} consent={} by={} issue={}\n",
+        "- artifact={} status={} execution_id={} source_decision={} operation_result_artifact={} candidate={} resolver={} selected={} input_delivery={} selected_path={} operation_status={} verification={} semantic_matched={} readiness={} blocker={} side_effect={} consent={} by={} consent_provenance={} consent_grade={} issue={}\n",
         lineage.artifact.artifact_id,
         render_candidate_action_execution_status(&lineage.status),
         lineage.execution_id.as_deref().unwrap_or("n/a"),
@@ -313,6 +315,8 @@ pub fn render_text(
         lineage.side_effect.as_deref().unwrap_or("n/a"),
         lineage.consent_id.as_deref().unwrap_or("n/a"),
         lineage.consent_granted_by.as_deref().unwrap_or("n/a"),
+        lineage.consent_provenance.as_deref().unwrap_or("n/a"),
+        lineage.consent_grade.as_deref().unwrap_or("n/a"),
         lineage.issue.as_deref().unwrap_or("n/a"),
       ));
       output.push_str(&format!(
@@ -740,6 +744,8 @@ mod tests {
       permission_granted_by: Some("human-review".to_string()),
       permission_scope_note: Some("fixture promotion".to_string()),
       consent_id: Some("consent_promotion_end_turn".to_string()),
+      consent_provenance: Some("human_gesture".to_string()),
+      consent_grade: Some("human_approved".to_string()),
       consent_scope: Some("candidate_promotion_only".to_string()),
       consent_approved_action: Some("promote_recognition_to_candidate".to_string()),
       consent_recognition_id: Some("recognition_detector_1".to_string()),
@@ -844,6 +850,8 @@ mod tests {
       readiness_blocker: None,
       consent_id: Some("consent_execute_end_turn".to_string()),
       consent_granted_by: Some("human-review".to_string()),
+      consent_provenance: Some("human_gesture".to_string()),
+      consent_grade: Some("human_approved".to_string()),
       side_effect: Some("single_input_delivered".to_string()),
       known_limits: vec![
         "activation_only verification records input delivery, not semantic success".to_string(),
@@ -887,6 +895,8 @@ mod tests {
     assert!(output.contains("source_recognition=artifacts/detector-recognition.json"));
     assert!(output.contains("freshness_source=artifacts/capture.png"));
     assert!(output.contains("consent_scope=candidate_promotion_only"));
+    assert!(output.contains("consent_provenance=human_gesture"));
+    assert!(output.contains("consent_grade=human_approved"));
     assert!(output.contains("permission_by=human-review"));
     assert!(output.contains("Candidate Action Decision Lineage:"));
     assert!(output.contains("artifact=artifact_candidate_action_decision"));
@@ -908,6 +918,8 @@ mod tests {
     assert!(output.contains("semantic_matched=n/a"));
     assert!(output.contains("side_effect=single_input_delivered"));
     assert!(output.contains("consent=consent_execute_end_turn"));
+    assert!(output.contains("consent_provenance=human_gesture"));
+    assert!(output.contains("consent_grade=human_approved"));
     assert!(output.contains("Validation Lineage:"));
     assert!(
       output

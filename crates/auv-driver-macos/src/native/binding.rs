@@ -10,11 +10,27 @@ pub(crate) mod ffi {
     Missing,
   }
 
+  enum NativeHumanApprovalStatus {
+    Approved,
+    Declined,
+    TimedOut,
+    Unavailable,
+  }
+
   #[swift_bridge(swift_repr = "struct")]
   struct NativePermissionProbeResponse {
     screen_recording: NativePermissionStatus,
     screen_capture_kit: NativePermissionStatus,
     accessibility: NativePermissionStatus,
+  }
+
+  #[swift_bridge(swift_repr = "struct")]
+  struct NativeHumanApprovalResponse {
+    status: NativeHumanApprovalStatus,
+    approved_at_unix_ms: i64,
+    mechanism: String,
+    error_message: Option<String>,
+    recovery_hint: Option<String>,
   }
 
   #[swift_bridge(swift_repr = "struct")]
@@ -340,6 +356,7 @@ pub(crate) mod ffi {
 
   extern "Swift" {
     fn probe_permissions() -> NativePermissionProbeResponse;
+    fn request_human_approval(reason: String, timeout_ms: u64) -> NativeHumanApprovalResponse;
     fn list_displays() -> NativeDisplayListResponse;
     fn list_windows(request: NativeWindowListRequest) -> NativeWindowListResponse;
     fn mutate_window(request: NativeWindowMutationRequest) -> NativeWindowMutationResponse;

@@ -1,3 +1,4 @@
+pub mod auth;
 pub mod ax_tree;
 #[cfg(target_os = "macos")]
 mod binding;

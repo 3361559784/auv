@@ -100,6 +100,8 @@ async fn run() -> Result<(), String> {
           max_centroid_drift_px: request.max_centroid_drift_px,
           require_stable_text: request.require_stable_text,
           dev_self_minted_consent: request.dev_self_minted_consent,
+          human_gesture_consent: request.human_gesture_consent,
+          human_gesture_timeout_ms: request.human_gesture_timeout_ms,
           promotion_id: request.promotion_id,
           decision_id: request.decision_id,
           execution_id: request.execution_id,

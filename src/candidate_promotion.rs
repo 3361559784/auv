@@ -20,6 +20,8 @@ pub struct PromotionContext {
   pub stability: StabilityInput,
   pub freshness: Option<FreshnessBasis>,
   pub permission: Option<ActionPermission>,
+  #[serde(default)]
+  pub allow_dev_self_minted_consent: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -61,8 +63,29 @@ pub struct ActionConsentRecord {
   pub run_id: String,
   pub scope: ConsentScope,
   pub approved_action: ConsentAction,
+  pub provenance: ConsentProvenance,
+  pub grade: ConsentGrade,
   pub approved_at_millis: u64,
   pub evidence_note: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConsentProvenance {
+  // NOTICE(consent-human-gesture-deferred):
+  // Human gesture minting is deferred to a later owner-approved slice. The
+  // provenance type lands now so runtime evidence can distinguish dev-grade
+  // self-minted records from future product-grade consent without another
+  // seam change.
+  DevSelfMinted,
+  HumanGesture,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConsentGrade {
+  DevOnly,
+  HumanApproved,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -135,7 +158,11 @@ pub fn promote_recognition_to_candidates(
   if !freshness_is_capture_backed_for_recognition(context.freshness.as_ref(), recognition) {
     reasons.push(PromotionRefusal::FreshnessUnknown);
   }
-  if !permission_is_explicit_for_recognition(context.permission.as_ref(), recognition) {
+  if !permission_is_explicit_for_recognition(
+    context.allow_dev_self_minted_consent,
+    context.permission.as_ref(),
+    recognition,
+  ) {
     reasons.push(PromotionRefusal::PermissionMissing);
   }
 
@@ -226,6 +253,7 @@ fn freshness_is_capture_backed_for_recognition(
 }
 
 fn permission_is_explicit_for_recognition(
+  allow_dev_self_minted_consent: bool,
   permission: Option<&ActionPermission>,
   recognition: &RecognitionResult,
 ) -> bool {
@@ -239,6 +267,8 @@ fn permission_is_explicit_for_recognition(
     && !permission.scope_note.trim().is_empty()
     && !consent.consent_id.trim().is_empty()
     && consent.recognition_id == recognition.recognition_id
+    && consent.grade == consent.provenance.expected_grade()
+    && (allow_dev_self_minted_consent || consent.grade != ConsentGrade::DevOnly)
     && recognition
       .scope
       .capture_artifact
@@ -248,14 +278,23 @@ fn permission_is_explicit_for_recognition(
     && consent.approved_action == ConsentAction::PromoteRecognitionToCandidate
 }
 
+impl ConsentProvenance {
+  pub fn expected_grade(&self) -> ConsentGrade {
+    match self {
+      Self::DevSelfMinted => ConsentGrade::DevOnly,
+      Self::HumanGesture => ConsentGrade::HumanApproved,
+    }
+  }
+}
+
 #[cfg(test)]
 mod tests {
   use serde_json::json;
 
   use super::{
-    ActionConsentRecord, ActionPermission, CandidatePromotion, ConsentAction, ConsentScope,
-    PromotionContext, PromotionProjection, PromotionRefusal, StabilityInput,
-    promote_recognition_to_candidates,
+    ActionConsentRecord, ActionPermission, CandidatePromotion, ConsentAction, ConsentGrade,
+    ConsentProvenance, ConsentScope, PromotionContext, PromotionProjection, PromotionRefusal,
+    StabilityInput, promote_recognition_to_candidates,
   };
   use crate::contract::{
     ArtifactRef, Candidate, FreshnessBasis, RecognitionBox, RecognitionResult, RecognitionScope,
@@ -359,10 +398,13 @@ mod tests {
           run_id: "run_candidate_promotion".to_string(),
           scope: ConsentScope::CandidatePromotionOnly,
           approved_action: ConsentAction::PromoteRecognitionToCandidate,
+          provenance: ConsentProvenance::HumanGesture,
+          grade: ConsentGrade::HumanApproved,
           approved_at_millis: 1,
           evidence_note: "unit test explicit consent".to_string(),
         }),
       }),
+      allow_dev_self_minted_consent: false,
     }
   }
 
@@ -449,6 +491,7 @@ mod tests {
         },
         freshness: None,
         permission: None,
+        allow_dev_self_minted_consent: false,
       },
     );
 
@@ -587,6 +630,68 @@ mod tests {
         reasons: vec![PromotionRefusal::PermissionMissing]
       }
     );
+  }
+
+  #[test]
+  fn dev_self_minted_permission_refuses_without_explicit_dev_allow() {
+    let recognition = sample_recognition();
+    let decision = promote_recognition_to_candidates(
+      &recognition,
+      &PromotionContext {
+        permission: Some(ActionPermission {
+          granted_by: "dev-cli".to_string(),
+          scope_note: "local dev-only promotion".to_string(),
+          consent: Some(ActionConsentRecord {
+            consent_id: "consent_dev".to_string(),
+            recognition_id: recognition.recognition_id.clone(),
+            run_id: "run_candidate_promotion".to_string(),
+            scope: ConsentScope::CandidatePromotionOnly,
+            approved_action: ConsentAction::PromoteRecognitionToCandidate,
+            provenance: ConsentProvenance::DevSelfMinted,
+            grade: ConsentGrade::DevOnly,
+            approved_at_millis: 1,
+            evidence_note: "dev-only fixture consent".to_string(),
+          }),
+        }),
+        ..sample_context()
+      },
+    );
+
+    assert_eq!(
+      decision,
+      CandidatePromotion::Refused {
+        reasons: vec![PromotionRefusal::PermissionMissing]
+      }
+    );
+  }
+
+  #[test]
+  fn dev_self_minted_permission_can_be_allowed_for_dev_only_paths() {
+    let recognition = sample_recognition();
+    let decision = promote_recognition_to_candidates(
+      &recognition,
+      &PromotionContext {
+        allow_dev_self_minted_consent: true,
+        permission: Some(ActionPermission {
+          granted_by: "dev-cli".to_string(),
+          scope_note: "local dev-only promotion".to_string(),
+          consent: Some(ActionConsentRecord {
+            consent_id: "consent_dev".to_string(),
+            recognition_id: recognition.recognition_id.clone(),
+            run_id: "run_candidate_promotion".to_string(),
+            scope: ConsentScope::CandidatePromotionOnly,
+            approved_action: ConsentAction::PromoteRecognitionToCandidate,
+            provenance: ConsentProvenance::DevSelfMinted,
+            grade: ConsentGrade::DevOnly,
+            approved_at_millis: 1,
+            evidence_note: "dev-only fixture consent".to_string(),
+          }),
+        }),
+        ..sample_context()
+      },
+    );
+
+    assert!(matches!(decision, CandidatePromotion::Promoted { .. }));
   }
 
   #[test]

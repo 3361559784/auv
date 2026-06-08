@@ -169,6 +169,8 @@ pub struct CandidateActionCommandRequest {
   pub max_centroid_drift_px: f64,
   pub require_stable_text: bool,
   pub dev_self_minted_consent: bool,
+  pub human_gesture_consent: bool,
+  pub human_gesture_timeout_ms: u64,
   pub promotion_id: String,
   pub decision_id: String,
   pub execution_id: String,
@@ -226,7 +228,7 @@ USAGE
   auv-cli list-drivers
   auv-cli doctor [--json]
   auv-cli permissions check [--json]
-  auv-cli candidate-action run --target-app <bundle-id> --query <text> --role <ax-role> [--dev-self-minted-consent --granted-by <who>] [--reveal-shortcut <shortcut>] [--reveal-settle-ms <ms>] [--stable-frames <n>] [--stable-frame-delay-ms <ms>] [--max-centroid-drift-px <px>] [--require-stable-text true|false] [--promotion-id <id>] [--decision-id <id>] [--execution-id <id>] [--promotion-scope-note <text>] [--promotion-evidence-note <text>] [--execution-scope-note <text>] [--execution-evidence-note <text>] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
+  auv-cli candidate-action run --target-app <bundle-id> --query <text> --role <ax-role> [(--dev-self-minted-consent --granted-by <who>) | (--human-gesture-consent [--granted-by <who>] [--human-gesture-timeout-ms <ms>])] [--reveal-shortcut <shortcut>] [--reveal-settle-ms <ms>] [--stable-frames <n>] [--stable-frame-delay-ms <ms>] [--max-centroid-drift-px <px>] [--require-stable-text true|false] [--promotion-id <id>] [--decision-id <id>] [--execution-id <id>] [--promotion-scope-note <text>] [--promotion-evidence-note <text>] [--execution-scope-note <text>] [--execution-evidence-note <text>] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
   auv-cli app probe <bundle-id> [--output-dir <dir>]
   auv-cli app analyze <probe-dir-or-probe-json>
   auv-cli app distill <analysis-dir-or-analysis-json> [--output-dir <dir>]
@@ -255,7 +257,7 @@ NOTES
   - `debug.captureDisplay`, `debug.listDisplays`, `debug.listWindows`, `debug.projectScreenshotPoint`, `debug.identifyPoint`, `debug.probeCoordinateReadiness`, `debug.captureAxTree`, `debug.probePermissions`, `debug.focusTextInput`, `debug.pressButton`, `verify.musicNowPlaying`, `verify.axText`, `debug.clickPoint`, and `debug.scrollPoint` are the current desktop donor entrypoints.
   - `debug.overlayShowCursor`, `debug.overlayHideCursor`, and `debug.overlayShutdown` are visual-only macOS overlay probes; standalone `invoke` calls run in separate Rust processes, so use `--hold_ms` on show when manually observing the overlay.
   - `debug.captureAxTree`, `debug.focusTextInput`, and `debug.pressButton` accept `--reveal_shortcut cmd+f`-style hints when an app hides the target UI until a keyboard shortcut reveals it.
-  - `candidate-action run` is the first formal single-action orchestration entrypoint. By default it does not self-mint consent; without an external consent source it records promotion refusal honestly. `--dev-self-minted-consent` exists only for local development smoke.
+  - `candidate-action run` is the first formal single-action orchestration entrypoint. By default it does not self-mint consent; without an external consent source it records promotion refusal honestly. `--dev-self-minted-consent` exists only for local development smoke. `--human-gesture-consent` mints one local human-approved consent through a native macOS approval prompt.
   - `--reveal_settle_ms <millis>` can be used to make the reveal step explicit instead of depending on hard-coded timing assumptions.
   - `debug.typeText` supports `--replace_existing true`, `--submit_key return`, and `--submit_settle_ms 800` for repeatable text-entry flows.
   - `debug.pressKey` supports both special keys like `Return` and shortcuts like `cmd+f`, with optional `--settle_ms`.
@@ -296,7 +298,7 @@ fn parse_permission_check(arguments: &[String]) -> AuvResult<CliCommand> {
 
 fn parse_candidate_action(arguments: &[String]) -> AuvResult<CliCommand> {
   if arguments.len() < 2 || arguments[1] != "run" {
-    return Err("usage: auv-cli candidate-action run --target-app <bundle-id> --query <text> --role <ax-role> [--dev-self-minted-consent --granted-by <who>] [--reveal-shortcut <shortcut>] [--reveal-settle-ms <ms>] [--stable-frames <n>] [--stable-frame-delay-ms <ms>] [--max-centroid-drift-px <px>] [--require-stable-text true|false] [--promotion-id <id>] [--decision-id <id>] [--execution-id <id>] [--promotion-scope-note <text>] [--promotion-evidence-note <text>] [--execution-scope-note <text>] [--execution-evidence-note <text>] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]".to_string());
+    return Err("usage: auv-cli candidate-action run --target-app <bundle-id> --query <text> --role <ax-role> [(--dev-self-minted-consent --granted-by <who>) | (--human-gesture-consent [--granted-by <who>] [--human-gesture-timeout-ms <ms>])] [--reveal-shortcut <shortcut>] [--reveal-settle-ms <ms>] [--stable-frames <n>] [--stable-frame-delay-ms <ms>] [--max-centroid-drift-px <px>] [--require-stable-text true|false] [--promotion-id <id>] [--decision-id <id>] [--execution-id <id>] [--promotion-scope-note <text>] [--promotion-evidence-note <text>] [--execution-scope-note <text>] [--execution-evidence-note <text>] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]".to_string());
   }
 
   let mut request = CandidateActionCommandRequest {
@@ -310,6 +312,8 @@ fn parse_candidate_action(arguments: &[String]) -> AuvResult<CliCommand> {
     max_centroid_drift_px: 4.0,
     require_stable_text: true,
     dev_self_minted_consent: false,
+    human_gesture_consent: false,
+    human_gesture_timeout_ms: 15_000,
     promotion_id: "candidate_promotion".to_string(),
     decision_id: "candidate_decision".to_string(),
     execution_id: "candidate_execution".to_string(),
@@ -352,6 +356,17 @@ fn parse_candidate_action(arguments: &[String]) -> AuvResult<CliCommand> {
       "--dev-self-minted-consent" => {
         request.dev_self_minted_consent = true;
         index += 1;
+      }
+      "--human-gesture-consent" => {
+        request.human_gesture_consent = true;
+        index += 1;
+      }
+      "--human-gesture-timeout-ms" => {
+        request.human_gesture_timeout_ms =
+          required_flag_value(arguments, index, "--human-gesture-timeout-ms")?
+            .parse::<u64>()
+            .map_err(|error| format!("invalid --human-gesture-timeout-ms: {error}"))?;
+        index += 2;
       }
       "--reveal-shortcut" => {
         request.reveal_shortcut = Some(required_flag_value(arguments, index, "--reveal-shortcut")?);
@@ -435,8 +450,16 @@ fn parse_candidate_action(arguments: &[String]) -> AuvResult<CliCommand> {
   if request.role.trim().is_empty() {
     return Err("--role is required".to_string());
   }
+  if request.dev_self_minted_consent && request.human_gesture_consent {
+    return Err(
+      "--dev-self-minted-consent cannot be combined with --human-gesture-consent".to_string(),
+    );
+  }
   if request.dev_self_minted_consent && request.granted_by.trim().is_empty() {
     return Err("--granted-by is required when --dev-self-minted-consent is set".to_string());
+  }
+  if request.human_gesture_timeout_ms == 0 {
+    return Err("--human-gesture-timeout-ms must be greater than 0".to_string());
   }
 
   Ok(CliCommand::CandidateActionRun { request, inspect })
@@ -1518,6 +1541,7 @@ mod tests {
     match command {
       CliCommand::CandidateActionRun { request, .. } => {
         assert!(!request.dev_self_minted_consent);
+        assert!(!request.human_gesture_consent);
         assert_eq!(request.granted_by, "");
       }
       other => panic!("unexpected command: {other:?}"),
@@ -1544,5 +1568,75 @@ mod tests {
       error,
       "--granted-by is required when --dev-self-minted-consent is set"
     );
+  }
+
+  #[test]
+  fn parse_candidate_action_run_command_with_human_gesture_consent() {
+    let command = parse_cli(&[
+      "candidate-action".to_string(),
+      "run".to_string(),
+      "--target-app".to_string(),
+      "com.apple.TextEdit".to_string(),
+      "--query".to_string(),
+      "Body".to_string(),
+      "--role".to_string(),
+      "AXTextArea".to_string(),
+      "--human-gesture-consent".to_string(),
+      "--human-gesture-timeout-ms".to_string(),
+      "4200".to_string(),
+    ])
+    .expect("candidate-action run with human gesture consent should parse");
+
+    match command {
+      CliCommand::CandidateActionRun { request, .. } => {
+        assert!(request.human_gesture_consent);
+        assert!(!request.dev_self_minted_consent);
+        assert_eq!(request.human_gesture_timeout_ms, 4200);
+      }
+      other => panic!("unexpected command: {other:?}"),
+    }
+  }
+
+  #[test]
+  fn parse_candidate_action_run_command_rejects_combined_consent_flags() {
+    let error = parse_cli(&[
+      "candidate-action".to_string(),
+      "run".to_string(),
+      "--target-app".to_string(),
+      "com.apple.TextEdit".to_string(),
+      "--query".to_string(),
+      "Body".to_string(),
+      "--role".to_string(),
+      "AXTextArea".to_string(),
+      "--dev-self-minted-consent".to_string(),
+      "--human-gesture-consent".to_string(),
+      "--granted-by".to_string(),
+      "dev".to_string(),
+    ])
+    .expect_err("combined consent flags should be rejected");
+
+    assert_eq!(
+      error,
+      "--dev-self-minted-consent cannot be combined with --human-gesture-consent"
+    );
+  }
+
+  #[test]
+  fn parse_candidate_action_run_command_rejects_zero_human_gesture_timeout() {
+    let error = parse_cli(&[
+      "candidate-action".to_string(),
+      "run".to_string(),
+      "--target-app".to_string(),
+      "com.apple.TextEdit".to_string(),
+      "--query".to_string(),
+      "Body".to_string(),
+      "--role".to_string(),
+      "AXTextArea".to_string(),
+      "--human-gesture-timeout-ms".to_string(),
+      "0".to_string(),
+    ])
+    .expect_err("zero human gesture timeout should be rejected");
+
+    assert_eq!(error, "--human-gesture-timeout-ms must be greater than 0");
   }
 }

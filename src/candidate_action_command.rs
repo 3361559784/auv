@@ -11,7 +11,10 @@ use crate::candidate_action_decision::{
   CandidateActionPostActionProbe, MacosCandidateActionExecutor,
   execute_and_record_single_candidate_action, record_candidate_action_decision_artifact,
 };
-use crate::candidate_promotion::{CandidatePromotion, PromotionRefusal};
+use crate::candidate_promotion::ConsentProvenance;
+use crate::candidate_promotion::{
+  ActionPermission, CandidatePromotion, ConsentGrade, PromotionRefusal,
+};
 use crate::candidate_promotion_recording::{
   CandidatePromotionArtifactRequest, CandidatePromotionConsentInput,
   explicit_consent_for_candidate_promotion, freshness_from_capture_backed_recognition,
@@ -34,6 +37,8 @@ pub struct CandidateActionCommandRequest {
   pub max_centroid_drift_px: f64,
   pub require_stable_text: bool,
   pub dev_self_minted_consent: bool,
+  pub human_gesture_consent: bool,
+  pub human_gesture_timeout_ms: u64,
   pub promotion_id: String,
   pub decision_id: String,
   pub execution_id: String,
@@ -57,6 +62,14 @@ impl CandidateActionCommandRequest {
     }
     if self.stable_frames == 0 {
       return Err("--stable-frames must be greater than 0".to_string());
+    }
+    if self.dev_self_minted_consent && self.human_gesture_consent {
+      return Err(
+        "--dev-self-minted-consent cannot be combined with --human-gesture-consent".to_string(),
+      );
+    }
+    if self.human_gesture_timeout_ms == 0 {
+      return Err("--human-gesture-timeout-ms must be greater than 0".to_string());
     }
     if self.dev_self_minted_consent {
       if self.granted_by.trim().is_empty() {
@@ -215,6 +228,7 @@ pub fn execute_candidate_action_command(
   let latest = observations
     .last()
     .ok_or_else(|| "candidate action command captured no observations".to_string())?;
+  let human_gesture_approval = request_human_gesture_approval(context, request)?;
 
   let mut promotion_request = CandidatePromotionArtifactRequest::new(
     request.promotion_id.clone(),
@@ -234,7 +248,8 @@ pub fn execute_candidate_action_command(
     )
     .map_err(|error| error.to_string())?,
   );
-  promotion_request.permission = self_minted_promotion_permission(request, latest)?;
+  promotion_request.permission =
+    promotion_permission_for_request(request, latest, human_gesture_approval.as_ref())?;
 
   let (promotion_artifact_ref, promotion) =
     record_candidate_promotion_artifact_with_recognition_projection(
@@ -292,12 +307,20 @@ pub fn execute_candidate_action_command(
   )
   .with_source_candidate_action_decision_artifact(decision_artifact_ref.clone())
   .with_post_action_probe(CandidateActionPostActionProbe::focused_ax_node_reobserved());
-  let execution_request = if let Some(consent) =
-    self_minted_execution_consent(request, &promotion, &decision, &decision_artifact_ref)
-  {
-    execution_request.with_consent(consent)
-  } else {
-    execution_request
+  let execution_request = match execution_consent_for_request(
+    request,
+    &promotion,
+    &decision,
+    &decision_artifact_ref,
+    human_gesture_approval.as_ref(),
+  ) {
+    Some(ExecutionConsentForRequest::DevSelfMinted(consent)) => execution_request
+      .allow_dev_self_minted_consent()
+      .with_consent(consent),
+    Some(ExecutionConsentForRequest::HumanGesture(consent)) => {
+      execution_request.with_consent(consent)
+    }
+    None => execution_request,
   };
 
   let mut executor = MacosCandidateActionExecutor::default();
@@ -348,7 +371,7 @@ fn resolve_target_window_number(app_bundle_id: &str, window_title: &str) -> AuvR
 fn self_minted_promotion_permission(
   request: &CandidateActionCommandRequest,
   recognition: &crate::contract::RecognitionResult,
-) -> AuvResult<Option<crate::candidate_promotion::ActionPermission>> {
+) -> AuvResult<Option<ActionPermission>> {
   if !request.dev_self_minted_consent {
     return Ok(None);
   }
@@ -367,10 +390,44 @@ fn self_minted_promotion_permission(
         scope_note: request.promotion_scope_note.clone(),
         evidence_note: request.promotion_evidence_note.clone(),
         approved_at_millis: now_millis(),
+        provenance: ConsentProvenance::DevSelfMinted,
       },
     )
     .map_err(|error| error.to_string())?,
   ))
+}
+
+#[cfg(target_os = "macos")]
+fn promotion_permission_for_request(
+  request: &CandidateActionCommandRequest,
+  recognition: &crate::contract::RecognitionResult,
+  human_gesture_approval: Option<&HumanGestureApproval>,
+) -> AuvResult<Option<ActionPermission>> {
+  if let Some(approval) = human_gesture_approval {
+    return Ok(Some(
+      explicit_consent_for_candidate_promotion(
+        &request.promotion_id,
+        recognition,
+        CandidatePromotionConsentInput {
+          granted_by: approval.granted_by.clone(),
+          scope_note: human_gesture_scope_note(
+            &request.promotion_scope_note,
+            approval,
+            "candidate_promotion_only",
+          ),
+          evidence_note: human_gesture_evidence_note(
+            &request.promotion_evidence_note,
+            approval,
+            request.human_gesture_timeout_ms,
+          ),
+          approved_at_millis: approval.approved_at_millis,
+          provenance: ConsentProvenance::HumanGesture,
+        },
+      )
+      .map_err(|error| error.to_string())?,
+    ));
+  }
+  self_minted_promotion_permission(request, recognition)
 }
 
 #[cfg(target_os = "macos")]
@@ -386,6 +443,7 @@ fn self_minted_execution_consent(
 
   Some(CandidateActionExecutionConsent {
     consent_id: format!("consent-{}", request.execution_id),
+    execution_id: request.execution_id.clone(),
     granted_by: request.granted_by.clone(),
     scope_note: request.execution_scope_note.clone(),
     run_id: decision_artifact_ref.run_id.as_str().to_string(),
@@ -393,9 +451,178 @@ fn self_minted_execution_consent(
     source_decision_id: decision.decision_id.clone(),
     candidate_local_id: decision.candidate_local_id.clone(),
     approved_action: CandidateActionExecutionConsentAction::ExecuteSingleCandidateAction,
+    provenance: ConsentProvenance::DevSelfMinted,
+    grade: crate::candidate_promotion::ConsentGrade::DevOnly,
     approved_at_millis: now_millis(),
     evidence_note: request.execution_evidence_note.clone(),
   })
+}
+
+#[cfg(target_os = "macos")]
+enum ExecutionConsentForRequest {
+  DevSelfMinted(CandidateActionExecutionConsent),
+  HumanGesture(CandidateActionExecutionConsent),
+}
+
+#[cfg(target_os = "macos")]
+fn execution_consent_for_request(
+  request: &CandidateActionCommandRequest,
+  promotion: &crate::candidate_promotion_recording::CandidatePromotionArtifact,
+  decision: &crate::candidate_action_decision::CandidateActionDecisionArtifact,
+  decision_artifact_ref: &crate::contract::ArtifactRef,
+  human_gesture_approval: Option<&HumanGestureApproval>,
+) -> Option<ExecutionConsentForRequest> {
+  if let Some(approval) = human_gesture_approval {
+    return Some(ExecutionConsentForRequest::HumanGesture(
+      human_gesture_execution_consent(
+        request,
+        promotion,
+        decision,
+        decision_artifact_ref,
+        approval,
+      ),
+    ));
+  }
+  self_minted_execution_consent(request, promotion, decision, decision_artifact_ref)
+    .map(ExecutionConsentForRequest::DevSelfMinted)
+}
+
+#[cfg(target_os = "macos")]
+fn human_gesture_execution_consent(
+  request: &CandidateActionCommandRequest,
+  promotion: &crate::candidate_promotion_recording::CandidatePromotionArtifact,
+  decision: &crate::candidate_action_decision::CandidateActionDecisionArtifact,
+  decision_artifact_ref: &crate::contract::ArtifactRef,
+  approval: &HumanGestureApproval,
+) -> CandidateActionExecutionConsent {
+  CandidateActionExecutionConsent {
+    consent_id: format!("consent-{}", request.execution_id),
+    execution_id: request.execution_id.clone(),
+    granted_by: approval.granted_by.clone(),
+    scope_note: human_gesture_scope_note(
+      &request.execution_scope_note,
+      approval,
+      "execute_single_candidate_action",
+    ),
+    run_id: decision_artifact_ref.run_id.as_str().to_string(),
+    source_promotion_id: promotion.promotion_id.clone(),
+    source_decision_id: decision.decision_id.clone(),
+    candidate_local_id: decision.candidate_local_id.clone(),
+    approved_action: CandidateActionExecutionConsentAction::ExecuteSingleCandidateAction,
+    provenance: ConsentProvenance::HumanGesture,
+    grade: ConsentGrade::HumanApproved,
+    approved_at_millis: approval.approved_at_millis,
+    evidence_note: human_gesture_evidence_note(
+      &request.execution_evidence_note,
+      approval,
+      request.human_gesture_timeout_ms,
+    ),
+  }
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct HumanGestureApproval {
+  granted_by: String,
+  mechanism: String,
+  approved_at_millis: u64,
+}
+
+#[cfg(target_os = "macos")]
+fn request_human_gesture_approval(
+  context: &mut RecordedOperationContext<'_>,
+  request: &CandidateActionCommandRequest,
+) -> AuvResult<Option<HumanGestureApproval>> {
+  if !request.human_gesture_consent {
+    return Ok(None);
+  }
+
+  context.record_event(
+    "candidate.action.command.consent.requested",
+    Some(format!(
+      "requesting human gesture approval for app {} query {:?} role {:?} timeout_ms={}",
+      request.app_bundle_id, request.query, request.role, request.human_gesture_timeout_ms
+    )),
+  );
+
+  let response = auv_driver_macos::native::auth::request_human_approval(
+    human_gesture_prompt_reason(request),
+    request.human_gesture_timeout_ms,
+  )?;
+
+  match response.status {
+    auv_driver_macos::native::auth::NativeHumanApprovalStatus::Approved => {
+      let mechanism = response.mechanism.trim().to_string();
+      let granted_by = human_gesture_granted_by(request, &mechanism);
+      let approved_at_millis = response.approved_at_unix_ms.unwrap_or_else(now_millis);
+      context.record_event(
+        "candidate.action.command.consent.approved",
+        Some(format!(
+          "human gesture approval granted via {} by {} at {}",
+          mechanism, granted_by, approved_at_millis
+        )),
+      );
+      Ok(Some(HumanGestureApproval {
+        granted_by,
+        mechanism,
+        approved_at_millis,
+      }))
+    }
+    status => {
+      context.record_event(
+        "candidate.action.command.consent.not_approved",
+        Some(format!(
+          "human gesture approval ended with status={} mechanism={} message={} recovery={}",
+          status.as_str(),
+          response.mechanism,
+          response.error_message.as_deref().unwrap_or(""),
+          response.recovery_hint.as_deref().unwrap_or(""),
+        )),
+      );
+      Ok(None)
+    }
+  }
+}
+
+#[cfg(target_os = "macos")]
+fn human_gesture_granted_by(request: &CandidateActionCommandRequest, mechanism: &str) -> String {
+  if request.granted_by.trim().is_empty() {
+    format!("human-gesture:{mechanism}")
+  } else {
+    request.granted_by.clone()
+  }
+}
+
+#[cfg(target_os = "macos")]
+fn human_gesture_prompt_reason(request: &CandidateActionCommandRequest) -> String {
+  format!(
+    "Approve one AUV candidate action for app {} targeting query {:?} with role {:?}. This approval is limited to promotion {} and execution {}.",
+    request.app_bundle_id, request.query, request.role, request.promotion_id, request.execution_id
+  )
+}
+
+#[cfg(target_os = "macos")]
+fn human_gesture_scope_note(
+  base_note: &str,
+  approval: &HumanGestureApproval,
+  scope_binding: &str,
+) -> String {
+  format!(
+    "{base_note}; consent_grade=human_approved; provenance=human_gesture; mechanism={}; binding={scope_binding}",
+    approval.mechanism
+  )
+}
+
+#[cfg(target_os = "macos")]
+fn human_gesture_evidence_note(
+  base_note: &str,
+  approval: &HumanGestureApproval,
+  timeout_ms: u64,
+) -> String {
+  format!(
+    "{base_note}; human approval minted via {}; approved_at_millis={}; timeout_ms={timeout_ms}",
+    approval.mechanism, approval.approved_at_millis
+  )
 }
 
 fn promotion_refusal_labels(reasons: &[PromotionRefusal]) -> Vec<String> {
@@ -464,6 +691,8 @@ mod tests {
       max_centroid_drift_px: 4.0,
       require_stable_text: true,
       dev_self_minted_consent: false,
+      human_gesture_consent: false,
+      human_gesture_timeout_ms: 15_000,
       promotion_id: "candidate_promotion".to_string(),
       decision_id: "candidate_decision".to_string(),
       execution_id: "candidate_execution".to_string(),
@@ -488,6 +717,28 @@ mod tests {
     assert_eq!(
       request.validate(),
       Err("--granted-by is required when --dev-self-minted-consent is set".to_string())
+    );
+  }
+
+  #[test]
+  fn validation_rejects_combined_dev_and_human_consent() {
+    let mut request = base_request();
+    request.dev_self_minted_consent = true;
+    request.human_gesture_consent = true;
+    request.granted_by = "dev".to_string();
+    assert_eq!(
+      request.validate(),
+      Err("--dev-self-minted-consent cannot be combined with --human-gesture-consent".to_string())
+    );
+  }
+
+  #[test]
+  fn validation_rejects_zero_human_gesture_timeout() {
+    let mut request = base_request();
+    request.human_gesture_timeout_ms = 0;
+    assert_eq!(
+      request.validate(),
+      Err("--human-gesture-timeout-ms must be greater than 0".to_string())
     );
   }
 

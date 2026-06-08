@@ -3062,10 +3062,13 @@ mod tests {
                 run_id: run_id.as_str().to_string(),
                 scope: ConsentScope::CandidatePromotionOnly,
                 approved_action: ConsentAction::PromoteRecognitionToCandidate,
+                provenance: crate::candidate_promotion::ConsentProvenance::HumanGesture,
+                grade: crate::candidate_promotion::ConsentGrade::HumanApproved,
                 approved_at_millis: 1,
                 evidence_note: "server fixture consent".to_string(),
               }),
             }),
+            allow_dev_self_minted_consent: false,
           },
           decision: CandidatePromotion::Promoted {
             candidates: vec![crate::contract::Candidate {
@@ -3328,6 +3331,7 @@ mod tests {
           }),
           consent: CandidateActionExecutionConsent {
             consent_id: "consent_execute_end_turn".to_string(),
+            execution_id: "execution_end_turn".to_string(),
             granted_by: "human-review".to_string(),
             scope_note: "execute exactly one approved candidate action".to_string(),
             run_id: run_id.as_str().to_string(),
@@ -3335,6 +3339,8 @@ mod tests {
             source_decision_id: "decision_end_turn".to_string(),
             candidate_local_id: "promoted-item_end_turn".to_string(),
             approved_action: CandidateActionExecutionConsentAction::ExecuteSingleCandidateAction,
+            provenance: crate::candidate_promotion::ConsentProvenance::HumanGesture,
+            grade: crate::candidate_promotion::ConsentGrade::HumanApproved,
             approved_at_millis: 2,
             evidence_note: "server fixture execution consent".to_string(),
           },

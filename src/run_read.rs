@@ -127,6 +127,8 @@ pub struct CandidatePromotionLineage {
   pub permission_granted_by: Option<String>,
   pub permission_scope_note: Option<String>,
   pub consent_id: Option<String>,
+  pub consent_provenance: Option<String>,
+  pub consent_grade: Option<String>,
   pub consent_scope: Option<String>,
   pub consent_approved_action: Option<String>,
   pub consent_recognition_id: Option<String>,
@@ -207,6 +209,8 @@ pub struct CandidateActionExecutionLineage {
   pub readiness_blocker: Option<String>,
   pub consent_id: Option<String>,
   pub consent_granted_by: Option<String>,
+  pub consent_provenance: Option<String>,
+  pub consent_grade: Option<String>,
   pub side_effect: Option<String>,
   pub known_limits: Vec<String>,
   pub issue: Option<String>,
@@ -454,6 +458,8 @@ pub(crate) fn extract_candidate_promotion_lineage(
         permission_granted_by: None,
         permission_scope_note: None,
         consent_id: None,
+        consent_provenance: None,
+        consent_grade: None,
         consent_scope: None,
         consent_approved_action: None,
         consent_recognition_id: None,
@@ -508,6 +514,8 @@ pub(crate) fn extract_candidate_promotion_lineage(
         permission_granted_by: None,
         permission_scope_note: None,
         consent_id: None,
+        consent_provenance: None,
+        consent_grade: None,
         consent_scope: None,
         consent_approved_action: None,
         consent_recognition_id: None,
@@ -740,6 +748,8 @@ fn candidate_promotion_lineage_entry(
     permission_granted_by: permission.map(|permission| permission.granted_by.clone()),
     permission_scope_note: permission.map(|permission| permission.scope_note.clone()),
     consent_id: consent.map(|consent| consent.consent_id.clone()),
+    consent_provenance: consent.map(|consent| consent_provenance_string(&consent.provenance)),
+    consent_grade: consent.map(|consent| consent_grade_string(&consent.grade)),
     consent_scope: consent.map(|consent| consent_scope_string(&consent.scope)),
     consent_approved_action: consent.map(|consent| consent_action_string(&consent.approved_action)),
     consent_recognition_id: consent.map(|consent| consent.recognition_id.clone()),
@@ -877,6 +887,8 @@ fn candidate_action_execution_lineage_entry(
     readiness_blocker: detail_string(&execution.detail, &["readiness_blocker"]),
     consent_id: Some(execution.consent.consent_id),
     consent_granted_by: Some(execution.consent.granted_by),
+    consent_provenance: Some(consent_provenance_string(&execution.consent.provenance)),
+    consent_grade: Some(consent_grade_string(&execution.consent.grade)),
     side_effect: Some(candidate_action_execution_side_effect_string(
       &execution.side_effect,
     )),
@@ -912,6 +924,8 @@ fn malformed_candidate_action_execution_lineage(
     readiness_blocker: None,
     consent_id: None,
     consent_granted_by: None,
+    consent_provenance: None,
+    consent_grade: None,
     side_effect: None,
     known_limits: Vec::new(),
     issue: Some(issue),
@@ -1125,6 +1139,20 @@ fn consent_scope_string(scope: &crate::candidate_promotion::ConsentScope) -> Str
     crate::candidate_promotion::ConsentScope::CandidatePromotionOnly => {
       "candidate_promotion_only".to_string()
     }
+  }
+}
+
+fn consent_provenance_string(provenance: &crate::candidate_promotion::ConsentProvenance) -> String {
+  match provenance {
+    crate::candidate_promotion::ConsentProvenance::DevSelfMinted => "dev_self_minted".to_string(),
+    crate::candidate_promotion::ConsentProvenance::HumanGesture => "human_gesture".to_string(),
+  }
+}
+
+fn consent_grade_string(grade: &crate::candidate_promotion::ConsentGrade) -> String {
+  match grade {
+    crate::candidate_promotion::ConsentGrade::DevOnly => "dev_only".to_string(),
+    crate::candidate_promotion::ConsentGrade::HumanApproved => "human_approved".to_string(),
   }
 }
 
@@ -2585,6 +2613,7 @@ mod tests {
       }),
       consent: CandidateActionExecutionConsent {
         consent_id: "consent_execute_end_turn".to_string(),
+        execution_id: "execution_end_turn".to_string(),
         granted_by: "human-review".to_string(),
         scope_note: "execute exactly one approved candidate action".to_string(),
         run_id: "run_read_candidate_action_execution".to_string(),
@@ -2592,6 +2621,8 @@ mod tests {
         source_decision_id: "decision_ready".to_string(),
         candidate_local_id: "promoted-item_end_turn".to_string(),
         approved_action: CandidateActionExecutionConsentAction::ExecuteSingleCandidateAction,
+        provenance: crate::candidate_promotion::ConsentProvenance::HumanGesture,
+        grade: crate::candidate_promotion::ConsentGrade::HumanApproved,
         approved_at_millis: 2,
         evidence_note: "unit test execution consent".to_string(),
       },
@@ -2935,10 +2966,13 @@ mod tests {
             run_id: run_id.as_str().to_string(),
             scope: ConsentScope::CandidatePromotionOnly,
             approved_action: ConsentAction::PromoteRecognitionToCandidate,
+            provenance: crate::candidate_promotion::ConsentProvenance::HumanGesture,
+            grade: crate::candidate_promotion::ConsentGrade::HumanApproved,
             approved_at_millis: 1,
             evidence_note: "fixture consent".to_string(),
           }),
         }),
+        allow_dev_self_minted_consent: false,
       },
       decision,
       recognition: RecognitionResult {

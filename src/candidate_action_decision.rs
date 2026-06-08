@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::action_resolver_decision::{ActionResolverDecision, ActionResolverDecisionInput};
-use crate::candidate_promotion::CandidatePromotion;
+use crate::candidate_promotion::{CandidatePromotion, ConsentGrade, ConsentProvenance};
 use crate::candidate_promotion_recording::CandidatePromotionArtifact;
 use crate::contract::{
   ArtifactRef, Candidate, CandidateRef, FailureLayer, OperationOutput, OperationResult,
@@ -81,6 +81,8 @@ pub struct CandidateActionExecutionRequest {
   pub(crate) execution_id: String,
   pub(crate) source_candidate_action_decision_artifact: Option<ArtifactRef>,
   pub(crate) consent: Option<CandidateActionExecutionConsent>,
+  #[serde(default)]
+  pub(crate) allow_dev_self_minted_consent: bool,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub(crate) readiness: Option<auv_driver::ReadinessReport>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -101,6 +103,7 @@ impl CandidateActionExecutionRequest {
       execution_id: execution_id.clone(),
       source_candidate_action_decision_artifact: None,
       consent: None,
+      allow_dev_self_minted_consent: false,
       readiness: None,
       readiness_debug: None,
       post_action_probe: None,
@@ -118,6 +121,11 @@ impl CandidateActionExecutionRequest {
 
   pub fn with_consent(mut self, consent: CandidateActionExecutionConsent) -> Self {
     self.consent = Some(consent);
+    self
+  }
+
+  pub fn allow_dev_self_minted_consent(mut self) -> Self {
+    self.allow_dev_self_minted_consent = true;
     self
   }
 
@@ -168,6 +176,7 @@ pub enum CandidateActionPostActionProbeKind {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CandidateActionExecutionConsent {
   pub consent_id: String,
+  pub execution_id: String,
   pub granted_by: String,
   pub scope_note: String,
   pub run_id: String,
@@ -175,6 +184,8 @@ pub struct CandidateActionExecutionConsent {
   pub source_decision_id: String,
   pub candidate_local_id: String,
   pub approved_action: CandidateActionExecutionConsentAction,
+  pub provenance: ConsentProvenance,
+  pub grade: ConsentGrade,
   pub approved_at_millis: u64,
   pub evidence_note: String,
 }
@@ -462,6 +473,8 @@ pub fn build_candidate_action_execution_artifact(
     .ok_or(CandidateActionDecisionError::MissingExecutionConsent)?;
   validate_execution_consent(
     &consent,
+    &request.execution_id,
+    request.allow_dev_self_minted_consent,
     promotion,
     decision,
     &source_candidate_action_decision_artifact,
@@ -690,6 +703,8 @@ pub fn execute_single_candidate_action<E: CandidateActionExecutor>(
     .ok_or(CandidateActionDecisionError::MissingExecutionConsent)?;
   validate_execution_consent(
     consent,
+    &request.execution_id,
+    request.allow_dev_self_minted_consent,
     promotion,
     decision,
     source_candidate_action_decision_artifact,
@@ -1174,12 +1189,19 @@ fn target_query(candidate: &Candidate) -> String {
 
 fn validate_execution_consent(
   consent: &CandidateActionExecutionConsent,
+  execution_id: &str,
+  allow_dev_self_minted_consent: bool,
   promotion: &CandidatePromotionArtifact,
   decision: &CandidateActionDecisionArtifact,
   source_decision_artifact: &ArtifactRef,
 ) -> Result<(), CandidateActionDecisionError> {
   if consent.consent_id.trim().is_empty() {
     return Err(consent_mismatch("consent_id is empty"));
+  }
+  if consent.execution_id != execution_id {
+    return Err(consent_mismatch(
+      "execution_id does not match execution request",
+    ));
   }
   if consent.granted_by.trim().is_empty() {
     return Err(consent_mismatch("granted_by is empty"));
@@ -1210,6 +1232,14 @@ fn validate_execution_consent(
   if consent.approved_action != CandidateActionExecutionConsentAction::ExecuteSingleCandidateAction
   {
     return Err(consent_mismatch("approved_action is not execute_single"));
+  }
+  if consent.grade != consent.provenance.expected_grade() {
+    return Err(consent_mismatch("consent grade does not match provenance"));
+  }
+  if !allow_dev_self_minted_consent && consent.grade == ConsentGrade::DevOnly {
+    return Err(consent_mismatch(
+      "dev self-minted execution consent is not allowed on this path",
+    ));
   }
   Ok(())
 }
@@ -1927,7 +1957,7 @@ mod tests {
   };
   use crate::AuvResult;
   use crate::build_runtime_with_store_root;
-  use crate::candidate_promotion::CandidatePromotion;
+  use crate::candidate_promotion::{CandidatePromotion, ConsentGrade, ConsentProvenance};
   use crate::candidate_promotion_recording::{
     CandidatePromotionArtifactRequest, CandidatePromotionConsentInput,
     build_candidate_promotion_artifact, explicit_consent_for_candidate_promotion,
@@ -2070,6 +2100,7 @@ mod tests {
           scope_note: "candidate promotion only, no action execution".to_string(),
           evidence_note: "unit test consent".to_string(),
           approved_at_millis: 1,
+          provenance: ConsentProvenance::HumanGesture,
         },
       )
       .expect("latest recognition is capture-backed"),
@@ -2090,6 +2121,7 @@ mod tests {
   fn execution_consent() -> CandidateActionExecutionConsent {
     CandidateActionExecutionConsent {
       consent_id: "consent_execute_text_area".to_string(),
+      execution_id: "execution_text_area".to_string(),
       granted_by: "human-review".to_string(),
       scope_note: "execute exactly one approved candidate action".to_string(),
       run_id: "run_candidate_action_decision_source".to_string(),
@@ -2097,6 +2129,8 @@ mod tests {
       source_decision_id: "decision_text_area".to_string(),
       candidate_local_id: "promoted-item_text_area".to_string(),
       approved_action: CandidateActionExecutionConsentAction::ExecuteSingleCandidateAction,
+      provenance: ConsentProvenance::HumanGesture,
+      grade: ConsentGrade::HumanApproved,
       approved_at_millis: 2,
       evidence_note: "unit test execution consent".to_string(),
     }
@@ -2560,6 +2594,32 @@ mod tests {
       auv_driver::InputActionResult::single_success(auv_driver::InputDeliveryPath::AxPress),
     )
     .expect_err("mismatched consent must refuse execution");
+
+    assert!(matches!(
+      error,
+      CandidateActionDecisionError::ExecutionConsentMismatch { .. }
+    ));
+  }
+
+  #[test]
+  fn execution_consent_cannot_be_reused_for_another_execution_id() {
+    let promotion = promoted_artifact();
+    let decision = decision_artifact();
+    let request = CandidateActionExecutionRequest::new(
+      "execution_text_area_other",
+      "text-area-action-execution-other",
+    )
+    .with_source_candidate_action_decision_artifact(source_decision_ref())
+    .with_consent(execution_consent());
+
+    let error = build_candidate_action_execution_artifact(
+      &promotion,
+      &decision,
+      &request,
+      RunId::new("run_l8b_execution"),
+      auv_driver::InputActionResult::single_success(auv_driver::InputDeliveryPath::AxPress),
+    )
+    .expect_err("consent must be bound to one execution id");
 
     assert!(matches!(
       error,
@@ -3291,6 +3351,7 @@ mod tests {
           scope_note: "candidate promotion only, no action execution".to_string(),
           evidence_note: "env-gated recorded smoke promotion consent".to_string(),
           approved_at_millis: 1,
+          provenance: ConsentProvenance::HumanGesture,
         },
       )
       .expect("latest recognition is capture-backed"),
@@ -3331,6 +3392,7 @@ mod tests {
           .with_post_action_probe(CandidateActionPostActionProbe::focused_ax_node_reobserved())
           .with_consent(CandidateActionExecutionConsent {
             consent_id: "consent_execute_text_area_smoke".to_string(),
+            execution_id: "execution_text_area_smoke".to_string(),
             granted_by: "human-review".to_string(),
             scope_note: "execute exactly one approved TextEdit smoke action".to_string(),
             run_id: source_decision_ref.run_id.as_str().to_string(),
@@ -3338,6 +3400,8 @@ mod tests {
             source_decision_id: decision.decision_id.clone(),
             candidate_local_id: decision.candidate_local_id.clone(),
             approved_action: CandidateActionExecutionConsentAction::ExecuteSingleCandidateAction,
+            provenance: ConsentProvenance::HumanGesture,
+            grade: ConsentGrade::HumanApproved,
             approved_at_millis: crate::model::now_millis(),
             evidence_note: "env-gated L8b recorded smoke execution consent".to_string(),
           });

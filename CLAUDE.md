@@ -6,9 +6,27 @@ phase.
 
 ## Current Mode
 
-AUV is converging its core contract. Optimize for making observation, action,
-verification, artifacts, trace records, and inspection agree. Do not optimize
-for local prettiness, broad cleanup, or filling every missing piece.
+AUV has converged its core contract on one machine-validated vertical. Keep
+observation, action, verification, artifacts, trace records, and inspection on
+that frozen seam. Do not reopen the seam casually, and do not optimize for
+local prettiness, broad cleanup, or filling every missing piece.
+
+Current validation boundary:
+
+- One real, env-gated macOS AX vertical is proven end to end.
+- The proof is specific to local TextEdit-style execution, not generalized app
+  coverage.
+- New work should extend the frozen contract or add product surface on top of
+  it, not redefine the core runtime seam.
+
+Convergence evidence:
+
+- `run_1780894793708_63155_0`: real match path with delivered input and
+  `semantic_matched=true`.
+- `run_1780894873446_65429_0`: real mismatch path with delivered input and
+  honest semantic refusal.
+- `run_1780894756352_61303_0`: real readiness refusal with
+  `input_delivery=not_attempted`.
 
 Current seam to preserve:
 

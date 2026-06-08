@@ -99,6 +99,7 @@ async fn run() -> Result<(), String> {
           stable_frame_delay_ms: request.stable_frame_delay_ms,
           max_centroid_drift_px: request.max_centroid_drift_px,
           require_stable_text: request.require_stable_text,
+          dev_self_minted_consent: request.dev_self_minted_consent,
           promotion_id: request.promotion_id,
           decision_id: request.decision_id,
           execution_id: request.execution_id,
@@ -110,9 +111,20 @@ async fn run() -> Result<(), String> {
         },
       )?;
       println!("runId: {}", output.run_id);
+      println!("status: {}", output.value.status.as_str());
       println!("promotionArtifact: {}", output.value.promotion_artifact_id);
-      println!("decisionArtifact: {}", output.value.decision_artifact_id);
-      println!("executionArtifact: {}", output.value.execution_artifact_id);
+      if let Some(decision_artifact_id) = output.value.decision_artifact_id.as_deref() {
+        println!("decisionArtifact: {decision_artifact_id}");
+      }
+      if let Some(execution_artifact_id) = output.value.execution_artifact_id.as_deref() {
+        println!("executionArtifact: {execution_artifact_id}");
+      }
+      if !output.value.promotion_refusals.is_empty() {
+        println!(
+          "promotionRefusals: {}",
+          output.value.promotion_refusals.join(",")
+        );
+      }
     }
     CliCommand::XtaskGenerateSwiftBridge => unreachable!("xtask is handled before runtime setup"),
     CliCommand::ListCommands => {

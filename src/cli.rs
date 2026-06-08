@@ -168,6 +168,7 @@ pub struct CandidateActionCommandRequest {
   pub stable_frame_delay_ms: u64,
   pub max_centroid_drift_px: f64,
   pub require_stable_text: bool,
+  pub dev_self_minted_consent: bool,
   pub promotion_id: String,
   pub decision_id: String,
   pub execution_id: String,
@@ -225,7 +226,7 @@ USAGE
   auv-cli list-drivers
   auv-cli doctor [--json]
   auv-cli permissions check [--json]
-  auv-cli candidate-action run --target-app <bundle-id> --query <text> --role <ax-role> --granted-by <who> [--reveal-shortcut <shortcut>] [--reveal-settle-ms <ms>] [--stable-frames <n>] [--stable-frame-delay-ms <ms>] [--max-centroid-drift-px <px>] [--require-stable-text true|false] [--promotion-id <id>] [--decision-id <id>] [--execution-id <id>] [--promotion-scope-note <text>] [--promotion-evidence-note <text>] [--execution-scope-note <text>] [--execution-evidence-note <text>] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
+  auv-cli candidate-action run --target-app <bundle-id> --query <text> --role <ax-role> [--dev-self-minted-consent --granted-by <who>] [--reveal-shortcut <shortcut>] [--reveal-settle-ms <ms>] [--stable-frames <n>] [--stable-frame-delay-ms <ms>] [--max-centroid-drift-px <px>] [--require-stable-text true|false] [--promotion-id <id>] [--decision-id <id>] [--execution-id <id>] [--promotion-scope-note <text>] [--promotion-evidence-note <text>] [--execution-scope-note <text>] [--execution-evidence-note <text>] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
   auv-cli app probe <bundle-id> [--output-dir <dir>]
   auv-cli app analyze <probe-dir-or-probe-json>
   auv-cli app distill <analysis-dir-or-analysis-json> [--output-dir <dir>]
@@ -254,7 +255,7 @@ NOTES
   - `debug.captureDisplay`, `debug.listDisplays`, `debug.listWindows`, `debug.projectScreenshotPoint`, `debug.identifyPoint`, `debug.probeCoordinateReadiness`, `debug.captureAxTree`, `debug.probePermissions`, `debug.focusTextInput`, `debug.pressButton`, `verify.musicNowPlaying`, `verify.axText`, `debug.clickPoint`, and `debug.scrollPoint` are the current desktop donor entrypoints.
   - `debug.overlayShowCursor`, `debug.overlayHideCursor`, and `debug.overlayShutdown` are visual-only macOS overlay probes; standalone `invoke` calls run in separate Rust processes, so use `--hold_ms` on show when manually observing the overlay.
   - `debug.captureAxTree`, `debug.focusTextInput`, and `debug.pressButton` accept `--reveal_shortcut cmd+f`-style hints when an app hides the target UI until a keyboard shortcut reveals it.
-  - `candidate-action run` is the first formal consent-gated single-action orchestration entrypoint. It captures AX evidence, promotes one candidate, records decide-only lineage, executes one approved action, and records semantic verification in one run.
+  - `candidate-action run` is the first formal single-action orchestration entrypoint. By default it does not self-mint consent; without an external consent source it records promotion refusal honestly. `--dev-self-minted-consent` exists only for local development smoke.
   - `--reveal_settle_ms <millis>` can be used to make the reveal step explicit instead of depending on hard-coded timing assumptions.
   - `debug.typeText` supports `--replace_existing true`, `--submit_key return`, and `--submit_settle_ms 800` for repeatable text-entry flows.
   - `debug.pressKey` supports both special keys like `Return` and shortcuts like `cmd+f`, with optional `--settle_ms`.
@@ -295,7 +296,7 @@ fn parse_permission_check(arguments: &[String]) -> AuvResult<CliCommand> {
 
 fn parse_candidate_action(arguments: &[String]) -> AuvResult<CliCommand> {
   if arguments.len() < 2 || arguments[1] != "run" {
-    return Err("usage: auv-cli candidate-action run --target-app <bundle-id> --query <text> --role <ax-role> --granted-by <who> [--reveal-shortcut <shortcut>] [--reveal-settle-ms <ms>] [--stable-frames <n>] [--stable-frame-delay-ms <ms>] [--max-centroid-drift-px <px>] [--require-stable-text true|false] [--promotion-id <id>] [--decision-id <id>] [--execution-id <id>] [--promotion-scope-note <text>] [--promotion-evidence-note <text>] [--execution-scope-note <text>] [--execution-evidence-note <text>] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]".to_string());
+    return Err("usage: auv-cli candidate-action run --target-app <bundle-id> --query <text> --role <ax-role> [--dev-self-minted-consent --granted-by <who>] [--reveal-shortcut <shortcut>] [--reveal-settle-ms <ms>] [--stable-frames <n>] [--stable-frame-delay-ms <ms>] [--max-centroid-drift-px <px>] [--require-stable-text true|false] [--promotion-id <id>] [--decision-id <id>] [--execution-id <id>] [--promotion-scope-note <text>] [--promotion-evidence-note <text>] [--execution-scope-note <text>] [--execution-evidence-note <text>] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]".to_string());
   }
 
   let mut request = CandidateActionCommandRequest {
@@ -308,6 +309,7 @@ fn parse_candidate_action(arguments: &[String]) -> AuvResult<CliCommand> {
     stable_frame_delay_ms: 150,
     max_centroid_drift_px: 4.0,
     require_stable_text: true,
+    dev_self_minted_consent: false,
     promotion_id: "candidate_promotion".to_string(),
     decision_id: "candidate_decision".to_string(),
     execution_id: "candidate_execution".to_string(),
@@ -346,6 +348,10 @@ fn parse_candidate_action(arguments: &[String]) -> AuvResult<CliCommand> {
       "--granted-by" => {
         request.granted_by = required_flag_value(arguments, index, "--granted-by")?;
         index += 2;
+      }
+      "--dev-self-minted-consent" => {
+        request.dev_self_minted_consent = true;
+        index += 1;
       }
       "--reveal-shortcut" => {
         request.reveal_shortcut = Some(required_flag_value(arguments, index, "--reveal-shortcut")?);
@@ -429,8 +435,8 @@ fn parse_candidate_action(arguments: &[String]) -> AuvResult<CliCommand> {
   if request.role.trim().is_empty() {
     return Err("--role is required".to_string());
   }
-  if request.granted_by.trim().is_empty() {
-    return Err("--granted-by is required".to_string());
+  if request.dev_self_minted_consent && request.granted_by.trim().is_empty() {
+    return Err("--granted-by is required when --dev-self-minted-consent is set".to_string());
   }
 
   Ok(CliCommand::CandidateActionRun { request, inspect })
@@ -1461,6 +1467,7 @@ mod tests {
       "Body".to_string(),
       "--role".to_string(),
       "AXTextArea".to_string(),
+      "--dev-self-minted-consent".to_string(),
       "--granted-by".to_string(),
       "human-review".to_string(),
       "--stable-frames".to_string(),
@@ -1481,6 +1488,7 @@ mod tests {
         assert_eq!(request.app_bundle_id, "com.apple.TextEdit");
         assert_eq!(request.query, "Body");
         assert_eq!(request.role, "AXTextArea");
+        assert!(request.dev_self_minted_consent);
         assert_eq!(request.granted_by, "human-review");
         assert_eq!(request.stable_frames, 3);
         assert_eq!(request.max_centroid_drift_px, 5.5);
@@ -1490,5 +1498,51 @@ mod tests {
       }
       other => panic!("unexpected command: {other:?}"),
     }
+  }
+
+  #[test]
+  fn parse_candidate_action_run_command_without_dev_self_minted_consent_does_not_require_granted_by()
+   {
+    let command = parse_cli(&[
+      "candidate-action".to_string(),
+      "run".to_string(),
+      "--target-app".to_string(),
+      "com.apple.TextEdit".to_string(),
+      "--query".to_string(),
+      "Body".to_string(),
+      "--role".to_string(),
+      "AXTextArea".to_string(),
+    ])
+    .expect("candidate-action run without dev self-minted consent should parse");
+
+    match command {
+      CliCommand::CandidateActionRun { request, .. } => {
+        assert!(!request.dev_self_minted_consent);
+        assert_eq!(request.granted_by, "");
+      }
+      other => panic!("unexpected command: {other:?}"),
+    }
+  }
+
+  #[test]
+  fn parse_candidate_action_run_command_requires_granted_by_when_dev_self_minted_consent_is_enabled()
+   {
+    let error = parse_cli(&[
+      "candidate-action".to_string(),
+      "run".to_string(),
+      "--target-app".to_string(),
+      "com.apple.TextEdit".to_string(),
+      "--query".to_string(),
+      "Body".to_string(),
+      "--role".to_string(),
+      "AXTextArea".to_string(),
+      "--dev-self-minted-consent".to_string(),
+    ])
+    .expect_err("dev self-minted consent without granted-by should be rejected");
+
+    assert_eq!(
+      error,
+      "--granted-by is required when --dev-self-minted-consent is set"
+    );
   }
 }

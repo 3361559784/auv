@@ -703,6 +703,7 @@ mod tests {
       &AxRecognitionRuntimeContext {
         recognition_id: "recognition_ax_done".to_string(),
         source_artifact: sample_artifact_ref(),
+        window_number: None,
       },
       &AxRecognitionPolicy {
         query: Some("Done".to_string()),

@@ -13,7 +13,7 @@ use crate::model::{AuvResult, now_millis};
 use crate::recorded_operation::RecordedOperationContext;
 
 #[cfg(target_os = "macos")]
-use auv_driver_macos::types::{ObservedAxNode, ObservedAxTreeSnapshot};
+use auv_driver_macos::types::{ObservedAxNode, ObservedAxTreeSnapshot, ObservedRect};
 
 const AX_RECOGNITION_ARTIFACT_ROLE: &str = "ax-recognition";
 const AX_RECOGNITION_BRIDGE_VERSION: &str = "ax-tree-recognitionresult.v0";
@@ -52,6 +52,7 @@ pub enum AxBestSelectionStrategy {
 pub struct AxRecognitionRuntimeContext {
   pub recognition_id: String,
   pub source_artifact: ArtifactRef,
+  pub window_number: Option<i64>,
 }
 
 #[cfg(target_os = "macos")]
@@ -118,7 +119,9 @@ pub fn map_ax_tree_to_recognition_result(
 
   let all = scored_nodes
     .iter()
-    .map(|(index, node, score)| recognized_ax_item(*index, node, *score))
+    .map(|(index, node, score)| {
+      recognized_ax_item(*index, node, *score, window_frame_from_snapshot(snapshot))
+    })
     .collect::<Vec<_>>();
   let filtered = all.clone();
   let filtered_node_count = filtered.len();
@@ -133,7 +136,7 @@ pub fn map_ax_tree_to_recognition_result(
       native_display_id: None,
       app_bundle_id: non_empty_string(&snapshot.bundle_id),
       window_title: non_empty_string(&snapshot.window_title),
-      window_number: None,
+      window_number: context.window_number,
       region_hint: None,
       capture_artifact: Some(context.source_artifact.clone()),
       capture_contract_artifact: None,
@@ -187,6 +190,7 @@ pub fn record_ax_tree_recognition_artifact(
   let runtime_context = AxRecognitionRuntimeContext {
     recognition_id: request.recognition_id.clone(),
     source_artifact: ax_tree_artifact_ref.clone(),
+    window_number: None,
   };
   let recognition = map_ax_tree_to_recognition_result(snapshot, &runtime_context, &request.policy)
     .map_err(|error| format!("failed to map AX tree into recognition result: {error}"))?;
@@ -287,7 +291,12 @@ fn score_node(index: usize, node: &ObservedAxNode, policy: &AxRecognitionPolicy)
 }
 
 #[cfg(target_os = "macos")]
-fn recognized_ax_item(index: usize, node: &ObservedAxNode, score: i64) -> RecognizedItem {
+fn recognized_ax_item(
+  index: usize,
+  node: &ObservedAxNode,
+  score: i64,
+  window_frame: Option<&ObservedRect>,
+) -> RecognizedItem {
   RecognizedItem {
     item_id: format!("ax:{}:{}", node.path, index),
     kind: ax_item_kind(node),
@@ -313,8 +322,25 @@ fn recognized_ax_item(index: usize, node: &ObservedAxNode, score: i64) -> Recogn
       "depth": node.depth,
       "coordinate_basis": "ax_frame_bounds",
       "projection_candidate": "identity_window_addressable",
+      "window_frame": window_frame.map(|bounds| {
+        json!({
+          "x": bounds.x,
+          "y": bounds.y,
+          "width": bounds.width,
+          "height": bounds.height,
+        })
+      }),
     }),
   }
+}
+
+#[cfg(target_os = "macos")]
+fn window_frame_from_snapshot(snapshot: &ObservedAxTreeSnapshot) -> Option<&ObservedRect> {
+  snapshot
+    .nodes
+    .iter()
+    .find(|node| node.role == "AXWindow" && has_bounds(node))
+    .map(|node| &node.bounds)
 }
 
 fn select_best(
@@ -500,6 +526,7 @@ mod tests {
       &AxRecognitionRuntimeContext {
         recognition_id: "recognition_ax_done".to_string(),
         source_artifact: artifact_ref(),
+        window_number: None,
       },
       &AxRecognitionPolicy {
         query: Some("Done".to_string()),
@@ -530,6 +557,18 @@ mod tests {
       promotion_projection_for_recognition(&result),
       PromotionProjection::IdentityWindowAddressable
     );
+    assert_eq!(
+      result
+        .best
+        .as_ref()
+        .and_then(|item| item.detail.get("window_frame")),
+      Some(&json!({
+        "x": 0,
+        "y": 0,
+        "width": 120,
+        "height": 40
+      }))
+    );
   }
 
   #[test]
@@ -539,6 +578,7 @@ mod tests {
       &AxRecognitionRuntimeContext {
         recognition_id: "recognition_ax_done".to_string(),
         source_artifact: artifact_ref(),
+        window_number: None,
       },
       &AxRecognitionPolicy::default(),
     )

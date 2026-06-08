@@ -84,6 +84,8 @@ pub struct CandidateActionExecutionRequest {
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub(crate) readiness: Option<auv_driver::ReadinessReport>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub(crate) readiness_debug: Option<serde_json::Value>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
   pub(crate) post_action_probe: Option<CandidateActionPostActionProbe>,
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   pub(crate) post_action_verifications: Vec<VerificationResult>,
@@ -100,6 +102,7 @@ impl CandidateActionExecutionRequest {
       source_candidate_action_decision_artifact: None,
       consent: None,
       readiness: None,
+      readiness_debug: None,
       post_action_probe: None,
       post_action_verifications: Vec::new(),
       artifact_role: CANDIDATE_ACTION_EXECUTION_ARTIFACT_ROLE.to_string(),
@@ -120,6 +123,11 @@ impl CandidateActionExecutionRequest {
 
   pub fn with_readiness(mut self, readiness: auv_driver::ReadinessReport) -> Self {
     self.readiness = Some(readiness);
+    self
+  }
+
+  pub fn with_readiness_debug(mut self, readiness_debug: serde_json::Value) -> Self {
+    self.readiness_debug = Some(readiness_debug);
     self
   }
 
@@ -235,6 +243,10 @@ pub trait CandidateActionExecutor {
     &mut self,
     plan: &CandidateActionDeliveryPlan,
   ) -> AuvResult<auv_driver::InputActionResult>;
+
+  fn readiness_debug(&self) -> Option<serde_json::Value> {
+    None
+  }
 
   // TODO(l8b-post-action-evidence-artifact): this hook returns
   // `VerificationResult`s only. A separate post-action observation artifact is
@@ -540,6 +552,7 @@ pub fn build_candidate_action_execution_artifact(
     "source_promotion_id": promotion.promotion_id,
     "source_decision_id": decision.decision_id,
     "candidate_local_id": candidate.candidate_local_id,
+    "readiness_debug": request.readiness_debug.clone().unwrap_or(serde_json::Value::Null),
   });
 
   Ok(CandidateActionExecutionArtifact {
@@ -627,6 +640,11 @@ pub fn execute_and_record_single_candidate_action<E: CandidateActionExecutor>(
   )
   .map_err(|error| format!("failed to execute single candidate action: {error}"))?;
   let mut request = request.clone().with_readiness(artifact.readiness.clone());
+  if let Some(debug) = artifact.detail.get("readiness_debug").cloned()
+    && !debug.is_null()
+  {
+    request = request.with_readiness_debug(debug);
+  }
   request.post_action_verifications = artifact
     .operation_result
     .verifications
@@ -683,7 +701,10 @@ pub fn execute_single_candidate_action<E: CandidateActionExecutor>(
       .map_err(|error| CandidateActionDecisionError::NotReady {
         reason: error.to_string(),
       })?;
-  let request = request.clone().with_readiness(readiness.clone());
+  let mut request = request.clone().with_readiness(readiness.clone());
+  if let Some(debug) = executor.readiness_debug() {
+    request = request.with_readiness_debug(debug);
+  }
   if !readiness.is_ready() {
     return build_candidate_action_execution_artifact(
       promotion,
@@ -858,7 +879,10 @@ fn number_field(value: &serde_json::Value, key: &str) -> Option<f64> {
 }
 
 #[cfg(target_os = "macos")]
-pub struct MacosCandidateActionExecutor;
+#[derive(Default)]
+pub struct MacosCandidateActionExecutor {
+  readiness_debug: Option<serde_json::Value>,
+}
 
 #[cfg(target_os = "macos")]
 impl CandidateActionExecutor for MacosCandidateActionExecutor {
@@ -896,6 +920,16 @@ impl CandidateActionExecutor for MacosCandidateActionExecutor {
       plan.window_y,
     )
     .with_expected_window_frame(plan.expected_window_frame);
+    let target = windows
+      .iter()
+      .find(|window| window_matches_plan(window, plan));
+    self.readiness_debug = Some(json!({
+      "plan": render_delivery_plan_debug(plan),
+      "frontmost_window": frontmost.as_ref().map(|window| render_window_debug(window)),
+      "matched_window": target.map(render_window_debug),
+      "windows": windows.iter().map(render_window_debug).collect::<Vec<_>>(),
+      "readiness_probe_input": input,
+    }));
     Ok(auv_driver_macos::assess_readiness(
       &permissions,
       &windows,
@@ -1041,6 +1075,10 @@ impl CandidateActionExecutor for MacosCandidateActionExecutor {
         )])
       }
     }
+  }
+
+  fn readiness_debug(&self) -> Option<serde_json::Value> {
+    self.readiness_debug.clone()
   }
 }
 
@@ -1349,6 +1387,35 @@ fn input_delivery_summary(readiness_ready: bool, delivery_succeeded: bool) -> &'
   } else {
     "failed"
   }
+}
+
+fn render_delivery_plan_debug(plan: &CandidateActionDeliveryPlan) -> serde_json::Value {
+  json!({
+    "selected_method": plan.selected_method,
+    "target_grounding": plan.target_grounding,
+    "target_query": plan.target_query,
+    "window_number": plan.window_number,
+    "window_title": plan.window_title,
+    "app_bundle_id": plan.app_bundle_id,
+    "expected_window_frame": plan.expected_window_frame,
+    "window_x": plan.window_x,
+    "window_y": plan.window_y,
+    "click_count": plan.click_count,
+  })
+}
+
+fn render_window_debug(window: &auv_driver::Window) -> serde_json::Value {
+  json!({
+    "window_ref": window.reference.id,
+    "title": window.title,
+    "app_name": window.app_name,
+    "app_bundle_id": window.app_bundle_id,
+    "process_id": window.process_id,
+    "frame": window.frame,
+    "coordinate_space": window.coordinate_space,
+    "is_main": window.is_main,
+    "is_visible": window.is_visible,
+  })
 }
 
 fn readiness_status_label(status: &auv_driver::ReadinessStatus) -> &'static str {
@@ -2729,6 +2796,78 @@ mod tests {
   }
 
   #[test]
+  fn recorded_operation_preserves_readiness_debug_from_execute_path() {
+    let project_root = temp_dir("candidate-action-execute-readiness-debug-record-project");
+    let store_root = temp_dir("candidate-action-execute-readiness-debug-record-store");
+    fs::create_dir_all(&project_root).expect("project root should exist");
+    let runtime = build_runtime_with_store_root(project_root.clone(), store_root.clone())
+      .expect("runtime should build");
+    let promotion = promoted_artifact();
+    let decision = decision_artifact();
+    let mut executor = FakeExecutor {
+      result: auv_driver::InputActionResult::single_success(
+        auv_driver::InputDeliveryPath::WindowTargetedMouse,
+      ),
+      readiness: ready_report(),
+      observed_plan: None,
+      executed: false,
+    };
+
+    let output = runtime
+      .run_recorded_operation(
+        RunSpec::new(RunType::Execute, "auv.candidate.action.execute_single"),
+        "Candidate action execute-and-record readiness debug fixture",
+        |context| {
+          let decision_source_path = project_root.join("candidate-action-decision-source.json");
+          fs::write(&decision_source_path, "{\"fixture\":true}\n")
+            .expect("decision source should write");
+          let (_, source_decision_ref) = context
+            .stage_artifact_file_with_ref(
+              "candidate-action-decision",
+              &decision_source_path,
+              "candidate-action-decision-source.json",
+              Some("Recorded source action decision artifact.".to_string()),
+            )
+            .expect("source decision artifact should stage");
+
+          let request = CandidateActionExecutionRequest::new(
+            "execution_text_area",
+            "text-area-action-execution",
+          )
+          .with_source_candidate_action_decision_artifact(source_decision_ref.clone())
+          .with_consent(CandidateActionExecutionConsent {
+            run_id: source_decision_ref.run_id.as_str().to_string(),
+            ..execution_consent()
+          })
+          .with_readiness_debug(json!({
+            "collector": "execute_path",
+            "window_ref": 11
+          }));
+          execute_and_record_single_candidate_action(
+            context,
+            &mut executor,
+            &promotion,
+            &decision,
+            &request,
+          )
+        },
+      )
+      .expect("execute-and-record operation should succeed");
+
+    let (_artifact_ref, artifact) = output.value;
+    assert_eq!(
+      artifact.detail["readiness_debug"],
+      json!({
+        "collector": "execute_path",
+        "window_ref": 11
+      })
+    );
+
+    let _ = fs::remove_dir_all(project_root);
+    let _ = fs::remove_dir_all(store_root);
+  }
+
+  #[test]
   fn recorded_operation_keeps_post_action_semantic_verification_from_execute_path() {
     let project_root = temp_dir("candidate-action-execute-post-action-record-project");
     let store_root = temp_dir("candidate-action-execute-post-action-record-store");
@@ -3039,7 +3178,7 @@ mod tests {
       .ok()
       .and_then(|value| value.parse::<f64>().ok())
       .unwrap_or(10.0);
-    let mut executor = MacosCandidateActionExecutor;
+    let mut executor = MacosCandidateActionExecutor::default();
     let Some(expected_window_frame) = smoke_expected_window_frame() else {
       eprintln!(
         "skip: AUV_L8B_WINDOW_FRAME_X/Y/WIDTH/HEIGHT are required for readiness-gated L8b smoke"
@@ -3165,7 +3304,7 @@ mod tests {
     .with_source_candidate_promotion_artifact(sample_artifact_ref());
     let decision = build_candidate_action_decision_artifact(&promotion, &decision_request)
       .expect("smoke decision should build");
-    let mut executor = MacosCandidateActionExecutor;
+    let mut executor = MacosCandidateActionExecutor::default();
 
     let output = runtime
       .run_recorded_operation(

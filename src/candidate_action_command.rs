@@ -2,8 +2,8 @@ use std::thread;
 use std::time::Duration;
 
 use crate::ax_recognition::{
-  AxBestSelectionStrategy, AxRecognitionArtifactRequest, AxRecognitionPolicy,
-  record_ax_tree_recognition_artifact,
+  AxBestSelectionStrategy, AxRecognitionPolicy, AxRecognitionRuntimeContext,
+  map_ax_tree_to_recognition_result,
 };
 use crate::candidate_action_decision::{
   CandidateActionDecisionRequest, CandidateActionExecutionConsent,
@@ -11,6 +11,7 @@ use crate::candidate_action_decision::{
   CandidateActionPostActionProbe, MacosCandidateActionExecutor,
   execute_and_record_single_candidate_action, record_candidate_action_decision_artifact,
 };
+use crate::candidate_promotion::{CandidatePromotion, PromotionRefusal};
 use crate::candidate_promotion_recording::{
   CandidatePromotionArtifactRequest, CandidatePromotionConsentInput,
   explicit_consent_for_candidate_promotion, freshness_from_capture_backed_recognition,
@@ -19,6 +20,7 @@ use crate::candidate_promotion_recording::{
 use crate::model::{AuvResult, now_millis};
 use crate::recorded_operation::RecordedOperationContext;
 use crate::stability::StabilityPolicy;
+use auv_driver::Driver;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct CandidateActionCommandRequest {
@@ -31,6 +33,7 @@ pub struct CandidateActionCommandRequest {
   pub stable_frame_delay_ms: u64,
   pub max_centroid_drift_px: f64,
   pub require_stable_text: bool,
+  pub dev_self_minted_consent: bool,
   pub promotion_id: String,
   pub decision_id: String,
   pub execution_id: String,
@@ -55,30 +58,49 @@ impl CandidateActionCommandRequest {
     if self.stable_frames == 0 {
       return Err("--stable-frames must be greater than 0".to_string());
     }
-    if self.granted_by.trim().is_empty() {
-      return Err("--granted-by is required".to_string());
-    }
-    if self.promotion_scope_note.trim().is_empty() {
-      return Err("--promotion-scope-note must not be empty".to_string());
-    }
-    if self.promotion_evidence_note.trim().is_empty() {
-      return Err("--promotion-evidence-note must not be empty".to_string());
-    }
-    if self.execution_scope_note.trim().is_empty() {
-      return Err("--execution-scope-note must not be empty".to_string());
-    }
-    if self.execution_evidence_note.trim().is_empty() {
-      return Err("--execution-evidence-note must not be empty".to_string());
+    if self.dev_self_minted_consent {
+      if self.granted_by.trim().is_empty() {
+        return Err("--granted-by is required when --dev-self-minted-consent is set".to_string());
+      }
+      if self.promotion_scope_note.trim().is_empty() {
+        return Err("--promotion-scope-note must not be empty".to_string());
+      }
+      if self.promotion_evidence_note.trim().is_empty() {
+        return Err("--promotion-evidence-note must not be empty".to_string());
+      }
+      if self.execution_scope_note.trim().is_empty() {
+        return Err("--execution-scope-note must not be empty".to_string());
+      }
+      if self.execution_evidence_note.trim().is_empty() {
+        return Err("--execution-evidence-note must not be empty".to_string());
+      }
     }
     Ok(())
   }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CandidateActionCommandStatus {
+  PromotionRefused,
+  ExecutedSingleAction,
+}
+
+impl CandidateActionCommandStatus {
+  pub fn as_str(self) -> &'static str {
+    match self {
+      Self::PromotionRefused => "promotion_refused",
+      Self::ExecutedSingleAction => "executed_single_action",
+    }
+  }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CandidateActionCommandOutput {
+  pub status: CandidateActionCommandStatus,
   pub promotion_artifact_id: String,
-  pub decision_artifact_id: String,
-  pub execution_artifact_id: String,
+  pub decision_artifact_id: Option<String>,
+  pub execution_artifact_id: Option<String>,
+  pub promotion_refusals: Vec<String>,
 }
 
 #[cfg(target_os = "macos")]
@@ -125,29 +147,62 @@ pub fn execute_candidate_action_command(
     })?;
 
     let recognition_id = format!("{}-frame-{}", request.promotion_id, frame_index);
-    let (_, recorded_recognition_artifact_ref, recognition) = record_ax_tree_recognition_artifact(
-      context,
-      &capture.snapshot,
-      &ax_report_path,
+    let policy = AxRecognitionPolicy {
+      query: Some(request.query.clone()),
+      role: Some(request.role.clone()),
+      require_bounds: true,
+      best_selection: AxBestSelectionStrategy::SingleFilteredItem,
+    };
+    let window_number =
+      resolve_target_window_number(&request.app_bundle_id, &capture.snapshot.window_title)?;
+    let (_, ax_tree_artifact_ref) = context.stage_artifact_file_with_ref(
       "ax-tree",
-      &format!("{recognition_id}.txt"),
+      &ax_report_path,
+      format!("{recognition_id}.txt"),
       Some(format!(
         "Source AX tree artifact for consent-gated command frame {frame_index}."
       )),
-      &AxRecognitionArtifactRequest {
-        recognition_id: recognition_id.clone(),
-        policy: AxRecognitionPolicy {
-          query: Some(request.query.clone()),
-          role: Some(request.role.clone()),
-          require_bounds: true,
-          best_selection: AxBestSelectionStrategy::SingleFilteredItem,
-        },
-        artifact_role: "ax-recognition".to_string(),
-        artifact_label: format!("{recognition_id}-recognition"),
-        artifact_note:
-          "AX tree-backed RecognitionResult runtime artifact for consent-gated command".to_string(),
-      },
     )?;
+    let recognition = map_ax_tree_to_recognition_result(
+      &capture.snapshot,
+      &AxRecognitionRuntimeContext {
+        recognition_id: recognition_id.clone(),
+        source_artifact: ax_tree_artifact_ref.clone(),
+        window_number,
+      },
+      &policy,
+    )
+    .map_err(|error| format!("failed to map AX tree into recognition result: {error}"))?;
+    let recognition_json = serde_json::to_string_pretty(&recognition)
+      .map(|mut rendered| {
+        rendered.push('\n');
+        rendered
+      })
+      .map_err(|error| format!("failed to encode AX recognition result JSON: {error}"))?;
+    let recognition_source_path =
+      std::env::temp_dir().join(format!("{}-recognition.json", recognition_id));
+    std::fs::write(&recognition_source_path, recognition_json).map_err(|error| {
+      format!(
+        "failed to write AX recognition temp artifact {}: {error}",
+        recognition_source_path.display()
+      )
+    })?;
+    let (_, recorded_recognition_artifact_ref) = context.stage_artifact_file_with_ref(
+      "ax-recognition",
+      &recognition_source_path,
+      format!("{recognition_id}-recognition.json"),
+      Some(
+        "AX tree-backed RecognitionResult runtime artifact for consent-gated command".to_string(),
+      ),
+    )?;
+    let _ = std::fs::remove_file(&recognition_source_path);
+    context.record_event(
+      "ax.recognition.artifact_recorded",
+      Some(format!(
+        "recorded {} from AX tree {}",
+        recorded_recognition_artifact_ref.artifact_id, ax_tree_artifact_ref.artifact_id
+      )),
+    );
     let _ = std::fs::remove_file(&ax_report_path);
     recognition_artifact_ref = Some(recorded_recognition_artifact_ref);
     observations.push(recognition);
@@ -179,19 +234,7 @@ pub fn execute_candidate_action_command(
     )
     .map_err(|error| error.to_string())?,
   );
-  promotion_request.permission = Some(
-    explicit_consent_for_candidate_promotion(
-      &promotion_request.promotion_id,
-      latest,
-      CandidatePromotionConsentInput {
-        granted_by: request.granted_by.clone(),
-        scope_note: request.promotion_scope_note.clone(),
-        evidence_note: request.promotion_evidence_note.clone(),
-        approved_at_millis: now_millis(),
-      },
-    )
-    .map_err(|error| error.to_string())?,
-  );
+  promotion_request.permission = self_minted_promotion_permission(request, latest)?;
 
   let (promotion_artifact_ref, promotion) =
     record_candidate_promotion_artifact_with_recognition_projection(
@@ -199,6 +242,25 @@ pub fn execute_candidate_action_command(
       &observations,
       &promotion_request,
     )?;
+
+  if let CandidatePromotion::Refused { reasons } = &promotion.decision {
+    let refusal_labels = promotion_refusal_labels(reasons);
+    context.record_event(
+      "candidate.action.command.promotion.refused",
+      Some(format!(
+        "promotion {} refused before decide/execute: {}",
+        promotion_artifact_ref.artifact_id,
+        refusal_labels.join(", ")
+      )),
+    );
+    return Ok(CandidateActionCommandOutput {
+      status: CandidateActionCommandStatus::PromotionRefused,
+      promotion_artifact_id: promotion_artifact_ref.artifact_id.as_str().to_string(),
+      decision_artifact_id: None,
+      execution_artifact_id: None,
+      promotion_refusals: refusal_labels,
+    });
+  }
 
   context.record_event(
     "candidate.action.command.promotion.ready",
@@ -229,8 +291,100 @@ pub fn execute_candidate_action_command(
     format!("{}-execution", request.execution_id),
   )
   .with_source_candidate_action_decision_artifact(decision_artifact_ref.clone())
-  .with_post_action_probe(CandidateActionPostActionProbe::focused_ax_node_reobserved())
-  .with_consent(CandidateActionExecutionConsent {
+  .with_post_action_probe(CandidateActionPostActionProbe::focused_ax_node_reobserved());
+  let execution_request = if let Some(consent) =
+    self_minted_execution_consent(request, &promotion, &decision, &decision_artifact_ref)
+  {
+    execution_request.with_consent(consent)
+  } else {
+    execution_request
+  };
+
+  let mut executor = MacosCandidateActionExecutor::default();
+  let (execution_artifact_ref, _execution) = execute_and_record_single_candidate_action(
+    context,
+    &mut executor,
+    &promotion,
+    &decision,
+    &execution_request,
+  )?;
+
+  Ok(CandidateActionCommandOutput {
+    status: CandidateActionCommandStatus::ExecutedSingleAction,
+    promotion_artifact_id: promotion_artifact_ref.artifact_id.as_str().to_string(),
+    decision_artifact_id: Some(decision_artifact_ref.artifact_id.as_str().to_string()),
+    execution_artifact_id: Some(execution_artifact_ref.artifact_id.as_str().to_string()),
+    promotion_refusals: Vec::new(),
+  })
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn execute_candidate_action_command(
+  _context: &mut RecordedOperationContext<'_>,
+  _request: &CandidateActionCommandRequest,
+) -> AuvResult<CandidateActionCommandOutput> {
+  Err("candidate action command is currently implemented only for macOS".to_string())
+}
+
+#[cfg(target_os = "macos")]
+fn resolve_target_window_number(app_bundle_id: &str, window_title: &str) -> AuvResult<Option<i64>> {
+  let driver = auv_driver_macos::MacosDriver::new();
+  let session = driver
+    .open_local()
+    .map_err(|error| format!("failed to open typed macOS driver session: {error}"))?;
+  let mut selector =
+    auv_driver::WindowSelector::default().owned_by(auv_driver::App::bundle_id(app_bundle_id));
+  selector.main_visible = true;
+  if !window_title.trim().is_empty() {
+    selector = selector.title_exact(window_title);
+  }
+  match session.window().resolve(selector) {
+    Ok(window) => Ok(window.reference.id.parse::<i64>().ok()),
+    Err(_) => Ok(None),
+  }
+}
+
+#[cfg(target_os = "macos")]
+fn self_minted_promotion_permission(
+  request: &CandidateActionCommandRequest,
+  recognition: &crate::contract::RecognitionResult,
+) -> AuvResult<Option<crate::candidate_promotion::ActionPermission>> {
+  if !request.dev_self_minted_consent {
+    return Ok(None);
+  }
+
+  // NOTICE(candidate-action-command-dev-consent):
+  // This command can self-mint consent records only behind an explicit dev flag
+  // so local smoke runs can exercise the full path. Product-grade consent must
+  // come from an external human approval source before this command is treated
+  // as a real in-the-loop action surface.
+  Ok(Some(
+    explicit_consent_for_candidate_promotion(
+      &request.promotion_id,
+      recognition,
+      CandidatePromotionConsentInput {
+        granted_by: request.granted_by.clone(),
+        scope_note: request.promotion_scope_note.clone(),
+        evidence_note: request.promotion_evidence_note.clone(),
+        approved_at_millis: now_millis(),
+      },
+    )
+    .map_err(|error| error.to_string())?,
+  ))
+}
+
+#[cfg(target_os = "macos")]
+fn self_minted_execution_consent(
+  request: &CandidateActionCommandRequest,
+  promotion: &crate::candidate_promotion_recording::CandidatePromotionArtifact,
+  decision: &crate::candidate_action_decision::CandidateActionDecisionArtifact,
+  decision_artifact_ref: &crate::contract::ArtifactRef,
+) -> Option<CandidateActionExecutionConsent> {
+  if !request.dev_self_minted_consent {
+    return None;
+  }
+
+  Some(CandidateActionExecutionConsent {
     consent_id: format!("consent-{}", request.execution_id),
     granted_by: request.granted_by.clone(),
     scope_note: request.execution_scope_note.clone(),
@@ -241,30 +395,24 @@ pub fn execute_candidate_action_command(
     approved_action: CandidateActionExecutionConsentAction::ExecuteSingleCandidateAction,
     approved_at_millis: now_millis(),
     evidence_note: request.execution_evidence_note.clone(),
-  });
-
-  let mut executor = MacosCandidateActionExecutor;
-  let (execution_artifact_ref, _execution) = execute_and_record_single_candidate_action(
-    context,
-    &mut executor,
-    &promotion,
-    &decision,
-    &execution_request,
-  )?;
-
-  Ok(CandidateActionCommandOutput {
-    promotion_artifact_id: promotion_artifact_ref.artifact_id.as_str().to_string(),
-    decision_artifact_id: decision_artifact_ref.artifact_id.as_str().to_string(),
-    execution_artifact_id: execution_artifact_ref.artifact_id.as_str().to_string(),
   })
 }
 
-#[cfg(not(target_os = "macos"))]
-pub fn execute_candidate_action_command(
-  _context: &mut RecordedOperationContext<'_>,
-  _request: &CandidateActionCommandRequest,
-) -> AuvResult<CandidateActionCommandOutput> {
-  Err("candidate action command is currently implemented only for macOS".to_string())
+fn promotion_refusal_labels(reasons: &[PromotionRefusal]) -> Vec<String> {
+  reasons.iter().map(promotion_refusal_label).collect()
+}
+
+fn promotion_refusal_label(reason: &PromotionRefusal) -> String {
+  match reason {
+    PromotionRefusal::EmptyRecognition => "empty_recognition".to_string(),
+    PromotionRefusal::NoUnambiguousTarget => "no_unambiguous_target".to_string(),
+    PromotionRefusal::NoRuntimeEvidence => "no_runtime_evidence".to_string(),
+    PromotionRefusal::MissingCaptureArtifact => "missing_capture_artifact".to_string(),
+    PromotionRefusal::ProjectionUnavailable { .. } => "projection_unavailable".to_string(),
+    PromotionRefusal::StabilityUnproven { .. } => "stability_unproven".to_string(),
+    PromotionRefusal::FreshnessUnknown => "freshness_unknown".to_string(),
+    PromotionRefusal::PermissionMissing => "permission_missing".to_string(),
+  }
 }
 
 #[cfg(target_os = "macos")]
@@ -298,6 +446,62 @@ fn activate_app(app_bundle_id: &str) -> AuvResult<()> {
     )
     .map_err(|error| format!("failed to activate target app {app_bundle_id}: {error}"))?;
   Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+  use super::{CandidateActionCommandRequest, CandidateActionCommandStatus};
+
+  fn base_request() -> CandidateActionCommandRequest {
+    CandidateActionCommandRequest {
+      app_bundle_id: "com.apple.TextEdit".to_string(),
+      query: "Body".to_string(),
+      role: "AXTextArea".to_string(),
+      reveal_shortcut: None,
+      reveal_settle_ms: 250,
+      stable_frames: 3,
+      stable_frame_delay_ms: 150,
+      max_centroid_drift_px: 4.0,
+      require_stable_text: true,
+      dev_self_minted_consent: false,
+      promotion_id: "candidate_promotion".to_string(),
+      decision_id: "candidate_decision".to_string(),
+      execution_id: "candidate_execution".to_string(),
+      granted_by: String::new(),
+      promotion_scope_note: "candidate promotion only".to_string(),
+      promotion_evidence_note: "explicit candidate promotion consent".to_string(),
+      execution_scope_note: "execute exactly one approved candidate action".to_string(),
+      execution_evidence_note: "explicit single-action execution consent".to_string(),
+    }
+  }
+
+  #[test]
+  fn validation_allows_missing_granted_by_without_dev_self_minted_consent() {
+    let request = base_request();
+    assert_eq!(request.validate(), Ok(()));
+  }
+
+  #[test]
+  fn validation_requires_granted_by_when_dev_self_minted_consent_is_enabled() {
+    let mut request = base_request();
+    request.dev_self_minted_consent = true;
+    assert_eq!(
+      request.validate(),
+      Err("--granted-by is required when --dev-self-minted-consent is set".to_string())
+    );
+  }
+
+  #[test]
+  fn command_status_strings_are_stable() {
+    assert_eq!(
+      CandidateActionCommandStatus::PromotionRefused.as_str(),
+      "promotion_refused"
+    );
+    assert_eq!(
+      CandidateActionCommandStatus::ExecutedSingleAction.as_str(),
+      "executed_single_action"
+    );
+  }
 }
 
 #[cfg(target_os = "macos")]

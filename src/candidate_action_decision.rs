@@ -21,6 +21,8 @@ pub const CANDIDATE_ACTION_EXECUTION_ARTIFACT_ROLE: &str = "candidate-action-exe
 const CANDIDATE_ACTION_DECISION_ARTIFACT_VERSION: &str = "candidate_action_decision_artifact_v0";
 const CANDIDATE_ACTION_EXECUTION_ARTIFACT_VERSION: &str = "candidate_action_execution_artifact_v0";
 const OPERATION_RESULT_ARTIFACT_ROLE: &str = "operation-result";
+const TYPE_TEXT_POST_ACTION_MAX_ATTEMPTS: usize = 4;
+const TYPE_TEXT_POST_ACTION_RETRY_DELAY_MS: u64 = 75;
 static TEMP_JSON_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1726,39 +1728,40 @@ fn post_action_focused_ax_node_verification(
       ),
     );
   };
-  let capture =
-    match auv_driver_macos::native::ax_tree::capture_ax_tree_snapshot(app_bundle_id, 8, 80) {
-      Ok(capture) => capture,
-      Err(error) => {
-        return post_action_verification(
-          candidate,
-          candidate_ref,
-          evidence_artifacts,
-          VerificationMethod::SemanticMatch,
-          false,
-          Some(FailureLayer::VerificationUnreliable),
-          format!(
-            "post-action focused AX reobserve failed: {error}; {}",
-            window_alive.summary()
-          ),
-        );
-      }
-    };
   let expected = expected_ax_focus_target(candidate, &plan.action);
-  let focused = capture.snapshot.nodes.iter().find(|node| node.focused);
-  let focused_matches = focused
-    .zip(expected.as_ref())
-    .is_some_and(|(focused, expected)| {
-      ax_node_matches_expected(focused, expected, bounds_tolerance_px, &plan.action)
-    });
-  let semantic_matched = window_alive.is_alive_for_action(&plan.action) && focused_matches;
-  let observed_preferred_text = focused.map(ax_node_preferred_text).unwrap_or_default();
-  let observed_searchable_text = focused.map(ax_node_searchable_text).unwrap_or_default();
+  let observation = match observe_focused_ax_until_settled(
+    &plan.action,
+    expected.as_ref(),
+    bounds_tolerance_px,
+    || {
+      auv_driver_macos::native::ax_tree::capture_ax_tree_snapshot(app_bundle_id, 8, 80)
+        .map(|capture| capture.snapshot.nodes.iter().find(|node| node.focused).cloned())
+    },
+  ) {
+    Ok(observation) => observation,
+    Err(error) => {
+      return post_action_verification(
+        candidate,
+        candidate_ref,
+        evidence_artifacts,
+        VerificationMethod::SemanticMatch,
+        false,
+        Some(FailureLayer::VerificationUnreliable),
+        format!(
+          "post-action focused AX reobserve failed: {error}; {}",
+          window_alive.summary()
+        ),
+      );
+    }
+  };
+  let semantic_matched =
+    window_alive.is_alive_for_action(&plan.action) && observation.focused_matches;
   let observed_label = format!(
-    "post-action focused_ax_node_reobserved={} focused_path={} focused_role={} expected_role={} expected_text={} observed_preferred_text={} observed_searchable_text={} {}",
-    focused_matches,
-    focused.map(|node| node.path.as_str()).unwrap_or("none"),
-    focused.map(|node| node.role.as_str()).unwrap_or("none"),
+    "post-action focused_ax_node_reobserved={} attempts={} focused_path={} focused_role={} expected_role={} expected_text={} observed_preferred_text={} observed_searchable_text={} {}",
+    observation.focused_matches,
+    observation.attempts,
+    observation.focused_path,
+    observation.focused_role,
     expected
       .as_ref()
       .and_then(|expected| expected.role.as_deref())
@@ -1767,8 +1770,8 @@ fn post_action_focused_ax_node_verification(
       .as_ref()
       .and_then(|expected| expected.text.as_deref())
       .unwrap_or("none"),
-    observed_preferred_text,
-    observed_searchable_text,
+    observation.observed_preferred_text,
+    observation.observed_searchable_text,
     window_alive.summary()
   );
   post_action_verification(
@@ -1882,6 +1885,17 @@ struct ExpectedAxFocusTarget {
   bounds: Option<auv_driver::Rect>,
 }
 
+#[cfg(target_os = "macos")]
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct FocusedAxObservationSummary {
+  attempts: usize,
+  focused_matches: bool,
+  focused_path: String,
+  focused_role: String,
+  observed_preferred_text: String,
+  observed_searchable_text: String,
+}
+
 fn expected_ax_focus_target(
   candidate: &Candidate,
   action: &CandidateActionKind,
@@ -1926,6 +1940,73 @@ fn expected_ax_focus_target(
     None
   } else {
     Some(ExpectedAxFocusTarget { role, text, bounds })
+  }
+}
+
+#[cfg(target_os = "macos")]
+fn observe_focused_ax_until_settled<F>(
+  action: &CandidateActionKind,
+  expected: Option<&ExpectedAxFocusTarget>,
+  bounds_tolerance_px: f64,
+  mut next_focused_node: F,
+) -> AuvResult<FocusedAxObservationSummary>
+where
+  F: FnMut() -> AuvResult<Option<auv_driver_macos::types::ObservedAxNode>>,
+{
+  let max_attempts = match action {
+    CandidateActionKind::TypeText { .. } => TYPE_TEXT_POST_ACTION_MAX_ATTEMPTS,
+    CandidateActionKind::Click => 1,
+  };
+
+  let mut last = FocusedAxObservationSummary {
+    attempts: 0,
+    focused_matches: false,
+    focused_path: "none".to_string(),
+    focused_role: "none".to_string(),
+    observed_preferred_text: String::new(),
+    observed_searchable_text: String::new(),
+  };
+
+  for attempt_index in 0..max_attempts {
+    let focused = next_focused_node()?;
+    let mut summary =
+      summarize_focused_ax_observation(focused.as_ref(), expected, bounds_tolerance_px, action);
+    summary.attempts = attempt_index + 1;
+    if summary.focused_matches || attempt_index + 1 == max_attempts {
+      return Ok(summary);
+    }
+    last = summary;
+    std::thread::sleep(std::time::Duration::from_millis(
+      TYPE_TEXT_POST_ACTION_RETRY_DELAY_MS,
+    ));
+  }
+
+  Ok(last)
+}
+
+#[cfg(target_os = "macos")]
+fn summarize_focused_ax_observation(
+  focused: Option<&auv_driver_macos::types::ObservedAxNode>,
+  expected: Option<&ExpectedAxFocusTarget>,
+  bounds_tolerance_px: f64,
+  action: &CandidateActionKind,
+) -> FocusedAxObservationSummary {
+  let focused_matches = focused
+    .zip(expected)
+    .is_some_and(|(focused, expected)| {
+      ax_node_matches_expected(focused, expected, bounds_tolerance_px, action)
+    });
+  FocusedAxObservationSummary {
+    attempts: 0,
+    focused_matches,
+    focused_path: focused
+      .map(|node| node.path.clone())
+      .unwrap_or_else(|| "none".to_string()),
+    focused_role: focused
+      .map(|node| node.role.clone())
+      .unwrap_or_else(|| "none".to_string()),
+    observed_preferred_text: focused.map(ax_node_preferred_text).unwrap_or_default(),
+    observed_searchable_text: focused.map(ax_node_searchable_text).unwrap_or_default(),
   }
 }
 
@@ -2154,6 +2235,7 @@ mod tests {
     build_candidate_action_decision_artifact, build_candidate_action_execution_artifact,
     enforce_action_specific_readiness, execute_and_record_single_candidate_action,
     execute_single_candidate_action, expected_ax_focus_target,
+    observe_focused_ax_until_settled,
     record_candidate_action_decision_artifact, record_candidate_action_execution_artifact,
     window_matches_plan,
   };
@@ -3590,6 +3672,60 @@ mod tests {
         text: "AUV_TYPE_TEXT_MARKER_2026_06_09_V5".to_string(),
       }
     ));
+  }
+
+  #[cfg(target_os = "macos")]
+  #[test]
+  fn type_text_post_action_reobserve_retries_until_text_settles() {
+    let expected = ExpectedAxFocusTarget {
+      role: Some("AXTextArea".to_string()),
+      text: Some("Hello from local proposer".to_string()),
+      bounds: Some(auv_driver::Rect::new(20.0, -874.0, 586.0, 382.0)),
+    };
+    let mut attempts = 0usize;
+    let observation = observe_focused_ax_until_settled(
+      &CandidateActionKind::TypeText {
+        text: "Hello from local proposer".to_string(),
+      },
+      Some(&expected),
+      2.0,
+      || {
+        attempts += 1;
+        let value = if attempts == 1 {
+          "Hello from local propose"
+        } else {
+          "Hello from local proposer"
+        };
+        Ok(Some(auv_driver_macos::types::ObservedAxNode {
+          depth: 2,
+          path: "0.0.0".to_string(),
+          role: "AXTextArea".to_string(),
+          subrole: String::new(),
+          title: String::new(),
+          description: String::new(),
+          help: String::new(),
+          identifier: "First Text View".to_string(),
+          placeholder: String::new(),
+          value: value.to_string(),
+          focused: true,
+          bounds: auv_driver_macos::types::ObservedRect {
+            x: 20,
+            y: -874,
+            width: 586,
+            height: 382,
+          },
+        }))
+      },
+    )
+    .expect("type-text post-action reobserve should retry");
+
+    assert_eq!(attempts, 2);
+    assert_eq!(observation.attempts, 2);
+    assert!(observation.focused_matches);
+    assert_eq!(
+      observation.observed_preferred_text,
+      "hello from local proposer"
+    );
   }
 
   #[test]

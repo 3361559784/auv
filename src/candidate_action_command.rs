@@ -1,6 +1,8 @@
 use std::thread;
 use std::time::Duration;
 
+use serde::{Deserialize, Serialize};
+
 use crate::ax_recognition::{
   AxBestSelectionStrategy, AxRecognitionPolicy, AxRecognitionRuntimeContext,
   map_ax_tree_to_recognition_result,
@@ -25,13 +27,20 @@ use crate::model::{AuvResult, now_millis};
 use crate::recorded_operation::RecordedOperationContext;
 use crate::stability::StabilityPolicy;
 use auv_driver::Driver;
+const CANDIDATE_ACTION_PROPOSAL_ARTIFACT_ROLE: &str = "candidate-action-proposal";
+const CANDIDATE_ACTION_PROPOSAL_ARTIFACT_VERSION: &str = "candidate_action_proposal_artifact_v0";
+const OPENAI_RESPONSES_API_URL: &str = "https://api.openai.com/v1/responses";
+const OPENAI_RESPONSES_TIMEOUT_MS: u64 = 30_000;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct CandidateActionCommandRequest {
   pub app_bundle_id: String,
-  pub query: String,
-  pub role: String,
-  pub action: CandidateActionKind,
+  pub query: Option<String>,
+  pub role: Option<String>,
+  pub action: Option<CandidateActionKind>,
+  pub intent: Option<String>,
+  pub proposer_model: Option<String>,
+  pub proposer_base_url: Option<String>,
   pub reveal_shortcut: Option<String>,
   pub reveal_settle_ms: u64,
   pub stable_frames: u32,
@@ -41,6 +50,7 @@ pub struct CandidateActionCommandRequest {
   pub dev_self_minted_consent: bool,
   pub human_gesture_consent: bool,
   pub human_gesture_timeout_ms: u64,
+  pub proposal_id: String,
   pub promotion_id: String,
   pub decision_id: String,
   pub execution_id: String,
@@ -56,16 +66,39 @@ impl CandidateActionCommandRequest {
     if self.app_bundle_id.trim().is_empty() {
       return Err("--target-app is required".to_string());
     }
-    if self.query.trim().is_empty() {
-      return Err("--query is required".to_string());
-    }
-    if self.role.trim().is_empty() {
-      return Err("--role is required".to_string());
-    }
-    if let CandidateActionKind::TypeText { text } = &self.action
-      && text.trim().is_empty()
-    {
-      return Err("--text must not be empty when --action type-text".to_string());
+    match self.mode()? {
+      CandidateActionCommandMode::Direct {
+        query,
+        role,
+        action,
+      } => {
+        if query.trim().is_empty() {
+          return Err("--query is required".to_string());
+        }
+        if role.trim().is_empty() {
+          return Err("--role is required".to_string());
+        }
+        if let CandidateActionKind::TypeText { text } = action
+          && text.trim().is_empty()
+        {
+          return Err("--text must not be empty when --action type-text".to_string());
+        }
+      }
+      CandidateActionCommandMode::ModelProposal {
+        intent,
+        proposer_model,
+        ..
+      } => {
+        if intent.trim().is_empty() {
+          return Err("--intent must not be empty".to_string());
+        }
+        if proposer_model.trim().is_empty() {
+          return Err(
+            "--proposer-model or AUV_MODEL_PROPOSER_MODEL is required when --intent is set"
+              .to_string(),
+          );
+        }
+      }
     }
     if self.stable_frames == 0 {
       return Err("--stable-frames must be greater than 0".to_string());
@@ -95,8 +128,66 @@ impl CandidateActionCommandRequest {
         return Err("--execution-evidence-note must not be empty".to_string());
       }
     }
+    if self.proposal_id.trim().is_empty() {
+      return Err("--proposal-id must not be empty".to_string());
+    }
     Ok(())
   }
+
+  fn mode(&self) -> AuvResult<CandidateActionCommandMode> {
+    if let Some(intent) = self.intent.as_deref() {
+      if self.query.is_some() || self.role.is_some() || self.action.is_some() {
+        return Err(
+          "--intent cannot be combined with --query, --role, --action, or --text".to_string(),
+        );
+      }
+      return Ok(CandidateActionCommandMode::ModelProposal {
+        intent: intent.to_string(),
+        proposer_model: self
+          .proposer_model
+          .clone()
+          .or_else(|| read_env_trimmed("AUV_MODEL_PROPOSER_MODEL"))
+          .unwrap_or_default(),
+        proposer_base_url: self
+          .proposer_base_url
+          .clone()
+          .or_else(|| read_env_trimmed("AUV_MODEL_PROPOSER_BASE_URL"))
+          .unwrap_or_else(|| OPENAI_RESPONSES_API_URL.to_string()),
+      });
+    }
+
+    let query = self
+      .query
+      .clone()
+      .ok_or_else(|| "--query is required".to_string())?;
+    let role = self
+      .role
+      .clone()
+      .ok_or_else(|| "--role is required".to_string())?;
+    let action = self
+      .action
+      .clone()
+      .ok_or_else(|| "--action is required when --intent is not set".to_string())?;
+    Ok(CandidateActionCommandMode::Direct {
+      query,
+      role,
+      action,
+    })
+  }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+enum CandidateActionCommandMode {
+  Direct {
+    query: String,
+    role: String,
+    action: CandidateActionKind,
+  },
+  ModelProposal {
+    intent: String,
+    proposer_model: String,
+    proposer_base_url: String,
+  },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -119,10 +210,94 @@ impl CandidateActionCommandStatus {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CandidateActionCommandOutput {
   pub status: CandidateActionCommandStatus,
+  pub proposal_artifact_id: Option<String>,
   pub promotion_artifact_id: String,
   pub decision_artifact_id: Option<String>,
   pub execution_artifact_id: Option<String>,
   pub promotion_refusals: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+struct CandidateActionProposalArtifact {
+  artifact_version: String,
+  proposal_id: String,
+  source_recognition_artifact: Option<crate::contract::ArtifactRef>,
+  observed_recognition_ids: Vec<String>,
+  proposal_input_recognition_id: String,
+  intent: String,
+  provider: String,
+  model: String,
+  selected_item_path: String,
+  selected_item_id: Option<String>,
+  selected_item_kind: Option<String>,
+  selected_item_text: Option<String>,
+  selected_action: CandidateActionKind,
+  proposal_observed_in_latest_frame: bool,
+  detail: serde_json::Value,
+  known_limits: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct PreparedCandidateActionPlan {
+  action: CandidateActionKind,
+  observations: Vec<crate::contract::RecognitionResult>,
+  recognition_artifact_ref: Option<crate::contract::ArtifactRef>,
+  proposal_artifact_id: Option<String>,
+  approval_target_summary: String,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct ModelSelectionProposal {
+  provider: String,
+  model: String,
+  intent: String,
+  selected_item_path: String,
+  selected_action: CandidateActionKind,
+  reason: String,
+  raw_response_text: String,
+  raw_response_json: serde_json::Value,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct ModelProposalResponse {
+  selected_item_path: String,
+  selected_action_kind: String,
+  selected_action_text: Option<String>,
+  reason: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+struct ProposalObservedItem {
+  item_id: String,
+  path: String,
+  kind: String,
+  text: Option<String>,
+  role: Option<String>,
+  focused: Option<bool>,
+  bounds: ProposalObservedRect,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+struct ProposalObservedRect {
+  x: i64,
+  y: i64,
+  width: i64,
+  height: i64,
+}
+
+trait CandidateActionProposer {
+  fn propose(
+    &self,
+    app_bundle_id: &str,
+    observation: &crate::contract::RecognitionResult,
+    intent: &str,
+  ) -> AuvResult<ModelSelectionProposal>;
+}
+
+struct OpenAiResponsesCandidateActionProposer {
+  api_key: String,
+  model: String,
+  endpoint: String,
 }
 
 #[cfg(target_os = "macos")]
@@ -131,119 +306,20 @@ pub fn execute_candidate_action_command(
   request: &CandidateActionCommandRequest,
 ) -> AuvResult<CandidateActionCommandOutput> {
   request.validate()?;
+  let plan = prepare_candidate_action_plan(context, request)?;
+  let human_gesture_approval =
+    request_human_gesture_approval(context, request, &plan.approval_target_summary)?;
 
-  context.record_event(
-    "candidate.action.command.observe.begin",
-    Some(format!(
-      "capturing {} AX frame(s) for app {} query {:?} role {:?}",
-      request.stable_frames, request.app_bundle_id, request.query, request.role
-    )),
-  );
-
-  let mut observations = Vec::new();
-  let mut recognition_artifact_ref = None;
-
-  for frame_index in 0..request.stable_frames {
-    activate_app(&request.app_bundle_id)?;
-    if let Some(shortcut) = request.reveal_shortcut.as_deref() {
-      press_shortcut(shortcut)?;
-      if request.reveal_settle_ms > 0 {
-        thread::sleep(Duration::from_millis(request.reveal_settle_ms));
-      }
-    }
-
-    let capture =
-      auv_driver_macos::native::ax_tree::capture_ax_tree_snapshot(&request.app_bundle_id, 8, 80)?;
-    let report = auv_driver_macos::native::ax_tree::render_ax_tree_report(&capture);
-    let ax_report_path = std::env::temp_dir().join(format!(
-      "auv-candidate-action-command-ax-{}-{}-{}.txt",
-      frame_index,
-      now_millis(),
-      std::process::id()
-    ));
-    std::fs::write(&ax_report_path, report).map_err(|error| {
-      format!(
-        "failed to write temporary AX tree report {}: {error}",
-        ax_report_path.display()
-      )
-    })?;
-
-    let recognition_id = format!("{}-frame-{}", request.promotion_id, frame_index);
-    let policy = AxRecognitionPolicy {
-      query: Some(request.query.clone()),
-      role: Some(request.role.clone()),
-      require_bounds: true,
-      best_selection: AxBestSelectionStrategy::SingleFilteredItem,
-    };
-    let window_number =
-      resolve_target_window_number(&request.app_bundle_id, &capture.snapshot.window_title)?;
-    let (_, ax_tree_artifact_ref) = context.stage_artifact_file_with_ref(
-      "ax-tree",
-      &ax_report_path,
-      format!("{recognition_id}.txt"),
-      Some(format!(
-        "Source AX tree artifact for consent-gated command frame {frame_index}."
-      )),
-    )?;
-    let recognition = map_ax_tree_to_recognition_result(
-      &capture.snapshot,
-      &AxRecognitionRuntimeContext {
-        recognition_id: recognition_id.clone(),
-        source_artifact: ax_tree_artifact_ref.clone(),
-        window_number,
-      },
-      &policy,
-    )
-    .map_err(|error| format!("failed to map AX tree into recognition result: {error}"))?;
-    let recognition_json = serde_json::to_string_pretty(&recognition)
-      .map(|mut rendered| {
-        rendered.push('\n');
-        rendered
-      })
-      .map_err(|error| format!("failed to encode AX recognition result JSON: {error}"))?;
-    let recognition_source_path =
-      std::env::temp_dir().join(format!("{}-recognition.json", recognition_id));
-    std::fs::write(&recognition_source_path, recognition_json).map_err(|error| {
-      format!(
-        "failed to write AX recognition temp artifact {}: {error}",
-        recognition_source_path.display()
-      )
-    })?;
-    let (_, recorded_recognition_artifact_ref) = context.stage_artifact_file_with_ref(
-      "ax-recognition",
-      &recognition_source_path,
-      format!("{recognition_id}-recognition.json"),
-      Some(
-        "AX tree-backed RecognitionResult runtime artifact for consent-gated command".to_string(),
-      ),
-    )?;
-    let _ = std::fs::remove_file(&recognition_source_path);
-    context.record_event(
-      "ax.recognition.artifact_recorded",
-      Some(format!(
-        "recorded {} from AX tree {}",
-        recorded_recognition_artifact_ref.artifact_id, ax_tree_artifact_ref.artifact_id
-      )),
-    );
-    let _ = std::fs::remove_file(&ax_report_path);
-    recognition_artifact_ref = Some(recorded_recognition_artifact_ref);
-    observations.push(recognition);
-
-    if frame_index + 1 < request.stable_frames && request.stable_frame_delay_ms > 0 {
-      thread::sleep(Duration::from_millis(request.stable_frame_delay_ms));
-    }
-  }
-
-  let latest = observations
+  let latest = plan
+    .observations
     .last()
     .ok_or_else(|| "candidate action command captured no observations".to_string())?;
-  let human_gesture_approval = request_human_gesture_approval(context, request)?;
 
   let mut promotion_request = CandidatePromotionArtifactRequest::new(
     request.promotion_id.clone(),
     format!("{}-promotion", request.promotion_id),
   );
-  promotion_request.source_recognition_artifact = recognition_artifact_ref;
+  promotion_request.source_recognition_artifact = plan.recognition_artifact_ref.clone();
   promotion_request.stability_policy = StabilityPolicy {
     min_frames: request.stable_frames,
     max_centroid_drift_px: request.max_centroid_drift_px,
@@ -263,7 +339,7 @@ pub fn execute_candidate_action_command(
   let (promotion_artifact_ref, promotion) =
     record_candidate_promotion_artifact_with_recognition_projection(
       context,
-      &observations,
+      &plan.observations,
       &promotion_request,
     )?;
 
@@ -279,6 +355,7 @@ pub fn execute_candidate_action_command(
     );
     return Ok(CandidateActionCommandOutput {
       status: CandidateActionCommandStatus::PromotionRefused,
+      proposal_artifact_id: plan.proposal_artifact_id,
       promotion_artifact_id: promotion_artifact_ref.artifact_id.as_str().to_string(),
       decision_artifact_id: None,
       execution_artifact_id: None,
@@ -298,7 +375,7 @@ pub fn execute_candidate_action_command(
     request.decision_id.clone(),
     format!("{}-decision", request.decision_id),
   )
-  .with_action(request.action.clone())
+  .with_action(plan.action.clone())
   .with_source_candidate_promotion_artifact(promotion_artifact_ref.clone());
   let (decision_artifact_ref, decision) =
     record_candidate_action_decision_artifact(context, &promotion, &decision_request)?;
@@ -316,7 +393,7 @@ pub fn execute_candidate_action_command(
     format!("{}-execution", request.execution_id),
   )
   .with_source_candidate_action_decision_artifact(decision_artifact_ref.clone())
-  .with_action(request.action.clone())
+  .with_action(plan.action.clone())
   .with_post_action_probe(CandidateActionPostActionProbe::focused_ax_node_reobserved());
   let execution_request = match execution_consent_for_request(
     request,
@@ -324,6 +401,7 @@ pub fn execute_candidate_action_command(
     &decision,
     &decision_artifact_ref,
     human_gesture_approval.as_ref(),
+    &plan.action,
   ) {
     Some(ExecutionConsentForRequest::DevSelfMinted(consent)) => execution_request
       .allow_dev_self_minted_consent()
@@ -345,6 +423,7 @@ pub fn execute_candidate_action_command(
 
   Ok(CandidateActionCommandOutput {
     status: command_status_for_execution_side_effect(&execution.side_effect),
+    proposal_artifact_id: plan.proposal_artifact_id,
     promotion_artifact_id: promotion_artifact_ref.artifact_id.as_str().to_string(),
     decision_artifact_id: Some(decision_artifact_ref.artifact_id.as_str().to_string()),
     execution_artifact_id: Some(execution_artifact_ref.artifact_id.as_str().to_string()),
@@ -374,6 +453,237 @@ pub fn execute_candidate_action_command(
 }
 
 #[cfg(target_os = "macos")]
+fn prepare_candidate_action_plan(
+  context: &mut RecordedOperationContext<'_>,
+  request: &CandidateActionCommandRequest,
+) -> AuvResult<PreparedCandidateActionPlan> {
+  let mode = request.mode()?;
+  let observation_label = match &mode {
+    CandidateActionCommandMode::Direct {
+      query,
+      role,
+      action,
+    } => format!(
+      "capturing {} AX frame(s) for app {} query {:?} role {:?} action {}",
+      request.stable_frames,
+      request.app_bundle_id,
+      query,
+      role,
+      action.label()
+    ),
+    CandidateActionCommandMode::ModelProposal { intent, .. } => format!(
+      "capturing {} AX frame(s) for app {} for model intent {:?}",
+      request.stable_frames, request.app_bundle_id, intent
+    ),
+  };
+  context.record_event(
+    "candidate.action.command.observe.begin",
+    Some(observation_label),
+  );
+
+  let observation = capture_candidate_action_observations(context, request, &mode)?;
+
+  match mode {
+    CandidateActionCommandMode::Direct {
+      query,
+      role,
+      action,
+    } => {
+      let recognition_artifact_ref = observation.recorded_recognition_artifact_ref.clone();
+      let observations = observation.filtered(query.as_str(), role.as_str())?;
+      Ok(PreparedCandidateActionPlan {
+        action,
+        observations,
+        recognition_artifact_ref,
+        proposal_artifact_id: None,
+        approval_target_summary: format!("query {:?} role {:?}", query, role),
+      })
+    }
+    CandidateActionCommandMode::ModelProposal {
+      intent,
+      proposer_model,
+      proposer_base_url,
+    } => {
+      let proposer =
+        OpenAiResponsesCandidateActionProposer::from_request(&proposer_model, &proposer_base_url)?;
+      let latest = observation
+        .wide_observations
+        .last()
+        .ok_or_else(|| "candidate action command captured no observations".to_string())?;
+      let proposal = proposer.propose(&request.app_bundle_id, latest, &intent)?;
+      let narrowed =
+        narrow_observations_for_model_proposal(&observation.wide_observations, &proposal)?;
+      let proposal_artifact_id = Some(record_model_proposal_artifact(
+        context,
+        request,
+        observation.recorded_recognition_artifact_ref.clone(),
+        &narrowed,
+        &proposal,
+      )?);
+      let selected_path = proposal.selected_item_path.clone();
+      let selected_action = proposal.selected_action.label().to_string();
+      Ok(PreparedCandidateActionPlan {
+        action: proposal.selected_action,
+        observations: narrowed,
+        recognition_artifact_ref: observation.recorded_recognition_artifact_ref,
+        proposal_artifact_id,
+        approval_target_summary: format!(
+          "intent {:?} -> path {:?} action {}",
+          intent, selected_path, selected_action
+        ),
+      })
+    }
+  }
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Clone, Debug, PartialEq)]
+struct CapturedCandidateActionObservations {
+  wide_observations: Vec<crate::contract::RecognitionResult>,
+  recorded_recognition_artifact_ref: Option<crate::contract::ArtifactRef>,
+}
+
+#[cfg(target_os = "macos")]
+impl CapturedCandidateActionObservations {
+  fn filtered(self, query: &str, role: &str) -> AuvResult<Vec<crate::contract::RecognitionResult>> {
+    self
+      .wide_observations
+      .into_iter()
+      .enumerate()
+      .map(|(frame_index, recognition)| {
+        refilter_recognition_frame(
+          recognition,
+          AxRecognitionPolicy {
+            query: Some(query.to_string()),
+            role: Some(role.to_string()),
+            require_bounds: true,
+            best_selection: AxBestSelectionStrategy::SingleFilteredItem,
+          },
+          frame_index,
+        )
+      })
+      .collect()
+  }
+}
+
+#[cfg(target_os = "macos")]
+fn capture_candidate_action_observations(
+  context: &mut RecordedOperationContext<'_>,
+  request: &CandidateActionCommandRequest,
+  mode: &CandidateActionCommandMode,
+) -> AuvResult<CapturedCandidateActionObservations> {
+  let mut wide_observations = Vec::new();
+  let mut recognition_artifact_ref = None;
+
+  for frame_index in 0..request.stable_frames {
+    activate_app(&request.app_bundle_id)?;
+    if let Some(shortcut) = request.reveal_shortcut.as_deref() {
+      press_shortcut(shortcut)?;
+      if request.reveal_settle_ms > 0 {
+        thread::sleep(Duration::from_millis(request.reveal_settle_ms));
+      }
+    }
+
+    let capture =
+      auv_driver_macos::native::ax_tree::capture_ax_tree_snapshot(&request.app_bundle_id, 8, 80)?;
+    let report = auv_driver_macos::native::ax_tree::render_ax_tree_report(&capture);
+    let ax_report_path = std::env::temp_dir().join(format!(
+      "auv-candidate-action-command-ax-{}-{}-{}.txt",
+      frame_index,
+      now_millis(),
+      std::process::id()
+    ));
+    std::fs::write(&ax_report_path, report).map_err(|error| {
+      format!(
+        "failed to write temporary AX tree report {}: {error}",
+        ax_report_path.display()
+      )
+    })?;
+
+    let recognition_id = format!("{}-frame-{}", request.promotion_id, frame_index);
+    let policy = AxRecognitionPolicy {
+      query: None,
+      role: None,
+      require_bounds: true,
+      best_selection: AxBestSelectionStrategy::None,
+    };
+    let window_number =
+      resolve_target_window_number(&request.app_bundle_id, &capture.snapshot.window_title)?;
+    let (_, ax_tree_artifact_ref) = context.stage_artifact_file_with_ref(
+      "ax-tree",
+      &ax_report_path,
+      format!("{recognition_id}.txt"),
+      Some(format!(
+        "Source AX tree artifact for candidate action command frame {frame_index}."
+      )),
+    )?;
+    let mut recognition = map_ax_tree_to_recognition_result(
+      &capture.snapshot,
+      &AxRecognitionRuntimeContext {
+        recognition_id: recognition_id.clone(),
+        source_artifact: ax_tree_artifact_ref.clone(),
+        window_number,
+      },
+      &policy,
+    )
+    .map_err(|error| format!("failed to map AX tree into recognition result: {error}"))?;
+    append_known_limit(
+      &mut recognition.known_limits,
+      "wide AX observation is addressability evidence only; target selection may still be narrowed later",
+    );
+    if matches!(mode, CandidateActionCommandMode::ModelProposal { .. }) {
+      append_known_limit(
+        &mut recognition.known_limits,
+        "final target may be model-proposed before promotion; proposal remains subject to the same refusal-first gate",
+      );
+    }
+    let recognition_json = serde_json::to_string_pretty(&recognition)
+      .map(|mut rendered| {
+        rendered.push('\n');
+        rendered
+      })
+      .map_err(|error| format!("failed to encode AX recognition result JSON: {error}"))?;
+    let recognition_source_path =
+      std::env::temp_dir().join(format!("{}-recognition.json", recognition_id));
+    std::fs::write(&recognition_source_path, recognition_json).map_err(|error| {
+      format!(
+        "failed to write AX recognition temp artifact {}: {error}",
+        recognition_source_path.display()
+      )
+    })?;
+    let (_, recorded_recognition_artifact_ref) = context.stage_artifact_file_with_ref(
+      "ax-recognition",
+      &recognition_source_path,
+      format!("{recognition_id}-recognition.json"),
+      Some(
+        "AX tree-backed RecognitionResult runtime artifact for candidate-action command"
+          .to_string(),
+      ),
+    )?;
+    let _ = std::fs::remove_file(&recognition_source_path);
+    context.record_event(
+      "ax.recognition.artifact_recorded",
+      Some(format!(
+        "recorded {} from AX tree {}",
+        recorded_recognition_artifact_ref.artifact_id, ax_tree_artifact_ref.artifact_id
+      )),
+    );
+    let _ = std::fs::remove_file(&ax_report_path);
+    recognition_artifact_ref = Some(recorded_recognition_artifact_ref);
+    wide_observations.push(recognition);
+
+    if frame_index + 1 < request.stable_frames && request.stable_frame_delay_ms > 0 {
+      thread::sleep(Duration::from_millis(request.stable_frame_delay_ms));
+    }
+  }
+
+  Ok(CapturedCandidateActionObservations {
+    wide_observations,
+    recorded_recognition_artifact_ref: recognition_artifact_ref,
+  })
+}
+
+#[cfg(target_os = "macos")]
 fn resolve_target_window_number(app_bundle_id: &str, window_title: &str) -> AuvResult<Option<i64>> {
   let driver = auv_driver_macos::MacosDriver::new();
   let session = driver
@@ -388,6 +698,283 @@ fn resolve_target_window_number(app_bundle_id: &str, window_title: &str) -> AuvR
   match session.window().resolve(selector) {
     Ok(window) => Ok(window.reference.id.parse::<i64>().ok()),
     Err(_) => Ok(None),
+  }
+}
+
+#[cfg(target_os = "macos")]
+fn refilter_recognition_frame(
+  mut recognition: crate::contract::RecognitionResult,
+  policy: AxRecognitionPolicy,
+  frame_index: usize,
+) -> AuvResult<crate::contract::RecognitionResult> {
+  let filtered = recognition
+    .all
+    .iter()
+    .filter(|item| recognized_item_matches_policy(item, &policy))
+    .cloned()
+    .collect::<Vec<_>>();
+  let best = match policy.best_selection {
+    AxBestSelectionStrategy::None => None,
+    AxBestSelectionStrategy::SingleFilteredItem if filtered.len() == 1 => filtered.first().cloned(),
+    AxBestSelectionStrategy::SingleFilteredItem => None,
+    AxBestSelectionStrategy::HighestScore => filtered
+      .iter()
+      .max_by(|left, right| {
+        left
+          .provider_score
+          .partial_cmp(&right.provider_score)
+          .unwrap_or(std::cmp::Ordering::Equal)
+      })
+      .cloned(),
+  };
+  recognition.filtered = filtered;
+  recognition.best = best;
+  recognition.detail["query"] = serde_json::json!(policy.query);
+  recognition.detail["role"] = serde_json::json!(policy.role);
+  recognition.detail["best_selection"] = serde_json::json!(policy.best_selection);
+  recognition.detail["filtered_node_count"] = serde_json::json!(recognition.filtered.len());
+  if recognition.best.is_none() {
+    append_known_limit(
+      &mut recognition.known_limits,
+      format!(
+        "frame {frame_index} has no single deterministic AX target after direct filter narrowing"
+      ),
+    );
+  }
+  Ok(recognition)
+}
+
+#[cfg(target_os = "macos")]
+fn narrow_observations_for_model_proposal(
+  observations: &[crate::contract::RecognitionResult],
+  proposal: &ModelSelectionProposal,
+) -> AuvResult<Vec<crate::contract::RecognitionResult>> {
+  observations
+    .iter()
+    .enumerate()
+    .map(|(frame_index, recognition)| {
+      let selected_item = recognition
+        .all
+        .iter()
+        .find(|item| recognized_item_path(item) == Some(proposal.selected_item_path.as_str()))
+        .cloned();
+      let mut narrowed = recognition.clone();
+      narrowed.filtered = selected_item.iter().cloned().collect();
+      narrowed.best = selected_item;
+      narrowed.detail["selection_provenance"] = serde_json::json!({
+        "kind": "model_proposal",
+        "provider": proposal.provider,
+        "model": proposal.model,
+        "selected_item_path": proposal.selected_item_path,
+        "selected_action": proposal.selected_action,
+      });
+      append_known_limit(
+        &mut narrowed.known_limits,
+        "best target was narrowed from wide AX observation by a model proposal before promotion",
+      );
+      if narrowed.best.is_none() {
+        append_known_limit(
+          &mut narrowed.known_limits,
+          format!(
+            "frame {frame_index} no longer contains the model-proposed AX path; stability may refuse"
+          ),
+        );
+      }
+      Ok(narrowed)
+    })
+    .collect()
+}
+
+#[cfg(target_os = "macos")]
+fn record_model_proposal_artifact(
+  context: &mut RecordedOperationContext<'_>,
+  request: &CandidateActionCommandRequest,
+  source_recognition_artifact: Option<crate::contract::ArtifactRef>,
+  observations: &[crate::contract::RecognitionResult],
+  proposal: &ModelSelectionProposal,
+) -> AuvResult<String> {
+  let latest = observations
+    .last()
+    .ok_or_else(|| "proposal recording requires at least one narrowed observation".to_string())?;
+  let selected = latest.best.as_ref().ok_or_else(|| {
+    "proposal-selected target must remain addressable in latest frame".to_string()
+  })?;
+  let artifact = CandidateActionProposalArtifact {
+    artifact_version: CANDIDATE_ACTION_PROPOSAL_ARTIFACT_VERSION.to_string(),
+    proposal_id: request.proposal_id.clone(),
+    source_recognition_artifact,
+    observed_recognition_ids: observations
+      .iter()
+      .map(|recognition| recognition.recognition_id.clone())
+      .collect(),
+    proposal_input_recognition_id: latest.recognition_id.clone(),
+    intent: proposal.intent.clone(),
+    provider: proposal.provider.clone(),
+    model: proposal.model.clone(),
+    selected_item_path: proposal.selected_item_path.clone(),
+    selected_item_id: Some(selected.item_id.clone()),
+    selected_item_kind: Some(selected.kind.clone()),
+    selected_item_text: selected.text.clone(),
+    selected_action: proposal.selected_action.clone(),
+    proposal_observed_in_latest_frame: true,
+    detail: serde_json::json!({
+      "reason": proposal.reason,
+      "raw_response_text": proposal.raw_response_text,
+      "raw_response_json": proposal.raw_response_json,
+      "selected_item_path": proposal.selected_item_path,
+      "selected_action": proposal.selected_action,
+    }),
+    known_limits: vec![
+      "model proposal is a fallible producer only; the same promotion/consent/readiness/verify spine still arbitrates execution".to_string(),
+      "proposal artifact records why the target was chosen, not why it was allowed".to_string(),
+    ],
+  };
+  let rendered = serde_json::to_string_pretty(&artifact)
+    .map(|mut rendered| {
+      rendered.push('\n');
+      rendered
+    })
+    .map_err(|error| {
+      format!("failed to encode candidate-action proposal artifact JSON: {error}")
+    })?;
+  let artifact_source_path = std::env::temp_dir().join(format!(
+    "auv-candidate-action-proposal-{}-{}-{}.json",
+    sanitize_artifact_label(&request.proposal_id),
+    now_millis(),
+    std::process::id()
+  ));
+  std::fs::write(&artifact_source_path, rendered).map_err(|error| {
+    format!(
+      "failed to write candidate-action proposal temp artifact {}: {error}",
+      artifact_source_path.display()
+    )
+  })?;
+  let (_, artifact_ref) = context.stage_artifact_file_with_ref(
+    CANDIDATE_ACTION_PROPOSAL_ARTIFACT_ROLE,
+    &artifact_source_path,
+    format!("{}.json", sanitize_artifact_label(&request.proposal_id)),
+    Some("Model-produced candidate-action proposal artifact.".to_string()),
+  )?;
+  let _ = std::fs::remove_file(&artifact_source_path);
+  context.record_event(
+    "candidate.action.command.proposal.recorded",
+    Some(format!(
+      "recorded {} for model proposal path {} action {}",
+      artifact_ref.artifact_id,
+      proposal.selected_item_path,
+      proposal.selected_action.label()
+    )),
+  );
+  Ok(artifact_ref.artifact_id.as_str().to_string())
+}
+
+#[cfg(target_os = "macos")]
+impl OpenAiResponsesCandidateActionProposer {
+  fn from_request(model: &str, endpoint: &str) -> AuvResult<Self> {
+    let api_key = read_env_trimmed("OPENAI_API_KEY")
+      .ok_or_else(|| "OPENAI_API_KEY is required for --intent proposer mode".to_string())?;
+    Ok(Self {
+      api_key,
+      model: model.to_string(),
+      endpoint: endpoint.to_string(),
+    })
+  }
+}
+
+#[cfg(target_os = "macos")]
+impl CandidateActionProposer for OpenAiResponsesCandidateActionProposer {
+  fn propose(
+    &self,
+    app_bundle_id: &str,
+    observation: &crate::contract::RecognitionResult,
+    intent: &str,
+  ) -> AuvResult<ModelSelectionProposal> {
+    let observed_items = observation
+      .all
+      .iter()
+      .map(observed_item_for_model)
+      .collect::<Vec<_>>();
+    if observed_items.is_empty() {
+      return Err("model proposer requires at least one observed AX item".to_string());
+    }
+    let request_body = serde_json::json!({
+      "model": self.model,
+      "input": [
+        {
+          "role": "system",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "You are a proposer only for AUV candidate-action targeting. You must choose exactly one observed AX item path and one action. Never invent a path. Never approve execution. Output strict JSON with keys: selected_item_path, selected_action_kind, selected_action_text, reason. Allowed selected_action_kind values: click, type_text."
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "input_text",
+              "text": format!(
+                "app_bundle_id={app_bundle_id}\nintent={intent}\nobserved_items={}",
+                serde_json::to_string_pretty(&observed_items)
+                  .map_err(|error| format!("failed to encode observed items for proposer prompt: {error}"))?
+              )
+            }
+          ]
+        }
+      ]
+    });
+    let endpoint = self.endpoint.clone();
+    let api_key = self.api_key.clone();
+    // NOTICE(candidate-action-proposer-blocking-http):
+    // `candidate-action run` currently executes inside the CLI's Tokio runtime,
+    // while this proposer path still uses blocking reqwest. Construct and drop
+    // the blocking client inside a dedicated thread so proposer mode cannot
+    // panic on Tokio runtime shutdown. Revisit when this command path becomes
+    // async end-to-end.
+    let response_json = std::thread::spawn(move || -> AuvResult<serde_json::Value> {
+      let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_millis(OPENAI_RESPONSES_TIMEOUT_MS))
+        .build()
+        .map_err(|error| format!("failed to build model proposer HTTP client: {error}"))?;
+      let response = client
+        .post(&endpoint)
+        .bearer_auth(api_key)
+        .header("content-type", "application/json")
+        .json(&request_body)
+        .send()
+        .map_err(|error| format!("candidate-action proposer HTTP request failed: {error}"))?;
+      if !response.status().is_success() {
+        let status = response.status();
+        let body = response
+          .text()
+          .unwrap_or_else(|_| "<failed to read error body>".to_string());
+        return Err(format!(
+          "candidate-action proposer HTTP request failed with status {status}: {body}"
+        ));
+      }
+      response.json::<serde_json::Value>().map_err(|error| {
+        format!("failed to decode candidate-action proposer JSON response: {error}")
+      })
+    })
+    .join()
+    .map_err(|_| "candidate-action proposer HTTP thread panicked".to_string())??;
+    let response_text = response_output_text(&response_json).ok_or_else(|| {
+      "candidate-action proposer response did not contain output_text".to_string()
+    })?;
+    let parsed: ModelProposalResponse = serde_json::from_str(&response_text)
+      .map_err(|error| format!("failed to parse candidate-action proposer JSON text: {error}"))?;
+    let selected_action = parse_model_selected_action(&parsed)?;
+    Ok(ModelSelectionProposal {
+      provider: "openai.responses".to_string(),
+      model: self.model.clone(),
+      intent: intent.to_string(),
+      selected_item_path: parsed.selected_item_path,
+      selected_action,
+      reason: parsed.reason,
+      raw_response_text: response_text,
+      raw_response_json: response_json,
+    })
   }
 }
 
@@ -460,6 +1047,7 @@ fn self_minted_execution_consent(
   promotion: &crate::candidate_promotion_recording::CandidatePromotionArtifact,
   decision: &crate::candidate_action_decision::CandidateActionDecisionArtifact,
   decision_artifact_ref: &crate::contract::ArtifactRef,
+  action: &CandidateActionKind,
 ) -> Option<CandidateActionExecutionConsent> {
   if !request.dev_self_minted_consent {
     return None;
@@ -474,7 +1062,7 @@ fn self_minted_execution_consent(
     source_promotion_id: promotion.promotion_id.clone(),
     source_decision_id: decision.decision_id.clone(),
     candidate_local_id: decision.candidate_local_id.clone(),
-    approved_action: CandidateActionExecutionConsentAction::from_action(&request.action),
+    approved_action: CandidateActionExecutionConsentAction::from_action(action),
     provenance: ConsentProvenance::DevSelfMinted,
     grade: crate::candidate_promotion::ConsentGrade::DevOnly,
     approved_at_millis: now_millis(),
@@ -495,6 +1083,7 @@ fn execution_consent_for_request(
   decision: &crate::candidate_action_decision::CandidateActionDecisionArtifact,
   decision_artifact_ref: &crate::contract::ArtifactRef,
   human_gesture_approval: Option<&HumanGestureApproval>,
+  action: &CandidateActionKind,
 ) -> Option<ExecutionConsentForRequest> {
   if let Some(approval) = human_gesture_approval {
     return Some(ExecutionConsentForRequest::HumanGesture(
@@ -504,10 +1093,11 @@ fn execution_consent_for_request(
         decision,
         decision_artifact_ref,
         approval,
+        action,
       ),
     ));
   }
-  self_minted_execution_consent(request, promotion, decision, decision_artifact_ref)
+  self_minted_execution_consent(request, promotion, decision, decision_artifact_ref, action)
     .map(ExecutionConsentForRequest::DevSelfMinted)
 }
 
@@ -518,6 +1108,7 @@ fn human_gesture_execution_consent(
   decision: &crate::candidate_action_decision::CandidateActionDecisionArtifact,
   decision_artifact_ref: &crate::contract::ArtifactRef,
   approval: &HumanGestureApproval,
+  action: &CandidateActionKind,
 ) -> CandidateActionExecutionConsent {
   CandidateActionExecutionConsent {
     consent_id: format!("consent-{}", request.execution_id),
@@ -532,7 +1123,7 @@ fn human_gesture_execution_consent(
     source_promotion_id: promotion.promotion_id.clone(),
     source_decision_id: decision.decision_id.clone(),
     candidate_local_id: decision.candidate_local_id.clone(),
-    approved_action: CandidateActionExecutionConsentAction::from_action(&request.action),
+    approved_action: CandidateActionExecutionConsentAction::from_action(action),
     provenance: ConsentProvenance::HumanGesture,
     grade: ConsentGrade::HumanApproved,
     approved_at_millis: approval.approved_at_millis,
@@ -556,6 +1147,7 @@ struct HumanGestureApproval {
 fn request_human_gesture_approval(
   context: &mut RecordedOperationContext<'_>,
   request: &CandidateActionCommandRequest,
+  approval_target_summary: &str,
 ) -> AuvResult<Option<HumanGestureApproval>> {
   if !request.human_gesture_consent {
     return Ok(None);
@@ -564,13 +1156,13 @@ fn request_human_gesture_approval(
   context.record_event(
     "candidate.action.command.consent.requested",
     Some(format!(
-      "requesting human gesture approval for app {} query {:?} role {:?} timeout_ms={}",
-      request.app_bundle_id, request.query, request.role, request.human_gesture_timeout_ms
+      "requesting human gesture approval for app {} target {} timeout_ms={}",
+      request.app_bundle_id, approval_target_summary, request.human_gesture_timeout_ms
     )),
   );
 
   let response = auv_driver_macos::native::auth::request_human_approval(
-    human_gesture_prompt_reason(request),
+    human_gesture_prompt_reason(request, approval_target_summary),
     request.human_gesture_timeout_ms,
   )?;
 
@@ -618,10 +1210,13 @@ fn human_gesture_granted_by(request: &CandidateActionCommandRequest, mechanism: 
 }
 
 #[cfg(target_os = "macos")]
-fn human_gesture_prompt_reason(request: &CandidateActionCommandRequest) -> String {
+fn human_gesture_prompt_reason(
+  request: &CandidateActionCommandRequest,
+  approval_target_summary: &str,
+) -> String {
   format!(
-    "Approve one AUV candidate action for app {} targeting query {:?} with role {:?}. This approval is limited to promotion {} and execution {}.",
-    request.app_bundle_id, request.query, request.role, request.promotion_id, request.execution_id
+    "Approve one AUV candidate action for app {} targeting {}. This approval is limited to promotion {} and execution {}.",
+    request.app_bundle_id, approval_target_summary, request.promotion_id, request.execution_id
   )
 }
 
@@ -647,6 +1242,187 @@ fn human_gesture_evidence_note(
     "{base_note}; human approval minted via {}; approved_at_millis={}; timeout_ms={timeout_ms}",
     approval.mechanism, approval.approved_at_millis
   )
+}
+
+#[cfg(target_os = "macos")]
+fn recognized_item_matches_policy(
+  item: &crate::contract::RecognizedItem,
+  policy: &AxRecognitionPolicy,
+) -> bool {
+  if policy.require_bounds && (item.box_.width <= 0 || item.box_.height <= 0) {
+    return false;
+  }
+  if let Some(role) = policy.role.as_deref()
+    && recognized_item_role(item) != Some(role)
+  {
+    return false;
+  }
+  if let Some(query) = policy.query.as_deref() {
+    let query = normalize_for_matching(query);
+    if query.is_empty() {
+      return true;
+    }
+    let searchable = normalize_for_matching(&recognized_item_search_text(item));
+    if !searchable.contains(&query) {
+      return false;
+    }
+  }
+  true
+}
+
+#[cfg(target_os = "macos")]
+fn recognized_item_search_text(item: &crate::contract::RecognizedItem) -> String {
+  [
+    item.text.as_deref().unwrap_or(""),
+    item
+      .detail
+      .get("title")
+      .and_then(serde_json::Value::as_str)
+      .unwrap_or(""),
+    item
+      .detail
+      .get("description")
+      .and_then(serde_json::Value::as_str)
+      .unwrap_or(""),
+    item
+      .detail
+      .get("identifier")
+      .and_then(serde_json::Value::as_str)
+      .unwrap_or(""),
+    item
+      .detail
+      .get("placeholder")
+      .and_then(serde_json::Value::as_str)
+      .unwrap_or(""),
+    item
+      .detail
+      .get("value")
+      .and_then(serde_json::Value::as_str)
+      .unwrap_or(""),
+  ]
+  .join(" ")
+}
+
+#[cfg(target_os = "macos")]
+fn recognized_item_role(item: &crate::contract::RecognizedItem) -> Option<&str> {
+  item.detail.get("role").and_then(serde_json::Value::as_str)
+}
+
+#[cfg(target_os = "macos")]
+fn recognized_item_path(item: &crate::contract::RecognizedItem) -> Option<&str> {
+  item.detail.get("path").and_then(serde_json::Value::as_str)
+}
+
+#[cfg(target_os = "macos")]
+fn observed_item_for_model(item: &crate::contract::RecognizedItem) -> ProposalObservedItem {
+  ProposalObservedItem {
+    item_id: item.item_id.clone(),
+    path: recognized_item_path(item).unwrap_or("").to_string(),
+    kind: item.kind.clone(),
+    text: item.text.clone(),
+    role: recognized_item_role(item).map(str::to_string),
+    focused: item
+      .detail
+      .get("focused")
+      .and_then(serde_json::Value::as_bool),
+    bounds: ProposalObservedRect {
+      x: item.box_.x,
+      y: item.box_.y,
+      width: item.box_.width,
+      height: item.box_.height,
+    },
+  }
+}
+
+#[cfg(target_os = "macos")]
+fn parse_model_selected_action(parsed: &ModelProposalResponse) -> AuvResult<CandidateActionKind> {
+  match parsed.selected_action_kind.as_str() {
+    "click" => Ok(CandidateActionKind::Click),
+    "type_text" | "type-text" => {
+      let text = parsed
+        .selected_action_text
+        .clone()
+        .ok_or_else(|| "type_text proposal requires selected_action_text".to_string())?;
+      if text.trim().is_empty() {
+        return Err("type_text proposal requires non-empty selected_action_text".to_string());
+      }
+      Ok(CandidateActionKind::TypeText { text })
+    }
+    other => Err(format!(
+      "invalid proposer selected_action_kind {other:?}; expected click or type_text"
+    )),
+  }
+}
+
+#[cfg(target_os = "macos")]
+fn response_output_text(value: &serde_json::Value) -> Option<String> {
+  value
+    .get("output_text")
+    .and_then(serde_json::Value::as_str)
+    .map(str::to_string)
+    .or_else(|| {
+      value
+        .get("output")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|output| {
+          output.iter().find_map(|item| {
+            item
+              .get("content")
+              .and_then(serde_json::Value::as_array)
+              .and_then(|content| {
+                content.iter().find_map(|entry| {
+                  entry
+                    .get("text")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string)
+                })
+              })
+          })
+        })
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn append_known_limit(known_limits: &mut Vec<String>, value: impl Into<String>) {
+  let value = value.into();
+  if !known_limits.iter().any(|existing| existing == &value) {
+    known_limits.push(value);
+  }
+}
+
+#[cfg(target_os = "macos")]
+fn read_env_trimmed(key: &str) -> Option<String> {
+  std::env::var(key)
+    .ok()
+    .map(|value| value.trim().to_string())
+    .filter(|value| !value.is_empty())
+}
+
+#[cfg(target_os = "macos")]
+fn normalize_for_matching(value: &str) -> String {
+  value
+    .chars()
+    .filter(|character| !character.is_whitespace())
+    .collect::<String>()
+    .to_lowercase()
+}
+
+#[cfg(target_os = "macos")]
+fn sanitize_artifact_label(raw: &str) -> String {
+  let sanitized = raw
+    .chars()
+    .map(|character| match character {
+      'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' => character,
+      _ => '-',
+    })
+    .collect::<String>()
+    .trim_matches('-')
+    .to_string();
+  if sanitized.is_empty() {
+    "artifact".to_string()
+  } else {
+    sanitized
+  }
 }
 
 fn promotion_refusal_labels(reasons: &[PromotionRefusal]) -> Vec<String> {
@@ -701,18 +1477,34 @@ fn activate_app(app_bundle_id: &str) -> AuvResult<()> {
 
 #[cfg(test)]
 mod tests {
+  use std::io::{Read, Write};
+  use std::net::TcpListener;
+  use std::thread;
+
   use super::{
-    CandidateActionCommandRequest, CandidateActionCommandStatus,
-    command_status_for_execution_side_effect,
+    CandidateActionCommandRequest, CandidateActionCommandStatus, CandidateActionProposer,
+    ModelProposalResponse, ModelSelectionProposal, OpenAiResponsesCandidateActionProposer,
+    command_status_for_execution_side_effect, narrow_observations_for_model_proposal,
+    normalize_for_matching, parse_model_selected_action, recognized_item_matches_policy,
+    response_output_text,
   };
+  use crate::ax_recognition::{AxBestSelectionStrategy, AxRecognitionPolicy};
   use crate::candidate_action_decision::{CandidateActionExecutionSideEffect, CandidateActionKind};
+  use crate::contract::{
+    RecognitionBox, RecognitionResult, RecognitionScope, RecognitionSource, RecognitionSurface,
+    RecognizedItem,
+  };
+  use serde_json::json;
 
   fn base_request() -> CandidateActionCommandRequest {
     CandidateActionCommandRequest {
       app_bundle_id: "com.apple.TextEdit".to_string(),
-      query: "Body".to_string(),
-      role: "AXTextArea".to_string(),
-      action: CandidateActionKind::Click,
+      query: Some("Body".to_string()),
+      role: Some("AXTextArea".to_string()),
+      action: Some(CandidateActionKind::Click),
+      intent: None,
+      proposer_model: None,
+      proposer_base_url: None,
       reveal_shortcut: None,
       reveal_settle_ms: 250,
       stable_frames: 3,
@@ -722,6 +1514,7 @@ mod tests {
       dev_self_minted_consent: false,
       human_gesture_consent: false,
       human_gesture_timeout_ms: 15_000,
+      proposal_id: "candidate_proposal".to_string(),
       promotion_id: "candidate_promotion".to_string(),
       decision_id: "candidate_decision".to_string(),
       execution_id: "candidate_execution".to_string(),
@@ -774,13 +1567,39 @@ mod tests {
   #[test]
   fn validation_requires_text_for_type_text_action() {
     let mut request = base_request();
-    request.action = CandidateActionKind::TypeText {
+    request.action = Some(CandidateActionKind::TypeText {
       text: String::new(),
-    };
+    });
 
     assert_eq!(
       request.validate(),
       Err("--text must not be empty when --action type-text".to_string())
+    );
+  }
+
+  #[test]
+  fn validation_requires_intent_model_in_proposer_mode() {
+    let mut request = base_request();
+    request.intent = Some("type hello".to_string());
+    request.query = None;
+    request.role = None;
+    request.action = None;
+    assert_eq!(
+      request.validate(),
+      Err(
+        "--proposer-model or AUV_MODEL_PROPOSER_MODEL is required when --intent is set".to_string()
+      )
+    );
+  }
+
+  #[test]
+  fn validation_rejects_intent_when_direct_target_flags_are_present() {
+    let mut request = base_request();
+    request.intent = Some("type hello".to_string());
+    request.proposer_model = Some("gpt-5.5".to_string());
+    assert_eq!(
+      request.validate(),
+      Err("--intent cannot be combined with --query, --role, --action, or --text".to_string())
     );
   }
 
@@ -814,6 +1633,286 @@ mod tests {
       ),
       CandidateActionCommandStatus::BlockedNotReady
     );
+  }
+
+  #[test]
+  fn recognized_item_matching_uses_role_and_normalized_text() {
+    let item = RecognizedItem {
+      item_id: "ax:/window/textarea".to_string(),
+      kind: "AXTextArea".to_string(),
+      box_: RecognitionBox {
+        x: 1,
+        y: 2,
+        width: 30,
+        height: 20,
+      },
+      text: Some("First Text View".to_string()),
+      provider_score: Some(100.0),
+      detail: json!({
+        "path": "/window/textarea",
+        "role": "AXTextArea",
+        "focused": true
+      }),
+    };
+    let policy = AxRecognitionPolicy {
+      query: Some("firsttextview".to_string()),
+      role: Some("AXTextArea".to_string()),
+      require_bounds: true,
+      best_selection: AxBestSelectionStrategy::SingleFilteredItem,
+    };
+    assert!(recognized_item_matches_policy(&item, &policy));
+    assert_eq!(normalize_for_matching(" First Text View "), "firsttextview");
+  }
+
+  #[test]
+  fn parse_model_selected_action_supports_click_and_type_text() {
+    assert_eq!(
+      parse_model_selected_action(&ModelProposalResponse {
+        selected_item_path: "/window/button".to_string(),
+        selected_action_kind: "click".to_string(),
+        selected_action_text: None,
+        reason: "button".to_string(),
+      })
+      .expect("click action should parse"),
+      CandidateActionKind::Click
+    );
+    assert_eq!(
+      parse_model_selected_action(&ModelProposalResponse {
+        selected_item_path: "/window/textarea".to_string(),
+        selected_action_kind: "type_text".to_string(),
+        selected_action_text: Some("hello".to_string()),
+        reason: "textarea".to_string(),
+      })
+      .expect("type_text action should parse"),
+      CandidateActionKind::TypeText {
+        text: "hello".to_string()
+      }
+    );
+  }
+
+  #[test]
+  fn response_output_text_reads_top_level_and_nested_shapes() {
+    assert_eq!(
+      response_output_text(
+        &json!({"output_text": "{\"selected_item_path\":\"/p\",\"selected_action_kind\":\"click\",\"reason\":\"ok\"}"})
+      ),
+      Some(
+        "{\"selected_item_path\":\"/p\",\"selected_action_kind\":\"click\",\"reason\":\"ok\"}"
+          .to_string()
+      )
+    );
+    assert_eq!(
+      response_output_text(&json!({
+        "output": [
+          {
+            "content": [
+              {
+                "text": "{\"selected_item_path\":\"/p\",\"selected_action_kind\":\"click\",\"reason\":\"ok\"}"
+              }
+            ]
+          }
+        ]
+      })),
+      Some(
+        "{\"selected_item_path\":\"/p\",\"selected_action_kind\":\"click\",\"reason\":\"ok\"}"
+          .to_string()
+      )
+    );
+  }
+
+  #[test]
+  fn narrow_observations_for_model_proposal_selects_same_ax_path_across_frames() {
+    let observations = vec![
+      sample_wide_recognition("frame-0", "/window/textarea", "Draft 0"),
+      sample_wide_recognition("frame-1", "/window/textarea", "Draft 1"),
+    ];
+    let proposal = ModelSelectionProposal {
+      provider: "openai.responses".to_string(),
+      model: "gpt-5.5".to_string(),
+      intent: "type hello".to_string(),
+      selected_item_path: "/window/textarea".to_string(),
+      selected_action: CandidateActionKind::TypeText {
+        text: "hello".to_string(),
+      },
+      reason: "main text area".to_string(),
+      raw_response_text: "{}".to_string(),
+      raw_response_json: json!({}),
+    };
+
+    let narrowed = narrow_observations_for_model_proposal(&observations, &proposal)
+      .expect("narrowing should work");
+
+    assert_eq!(narrowed.len(), 2);
+    assert_eq!(
+      narrowed[0]
+        .best
+        .as_ref()
+        .and_then(|item| item.text.as_deref()),
+      Some("Draft 0")
+    );
+    assert_eq!(
+      narrowed[1]
+        .best
+        .as_ref()
+        .and_then(|item| item.text.as_deref()),
+      Some("Draft 1")
+    );
+    assert_eq!(narrowed[0].filtered.len(), 1);
+    assert_eq!(
+      narrowed[0].detail["selection_provenance"]["kind"],
+      json!("model_proposal")
+    );
+  }
+
+  #[test]
+  fn openai_responses_proposer_parses_local_fixture_response() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind test listener");
+    let address = listener.local_addr().expect("listener addr");
+    let server = thread::spawn(move || {
+      let (mut stream, _) = listener.accept().expect("accept request");
+      let mut buffer = [0_u8; 8192];
+      let _ = stream.read(&mut buffer).expect("read request");
+      let body = json!({
+        "output_text": "{\"selected_item_path\":\"/window/textarea\",\"selected_action_kind\":\"type_text\",\"selected_action_text\":\"hello from proposer\",\"reason\":\"the textarea matches the user's intent\"}"
+      })
+      .to_string();
+      write!(
+        stream,
+        "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+        body.len(),
+        body
+      )
+      .expect("write response");
+    });
+
+    let proposer = OpenAiResponsesCandidateActionProposer {
+      api_key: "test-key".to_string(),
+      model: "gpt-5.5".to_string(),
+      endpoint: format!("http://{address}/v1/responses"),
+    };
+    let proposal = proposer
+      .propose(
+        "com.apple.TextEdit",
+        &sample_wide_recognition("frame-1", "/window/textarea", "Draft 1"),
+        "type hello into the main text area",
+      )
+      .expect("proposal should parse");
+    server.join().expect("server thread should finish");
+
+    assert_eq!(proposal.provider, "openai.responses");
+    assert_eq!(proposal.model, "gpt-5.5");
+    assert_eq!(proposal.selected_item_path, "/window/textarea");
+    assert_eq!(
+      proposal.selected_action,
+      CandidateActionKind::TypeText {
+        text: "hello from proposer".to_string()
+      }
+    );
+  }
+
+  #[tokio::test(flavor = "current_thread")]
+  async fn openai_responses_proposer_does_not_panic_inside_tokio_runtime() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind test listener");
+    let address = listener.local_addr().expect("listener addr");
+    let server = thread::spawn(move || {
+      let (mut stream, _) = listener.accept().expect("accept request");
+      let mut buffer = [0_u8; 8192];
+      let _ = stream.read(&mut buffer).expect("read request");
+      let body = json!({
+        "output_text": "{\"selected_item_path\":\"/window/textarea\",\"selected_action_kind\":\"click\",\"reason\":\"the textarea is the main editable target\"}"
+      })
+      .to_string();
+      write!(
+        stream,
+        "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+        body.len(),
+        body
+      )
+      .expect("write response");
+    });
+
+    let proposer = OpenAiResponsesCandidateActionProposer {
+      api_key: "test-key".to_string(),
+      model: "gpt-5.5".to_string(),
+      endpoint: format!("http://{address}/v1/responses"),
+    };
+    let proposal = proposer
+      .propose(
+        "com.apple.TextEdit",
+        &sample_wide_recognition("frame-1", "/window/textarea", "Draft 1"),
+        "focus the main text area",
+      )
+      .expect("proposal should succeed inside tokio runtime");
+    server.join().expect("server thread should finish");
+
+    assert_eq!(proposal.provider, "openai.responses");
+    assert_eq!(proposal.selected_item_path, "/window/textarea");
+    assert_eq!(proposal.selected_action, CandidateActionKind::Click);
+  }
+
+  fn sample_wide_recognition(
+    recognition_id: &str,
+    matching_path: &str,
+    matching_text: &str,
+  ) -> RecognitionResult {
+    let matching = RecognizedItem {
+      item_id: format!("ax:{matching_path}:0"),
+      kind: "AXTextArea".to_string(),
+      box_: RecognitionBox {
+        x: 10,
+        y: 20,
+        width: 300,
+        height: 120,
+      },
+      text: Some(matching_text.to_string()),
+      provider_score: Some(999.0),
+      detail: json!({
+        "path": matching_path,
+        "role": "AXTextArea",
+        "focused": true,
+      }),
+    };
+    let decoy = RecognizedItem {
+      item_id: "ax:/window/button:1".to_string(),
+      kind: "AXButton".to_string(),
+      box_: RecognitionBox {
+        x: 400,
+        y: 20,
+        width: 80,
+        height: 30,
+      },
+      text: Some("Save".to_string()),
+      provider_score: Some(500.0),
+      detail: json!({
+        "path": "/window/button",
+        "role": "AXButton",
+        "focused": false,
+      }),
+    };
+    RecognitionResult {
+      recognition_id: recognition_id.to_string(),
+      source: RecognitionSource::Custom,
+      scope: RecognitionScope {
+        surface: RecognitionSurface::Window,
+        display_ref: None,
+        native_display_id: None,
+        app_bundle_id: Some("com.apple.TextEdit".to_string()),
+        window_title: Some("Untitled".to_string()),
+        window_number: Some(7),
+        region_hint: None,
+        capture_artifact: None,
+        capture_contract_artifact: None,
+      },
+      best: None,
+      filtered: Vec::new(),
+      all: vec![matching, decoy],
+      detail: json!({
+        "provider": "macos.ax_tree",
+        "projection_candidate": "identity_window_addressable",
+      }),
+      evidence: Vec::new(),
+      known_limits: Vec::new(),
+    }
   }
 }
 

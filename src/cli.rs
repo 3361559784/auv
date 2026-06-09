@@ -161,9 +161,12 @@ pub enum CliCommand {
 #[derive(Clone, Debug, PartialEq)]
 pub struct CandidateActionCommandRequest {
   pub app_bundle_id: String,
-  pub query: String,
-  pub role: String,
-  pub action: CandidateActionKind,
+  pub query: Option<String>,
+  pub role: Option<String>,
+  pub action: Option<CandidateActionKind>,
+  pub intent: Option<String>,
+  pub proposer_model: Option<String>,
+  pub proposer_base_url: Option<String>,
   pub reveal_shortcut: Option<String>,
   pub reveal_settle_ms: u64,
   pub stable_frames: u32,
@@ -173,6 +176,7 @@ pub struct CandidateActionCommandRequest {
   pub dev_self_minted_consent: bool,
   pub human_gesture_consent: bool,
   pub human_gesture_timeout_ms: u64,
+  pub proposal_id: String,
   pub promotion_id: String,
   pub decision_id: String,
   pub execution_id: String,
@@ -223,14 +227,14 @@ fn parse_xtask(arguments: &[String]) -> AuvResult<CliCommand> {
 pub fn help_text() -> String {
   String::from(
     "\
-auv-cli prototype
+  auv-cli prototype
 
 USAGE
   auv-cli list-commands
   auv-cli list-drivers
   auv-cli doctor [--json]
   auv-cli permissions check [--json]
-  auv-cli candidate-action run --target-app <bundle-id> --query <text> --role <ax-role> [(--dev-self-minted-consent --granted-by <who>) | (--human-gesture-consent [--granted-by <who>] [--human-gesture-timeout-ms <ms>])] [--reveal-shortcut <shortcut>] [--reveal-settle-ms <ms>] [--stable-frames <n>] [--stable-frame-delay-ms <ms>] [--max-centroid-drift-px <px>] [--require-stable-text true|false] [--promotion-id <id>] [--decision-id <id>] [--execution-id <id>] [--promotion-scope-note <text>] [--promotion-evidence-note <text>] [--execution-scope-note <text>] [--execution-evidence-note <text>] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
+  auv-cli candidate-action run --target-app <bundle-id> [(--query <text> --role <ax-role> [--action click|type-text] [--text <content>]) | (--intent <text> [--proposer-model <id>] [--proposer-base-url <url>])] [(--dev-self-minted-consent --granted-by <who>) | (--human-gesture-consent [--granted-by <who>] [--human-gesture-timeout-ms <ms>])] [--reveal-shortcut <shortcut>] [--reveal-settle-ms <ms>] [--stable-frames <n>] [--stable-frame-delay-ms <ms>] [--max-centroid-drift-px <px>] [--require-stable-text true|false] [--proposal-id <id>] [--promotion-id <id>] [--decision-id <id>] [--execution-id <id>] [--promotion-scope-note <text>] [--promotion-evidence-note <text>] [--execution-scope-note <text>] [--execution-evidence-note <text>] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
   auv-cli app probe <bundle-id> [--output-dir <dir>]
   auv-cli app analyze <probe-dir-or-probe-json>
   auv-cli app distill <analysis-dir-or-analysis-json> [--output-dir <dir>]
@@ -260,6 +264,7 @@ NOTES
   - `debug.overlayShowCursor`, `debug.overlayHideCursor`, and `debug.overlayShutdown` are visual-only macOS overlay probes; standalone `invoke` calls run in separate Rust processes, so use `--hold_ms` on show when manually observing the overlay.
   - `debug.captureAxTree`, `debug.focusTextInput`, and `debug.pressButton` accept `--reveal_shortcut cmd+f`-style hints when an app hides the target UI until a keyboard shortcut reveals it.
   - `candidate-action run` is the first formal single-action orchestration entrypoint. By default it does not self-mint consent; without an external consent source it records promotion refusal honestly. `--dev-self-minted-consent` exists only for local development smoke. `--human-gesture-consent` mints one local human-approved consent through a native macOS approval prompt.
+  - `candidate-action run --intent ...` keeps the model in proposer-only mode: it chooses one observed AX item and one action, records that proposal, then feeds the existing refusal-first candidate-action spine unchanged.
   - `--reveal_settle_ms <millis>` can be used to make the reveal step explicit instead of depending on hard-coded timing assumptions.
   - `debug.typeText` supports `--replace_existing true`, `--submit_key return`, and `--submit_settle_ms 800` for repeatable text-entry flows.
   - `debug.pressKey` supports both special keys like `Return` and shortcuts like `cmd+f`, with optional `--settle_ms`.
@@ -300,14 +305,17 @@ fn parse_permission_check(arguments: &[String]) -> AuvResult<CliCommand> {
 
 fn parse_candidate_action(arguments: &[String]) -> AuvResult<CliCommand> {
   if arguments.len() < 2 || arguments[1] != "run" {
-    return Err("usage: auv-cli candidate-action run --target-app <bundle-id> --query <text> --role <ax-role> [--action click|type-text] [--text <content>] [(--dev-self-minted-consent --granted-by <who>) | (--human-gesture-consent [--granted-by <who>] [--human-gesture-timeout-ms <ms>])] [--reveal-shortcut <shortcut>] [--reveal-settle-ms <ms>] [--stable-frames <n>] [--stable-frame-delay-ms <ms>] [--max-centroid-drift-px <px>] [--require-stable-text true|false] [--promotion-id <id>] [--decision-id <id>] [--execution-id <id>] [--promotion-scope-note <text>] [--promotion-evidence-note <text>] [--execution-scope-note <text>] [--execution-evidence-note <text>] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]".to_string());
+    return Err("usage: auv-cli candidate-action run --target-app <bundle-id> [(--query <text> --role <ax-role> [--action click|type-text] [--text <content>]) | (--intent <text> [--proposer-model <id>] [--proposer-base-url <url>])] [(--dev-self-minted-consent --granted-by <who>) | (--human-gesture-consent [--granted-by <who>] [--human-gesture-timeout-ms <ms>])] [--reveal-shortcut <shortcut>] [--reveal-settle-ms <ms>] [--stable-frames <n>] [--stable-frame-delay-ms <ms>] [--max-centroid-drift-px <px>] [--require-stable-text true|false] [--proposal-id <id>] [--promotion-id <id>] [--decision-id <id>] [--execution-id <id>] [--promotion-scope-note <text>] [--promotion-evidence-note <text>] [--execution-scope-note <text>] [--execution-evidence-note <text>] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]".to_string());
   }
 
   let mut request = CandidateActionCommandRequest {
     app_bundle_id: String::new(),
-    query: String::new(),
-    role: String::new(),
-    action: CandidateActionKind::Click,
+    query: None,
+    role: None,
+    action: None,
+    intent: None,
+    proposer_model: None,
+    proposer_base_url: None,
     reveal_shortcut: None,
     reveal_settle_ms: 250,
     stable_frames: 3,
@@ -317,6 +325,7 @@ fn parse_candidate_action(arguments: &[String]) -> AuvResult<CliCommand> {
     dev_self_minted_consent: false,
     human_gesture_consent: false,
     human_gesture_timeout_ms: 15_000,
+    proposal_id: "candidate_proposal".to_string(),
     promotion_id: "candidate_promotion".to_string(),
     decision_id: "candidate_decision".to_string(),
     execution_id: "candidate_execution".to_string(),
@@ -344,17 +353,33 @@ fn parse_candidate_action(arguments: &[String]) -> AuvResult<CliCommand> {
         request.app_bundle_id = required_flag_value(arguments, index, "--target-app")?;
         index += 2;
       }
+      "--intent" => {
+        request.intent = Some(required_flag_value(arguments, index, "--intent")?);
+        index += 2;
+      }
+      "--proposer-model" => {
+        request.proposer_model = Some(required_flag_value(arguments, index, "--proposer-model")?);
+        index += 2;
+      }
+      "--proposer-base-url" => {
+        request.proposer_base_url = Some(required_flag_value(
+          arguments,
+          index,
+          "--proposer-base-url",
+        )?);
+        index += 2;
+      }
       "--query" => {
-        request.query = required_flag_value(arguments, index, "--query")?;
+        request.query = Some(required_flag_value(arguments, index, "--query")?);
         index += 2;
       }
       "--role" => {
-        request.role = required_flag_value(arguments, index, "--role")?;
+        request.role = Some(required_flag_value(arguments, index, "--role")?);
         index += 2;
       }
       "--action" => {
         let value = required_flag_value(arguments, index, "--action")?;
-        request.action = match value.as_str() {
+        request.action = Some(match value.as_str() {
           "click" => CandidateActionKind::Click,
           "type-text" => CandidateActionKind::TypeText {
             text: String::new(),
@@ -364,14 +389,14 @@ fn parse_candidate_action(arguments: &[String]) -> AuvResult<CliCommand> {
               "invalid --action {other:?}; expected click or type-text"
             ));
           }
-        };
+        });
         index += 2;
       }
       "--text" => {
         let value = required_flag_value(arguments, index, "--text")?;
-        match &mut request.action {
+        match request.action.get_or_insert(CandidateActionKind::Click) {
           CandidateActionKind::Click => {
-            request.action = CandidateActionKind::TypeText { text: value };
+            request.action = Some(CandidateActionKind::TypeText { text: value });
           }
           CandidateActionKind::TypeText { text } => *text = value,
         }
@@ -437,6 +462,10 @@ fn parse_candidate_action(arguments: &[String]) -> AuvResult<CliCommand> {
         request.promotion_id = required_flag_value(arguments, index, "--promotion-id")?;
         index += 2;
       }
+      "--proposal-id" => {
+        request.proposal_id = required_flag_value(arguments, index, "--proposal-id")?;
+        index += 2;
+      }
       "--decision-id" => {
         request.decision_id = required_flag_value(arguments, index, "--decision-id")?;
         index += 2;
@@ -472,11 +501,20 @@ fn parse_candidate_action(arguments: &[String]) -> AuvResult<CliCommand> {
   if request.app_bundle_id.trim().is_empty() {
     return Err("--target-app is required".to_string());
   }
-  if request.query.trim().is_empty() {
-    return Err("--query is required".to_string());
-  }
-  if request.role.trim().is_empty() {
-    return Err("--role is required".to_string());
+  if request.intent.is_some() {
+    if request.query.is_some() || request.role.is_some() {
+      return Err("--intent cannot be combined with --query or --role".to_string());
+    }
+  } else {
+    if request.query.as_deref().unwrap_or("").trim().is_empty() {
+      return Err("--query is required".to_string());
+    }
+    if request.role.as_deref().unwrap_or("").trim().is_empty() {
+      return Err("--role is required".to_string());
+    }
+    if request.action.is_none() {
+      request.action = Some(CandidateActionKind::Click);
+    }
   }
   if request.dev_self_minted_consent && request.human_gesture_consent {
     return Err(
@@ -489,7 +527,7 @@ fn parse_candidate_action(arguments: &[String]) -> AuvResult<CliCommand> {
   if request.human_gesture_timeout_ms == 0 {
     return Err("--human-gesture-timeout-ms must be greater than 0".to_string());
   }
-  if let CandidateActionKind::TypeText { text } = &request.action
+  if let Some(CandidateActionKind::TypeText { text }) = &request.action
     && text.trim().is_empty()
   {
     return Err("--text must not be empty when --action type-text".to_string());
@@ -1542,8 +1580,8 @@ mod tests {
     match command {
       CliCommand::CandidateActionRun { request, inspect } => {
         assert_eq!(request.app_bundle_id, "com.apple.TextEdit");
-        assert_eq!(request.query, "Body");
-        assert_eq!(request.role, "AXTextArea");
+        assert_eq!(request.query.as_deref(), Some("Body"));
+        assert_eq!(request.role.as_deref(), Some("AXTextArea"));
         assert!(request.dev_self_minted_consent);
         assert_eq!(request.granted_by, "human-review");
         assert_eq!(request.stable_frames, 3);
@@ -1576,6 +1614,8 @@ mod tests {
         assert!(!request.dev_self_minted_consent);
         assert!(!request.human_gesture_consent);
         assert_eq!(request.granted_by, "");
+        assert_eq!(request.query.as_deref(), Some("Body"));
+        assert_eq!(request.role.as_deref(), Some("AXTextArea"));
       }
       other => panic!("unexpected command: {other:?}"),
     }
@@ -1652,13 +1692,62 @@ mod tests {
       CliCommand::CandidateActionRun { request, .. } => {
         assert_eq!(
           request.action,
-          auv_cli::candidate_action_decision::CandidateActionKind::TypeText {
-            text: "hello from auv".to_string(),
-          }
+          Some(
+            auv_cli::candidate_action_decision::CandidateActionKind::TypeText {
+              text: "hello from auv".to_string(),
+            }
+          )
         );
       }
       other => panic!("unexpected command: {other:?}"),
     }
+  }
+
+  #[test]
+  fn parse_candidate_action_run_command_with_model_intent() {
+    let command = parse_cli(&[
+      "candidate-action".to_string(),
+      "run".to_string(),
+      "--target-app".to_string(),
+      "com.apple.TextEdit".to_string(),
+      "--intent".to_string(),
+      "type hello into the main text area".to_string(),
+      "--proposer-model".to_string(),
+      "gpt-5.5".to_string(),
+    ])
+    .expect("candidate-action run with intent proposer should parse");
+
+    match command {
+      CliCommand::CandidateActionRun { request, .. } => {
+        assert_eq!(
+          request.intent.as_deref(),
+          Some("type hello into the main text area")
+        );
+        assert_eq!(request.proposer_model.as_deref(), Some("gpt-5.5"));
+        assert_eq!(request.query, None);
+        assert_eq!(request.role, None);
+      }
+      other => panic!("unexpected command: {other:?}"),
+    }
+  }
+
+  #[test]
+  fn parse_candidate_action_run_command_rejects_intent_with_query() {
+    let error = parse_cli(&[
+      "candidate-action".to_string(),
+      "run".to_string(),
+      "--target-app".to_string(),
+      "com.apple.TextEdit".to_string(),
+      "--intent".to_string(),
+      "type hello".to_string(),
+      "--query".to_string(),
+      "Body".to_string(),
+      "--proposer-model".to_string(),
+      "gpt-5.5".to_string(),
+    ])
+    .expect_err("intent and query should be mutually exclusive");
+
+    assert_eq!(error, "--intent cannot be combined with --query or --role");
   }
 
   #[test]

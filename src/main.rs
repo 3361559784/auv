@@ -94,6 +94,9 @@ async fn run() -> Result<(), String> {
           query: request.query,
           role: request.role,
           action: request.action,
+          intent: request.intent,
+          proposer_model: request.proposer_model,
+          proposer_base_url: request.proposer_base_url,
           reveal_shortcut: request.reveal_shortcut,
           reveal_settle_ms: request.reveal_settle_ms,
           stable_frames: request.stable_frames,
@@ -103,6 +106,7 @@ async fn run() -> Result<(), String> {
           dev_self_minted_consent: request.dev_self_minted_consent,
           human_gesture_consent: request.human_gesture_consent,
           human_gesture_timeout_ms: request.human_gesture_timeout_ms,
+          proposal_id: request.proposal_id,
           promotion_id: request.promotion_id,
           decision_id: request.decision_id,
           execution_id: request.execution_id,
@@ -115,6 +119,9 @@ async fn run() -> Result<(), String> {
       )?;
       println!("runId: {}", output.run_id);
       println!("status: {}", output.value.status.as_str());
+      if let Some(proposal_artifact_id) = output.value.proposal_artifact_id.as_deref() {
+        println!("proposalArtifact: {proposal_artifact_id}");
+      }
       println!("promotionArtifact: {}", output.value.promotion_artifact_id);
       if let Some(decision_artifact_id) = output.value.decision_artifact_id.as_deref() {
         println!("decisionArtifact: {decision_artifact_id}");

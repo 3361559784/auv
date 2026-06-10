@@ -6,27 +6,26 @@ phase.
 
 ## Current Mode
 
-AUV has converged its core contract on one machine-validated vertical. Keep
-observation, action, verification, artifacts, trace records, and inspection on
-that frozen seam. Do not reopen the seam casually, and do not optimize for
-local prettiness, broad cleanup, or filling every missing piece.
+AUV is actively returning to its core lane: SkillBundle, recipe, invoke, run
+recording, artifacts, inspection, and distill/compile/run reuse across
+frontends. Do not treat one archived macOS AX proof as the product center, and
+do not spend active roadmap budget polishing the archived vertical.
 
 Current validation boundary:
 
-- One real, env-gated macOS AX vertical is proven end to end.
-- The proof is specific to local TextEdit-style execution, not generalized app
-  coverage.
-- New work should extend the frozen contract or add product surface on top of
-  it, not redefine the core runtime seam.
+- One real macOS AX copilot vertical is proven and archived.
+- That proof is specific to local TextEdit-style execution and remains a
+  recoverable reference, not the current AUV roadmap.
+- New work should reconnect or extend the AUV core runtime surfaces, especially
+  SkillBundle/recipe/invoke/run-artifact-inspect, instead of expanding the
+  archived `candidate-action` path.
 
 Convergence evidence:
 
-- `run_1780894793708_63155_0`: real match path with delivered input and
-  `semantic_matched=true`.
-- `run_1780894873446_65429_0`: real mismatch path with delivered input and
-  honest semantic refusal.
-- `run_1780894756352_61303_0`: real readiness refusal with
-  `input_delivery=not_attempted`.
+- The archived AX copilot proof lives in
+  `docs/archive/verticals/ax-copilot/2026-06-09-auv-macos-ax-copilot-mvp-evidence-pack.md`.
+- Active roadmap evidence should come from AUV core runtime surfaces, not from
+  the archived TextEdit copilot runs.
 
 Current seam to preserve:
 
@@ -40,7 +39,8 @@ recognition / AX / candidates
 `auv-overlay-macos` is visual-only presentation. `auv-driver` /
 `auv-driver-macos` own input delivery and disturbance reporting. Do not create
 a third action-result schema beside `ActionResolverDecision` and
-`InputActionResult`.
+`InputActionResult`. `candidate_promotion` remains part of AUV core as a
+reusable promotion/gating seam even while `candidate-action` is frozen.
 
 ## Start Every Task By Classifying It
 

@@ -25,17 +25,27 @@ view.
 > communicate with users frequently and clearly to avoid misunderstandings,
 > premature naming decisions, and avoidable rework.
 
-## Project Phase: Converge The Core Contract
+## Project Phase: Restore The AUV Core Lane
 
-AUV is currently converging its core contract. The important work is to make
-observation, action, verification, trace data, artifacts, and inspection agree
-on the same model. Prefer changes that reduce ambiguity in that model. Avoid
-changes that merely make a local file look cleaner.
+AUV is currently pulling its active roadmap back to the Application Use Via
+core: SkillBundle, recipe, invoke, run recording, artifacts, inspection, and
+distill/compile/run reuse across frontends. The important work is to make those
+runtime surfaces agree on one shared execution model. Prefer changes that
+tighten or reconnect the existing core runtime over polishing one archived
+vertical proof.
+
+The macOS AX copilot work remains valuable, but it is no longer the active
+product lane. Treat `candidate-action` as a frozen archived vertical proof. Do
+not present it as AUV itself, do not expand it with new action classes or
+product polish, and do not route new roadmap work through TextEdit-only proof
+paths.
 
 Good convergence work usually has one of these shapes:
 
 - Defines or tightens a shared contract in `docs/TERMS_AND_CONCEPTS.md`,
   `src/contract.rs`, run records, artifacts, or command signals.
+- Reconnects bundle/recipe/invoke surfaces so CLI, library, MCP, and future UI
+  frontends share the same runtime execution path.
 - Connects an existing producer to an existing consumer with typed evidence,
   for example `RecognitionResult -> CandidateRef -> action -> VerificationResult`.
 - Aligns action-selection metadata with typed driver results, for example
@@ -48,8 +58,9 @@ Good convergence work usually has one of these shapes:
 
 Poor convergence work looks like broad cleanup, TODO chasing, opportunistic
 helper extraction, speculative backends, or implementing future APIs just
-because a doc mentions them. If the change adds new surface area, it needs an
-explicit reason tied to the current contract.
+because a doc mentions them. It also includes continuing to deepen the archived
+AX copilot vertical and then calling that AUV progress. If the change adds new
+surface area, it needs an explicit reason tied to the current contract.
 
 ## Scope Discipline
 
@@ -146,6 +157,11 @@ Keep visual presentation separate from input delivery:
 - Verification remains separate from activation. A successful click, AX press,
   or overlay animation is not semantic success without a verification result or
   an explicit `activation_only` boundary.
+
+This seam stays in AUV core because multiple runtime and read-side paths depend
+on it. In particular, `candidate_promotion` is a reusable promotion/gating
+seam, not a `candidate-action`-private module. Do not externalize or remove it
+while quarantining the archived vertical.
 
 ## Architecture Surfaces
 
@@ -429,6 +445,10 @@ Use this root-cause block format in regression tests when relevant:
   is discoverable outside the original plan or spec.
 - When editing design docs, preserve open questions and clearly label
   provisional names so the team can review them before implementation.
+- When a document records a finished but non-active vertical proof, move it out
+  of active references into an archive path and leave only a short tombstone at
+  the old location. Do not leave archived roadmap context sitting in
+  `docs/ai/references/` where agents will keep treating it as current guidance.
 
 ### Documentation Placement
 
@@ -438,6 +458,8 @@ Use this root-cause block format in regression tests when relevant:
   task context is gone.
 - Content in `docs/ai/references/` should describe the current project state or
   a clearly labeled historical decision.
+- Use `docs/archive/verticals/` for archived proofs that should remain
+  recoverable but must not continue to bias active roadmap decisions.
 - Use `docs/ai/explanations/` for committed explanatory material: tutorials,
   interactive explainers, conceptual walkthroughs, diagrams, and documents
   whose purpose is to teach or clarify an idea rather than record project

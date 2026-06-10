@@ -22,9 +22,9 @@ use analysis::{
   verification_mode_for_strategy,
 };
 use infra::{
-  app_span_record, default_probe_output_dir, finish_failed_app_run, invoke_probe_step, read_json,
-  resolve_analysis_path, resolve_app_identity, resolve_distillation_path, resolve_probe_path,
-  stage_app_artifact, write_pretty_json,
+  app_span_record, default_probe_output_dir, finish_failed_app_run, first_non_empty_string,
+  invoke_probe_step, read_json, resolve_analysis_path, resolve_app_identity,
+  resolve_distillation_path, resolve_probe_path, stage_app_artifact, write_pretty_json,
 };
 use recipe::{
   candidate_slug, recipe_app_slug, render_candidate_case_matrix, render_candidate_recipe,
@@ -56,6 +56,86 @@ const APP_PROBE_VERSION: &str = "v0";
 const APP_ANALYSIS_VERSION: &str = "v0";
 const APP_DISTILL_VERSION: &str = "v0";
 const APP_VALIDATE_VERSION: &str = "v0";
+
+pub(crate) fn resolve_probe_window_title(
+  app: &AppIdentity,
+  steps: &[AppProbeStep],
+) -> Option<String> {
+  let window_report = steps
+    .iter()
+    .find(|step| step.id == "list-windows")
+    .and_then(|step| {
+      step.artifact_paths.iter().find_map(|path| {
+        let is_window_report = path
+          .extension()
+          .and_then(|value| value.to_str())
+          .is_some_and(|value| value.eq_ignore_ascii_case("txt"))
+          && path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .is_some_and(|name| name.contains("window-list"));
+        if !is_window_report {
+          return None;
+        }
+        fs::read_to_string(path).ok()
+      })
+    });
+  first_non_empty_string(&[
+    window_report
+      .as_deref()
+      .and_then(|report| extract_window_title_from_window_report(report, &app.bundle_id)),
+    window_report
+      .as_deref()
+      .and_then(|report| {
+        report
+          .lines()
+          .find_map(|line| line.strip_prefix("frontmostWindowTitle="))
+      })
+      .map(str::to_string),
+    window_report
+      .as_deref()
+      .and_then(|report| {
+        report
+          .lines()
+          .find_map(|line| line.strip_prefix("frontmostAppName="))
+      })
+      .map(str::to_string),
+  ])
+  .or_else(|| {
+    steps
+      .iter()
+      .find(|step| step.id == "list-windows")
+      .and_then(|step| {
+        step
+          .output_summary
+          .split_once("frontmost app is ")
+          .map(|(_, suffix)| suffix.trim_end_matches('.').to_string())
+      })
+      .filter(|value| !value.trim().is_empty())
+  })
+}
+
+fn extract_window_title_from_window_report(report: &str, bundle_id: &str) -> Option<String> {
+  report.lines().find_map(|line| {
+    let fields = line.split('\t').collect::<Vec<_>>();
+    if fields.first().copied() != Some("window") {
+      return None;
+    }
+    if fields.len() >= 11 && fields.get(3).copied() == Some(bundle_id) {
+      return fields
+        .get(6)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    }
+    if fields.len() >= 4 {
+      return fields
+        .last()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    }
+    None
+  })
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AppIdentity {
@@ -618,18 +698,21 @@ fn probe_app_into_run(
     BTreeMap::new(),
     false,
   )?);
-  let mut activate_inputs = BTreeMap::new();
-  activate_inputs.insert("settle_ms".to_string(), "250".to_string());
-  steps.push(invoke_probe_step(
-    runtime,
-    run,
-    parent,
-    "activate-target-app",
-    "debug.activateApp",
-    Some(app.bundle_id.clone()),
-    activate_inputs,
-    true,
-  )?);
+  let can_activate_target = app.apple_script_addressable;
+  if can_activate_target {
+    let mut activate_inputs = BTreeMap::new();
+    activate_inputs.insert("settle_ms".to_string(), "250".to_string());
+    steps.push(invoke_probe_step(
+      runtime,
+      run,
+      parent,
+      "activate-target-app",
+      "debug.activateApp",
+      Some(app.bundle_id.clone()),
+      activate_inputs,
+      true,
+    )?);
+  }
 
   let mut window_inputs = BTreeMap::new();
   window_inputs.insert("limit".to_string(), "20".to_string());
@@ -644,8 +727,20 @@ fn probe_app_into_run(
     true,
   )?);
 
+  let can_use_app_scoped_window_ops = can_activate_target || app.launch_services_resolved;
+  let fallback_window_title = if can_use_app_scoped_window_ops {
+    None
+  } else {
+    resolve_probe_window_title(app, &steps)
+  };
+
   let mut tree_inputs = BTreeMap::new();
   tree_inputs.insert("max_depth".to_string(), "6".to_string());
+  if !can_use_app_scoped_window_ops {
+    if let Some(title) = fallback_window_title.clone() {
+      tree_inputs.insert("title".to_string(), title);
+    }
+  }
   tree_inputs.insert("max_children".to_string(), "24".to_string());
   steps.push(invoke_probe_step(
     runtime,
@@ -661,52 +756,54 @@ fn probe_app_into_run(
   let capture_label = format!("app-probe-{}", sanitized_artifact_name(&app.bundle_id));
   let mut capture_inputs = BTreeMap::new();
   capture_inputs.insert("label".to_string(), capture_label);
-  capture_inputs.insert(
-    "activate_target_before_capture".to_string(),
-    "true".to_string(),
-  );
+  if can_activate_target {
+    capture_inputs.insert(
+      "activate_target_before_capture".to_string(),
+      "true".to_string(),
+    );
+  }
+  if !can_use_app_scoped_window_ops {
+    if let Some(title) = fallback_window_title.clone() {
+      capture_inputs.insert("title".to_string(), title);
+    }
+  }
   let capture_step = invoke_probe_step(
     runtime,
     run,
     parent,
-    "capture-display",
-    "debug.captureDisplay",
+    "capture-window",
+    "debug.captureWindow",
     Some(app.bundle_id.clone()),
     capture_inputs,
     true,
   )?;
-  let screenshot_artifact_path = capture_step
-    .artifact_paths
-    .iter()
-    .find(|path| {
-      path
-        .extension()
-        .and_then(|value| value.to_str())
-        .is_some_and(|value| value.eq_ignore_ascii_case("png"))
-    })
-    .cloned();
   steps.push(capture_step);
 
-  if let Some(screenshot_artifact_path) = screenshot_artifact_path {
-    let ocr_sample_query = resolve_probe_ocr_sample_query(app, &steps);
-    let mut ocr_inputs = BTreeMap::new();
-    ocr_inputs.insert(
-      "image_path".to_string(),
-      screenshot_artifact_path.display().to_string(),
-    );
-    ocr_inputs.insert("query".to_string(), ocr_sample_query);
-    ocr_inputs.insert("min_confidence".to_string(), "0.55".to_string());
-    steps.push(invoke_probe_step(
-      runtime,
-      run,
-      parent,
-      "ocr-sample",
-      "debug.findImageText",
-      None,
-      ocr_inputs,
-      true,
-    )?);
+  let ocr_sample_query = resolve_probe_ocr_sample_query(app, &steps);
+  let mut ocr_inputs = BTreeMap::new();
+  ocr_inputs.insert("label".to_string(), "app-probe-ocr-sample".to_string());
+  ocr_inputs.insert("query".to_string(), ocr_sample_query);
+  ocr_inputs.insert("min_confidence".to_string(), "0.55".to_string());
+  ocr_inputs.insert("region_left_ratio".to_string(), "0.0".to_string());
+  ocr_inputs.insert("region_top_ratio".to_string(), "0.0".to_string());
+  ocr_inputs.insert("region_right_ratio".to_string(), "1.0".to_string());
+  ocr_inputs.insert("region_bottom_ratio".to_string(), "1.0".to_string());
+  ocr_inputs.insert("max_observations".to_string(), "20".to_string());
+  if !can_use_app_scoped_window_ops {
+    if let Some(title) = fallback_window_title {
+      ocr_inputs.insert("title".to_string(), title);
+    }
   }
+  steps.push(invoke_probe_step(
+    runtime,
+    run,
+    parent,
+    "ocr-sample",
+    "debug.observeWindowRegion",
+    Some(app.bundle_id.clone()),
+    ocr_inputs,
+    true,
+  )?);
 
   let probe = AppProbe {
     probe_version: APP_PROBE_VERSION.to_string(),

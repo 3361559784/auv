@@ -4102,9 +4102,10 @@ fn build_app_analysis_tolerates_partial_probe_failures() {
         "debug.captureAxTree",
         "app not available",
       ),
+      failed_probe_step_fixture("capture-window", "debug.captureWindow", "app not available"),
       failed_probe_step_fixture(
-        "capture-display",
-        "debug.captureDisplay",
+        "ocr-sample",
+        "debug.observeWindowRegion",
         "app not available",
       ),
     ],
@@ -4351,6 +4352,297 @@ fn build_app_analysis_keeps_plain_text_editor_out_of_search_entry_recommendation
       .recommended_strategies
       .iter()
       .any(|strategy| { strategy.taxonomy_id == NATIVE_TEXT_CANONICAL_TAXONOMY_ID })
+  );
+
+  let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn resolve_probe_window_title_prefers_window_report_titles_for_unresolved_runtime_id() {
+  let app = AppIdentity {
+    bundle_id: "net.java.openjdk.cmd".to_string(),
+    app_name: "net.java.openjdk.cmd".to_string(),
+    app_path: None,
+    main_executable_path: None,
+    version: "unknown".to_string(),
+    build_version: "unknown".to_string(),
+    url_schemes: vec![],
+    apple_script_addressable: false,
+    launch_services_resolved: false,
+    resolution_notes: vec![],
+  };
+  let root = temp_dir("probe-window-title-fallback");
+  let windows_path = root.join("artifact_window-list.txt");
+  fs::write(
+    &windows_path,
+    "observedAt=2026-06-10T00:00:00Z
+frontmostAppName=Slay the Spire
+frontmostWindowTitle=Slay the Spire
+windowCount=1
+window	DesktopLauncher	68226	net.java.openjdk.cmd	13362	0	Slay the Spire	73	79	1366	796
+",
+  )
+  .expect("windows artifact should write");
+  let steps = vec![probe_step_fixture(
+    "list-windows",
+    "debug.listWindows",
+    vec![windows_path],
+  )];
+
+  assert_eq!(
+    resolve_probe_window_title(&app, &steps),
+    Some("Slay the Spire".to_string())
+  );
+
+  let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn build_app_analysis_tolerates_window_scoped_probe_failures_for_unresolved_runtime_id() {
+  let root = temp_dir("window-scoped-runtime-id-fallback");
+  let probe_path = root.join("probe.json");
+  let permissions_path = root.join("artifact_probe-permissions.txt");
+  let displays_path = root.join("artifact_display-list.json");
+  let readiness_path = root.join("artifact_coordinate-readiness-report.txt");
+  let windows_path = root.join("artifact_window-list.txt");
+
+  fs::write(
+    &permissions_path,
+    "screenRecording=granted
+accessibility=granted
+automationToSystemEvents=granted
+launchHostProcess=Atlas
+",
+  )
+  .expect("permissions artifact should write");
+  fs::write(
+    &displays_path,
+    serde_json::to_string(&vec![serde_json::json!({
+      "display_ref": "display_0",
+      "native_display_id": "1",
+      "is_main": true,
+      "is_builtin": true,
+      "global_logical_bounds": {"x": 0, "y": 0, "width": 1512, "height": 982},
+      "visible_logical_bounds": {"x": 0, "y": 0, "width": 1512, "height": 982},
+      "scale_factor": 2.0,
+      "physical_pixel_size": {"width": 3024, "height": 1964}
+    })])
+    .expect("display artifact should serialize"),
+  )
+  .expect("display artifact should write");
+  fs::write(
+    &readiness_path,
+    "readyForLogicalInput=false
+reason=main display pixels are 2x logical points
+",
+  )
+  .expect("readiness artifact should write");
+  fs::write(
+    &windows_path,
+    "observedAt=2026-06-10T00:00:00Z
+frontmostAppName=Slay the Spire
+frontmostWindowTitle=Slay the Spire
+windowCount=1
+window	DesktopLauncher	68226	net.java.openjdk.cmd	13362	0	Slay the Spire	73	79	1366	796
+",
+  )
+  .expect("windows artifact should write");
+
+  let probe = AppProbe {
+    probe_version: APP_PROBE_VERSION.to_string(),
+    created_at_millis: 0,
+    project_root: root.clone(),
+    output_dir: root.clone(),
+    app: AppIdentity {
+      bundle_id: "net.java.openjdk.cmd".to_string(),
+      app_name: "net.java.openjdk.cmd".to_string(),
+      app_path: None,
+      main_executable_path: None,
+      version: "unknown".to_string(),
+      build_version: "unknown".to_string(),
+      url_schemes: vec![],
+      apple_script_addressable: false,
+      launch_services_resolved: false,
+      resolution_notes: vec![],
+    },
+    steps: vec![
+      probe_step_fixture(
+        "probe-permissions",
+        "debug.probePermissions",
+        vec![permissions_path],
+      ),
+      probe_step_fixture("list-displays", "debug.listDisplays", vec![displays_path]),
+      probe_step_fixture(
+        "probe-coordinate-readiness",
+        "debug.probeCoordinateReadiness",
+        vec![readiness_path],
+      ),
+      probe_step_fixture("list-windows", "debug.listWindows", vec![windows_path]),
+      failed_probe_step_fixture(
+        "capture-ax-tree",
+        "debug.captureAxTree",
+        "could not resolve a visible app reference for selector \"net.java.openjdk.cmd\"",
+      ),
+      failed_probe_step_fixture(
+        "capture-window",
+        "debug.captureWindow",
+        "could not resolve a visible app reference for selector \"net.java.openjdk.cmd\"",
+      ),
+      failed_probe_step_fixture(
+        "ocr-sample",
+        "debug.observeWindowRegion",
+        "could not resolve a visible app reference for selector \"net.java.openjdk.cmd\"",
+      ),
+    ],
+  };
+
+  let analysis = build_app_analysis(&probe_path, &probe).expect("analysis should still build");
+  assert_eq!(analysis.window_context.observed_window_count, 1);
+  assert_eq!(
+    analysis.window_context.primary_window_title,
+    "Slay the Spire"
+  );
+  assert_eq!(
+    analysis.verification_assessment.ax_verify,
+    AssessmentStatus::Unavailable
+  );
+  assert!(analysis.annotation_candidates.iter().any(|candidate| {
+    candidate.candidate_id == "window-primary-region"
+      && candidate.area == "window.primary"
+      && candidate.source == "window"
+  }));
+  assert!(
+    analysis
+      .known_boundaries
+      .iter()
+      .any(|entry| { entry.contains("capture-window") })
+  );
+  assert!(
+    analysis
+      .known_boundaries
+      .iter()
+      .any(|entry| { entry.contains("ocr-sample") })
+  );
+
+  let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn build_app_analysis_ignores_window_chrome_text_for_ax_verification() {
+  let root = temp_dir("window-chrome-ax-probe");
+  let probe_path = root.join("probe.json");
+  let permissions_path = root.join("artifact_probe-permissions.txt");
+  let displays_path = root.join("artifact_display-list.json");
+  let readiness_path = root.join("artifact_coordinate-readiness-report.txt");
+  let windows_path = root.join("artifact_window-list.txt");
+  let ax_path = root.join("artifact_ax-tree.txt");
+
+  fs::write(
+    &permissions_path,
+    "screenRecording=granted
+accessibility=granted
+automationToSystemEvents=granted
+launchHostProcess=Atlas
+",
+  )
+  .expect("permissions artifact should write");
+  fs::write(
+    &displays_path,
+    serde_json::to_string(&vec![serde_json::json!({
+      "display_ref": "display_0",
+      "native_display_id": "1",
+      "is_main": true,
+      "is_builtin": true,
+      "global_logical_bounds": {"x": 0, "y": 0, "width": 1512, "height": 982},
+      "visible_logical_bounds": {"x": 0, "y": 0, "width": 1512, "height": 982},
+      "scale_factor": 2.0,
+      "physical_pixel_size": {"width": 3024, "height": 1964}
+    })])
+    .expect("display artifact should serialize"),
+  )
+  .expect("display artifact should write");
+  fs::write(
+    &readiness_path,
+    "readyForLogicalInput=true
+reason=logical input is aligned
+",
+  )
+  .expect("readiness artifact should write");
+  fs::write(
+    &windows_path,
+    "observedAt=2026-06-10T00:00:00Z
+frontmostAppName=Slay the Spire
+frontmostWindowTitle=Slay the Spire
+windowCount=1
+window	0	DesktopLauncher	Slay the Spire	73	79	1366	796
+",
+  )
+  .expect("windows artifact should write");
+  fs::write(
+    &ax_path,
+    "observedAt=2026-06-10T00:00:00Z
+appName=Slay the Spire
+bundleId=net.java.openjdk.cmd
+pid=68226
+windowTitle=Slay the Spire
+rootRole=AXWindow
+node	0	0	AXWindow	AXStandardWindow							73	79	1366	796
+nodeCount=1
+",
+  )
+  .expect("ax artifact should write");
+
+  let probe = AppProbe {
+    probe_version: APP_PROBE_VERSION.to_string(),
+    created_at_millis: 0,
+    project_root: root.clone(),
+    output_dir: root.clone(),
+    app: AppIdentity {
+      bundle_id: "net.java.openjdk.cmd".to_string(),
+      app_name: "net.java.openjdk.cmd".to_string(),
+      app_path: None,
+      main_executable_path: None,
+      version: "unknown".to_string(),
+      build_version: "unknown".to_string(),
+      url_schemes: vec![],
+      apple_script_addressable: true,
+      launch_services_resolved: false,
+      resolution_notes: vec![],
+    },
+    steps: vec![
+      probe_step_fixture(
+        "probe-permissions",
+        "debug.probePermissions",
+        vec![permissions_path],
+      ),
+      probe_step_fixture("list-displays", "debug.listDisplays", vec![displays_path]),
+      probe_step_fixture(
+        "probe-coordinate-readiness",
+        "debug.probeCoordinateReadiness",
+        vec![readiness_path],
+      ),
+      probe_step_fixture("list-windows", "debug.listWindows", vec![windows_path]),
+      probe_step_fixture("capture-ax-tree", "debug.captureAxTree", vec![ax_path]),
+    ],
+  };
+
+  let analysis = build_app_analysis(&probe_path, &probe).expect("analysis should still build");
+  assert_eq!(
+    analysis.verification_assessment.ax_verify,
+    AssessmentStatus::Unavailable
+  );
+  assert!(
+    !analysis
+      .recommended_strategies
+      .iter()
+      .any(|strategy| { strategy.taxonomy_id == NATIVE_TEXT_CANONICAL_TAXONOMY_ID })
+  );
+  assert!(
+    analysis
+      .grounding_assessment
+      .stable_anchor_candidates
+      .iter()
+      .all(|candidate| { !candidate.starts_with("axText:") })
   );
 
   let _ = fs::remove_dir_all(root);

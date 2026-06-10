@@ -36,6 +36,8 @@ use crate::{
   model::{DriverCall, DriverRunContext, ExecutionTarget, now_millis},
 };
 
+use super::observe::resolve_legacy_app_filtered_snapshot_for_test;
+
 #[test]
 fn macos_driver_descriptor_uses_desktop_namespace() {
   let driver = super::LegacyMacosCommandDriver;
@@ -1037,6 +1039,59 @@ fn selector_filtered_report_window_count_equals_matched_windows() {
   assert_eq!(window_lines.len(), 1);
   assert!(window_lines[0].contains("网易云音乐"));
   assert!(!window_lines[0].contains("Dock"));
+}
+
+#[test]
+fn legacy_app_filtered_snapshot_falls_back_to_all_visible_windows() {
+  let app_snapshot = super::ObservedWindowSnapshot {
+    frontmost_app_name: "Terminal".to_string(),
+    frontmost_app_bundle_id: "com.apple.Terminal".to_string(),
+    frontmost_window_title: "Terminal".to_string(),
+    observed_at: "2026-06-11T00:00:00Z".to_string(),
+    windows: vec![],
+  };
+  let fallback_snapshot = super::ObservedWindowSnapshot {
+    frontmost_app_name: "DesktopLauncher".to_string(),
+    frontmost_app_bundle_id: "net.java.openjdk.cmd".to_string(),
+    frontmost_window_title: "Slay the Spire".to_string(),
+    observed_at: "2026-06-11T00:00:01Z".to_string(),
+    windows: vec![ObservedWindow {
+      window_number: 9215,
+      app_name: "DesktopLauncher".to_string(),
+      owner_pid: 4242,
+      owner_bundle_id: "net.java.openjdk.cmd".to_string(),
+      layer: 0,
+      title: "Slay the Spire".to_string(),
+      bounds: super::ObservedRect {
+        x: 120,
+        y: 80,
+        width: 1366,
+        height: 796,
+      },
+    }],
+  };
+
+  let (snapshot, resolved, note, report) = resolve_legacy_app_filtered_snapshot_for_test(
+    "net.java.openjdk.cmd",
+    &app_snapshot,
+    Some(&fallback_snapshot),
+  )
+  .expect("fallback snapshot should resolve");
+
+  assert_eq!(snapshot.windows.len(), 1);
+  assert_eq!(snapshot.windows[0].window_number, 9215);
+  assert_eq!(snapshot.frontmost_app_name, "Terminal");
+  assert_eq!(
+    resolved.expect("resolved app should exist").match_strategy,
+    "bundle-id-exact"
+  );
+  assert_eq!(
+    note.as_deref(),
+    Some("candidateResolution=all-visible-fallback:bundle-id-exact")
+  );
+  assert!(report.contains("windowCount=1"));
+  assert!(report.contains("resolvedAppBundleId=net.java.openjdk.cmd"));
+  assert!(report.contains("Slay the Spire"));
 }
 
 /// The filtering helper should keep only the windows belonging to the resolved

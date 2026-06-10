@@ -8,6 +8,7 @@
 //! Boundary: these are evidence-producing primitives and heuristics, not a
 //! generic UI model. Higher-level meaning lives in recipes and typed consumers.
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::PathBuf;
 use std::thread;
@@ -63,8 +64,8 @@ use crate::driver::macos::support::{
 };
 use crate::model::AuvResult;
 use crate::trace::RunId;
+use auv_driver_macos::support::filter_windows_for_app;
 use auv_driver_macos::types::ObservedWindow;
-#[cfg(test)]
 use auv_driver_macos::types::ResolvedAppRef;
 
 const VERIFY_AX_TEXT_OPERATION_ID: &str = "verify.axText";
@@ -207,24 +208,22 @@ pub(super) fn list_windows(call: &DriverCall) -> AuvResult<DriverResponse> {
 }
 
 fn list_windows_with_legacy_app_filter(app_filter: &str, limit: i64) -> AuvResult<DriverResponse> {
-  let snapshot = list_windows_snapshot(auv_driver_macos::native::window::ListWindowsOptions::app(
-    limit, app_filter,
-  ))?;
-  let report = render_window_snapshot_report(&snapshot);
+  let app_snapshot = list_windows_snapshot(
+    auv_driver_macos::native::window::ListWindowsOptions::app(limit, app_filter),
+  )?;
+  let fallback_snapshot = list_windows_snapshot(
+    auv_driver_macos::native::window::ListWindowsOptions::all_visible(limit.max(256)),
+  )
+  .ok();
+  let (snapshot, resolved_app, candidate_note, report) =
+    resolve_legacy_app_filtered_snapshot(app_filter, &app_snapshot, fallback_snapshot.as_ref())?;
   let window_count = snapshot.windows.len();
   let frontmost_app = snapshot.frontmost_app_name.clone();
   let frontmost_window = snapshot.frontmost_window_title.clone();
   let displays = crate::driver::macos::capture::xcap_backend::list_displays()?;
-  let mut candidate_note = None;
-  let rendered_candidates = match parse_app_selector(app_filter)
-    .and_then(|selector| resolve_app_ref(&snapshot, &selector))
-    .and_then(|resolved_app| build_window_candidates(&snapshot, &resolved_app, &displays))
-  {
-    Ok(candidates) => candidates,
-    Err(error) => {
-      candidate_note = Some(format!("candidateResolution={error}"));
-      Vec::new()
-    }
+  let rendered_candidates = match resolved_app.as_ref() {
+    Some(resolved_app) => build_window_candidates(&snapshot, resolved_app, &displays)?,
+    None => Vec::new(),
   };
   let json = render_window_list_json(&snapshot, &rendered_candidates, candidate_note.as_deref())?;
   let json_artifact = build_text_artifact(
@@ -263,6 +262,84 @@ fn list_windows_with_legacy_app_filter(app_filter: &str, limit: i64) -> AuvResul
     notes,
     artifacts: vec![json_artifact, text_artifact],
   })
+}
+
+fn resolve_legacy_app_filtered_snapshot(
+  app_filter: &str,
+  app_snapshot: &ObservedWindowSnapshot,
+  fallback_snapshot: Option<&ObservedWindowSnapshot>,
+) -> AuvResult<(
+  ObservedWindowSnapshot,
+  Option<ResolvedAppRef>,
+  Option<String>,
+  String,
+)> {
+  let selector = parse_app_selector(app_filter)?;
+  let app_resolved = resolve_app_ref(app_snapshot, &selector);
+  if let Ok(resolved_app) = app_resolved {
+    let snapshot =
+      merge_legacy_app_filtered_windows(app_snapshot, fallback_snapshot, &resolved_app);
+    let used_fallback = snapshot.windows.len() > app_snapshot.windows.len();
+    let report = render_legacy_app_filtered_report(&snapshot, &resolved_app);
+    let note = used_fallback.then(|| {
+      format!(
+        "candidateResolution=app-scoped+all-visible-fallback:{}",
+        resolved_app.match_strategy
+      )
+    });
+    return Ok((snapshot, Some(resolved_app), note, report));
+  }
+
+  if let Some(fallback_snapshot) = fallback_snapshot
+    && let Ok(resolved_app) = resolve_app_ref(fallback_snapshot, &selector)
+  {
+    let snapshot =
+      merge_legacy_app_filtered_windows(app_snapshot, fallback_snapshot.into(), &resolved_app);
+    let report = render_legacy_app_filtered_report(&snapshot, &resolved_app);
+    return Ok((
+      snapshot,
+      Some(resolved_app.clone()),
+      Some(format!(
+        "candidateResolution=all-visible-fallback:{}",
+        resolved_app.match_strategy
+      )),
+      report,
+    ));
+  }
+
+  let report = render_window_snapshot_report(app_snapshot);
+  Ok((
+    app_snapshot.clone(),
+    None,
+    Some(format!(
+      "candidateResolution={}",
+      app_resolved.expect_err("app-scoped resolution should already have failed")
+    )),
+    report,
+  ))
+}
+
+fn merge_legacy_app_filtered_windows(
+  app_snapshot: &ObservedWindowSnapshot,
+  fallback_snapshot: Option<&ObservedWindowSnapshot>,
+  resolved_app: &ResolvedAppRef,
+) -> ObservedWindowSnapshot {
+  let mut snapshot = app_snapshot.clone();
+  let mut windows = Vec::new();
+  let mut seen = BTreeSet::new();
+  for source in [Some(app_snapshot), fallback_snapshot]
+    .into_iter()
+    .flatten()
+  {
+    for window in filter_windows_for_app(&source.windows, resolved_app) {
+      let key = (window.owner_pid, window.window_number);
+      if seen.insert(key) {
+        windows.push(window.clone());
+      }
+    }
+  }
+  snapshot.windows = windows;
+  snapshot
 }
 
 fn select_typed_window_list(windows: &[auv_driver::Window], limit: i64) -> Vec<auv_driver::Window> {
@@ -357,7 +434,6 @@ pub(super) fn build_selector_filtered_report_for_test(
   build_selector_filtered_report_impl(raw_report, filtered_windows, resolved_app)
 }
 
-#[cfg(test)]
 fn build_selector_filtered_report_impl(
   raw_report: &str,
   filtered_windows: &[&ObservedWindow],
@@ -395,6 +471,29 @@ fn build_selector_filtered_report_impl(
     ));
   }
   lines.join("\n")
+}
+
+fn render_legacy_app_filtered_report(
+  snapshot: &ObservedWindowSnapshot,
+  resolved_app: &ResolvedAppRef,
+) -> String {
+  let raw_report = render_window_snapshot_report(snapshot);
+  let filtered_windows = snapshot.windows.iter().collect::<Vec<_>>();
+  build_selector_filtered_report_impl(&raw_report, &filtered_windows, resolved_app)
+}
+
+#[cfg(test)]
+pub(super) fn resolve_legacy_app_filtered_snapshot_for_test(
+  app_filter: &str,
+  app_snapshot: &ObservedWindowSnapshot,
+  fallback_snapshot: Option<&ObservedWindowSnapshot>,
+) -> AuvResult<(
+  ObservedWindowSnapshot,
+  Option<ResolvedAppRef>,
+  Option<String>,
+  String,
+)> {
+  resolve_legacy_app_filtered_snapshot(app_filter, app_snapshot, fallback_snapshot)
 }
 
 pub(super) fn verify_now_playing_title(call: &DriverCall) -> AuvResult<DriverResponse> {

@@ -116,12 +116,12 @@ pub(crate) fn build_app_analysis(probe_path: &Path, probe: &AppProbe) -> AuvResu
 
   let text_input_count = count_text_inputs(&ax_snapshot);
   let button_like_count = count_button_like_nodes(&ax_snapshot);
-  let text_bearing_count = count_text_bearing_nodes(&ax_snapshot);
+  let content_text_bearing_count = count_content_text_bearing_nodes(&ax_snapshot);
   let ax_quality = classify_ax_quality(
     ax_snapshot.nodes.len(),
     text_input_count,
     button_like_count,
-    text_bearing_count,
+    content_text_bearing_count,
   );
   let menu_surface = if has_menu_surface(&ax_snapshot) {
     AssessmentStatus::Available
@@ -181,7 +181,7 @@ pub(crate) fn build_app_analysis(probe_path: &Path, probe: &AppProbe) -> AuvResu
   if !ax_snapshot.window_title.trim().is_empty() {
     stable_anchor_candidates.push(format!("windowTitle: {}", ax_snapshot.window_title));
   }
-  if let Some(first_text_node) = first_text_bearing_node(&ax_snapshot) {
+  if let Some(first_text_node) = first_content_text_bearing_node(&ax_snapshot) {
     stable_anchor_candidates.push(format!(
       "axText: {}",
       summarize_ax_node_text(first_text_node)
@@ -246,7 +246,7 @@ pub(crate) fn build_app_analysis(probe_path: &Path, probe: &AppProbe) -> AuvResu
   };
 
   let mut verification_notes = Vec::new();
-  let ax_verify = if text_bearing_count > 0 {
+  let ax_verify = if content_text_bearing_count > 0 {
     verification_notes.push(
       "AX tree contains text-bearing nodes; verifyAxText is a viable candidate contract."
         .to_string(),
@@ -335,7 +335,7 @@ pub(crate) fn build_app_analysis(probe_path: &Path, probe: &AppProbe) -> AuvResu
       "The sampled AX surface exposed a search-like text input, so a keyboard/clipboard search-entry path is worth validating before escalating to pointer control.",
     )?);
   }
-  if text_bearing_count > 0 {
+  if content_text_bearing_count > 0 {
     recommended_strategies.push(recommended_strategy(
       "native-text",
       "ax-text",
@@ -2068,19 +2068,26 @@ fn count_button_like_nodes(snapshot: &ObservedAxTreeSnapshot) -> usize {
     .count()
 }
 
-fn count_text_bearing_nodes(snapshot: &ObservedAxTreeSnapshot) -> usize {
+fn is_window_chrome_node(node: &ObservedAxNode) -> bool {
+  node.role == "AXWindow"
+    || node.role == "AXApplication"
+    || node.subrole == "AXStandardWindow"
+    || (node.role == "AXScrollArea" && summarize_ax_node_text(node).is_empty())
+}
+
+fn count_content_text_bearing_nodes(snapshot: &ObservedAxTreeSnapshot) -> usize {
   snapshot
     .nodes
     .iter()
-    .filter(|node| !summarize_ax_node_text(node).is_empty())
+    .filter(|node| !is_window_chrome_node(node) && !summarize_ax_node_text(node).is_empty())
     .count()
 }
 
-fn first_text_bearing_node(snapshot: &ObservedAxTreeSnapshot) -> Option<&ObservedAxNode> {
+fn first_content_text_bearing_node(snapshot: &ObservedAxTreeSnapshot) -> Option<&ObservedAxNode> {
   snapshot
     .nodes
     .iter()
-    .find(|node| !summarize_ax_node_text(node).is_empty())
+    .find(|node| !is_window_chrome_node(node) && !summarize_ax_node_text(node).is_empty())
 }
 
 fn summarize_ax_node_text(node: &ObservedAxNode) -> String {

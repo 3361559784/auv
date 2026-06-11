@@ -327,4 +327,4 @@ Use the AUV inventory commands after the refactor:
 - `DetectionSet -> Candidate` or `DetectionSet -> RecognitionResult` bridges
   remain deferred to a separate contract slice. The current deferred boundary
   is written down in
-  `docs/superpowers/specs/2026-06-05-detectionset-candidate-adapter-boundary.md`.
+  `docs/ai/references/2026-06-05-detectionset-candidate-adapter-boundary.md`.

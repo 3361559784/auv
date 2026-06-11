@@ -27,7 +27,7 @@ Policy:
 
 The first implementation slice was superseded by the owner-approved direct
 removal sequence in
-`docs/superpowers/specs/2026-06-11-skill-recipe-removal-sequence-design.md`.
+`docs/ai/references/2026-06-11-skill-recipe-removal-sequence-design.md`.
 Bundle execution, export, verification, checked-in bundle manifests, and
 bundle-era invoke resolution were removed in the 2026-06-11 bundle retirement
 slice. JSON skill/recipe/case-matrix execution was removed by PR #35.

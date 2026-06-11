@@ -1,6 +1,6 @@
 # auv-cli-invoke Catalog Removal Spec
 
-Status: superseded by `docs/superpowers/specs/2026-06-11-skill-recipe-removal-sequence-design.md`
+Status: superseded by `docs/ai/references/2026-06-11-skill-recipe-removal-sequence-design.md`
 
 Update 2026-06-11: the legacy JSON `skill`/recipe/case-matrix lane has been
 removed by PR #35. Treat this document as historical design context only. A new

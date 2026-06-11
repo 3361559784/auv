@@ -138,7 +138,7 @@ pub enum InputPolicy {
   separated from delivery preference.
 
 NOTICE(2026-06-02-scroll-policy): Scroll now has a narrower owner-approved
-policy override in `docs/superpowers/specs/2026-06-02-background-scroll-policy-design.md`.
+policy override in `docs/ai/references/2026-06-02-background-scroll-policy-design.md`.
 For scroll input, `ForegroundPreferred` means choose foreground/global HID first;
 `BackgroundPreferred` is the policy that tries window-targeted delivery before
 foreground fallback. Non-input capabilities such as capture remain background

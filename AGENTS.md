@@ -433,7 +433,11 @@ Use this root-cause block format in regression tests when relevant:
 ## Documentation Workflow
 
 - During active design or implementation, write specs, plans, and working notes
-  in the locations required by the relevant skill or workflow.
+  directly under `docs/ai/references/`.
+- Do not create or use `docs/superpowers/specs/` or `docs/superpowers/plans/`
+  for this repository. If a skill suggests those default locations, treat this
+  repository guide as the override and place the document in
+  `docs/ai/references/` instead.
 - In-progress documents are the source of truth while the work is underway.
 - When an implementation is mostly complete, update durable reference material
   in `docs/ai/references/`.

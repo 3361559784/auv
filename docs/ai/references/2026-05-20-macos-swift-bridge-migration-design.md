@@ -272,14 +272,12 @@ Implementation notes from the foundation slice:
 
 ## Implementation Plans
 
-This design is implemented through two plans:
+This design was implemented through two historical plan slices:
 
-- `docs/superpowers/plans/2026-05-20-macos-swift-bridge-foundation.md`
-  covers the completed foundation slice: Cargo/build integration,
+- macOS Swift bridge foundation: Cargo/build integration,
   `src/driver/macos/native`, and the permission probe migration.
-- `docs/superpowers/plans/2026-05-20-macos-swift-bridge-migration-completion.md`
-  covers the remaining runtime Swift script migrations: display/window, AX tree,
-  OCR, pointer, clipboard, keyboard decision, script removal, and final live
+- macOS Swift bridge migration completion: display/window, AX tree, OCR,
+  pointer, clipboard, keyboard decision, script removal, and final live
   validation.
 
 Current status: foundation slice completed; completion plan executed for the

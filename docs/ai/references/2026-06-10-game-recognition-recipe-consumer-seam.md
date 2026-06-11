@@ -44,8 +44,8 @@ DetectionEvidenceManifest
 Anchors:
 
 - `src/inference_recognition.rs`
-- `docs/superpowers/specs/2026-06-05-detector-manifest-recognitionresult-mapping-v0.md`
-- `docs/superpowers/specs/2026-06-06-game-slay-the-spire-observe-only-recognition-fixture-boundary.md`
+- `docs/ai/references/2026-06-05-detector-manifest-recognitionresult-mapping-v0.md`
+- `docs/ai/references/2026-06-06-game-slay-the-spire-observe-only-recognition-fixture-boundary.md`
 
 Top half, runtime-side invoke/recipe execution:
 

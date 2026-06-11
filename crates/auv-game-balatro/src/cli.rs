@@ -1022,9 +1022,9 @@ fn click_game_restart(args: OperationControlArgs) -> Result<(), CliError> {
   let first_point = before
     .as_ref()
     .and_then(|state| {
-      best_button(&state.buttons, "button_new_run_play").map(|button| {
+      restart_primary_button(&state.buttons).map(|button| {
         (
-          "button_new_run_play",
+          button.id.as_str(),
           window_point_from_button(state, &window, button),
         )
       })
@@ -1062,7 +1062,7 @@ fn click_game_restart(args: OperationControlArgs) -> Result<(), CliError> {
   let mut second_point = None;
   if let Ok(intermediate) = observe_image(&intermediate_image, &BalatroModelConfig::default(), true)
   {
-    if let Some(button) = best_button(&intermediate.buttons, "button_new_run_play") {
+    if let Some(button) = restart_primary_button(&intermediate.buttons) {
       let point = window_point_from_button(&intermediate, &window, button);
       click_game_point(&session, &window, point)?;
       second_point = Some(point);
@@ -1088,7 +1088,7 @@ fn click_game_restart(args: OperationControlArgs) -> Result<(), CliError> {
     let mut verification_retry_click_point = None;
     if let Ok(after) = &after_result {
       if after.phase == BalatroPhase::MainMenu {
-        if let Some(button) = best_button(&after.buttons, "button_new_run_play") {
+        if let Some(button) = restart_primary_button(&after.buttons) {
           let point = window_point_from_button(after, &window, button);
           click_game_point(&session, &window, point)?;
           verification_retry_click_point = Some(point);
@@ -2924,6 +2924,11 @@ fn best_button<'a>(buttons: &'a [ButtonTarget], id: &str) -> Option<&'a ButtonTa
     })
 }
 
+fn restart_primary_button(buttons: &[ButtonTarget]) -> Option<&ButtonTarget> {
+  best_button(buttons, "button_new_run_play")
+    .or_else(|| best_button(buttons, "button_main_menu_play"))
+}
+
 fn resolve_store_next_round_target(state: &BalatroState) -> Result<ResolvedActionTarget, CliError> {
   if let Some(button) = best_button(&state.buttons, "button_store_next_round") {
     return Ok(ResolvedActionTarget {
@@ -4658,6 +4663,15 @@ mod tests {
       },
       confidence,
     }
+  }
+
+  #[test]
+  fn restart_primary_button_accepts_main_menu_play() {
+    let buttons = vec![button("button_main_menu_play", 100.0, 0.8)];
+
+    let resolved = restart_primary_button(&buttons).expect("main menu play should start a run");
+
+    assert_eq!(resolved.id, "button_main_menu_play");
   }
 
   #[test]

@@ -1,28 +1,36 @@
 # Recipe To Rust Orchestration Migration Inventory
 
-Status: proposed, corrected after owner clarification; bundle surface retired 2026-06-11
+Status: historical inventory; bundle surface retired 2026-06-11; JSON
+skill/recipe/case-matrix lane removed by PR #35
 
 Scope: migration inventory for
 `2026-06-10-rust-orchestration-recipes-bundles-retirement.md`.
 
+Update 2026-06-11: this inventory is no longer an active migration policy.
+Checked-in `recipes/**`, `src/skill/**`, `skill` CLI/MCP surfaces, app
+distillation/validation recipe schema support, and scroll-scan recipe hooks have
+been removed. Do not use `fallback` rows below as approval to restore JSON
+recipe execution. Future workflow work should use app-local Rust commands,
+typed driver APIs, and later `auv-tracing-*` boundaries.
+
 Policy:
 
-- `migrate`: implement Rust orchestration replacement before removing execution.
-- `fallback`: keep JSON recipe or case-matrix execution available until the
-  entry migrates or is explicitly archived.
+- `migrate`: historical 2026-06-10 recommendation to implement Rust
+  orchestration replacement before removing execution.
+- `fallback`: historical 2026-06-10 recommendation that has been superseded by
+  PR #35; it must not be treated as active approval to keep or restore JSON
+  recipe execution.
 - `archive`: keep discoverable as historical proof material after it is no
   longer an active workflow.
 - `delete`: remove when no durable reference value remains.
 - `hold`: needs owner review before migration or removal.
 
-The first implementation slice should migrate one small recipe from
-`recipes/` into Rust-owned operation code while preserving existing CLI
-behavior through the JSON recipe compatibility path. The suggested exemplar is
-`recipes/macos/textedit/create-and-verify-text.v0.json` because it has one case
-matrix, a narrow workflow, and existing validation tests. Other recipes remain
-`fallback` until they are migrated or explicitly archived. Bundle execution,
-export, verification, checked-in bundle manifests, and bundle-era invoke
-resolution were removed in the 2026-06-11 bundle retirement slice.
+The first implementation slice was superseded by the owner-approved direct
+removal sequence in
+`docs/superpowers/specs/2026-06-11-skill-recipe-removal-sequence-design.md`.
+Bundle execution, export, verification, checked-in bundle manifests, and
+bundle-era invoke resolution were removed in the 2026-06-11 bundle retirement
+slice. JSON skill/recipe/case-matrix execution was removed by PR #35.
 
 Implementation note, 2026-06-10: `crates/auv-apple-textedit` now owns the
 TextEdit operation contract and a `TextEditDriver` boundary. Its macOS adapter
@@ -75,5 +83,6 @@ App-local replacement commands should use app-domain names:
 | `recipes/macos/textedit/create-and-verify-text.cases.v0.json` | case_matrix | `auv-cli skill cases run` | migrate | crates/auv-apple-textedit `document write <content> --replace --verify` | owner clarification, 2026-06-10 |
 | `recipes/scan/list-item-candidate-continue-hook.v0.json` | recipe | scroll-scan recipe hook | fallback | later typed `auv-tracing-interaction` hook | owner clarification, 2026-06-10 |
 
-README files under `recipes/**/README.md` remain documentation artifacts and do
-not define executable manifest entries.
+README files formerly under `recipes/**/README.md` were deleted with the
+checked-in recipe lane. Historical references in this table are retained only
+to explain the retired migration discussion.

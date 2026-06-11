@@ -1,6 +1,11 @@
 # auv-tracing-driver Runtime Recording Split Spec
 
-Status: proposed
+Status: needs refresh after PR #35
+
+Update 2026-06-11: the legacy JSON `skill`/recipe/case-matrix lane has been
+removed by PR #35. This document remains useful for the `auv-tracing-driver`
+recording boundary, but any statement that assumes JSON recipes still exist as
+`Runtime` callers is historical and should not guide new implementation.
 
 Scope classification: approved feature slice
 
@@ -27,6 +32,7 @@ operation coverage. It is not the broad command migration PR.
 - resolves command ids through the catalog
 - invokes legacy drivers through `DriverCall`
 - previously invoked bundle-era recipe commands, retired 2026-06-11
+- previously invoked JSON skill/recipe/case-matrix commands, retired by PR #35
 - exposes read/inspect helper methods
 - hosts recorded operation helpers through `recorded_operation.rs`
 
@@ -46,8 +52,8 @@ Create an `auv-tracing-driver` boundary for driver-level recording:
 - recorder fan-out to local snapshots and inspect server write mode
 
 This boundary records evidence for atomic driver operations. It should not own
-command compatibility, JSON recipe execution, retired bundle lookup, or UI-specific
-interaction loops.
+command compatibility, retired JSON recipe execution, retired bundle lookup, or
+UI-specific interaction loops.
 
 ## API Shape
 
@@ -90,8 +96,8 @@ recording for atomic observations and input actions.
 ## Non-Goals
 
 - Do not rewrite all command implementations in this PR.
-- Do not remove JSON recipes in this PR. Bundles have already been retired and
-  must not be restored.
+- Do not reintroduce JSON recipes or bundles. Both lanes have been retired and
+  must not be restored as compatibility.
 - Do not change persisted run record wire shapes unless a compatibility
   boundary is documented and tested.
 - Do not make the inspect server an execution dependency.
@@ -115,8 +121,8 @@ recording for atomic observations and input actions.
    `auv-cli-invoke` to the new recorder only to keep current recording behavior
    working, and add at most one minimal typed proof handler with no
    command-family migration.
-6. Shrink `Runtime` to a temporary facade for JSON recipe paths that have not
-   yet migrated.
+6. Shrink `Runtime` to a temporary facade only for remaining command/catalog
+   compatibility paths that have not yet moved behind `auv-cli-invoke`.
 
 ## Exit Criteria
 
@@ -148,8 +154,9 @@ Focused tests should cover:
 
 ## Deferrals
 
-TODO(runtime-delete): full `runtime.rs` deletion is deferred until JSON recipe
-execution no longer depends on the compatibility facade.
+TODO(runtime-delete): full `runtime.rs` deletion is deferred until command
+catalog compatibility and remaining recording responsibilities move behind
+`auv-cli-invoke` and `auv-tracing-driver`.
 
 TODO(tracing-interaction): scroll scan and other macro-operation recording are
 deferred to `auv-tracing-interaction` after driver-level recording is stable.

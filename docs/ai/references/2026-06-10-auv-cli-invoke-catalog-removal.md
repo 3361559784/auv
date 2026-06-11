@@ -1,6 +1,12 @@
 # auv-cli-invoke Catalog Removal Spec
 
-Status: proposed
+Status: superseded by `docs/superpowers/specs/2026-06-11-skill-recipe-removal-sequence-design.md`
+
+Update 2026-06-11: the legacy JSON `skill`/recipe/case-matrix lane has been
+removed by PR #35. Treat this document as historical design context only. A new
+`auv-cli-invoke` design should not preserve JSON recipe compatibility or move
+recipe step compatibility types forward; it should start from the post-removal
+state where `src/skill/**` and `recipes/**` no longer exist.
 
 Scope classification: approved feature slice
 
@@ -76,8 +82,8 @@ must disappear before extraction.
   PR.
 - Do not move run lifecycle, artifact staging, or driver execution ownership
   into `auv-cli-invoke`.
-- Do not remove JSON recipe execution in this PR. Bundle execution has already
-  been retired and must not be reintroduced as compatibility.
+- Do not reintroduce JSON recipe execution. Bundle execution and JSON recipes
+  have both been retired and must not be restored as compatibility.
 - Do not introduce REPL behavior. `auv-cli-invoke` is a library boundary first.
 
 ## Proposed Steps
@@ -88,13 +94,10 @@ must disappear before extraction.
 3. Move the default command table from `src/catalog.rs` into
    `auv-cli-invoke` as a legacy registry.
 4. Update the CLI `invoke` subcommand to call `auv-cli-invoke`.
-5. Keep legacy recipe step request/result compatibility types in a neutral root
-   compatibility module until PR3, or re-export them through such a module. JSON
-   recipe execution must not depend on the frontend `auv-cli-invoke` crate.
-6. Let `auv-cli-invoke` translate CLI input into the legacy compatibility
+5. Let `auv-cli-invoke` translate CLI input into the legacy compatibility
    request and call the current legacy `DriverCall` adapter for unmigrated
    commands without owning driver execution.
-7. Delete root `src/catalog.rs` once no root module imports it.
+6. Delete root `src/catalog.rs` once no root module imports it.
 
 ## Compatibility Rule
 

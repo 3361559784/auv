@@ -7,6 +7,8 @@ use rosu_map::Beatmap;
 use rosu_map::section::hit_objects::HitObjectKind;
 use serde::{Deserialize, Serialize};
 
+use crate::visual_truth::{VisualTruthManifest, build_visual_truth_manifest};
+
 #[cfg(target_os = "macos")]
 use auv_driver::capture::Capture;
 #[cfg(target_os = "macos")]
@@ -184,6 +186,7 @@ pub struct BenchmarkOutput {
   pub capture_trace: Vec<CaptureTraceSample>,
   pub latency_report: LatencyReport,
   pub verification_summary: Option<VerificationSummary>,
+  pub visual_truth_manifest: Option<VisualTruthManifest>,
   pub output_dir: PathBuf,
 }
 
@@ -220,6 +223,16 @@ pub fn run_benchmark(inputs: &BenchmarkInputs) -> OsuResult<BenchmarkOutput> {
     RunMode::TypedDispatch => run_typed_dispatch(schedule.as_slice(), inputs)?,
   };
   let latency_report = build_latency_report(inputs.run_mode.clone(), &dispatch_trace);
+  let visual_truth_manifest = if inputs.capture_verify {
+    Some(build_visual_truth_manifest(
+      &map_summary,
+      &schedule,
+      &dispatch_trace,
+      &capture_trace,
+    )?)
+  } else {
+    None
+  };
 
   write_json(
     inputs.output_dir.join("parsed_map_summary.json"),
@@ -240,6 +253,12 @@ pub fn run_benchmark(inputs: &BenchmarkInputs) -> OsuResult<BenchmarkOutput> {
       inputs.output_dir.join("verification_summary.json"),
       &verification_summary,
     )?;
+    if let Some(manifest) = &visual_truth_manifest {
+      write_json(
+        inputs.output_dir.join("visual_truth_manifest.json"),
+        manifest,
+      )?;
+    }
   }
 
   Ok(BenchmarkOutput {
@@ -249,6 +268,7 @@ pub fn run_benchmark(inputs: &BenchmarkInputs) -> OsuResult<BenchmarkOutput> {
     capture_trace,
     latency_report,
     verification_summary,
+    visual_truth_manifest,
     output_dir: inputs.output_dir.clone(),
   })
 }
@@ -876,4 +896,51 @@ mod tests {
     assert_eq!(summary.max_capture_delay_ms, -1);
     assert_eq!(summary.suspicious_time_inversion_count, 1);
   }
+
+  #[test]
+  fn benchmark_writes_visual_truth_manifest_when_capture_verify_is_enabled() {
+    let temp_dir = std::env::temp_dir().join(format!(
+      "auv-osu-visual-truth-{}",
+      std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("unix epoch")
+        .as_nanos()
+    ));
+    let beatmap_path = temp_dir.join("fixture.osu");
+    std::fs::create_dir_all(&temp_dir).expect("create temp dir");
+    std::fs::write(&beatmap_path, TEST_BEATMAP).expect("write beatmap fixture");
+
+    let mut inputs = BenchmarkInputs::new(beatmap_path.clone(), temp_dir.clone());
+    inputs.capture_verify = true;
+
+    let output = run_benchmark(&inputs).expect("benchmark should succeed");
+
+    assert!(temp_dir.join("visual_truth_manifest.json").exists());
+    let manifest = output
+      .visual_truth_manifest
+      .expect("visual truth manifest should exist");
+    assert_eq!(manifest.schema_version, 1);
+    assert_eq!(manifest.frames.len(), 0);
+
+    std::fs::remove_dir_all(&temp_dir).expect("remove temp dir");
+  }
+
+  const TEST_BEATMAP: &str = r"osu file format v14
+
+[General]
+AudioFilename: test.mp3
+Mode: 0
+
+[Difficulty]
+HPDrainRate:5
+CircleSize:4
+OverallDifficulty:7
+ApproachRate:8
+
+[TimingPoints]
+0,500,4,2,0,100,1,0
+
+[HitObjects]
+256,192,1000,1,0,0:0:0:0:
+";
 }

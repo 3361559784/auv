@@ -50,6 +50,7 @@ pub fn run_osu_benchmark_with_inputs(
           "latency_report.json",
           "capture_trace.json",
           "verification_summary.json",
+          "visual_truth_manifest.json",
         ] {
           let artifact_path = result.output_dir.join(artifact_name);
           if artifact_path.exists() {

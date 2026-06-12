@@ -4,7 +4,7 @@ Date: 2026-06-12
 
 Status: current handoff for the next coding agent before session compaction
 
-Current HEAD when written: `WORKTREE_DIRTY_P2_PENDING_COMMIT`
+Current HEAD when written: `33bdabf`
 
 ## Start Here
 
@@ -34,7 +34,8 @@ Current shape of the lane:
 
 - `P0`: beatmap-driven offline scheduler benchmark — **done as merged skeleton**
 - `P1`: typed macOS window dispatch benchmark mode — **done as merged slice**
-- `P2`: capture / visual verification — **implemented locally and smoke-verified, pending commit**
+- `P2`: capture / visual verification — **done as merged slice with local real-app smoke verification**
+- `P2.5`: capture timestamp semantics — **next approved slice before any visual dataset / YOLO work**
 - `P3`: YOLO/CV as independent validation channel — **not started**
 
 ## Current Repo State
@@ -43,21 +44,15 @@ Current branch state when written:
 
 ```text
 main...origin/main
-M crates/auv-game-osu/src/benchmark.rs
-M crates/auv-game-osu/src/lib.rs
-M docs/ai/references/2026-05-24-codex-handoff.md
-M src/cli.rs
-M src/main.rs
-M src/osu.rs
 ```
 
 Recent commits that matter:
 
 ```text
+33bdabf feat(osu): add capture verification evidence to dispatch benchmark
 4d7f06a feat(osu): add typed dispatch benchmark mode
 54394b4 feat(osu): add beatmap benchmark skeleton
 d394430 fix(auv-game-balatro): accept main menu play restart button
-a8dd2c5 docs: move superpowers specs to references
 ```
 
 Before coding again, verify live state:
@@ -67,7 +62,7 @@ git status --short --branch
 git log --oneline --decorate -5
 ```
 
-When this handoff was written, the working tree was clean.
+When this handoff was written, `main` matched `origin/main`; the handoff file itself was then refreshed to record that pushed state.
 
 ## What Was Completed In This Session
 
@@ -128,15 +123,15 @@ MacosDriver::new()
 auv-cli osu dispatch <beatmap.osu> --target-app <name> [--output-dir <dir>] [--dispatch-limit <n>]
 ```
 
-### P2 local and smoke-verified
+### P2 merged
 
 Commit:
 
 ```text
-pending local commit
+33bdabf feat(osu): add capture verification evidence to dispatch benchmark
 ```
 
-What it does:
+What it did:
 
 - extends typed dispatch benchmark inputs with `capture_verify`
 - captures window evidence around each dispatched action
@@ -159,9 +154,35 @@ Smoke verification completed locally against installed `osu!.app` and a real loc
 
 This preserves the active AUV core lane instead of forking a private benchmark recorder.
 
+### P2.5 in progress
+
+Current local slice after `33bdabf`:
+
+- adds `pre_capture_offset_ms` with default `16`
+- moves before capture to `scheduled_time_ms - pre_capture_offset_ms`
+- treats `post_capture_offsets_ms` as absolute offsets relative to `actual_dispatch_time_ms`
+- splits capture timing into both:
+  - `relative_to_scheduled_ms`
+  - `relative_to_dispatch_ms`
+- keeps `VerificationSummary` aligned with dispatch-time semantics instead of mixing scheduled and dispatch references
+
+Local real-app smoke re-run passed against installed `osu!.app` and a real local beatmap file.
+
+- run id: `run_1781278300171_81552_0`
+- output dir: `.tmp-osu-dispatch-p25`
+- `verificationCapturedActions: 1`
+- `verificationMissingFrames: 0`
+- produced files:
+  - `capture-object-0000-before-16ms.png`
+  - `capture-object-0000-after-16ms.png`
+  - `capture-object-0000-after-48ms.png`
+- `capture_trace.json` now records both scheduled-relative and dispatch-relative offsets
+
+Observed timing on that smoke confirms why P2.5 matters: dispatch itself was late (`scheduled_time_ms = 151`, `actual_dispatch_time_ms = 1283`), so scheduled-relative and dispatch-relative capture semantics must stay separate and explicit.
+
 ## Verification Already Run
 
-The following checks passed for the local P2 state:
+The following checks passed for the merged P2 state:
 
 ```bash
 cargo fmt --check
@@ -174,6 +195,24 @@ cargo run -- osu benchmark <beatmap.osu> [--output-dir <dir>]
 cargo run -- osu dispatch <local beatmap> --target-app "osu!" --dispatch-limit 1 --capture-verify --output-dir .tmp-osu-dispatch-p2
 auv-cli inspect run_1781276425182_80682_0
 ```
+
+Additional local verification for the current P2.5 slice:
+
+```bash
+cargo fmt --check
+cargo check
+cargo test
+cargo build
+git diff --check
+cargo run --quiet -- osu benchmark <local beatmap> --output-dir .tmp-osu-benchmark-p25
+cargo run --quiet -- osu dispatch <local beatmap> --target-app "osu!" --dispatch-limit 1 --capture-verify --output-dir .tmp-osu-dispatch-p25
+```
+
+Notes:
+
+- one intermediate dispatch smoke failed only because the `osu!` window was not visible/resolvable at the time of launch
+- the successful rerun produced `run_1781278300171_81552_0`
+- in this shell, `auv-cli inspect` was not on `PATH`; inspect validation for P2.5 should therefore be rerun via the built binary path or `cargo run -- inspect ...` if needed
 
 ## Collabi State
 
@@ -210,16 +249,18 @@ Still true:
 
 Do not open a new goal.
 
-Next step is one of these, with `P2` currently the most direct forward move:
+Next step is `P2.5`, then `P3a`:
 
-1. `P2`: add timestamped capture / visual verification around typed dispatch
-2. alternatively thicken `P0` reporting/schema without changing the truth model
+1. fix capture timestamp semantics so before/after captures are aligned to explicit pre-dispatch and absolute post-dispatch offsets
+2. keep `CaptureSample` / `VerificationSummary` field names and aggregates honest about scheduled-vs-dispatch timing
+3. only after that, open `P3a`: generate a minimal offline dataset/alignment path from beatmap truth + corrected P2 capture artifacts
+4. validate visual-only detection quality offline before any control-path experiments
 
-If continuing with `P2`, preserve these rules:
+If continuing with `P2.5` / `P3a`, preserve these rules:
 
-- capture is a separate evidence channel, not the first truth source
-- keep typed dispatch as the execution path
-- do not turn this into YOLO-first control
+- beatmap truth remains the primary source; vision stays a validation lane
+- reuse P2 capture artifacts instead of inventing a parallel evidence path
+- do not put LLM or detector inference into the hit loop
 
 ## Useful Mental Model
 

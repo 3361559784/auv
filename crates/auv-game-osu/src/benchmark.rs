@@ -35,6 +35,7 @@ pub struct BenchmarkInputs {
   pub target_app: Option<String>,
   pub dispatch_limit: Option<usize>,
   pub capture_verify: bool,
+  pub pre_capture_offset_ms: u64,
   pub post_capture_offsets_ms: Vec<u64>,
 }
 
@@ -48,6 +49,7 @@ impl BenchmarkInputs {
       target_app: None,
       dispatch_limit: None,
       capture_verify: false,
+      pre_capture_offset_ms: default_pre_capture_offset_ms(),
       post_capture_offsets_ms: default_post_capture_offsets_ms(),
     }
   }
@@ -65,6 +67,7 @@ impl BenchmarkInputs {
       target_app: Some(target_app.into()),
       dispatch_limit: Some(8),
       capture_verify: false,
+      pre_capture_offset_ms: default_pre_capture_offset_ms(),
       post_capture_offsets_ms: default_post_capture_offsets_ms(),
     }
   }
@@ -124,6 +127,7 @@ pub struct DispatchSample {
 pub struct CaptureSample {
   pub phase: CapturePhase,
   pub capture_time_ms: u64,
+  pub relative_to_scheduled_ms: i64,
   pub relative_to_dispatch_ms: i64,
   pub file_name: String,
   pub width: u32,
@@ -208,7 +212,11 @@ pub fn run_benchmark(inputs: &BenchmarkInputs) -> OsuResult<BenchmarkOutput> {
 
   let map_summary = build_map_summary(&inputs.beatmap_path, &beatmap, &schedule);
   let (dispatch_trace, capture_trace, verification_summary) = match inputs.run_mode {
-    RunMode::DryRun => (run_dry_schedule(&schedule, inputs.lead_in_ms), Vec::new(), None),
+    RunMode::DryRun => (
+      run_dry_schedule(&schedule, inputs.lead_in_ms),
+      Vec::new(),
+      None,
+    ),
     RunMode::TypedDispatch => run_typed_dispatch(schedule.as_slice(), inputs)?,
   };
   let latency_report = build_latency_report(inputs.run_mode.clone(), &dispatch_trace);
@@ -217,10 +225,7 @@ pub fn run_benchmark(inputs: &BenchmarkInputs) -> OsuResult<BenchmarkOutput> {
     inputs.output_dir.join("parsed_map_summary.json"),
     &map_summary,
   )?;
-  write_json(
-    inputs.output_dir.join("action_schedule.json"),
-    &schedule,
-  )?;
+  write_json(inputs.output_dir.join("action_schedule.json"), &schedule)?;
   write_json(
     inputs.output_dir.join("dispatch_trace.json"),
     &dispatch_trace,
@@ -230,10 +235,7 @@ pub fn run_benchmark(inputs: &BenchmarkInputs) -> OsuResult<BenchmarkOutput> {
     &latency_report,
   )?;
   if inputs.capture_verify {
-    write_json(
-      inputs.output_dir.join("capture_trace.json"),
-      &capture_trace,
-    )?;
+    write_json(inputs.output_dir.join("capture_trace.json"), &capture_trace)?;
     write_json(
       inputs.output_dir.join("verification_summary.json"),
       &verification_summary,
@@ -347,7 +349,11 @@ fn run_typed_dispatch(
   let session = driver.open_local().map_err(|error| error.to_string())?;
   let window = session
     .window()
-    .resolve(WindowSelector::default().owned_by(App::name(target_app.to_string())).title_contains("osu"))
+    .resolve(
+      WindowSelector::default()
+        .owned_by(App::name(target_app.to_string()))
+        .title_contains("osu"),
+    )
     .map_err(|error| error.to_string())?;
   let start = Instant::now() + Duration::from_millis(inputs.lead_in_ms);
   let mut trace = Vec::with_capacity(dispatch_limit);
@@ -360,6 +366,10 @@ fn run_typed_dispatch(
   for action in schedule.iter().take(dispatch_limit) {
     let mut captures = Vec::new();
     if inputs.capture_verify {
+      let before_capture_time_ms = action
+        .scheduled_time_ms
+        .saturating_sub(inputs.pre_capture_offset_ms);
+      wait_until_due(start, before_capture_time_ms);
       captures.push(capture_sample(
         &session,
         &window,
@@ -367,7 +377,9 @@ fn run_typed_dispatch(
         action,
         CapturePhase::BeforeDispatch,
         &start,
-        0,
+        action.scheduled_time_ms,
+        None,
+        inputs.pre_capture_offset_ms,
       )?);
     }
     wait_until_due(start, action.scheduled_time_ms);
@@ -383,16 +395,26 @@ fn run_typed_dispatch(
           window_strategy: WindowClickStrategy::ChromiumCompatible,
         },
       )
-      .map_err(|error| format!("typed dispatch failed at object {}: {error}", action.object_index))?;
+      .map_err(|error| {
+        format!(
+          "typed dispatch failed at object {}: {error}",
+          action.object_index
+        )
+      })?;
     let actual_dispatch_time_ms = start.elapsed().as_millis() as u64;
     let dispatch_error_ms = actual_dispatch_time_ms as i64 - action.scheduled_time_ms as i64;
-    trace.push(dispatch_sample_from_result(action, actual_dispatch_time_ms, dispatch_error_ms, result));
+    trace.push(dispatch_sample_from_result(
+      action,
+      actual_dispatch_time_ms,
+      dispatch_error_ms,
+      result,
+    ));
 
     if inputs.capture_verify {
       for offset_ms in &inputs.post_capture_offsets_ms {
-        if *offset_ms > 0 {
-          thread::sleep(Duration::from_millis(*offset_ms));
-        }
+        let post_capture_due =
+          start + Duration::from_millis(actual_dispatch_time_ms.saturating_add(*offset_ms));
+        wait_until_instant(post_capture_due);
         captures.push(capture_sample(
           &session,
           &window,
@@ -400,6 +422,8 @@ fn run_typed_dispatch(
           action,
           CapturePhase::AfterDispatch,
           &start,
+          action.scheduled_time_ms,
+          Some(actual_dispatch_time_ms),
           *offset_ms,
         )?);
       }
@@ -429,13 +453,26 @@ fn capture_sample(
   action: &ScheduledAction,
   phase: CapturePhase,
   start: &Instant,
+  scheduled_time_ms: u64,
+  actual_dispatch_time_ms: Option<u64>,
   phase_offset_ms: u64,
 ) -> OsuResult<CaptureSample> {
-  let capture = session
-    .window()
-    .capture(window)
-    .map_err(|error| format!("window capture failed at object {}: {error}", action.object_index))?;
-  capture_to_sample(output_dir, action, phase, start, phase_offset_ms, capture)
+  let capture = session.window().capture(window).map_err(|error| {
+    format!(
+      "window capture failed at object {}: {error}",
+      action.object_index
+    )
+  })?;
+  capture_to_sample(
+    output_dir,
+    action,
+    phase,
+    start,
+    scheduled_time_ms,
+    actual_dispatch_time_ms,
+    phase_offset_ms,
+    capture,
+  )
 }
 
 #[cfg(target_os = "macos")]
@@ -444,6 +481,8 @@ fn capture_to_sample(
   action: &ScheduledAction,
   phase: CapturePhase,
   start: &Instant,
+  scheduled_time_ms: u64,
+  actual_dispatch_time_ms: Option<u64>,
   phase_offset_ms: u64,
   capture: Capture,
 ) -> OsuResult<CaptureSample> {
@@ -465,7 +504,10 @@ fn capture_to_sample(
   Ok(CaptureSample {
     phase,
     capture_time_ms,
-    relative_to_dispatch_ms: capture_time_ms as i64 - action.scheduled_time_ms as i64,
+    relative_to_scheduled_ms: capture_time_ms as i64 - scheduled_time_ms as i64,
+    relative_to_dispatch_ms: actual_dispatch_time_ms
+      .map(|dispatch_time_ms| capture_time_ms as i64 - dispatch_time_ms as i64)
+      .unwrap_or(capture_time_ms as i64 - scheduled_time_ms as i64),
     file_name,
     width: capture.image.width(),
     height: capture.image.height(),
@@ -507,6 +549,10 @@ fn dispatch_sample_from_result(
 
 fn wait_until_due(start: Instant, scheduled_time_ms: u64) {
   let due = start + Duration::from_millis(scheduled_time_ms);
+  wait_until_instant(due);
+}
+
+fn wait_until_instant(due: Instant) {
   loop {
     let now = Instant::now();
     if now >= due {
@@ -562,26 +608,34 @@ fn build_verification_summary(
   expected_actions: usize,
   capture_trace: &[CaptureTraceSample],
 ) -> VerificationSummary {
-  let captured_action_count = capture_trace.iter().filter(|sample| !sample.captures.is_empty()).count();
-  let missing_frame_count: usize = capture_trace
+  let captured_action_count = capture_trace
     .iter()
-    .map(|sample| sample.captures.iter().filter(|capture| capture.width == 0 || capture.height == 0).count())
-    .sum();
+    .filter(|sample| !sample.captures.is_empty())
+    .count();
+  let missing_frame_count = expected_actions.saturating_sub(captured_action_count);
   let max_capture_delay_ms = capture_trace
     .iter()
-    .flat_map(|sample| sample.captures.iter().map(|capture| capture.relative_to_dispatch_ms))
+    .flat_map(|sample| {
+      sample
+        .captures
+        .iter()
+        .filter(|capture| matches!(capture.phase, CapturePhase::AfterDispatch))
+        .map(|capture| capture.relative_to_dispatch_ms)
+    })
     .max()
     .unwrap_or(0);
   let suspicious_time_inversion_count = capture_trace
     .iter()
     .flat_map(|sample| sample.captures.iter())
-    .filter(|capture| matches!(capture.phase, CapturePhase::AfterDispatch) && capture.relative_to_dispatch_ms < 0)
+    .filter(|capture| {
+      matches!(capture.phase, CapturePhase::AfterDispatch) && capture.relative_to_dispatch_ms < 0
+    })
     .count();
 
   VerificationSummary {
     capture_enabled: true,
     captured_action_count,
-    missing_frame_count: missing_frame_count + expected_actions.saturating_sub(captured_action_count),
+    missing_frame_count,
     max_capture_delay_ms,
     suspicious_time_inversion_count,
   }
@@ -610,8 +664,11 @@ fn write_json(path: PathBuf, value: &impl Serialize) -> OsuResult<()> {
   let mut rendered = serde_json::to_string_pretty(value)
     .map_err(|error| format!("failed to encode {}: {error}", path.display()))?;
   rendered.push('\n');
-  fs::write(&path, rendered)
-    .map_err(|error| format!("failed to write {}: {error}", path.display()))
+  fs::write(&path, rendered).map_err(|error| format!("failed to write {}: {error}", path.display()))
+}
+
+fn default_pre_capture_offset_ms() -> u64 {
+  16
 }
 
 fn default_post_capture_offsets_ms() -> Vec<u64> {
@@ -696,20 +753,20 @@ mod tests {
     assert_eq!(inputs.target_app, None);
     assert_eq!(inputs.dispatch_limit, None);
     assert!(!inputs.capture_verify);
+    assert_eq!(inputs.pre_capture_offset_ms, 16);
     assert_eq!(inputs.post_capture_offsets_ms, vec![16, 48]);
   }
 
   #[test]
   fn typed_dispatch_inputs_set_defaults() {
-    let inputs = BenchmarkInputs::typed_dispatch(
-      PathBuf::from("map.osu"),
-      PathBuf::from("out"),
-      "osu!",
-    );
+    let inputs =
+      BenchmarkInputs::typed_dispatch(PathBuf::from("map.osu"), PathBuf::from("out"), "osu!");
     assert_eq!(inputs.run_mode, RunMode::TypedDispatch);
     assert_eq!(inputs.target_app.as_deref(), Some("osu!"));
     assert_eq!(inputs.dispatch_limit, Some(8));
     assert!(!inputs.capture_verify);
+    assert_eq!(inputs.pre_capture_offset_ms, 16);
+    assert_eq!(inputs.post_capture_offsets_ms, vec![16, 48]);
   }
 
   #[test]
@@ -753,7 +810,8 @@ mod tests {
             CaptureSample {
               phase: CapturePhase::BeforeDispatch,
               capture_time_ms: 9,
-              relative_to_dispatch_ms: -1,
+              relative_to_scheduled_ms: -1,
+              relative_to_dispatch_ms: -2,
               file_name: "a.png".to_string(),
               width: 100,
               height: 100,
@@ -763,6 +821,7 @@ mod tests {
             CaptureSample {
               phase: CapturePhase::AfterDispatch,
               capture_time_ms: 25,
+              relative_to_scheduled_ms: 15,
               relative_to_dispatch_ms: 14,
               file_name: "b.png".to_string(),
               width: 100,
@@ -786,5 +845,35 @@ mod tests {
     assert_eq!(summary.missing_frame_count, 1);
     assert_eq!(summary.max_capture_delay_ms, 14);
     assert_eq!(summary.suspicious_time_inversion_count, 0);
+  }
+
+  #[test]
+  fn verification_summary_flags_after_dispatch_time_inversion() {
+    let summary = build_verification_summary(
+      1,
+      &[CaptureTraceSample {
+        object_index: 0,
+        object_kind: ObjectKind::Circle,
+        scheduled_time_ms: 30,
+        actual_dispatch_time_ms: 35,
+        dispatch_error_ms: 5,
+        captures: vec![CaptureSample {
+          phase: CapturePhase::AfterDispatch,
+          capture_time_ms: 34,
+          relative_to_scheduled_ms: 4,
+          relative_to_dispatch_ms: -1,
+          file_name: "after.png".to_string(),
+          width: 100,
+          height: 100,
+          backend: "test".to_string(),
+          fallback_reason: None,
+        }],
+      }],
+    );
+
+    assert_eq!(summary.captured_action_count, 1);
+    assert_eq!(summary.missing_frame_count, 0);
+    assert_eq!(summary.max_capture_delay_ms, -1);
+    assert_eq!(summary.suspicious_time_inversion_count, 1);
   }
 }

@@ -13,6 +13,10 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
+auv-driver = { path = "../auv-driver" }
 serde.workspace = true
 serde_json.workspace = true
 rosu-map = "0.2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+auv-driver-macos = { path = "../auv-driver-macos" }

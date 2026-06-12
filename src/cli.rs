@@ -80,6 +80,12 @@ pub enum CliCommand {
     beatmap_path: String,
     output_dir: Option<String>,
   },
+  OsuBenchmarkDispatch {
+    beatmap_path: String,
+    target_app: String,
+    output_dir: Option<String>,
+    dispatch_limit: Option<usize>,
+  },
   Invoke {
     request: InvokeRequest,
     inspect: InspectClientOptions,
@@ -193,6 +199,7 @@ USAGE
   auv-cli app probe <bundle-id> [--output-dir <dir>]
   auv-cli app analyze <probe-dir-or-probe-json>
   auv-cli osu benchmark <beatmap.osu> [--output-dir <dir>]
+  auv-cli osu dispatch <beatmap.osu> --target-app <name> [--output-dir <dir>] [--dispatch-limit <n>]
   auv-cli invoke <command-id> [--dry-run] [--target <application-id>] [--label <text>] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
   auv-cli inspect <run-id>
   auv-cli inspect serve [--host <host>] [--port <port>] [--store-root <path>] [--enable-write] [--write-token <token>] [--write-token-file <path>] [--no-write-token]
@@ -548,13 +555,14 @@ fn parse_app_probe(arguments: &[String]) -> AuvResult<CliCommand> {
 
 fn parse_osu(arguments: &[String]) -> AuvResult<CliCommand> {
   if arguments.len() < 2 {
-    return Err("usage: auv-cli osu benchmark <beatmap.osu> [--output-dir <dir>]".to_string());
+    return Err("usage: auv-cli osu <benchmark|dispatch> ...".to_string());
   }
 
   match arguments[1].as_str() {
     "benchmark" => parse_osu_benchmark(arguments),
+    "dispatch" => parse_osu_dispatch(arguments),
     other => Err(format!(
-      "unknown osu subcommand {other}; use `auv-cli osu benchmark <beatmap.osu>`"
+      "unknown osu subcommand {other}; use `auv-cli osu benchmark` or `auv-cli osu dispatch`"
     )),
   }
 }
@@ -585,6 +593,59 @@ fn parse_osu_benchmark(arguments: &[String]) -> AuvResult<CliCommand> {
   Ok(CliCommand::OsuBenchmark {
     beatmap_path,
     output_dir,
+  })
+}
+
+fn parse_osu_dispatch(arguments: &[String]) -> AuvResult<CliCommand> {
+  if arguments.len() < 5 {
+    return Err(
+      "usage: auv-cli osu dispatch <beatmap.osu> --target-app <name> [--output-dir <dir>] [--dispatch-limit <n>]".to_string(),
+    );
+  }
+
+  let beatmap_path = arguments[2].clone();
+  let mut target_app = None;
+  let mut output_dir = None;
+  let mut dispatch_limit = None;
+  let mut index = 3;
+  while index < arguments.len() {
+    match arguments[index].as_str() {
+      "--target-app" => {
+        if index + 1 >= arguments.len() {
+          return Err("--target-app requires a value".to_string());
+        }
+        target_app = Some(arguments[index + 1].clone());
+        index += 2;
+      }
+      "--output-dir" => {
+        if index + 1 >= arguments.len() {
+          return Err("--output-dir requires a value".to_string());
+        }
+        output_dir = Some(arguments[index + 1].clone());
+        index += 2;
+      }
+      "--dispatch-limit" => {
+        if index + 1 >= arguments.len() {
+          return Err("--dispatch-limit requires a value".to_string());
+        }
+        dispatch_limit = Some(
+          arguments[index + 1]
+            .parse::<usize>()
+            .map_err(|error| format!("invalid --dispatch-limit: {error}"))?,
+        );
+        index += 2;
+      }
+      other => return Err(format!("unexpected osu-dispatch argument {other}")),
+    }
+  }
+
+  let target_app = target_app.ok_or_else(|| "--target-app is required".to_string())?;
+
+  Ok(CliCommand::OsuBenchmarkDispatch {
+    beatmap_path,
+    target_app,
+    output_dir,
+    dispatch_limit,
   })
 }
 

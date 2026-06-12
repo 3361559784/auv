@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use auv_game_osu::{BenchmarkInputs, BenchmarkOutput, run_benchmark};
+use auv_game_osu::{BenchmarkInputs, BenchmarkOutput, RunMode, run_benchmark};
 
 use crate::model::AuvResult;
 use crate::recorded_operation::RecordedOperationOutput;
@@ -13,18 +13,35 @@ pub fn run_osu_benchmark(
   beatmap_path: PathBuf,
   output_dir: PathBuf,
 ) -> AuvResult<RecordedOperationOutput<BenchmarkOutput>> {
+  run_osu_benchmark_with_inputs(
+    runtime,
+    BenchmarkInputs::new(beatmap_path, output_dir),
+    "osu benchmark dry-run",
+  )
+}
+
+pub fn run_osu_benchmark_with_inputs(
+  runtime: &Runtime,
+  inputs: BenchmarkInputs,
+  operation_label: &str,
+) -> AuvResult<RecordedOperationOutput<BenchmarkOutput>> {
+  let beatmap_path = inputs.beatmap_path.clone();
   runtime.run_recorded_operation(
     RunSpec::new(RunType::Execute, "auv.osu.benchmark"),
-    "osu benchmark dry-run",
+    operation_label,
     |context| {
       context.record_event(
         "osu.benchmark.inputs",
-        Some(format!("beatmap={}", beatmap_path.display())),
+        Some(format!(
+          "beatmap={} run_mode={}",
+          beatmap_path.display(),
+          match inputs.run_mode {
+            RunMode::DryRun => "dry_run",
+            RunMode::TypedDispatch => "typed_dispatch",
+          }
+        )),
       );
-      let result = run_benchmark(&BenchmarkInputs::new(
-        beatmap_path.clone(),
-        output_dir.clone(),
-      ))?;
+      let result = run_benchmark(&inputs)?;
       context.in_span("osu.benchmark.artifacts", |context| {
         for artifact_name in [
           "parsed_map_summary.json",

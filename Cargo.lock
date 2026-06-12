@@ -419,6 +419,8 @@ dependencies = [
 name = "auv-game-osu"
 version = "0.0.1"
 dependencies = [
+ "auv-driver",
+ "auv-driver-macos",
  "rosu-map",
  "serde",
  "serde_json",

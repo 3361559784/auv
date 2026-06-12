@@ -204,6 +204,35 @@ async fn run() -> Result<(), String> {
       println!("jitterMs: {}", output.value.latency_report.jitter_ms);
       println!("output: {}", output.value.output_dir.display());
     }
+    CliCommand::OsuBenchmarkDispatch {
+      beatmap_path,
+      target_app,
+      output_dir,
+      dispatch_limit,
+    } => {
+      let runtime = build_default_runtime(project_root.clone())?;
+      let beatmap_path = PathBuf::from(beatmap_path);
+      let output_dir = output_dir
+        .map(PathBuf::from)
+        .unwrap_or_else(|| temp_runtime_store_root().join("osu-dispatch-output"));
+      let mut inputs =
+        auv_game_osu::BenchmarkInputs::typed_dispatch(beatmap_path, output_dir, target_app);
+      if let Some(dispatch_limit) = dispatch_limit {
+        inputs.dispatch_limit = Some(dispatch_limit);
+      }
+      let output = auv_cli::osu::run_osu_benchmark_with_inputs(
+        &runtime,
+        inputs,
+        "osu benchmark typed dispatch",
+      )?;
+      println!("runId: {}", output.run_id);
+      println!("status: completed");
+      println!("beatmap: {}", output.value.map_summary.beatmap_path);
+      println!("objects: {}", output.value.map_summary.total_objects);
+      println!("latencyP95Ms: {}", output.value.latency_report.p95_error_ms);
+      println!("jitterMs: {}", output.value.latency_report.jitter_ms);
+      println!("output: {}", output.value.output_dir.display());
+    }
     CliCommand::Invoke { request, inspect } => {
       let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
       let result = runtime.invoke(request)?;

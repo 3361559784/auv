@@ -3,9 +3,17 @@ use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use rosu_map::section::hit_objects::HitObjectKind;
 use rosu_map::Beatmap;
+use rosu_map::section::hit_objects::HitObjectKind;
 use serde::{Deserialize, Serialize};
+
+#[cfg(target_os = "macos")]
+use auv_driver::{
+  App, Click, ClickOptions, Driver, InputActionResult, InputPolicy, WindowClickStrategy,
+  WindowPoint, WindowSelector,
+};
+#[cfg(target_os = "macos")]
+use auv_driver_macos::MacosDriver;
 
 pub type OsuResult<T> = Result<T, String>;
 
@@ -13,6 +21,7 @@ pub type OsuResult<T> = Result<T, String>;
 #[serde(rename_all = "snake_case")]
 pub enum RunMode {
   DryRun,
+  TypedDispatch,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -21,6 +30,8 @@ pub struct BenchmarkInputs {
   pub output_dir: PathBuf,
   pub lead_in_ms: u64,
   pub run_mode: RunMode,
+  pub target_app: Option<String>,
+  pub dispatch_limit: Option<usize>,
 }
 
 impl BenchmarkInputs {
@@ -30,6 +41,23 @@ impl BenchmarkInputs {
       output_dir,
       lead_in_ms: 25,
       run_mode: RunMode::DryRun,
+      target_app: None,
+      dispatch_limit: None,
+    }
+  }
+
+  pub fn typed_dispatch(
+    beatmap_path: PathBuf,
+    output_dir: PathBuf,
+    target_app: impl Into<String>,
+  ) -> Self {
+    Self {
+      beatmap_path,
+      output_dir,
+      lead_in_ms: 25,
+      run_mode: RunMode::TypedDispatch,
+      target_app: Some(target_app.into()),
+      dispatch_limit: Some(8),
     }
   }
 }
@@ -78,6 +106,10 @@ pub struct DispatchSample {
   pub dispatch_error_ms: i64,
   pub x: f32,
   pub y: f32,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub delivery_path: Option<String>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub fallback_reason: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -126,7 +158,10 @@ pub fn run_benchmark(inputs: &BenchmarkInputs) -> OsuResult<BenchmarkOutput> {
   }
 
   let map_summary = build_map_summary(&inputs.beatmap_path, &beatmap, &schedule);
-  let dispatch_trace = run_dry_schedule(&schedule, inputs.lead_in_ms);
+  let dispatch_trace = match inputs.run_mode {
+    RunMode::DryRun => run_dry_schedule(&schedule, inputs.lead_in_ms),
+    RunMode::TypedDispatch => run_typed_dispatch(schedule.as_slice(), inputs)?,
+  };
   let latency_report = build_latency_report(inputs.run_mode.clone(), &dispatch_trace);
 
   write_json(
@@ -214,20 +249,7 @@ fn run_dry_schedule(schedule: &[ScheduledAction], lead_in_ms: u64) -> Vec<Dispat
   let mut trace = Vec::with_capacity(schedule.len());
 
   for action in schedule {
-    let due = start + Duration::from_millis(action.scheduled_time_ms);
-    loop {
-      let now = Instant::now();
-      if now >= due {
-        break;
-      }
-      let remaining = due.saturating_duration_since(now);
-      if remaining > Duration::from_millis(2) {
-        thread::sleep(Duration::from_millis(1));
-      } else {
-        std::hint::spin_loop();
-      }
-    }
-
+    wait_until_due(start, action.scheduled_time_ms);
     let actual_dispatch_time_ms = start.elapsed().as_millis() as u64;
     let dispatch_error_ms = actual_dispatch_time_ms as i64 - action.scheduled_time_ms as i64;
     trace.push(DispatchSample {
@@ -238,10 +260,97 @@ fn run_dry_schedule(schedule: &[ScheduledAction], lead_in_ms: u64) -> Vec<Dispat
       dispatch_error_ms,
       x: action.x,
       y: action.y,
+      delivery_path: None,
+      fallback_reason: None,
     });
   }
 
   trace
+}
+
+#[cfg(target_os = "macos")]
+fn run_typed_dispatch(
+  schedule: &[ScheduledAction],
+  inputs: &BenchmarkInputs,
+) -> OsuResult<Vec<DispatchSample>> {
+  let target_app = inputs
+    .target_app
+    .as_deref()
+    .ok_or_else(|| "typed dispatch requires target_app".to_string())?;
+  let dispatch_limit = inputs.dispatch_limit.unwrap_or(8).min(schedule.len());
+  let driver = MacosDriver::new();
+  let session = driver.open_local().map_err(|error| error.to_string())?;
+  let window = session
+    .window()
+    .resolve(WindowSelector::default().owned_by(App::name(target_app.to_string())).title_contains("osu"))
+    .map_err(|error| error.to_string())?;
+  let start = Instant::now() + Duration::from_millis(inputs.lead_in_ms);
+  let mut trace = Vec::with_capacity(dispatch_limit);
+
+  for action in schedule.iter().take(dispatch_limit) {
+    wait_until_due(start, action.scheduled_time_ms);
+    let window_point = WindowPoint::new(f64::from(action.x), f64::from(action.y));
+    let result = session
+      .window()
+      .click(
+        &window,
+        window_point,
+        ClickOptions {
+          policy: InputPolicy::ForegroundPreferred,
+          click: Click::Single,
+          window_strategy: WindowClickStrategy::ChromiumCompatible,
+        },
+      )
+      .map_err(|error| format!("typed dispatch failed at object {}: {error}", action.object_index))?;
+    let actual_dispatch_time_ms = start.elapsed().as_millis() as u64;
+    let dispatch_error_ms = actual_dispatch_time_ms as i64 - action.scheduled_time_ms as i64;
+    trace.push(dispatch_sample_from_result(action, actual_dispatch_time_ms, dispatch_error_ms, result));
+  }
+
+  Ok(trace)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn run_typed_dispatch(
+  _schedule: &[ScheduledAction],
+  _inputs: &BenchmarkInputs,
+) -> OsuResult<Vec<DispatchSample>> {
+  Err("typed dispatch is currently implemented only for macOS".to_string())
+}
+
+fn dispatch_sample_from_result(
+  action: &ScheduledAction,
+  actual_dispatch_time_ms: u64,
+  dispatch_error_ms: i64,
+  result: InputActionResult,
+) -> DispatchSample {
+  DispatchSample {
+    object_index: action.object_index,
+    object_kind: action.object_kind.clone(),
+    scheduled_time_ms: action.scheduled_time_ms,
+    actual_dispatch_time_ms,
+    dispatch_error_ms,
+    x: action.x,
+    y: action.y,
+    delivery_path: Some(format!("{:?}", result.selected_path)),
+    fallback_reason: result.fallback_reason,
+  }
+}
+
+fn wait_until_due(start: Instant, scheduled_time_ms: u64) {
+  let due = start + Duration::from_millis(scheduled_time_ms);
+  loop {
+    let now = Instant::now();
+    if now >= due {
+      break;
+    }
+    let remaining = due.saturating_duration_since(now);
+    if remaining > Duration::from_millis(2) {
+      thread::sleep(Duration::from_millis(1));
+    } else {
+      std::hint::spin_loop();
+    }
+  }
 }
 
 fn build_latency_report(run_mode: RunMode, dispatch_trace: &[DispatchSample]) -> LatencyReport {
@@ -311,6 +420,7 @@ fn write_json(path: PathBuf, value: &impl Serialize) -> OsuResult<()> {
 #[cfg(test)]
 mod tests {
   use super::*;
+  use auv_driver::{InputActionResult, InputDeliveryPath};
 
   #[test]
   fn latency_report_aggregates_percentiles() {
@@ -323,6 +433,8 @@ mod tests {
         dispatch_error_ms: 1,
         x: 1.0,
         y: 2.0,
+        delivery_path: None,
+        fallback_reason: None,
       },
       DispatchSample {
         object_index: 1,
@@ -332,6 +444,8 @@ mod tests {
         dispatch_error_ms: 3,
         x: 3.0,
         y: 4.0,
+        delivery_path: None,
+        fallback_reason: None,
       },
       DispatchSample {
         object_index: 2,
@@ -341,6 +455,8 @@ mod tests {
         dispatch_error_ms: 2,
         x: 5.0,
         y: 6.0,
+        delivery_path: None,
+        fallback_reason: None,
       },
     ];
 
@@ -376,5 +492,45 @@ mod tests {
     let inputs = BenchmarkInputs::new(PathBuf::from("map.osu"), PathBuf::from("out"));
     assert_eq!(inputs.run_mode, RunMode::DryRun);
     assert_eq!(inputs.lead_in_ms, 25);
+    assert_eq!(inputs.target_app, None);
+    assert_eq!(inputs.dispatch_limit, None);
+  }
+
+  #[test]
+  fn typed_dispatch_inputs_set_defaults() {
+    let inputs = BenchmarkInputs::typed_dispatch(
+      PathBuf::from("map.osu"),
+      PathBuf::from("out"),
+      "osu!",
+    );
+    assert_eq!(inputs.run_mode, RunMode::TypedDispatch);
+    assert_eq!(inputs.target_app.as_deref(), Some("osu!"));
+    assert_eq!(inputs.dispatch_limit, Some(8));
+  }
+
+  #[test]
+  fn dispatch_sample_captures_input_result_metadata() {
+    let action = ScheduledAction {
+      object_index: 4,
+      object_kind: ObjectKind::Circle,
+      scheduled_time_ms: 120,
+      x: 256.0,
+      y: 192.0,
+    };
+    let sample = dispatch_sample_from_result(
+      &action,
+      125,
+      5,
+      InputActionResult {
+        selected_path: InputDeliveryPath::WindowTargetedMouse,
+        attempts: vec![],
+        fallback_reason: Some("fallback".to_string()),
+        mouse_disturbance: auv_driver::DisturbanceLevel::Temporary,
+        focus_disturbance: auv_driver::DisturbanceLevel::Foreground,
+        clipboard_disturbance: auv_driver::DisturbanceLevel::None,
+      },
+    );
+    assert_eq!(sample.delivery_path.as_deref(), Some("WindowTargetedMouse"));
+    assert_eq!(sample.fallback_reason.as_deref(), Some("fallback"));
   }
 }

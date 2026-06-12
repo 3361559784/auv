@@ -4,7 +4,7 @@ Date: 2026-06-12
 
 Status: current handoff for the next coding agent before session compaction
 
-Current HEAD when written: `33bdabf`
+Current HEAD when written: `04ef4de`
 
 ## Start Here
 
@@ -35,7 +35,8 @@ Current shape of the lane:
 - `P0`: beatmap-driven offline scheduler benchmark — **done as merged skeleton**
 - `P1`: typed macOS window dispatch benchmark mode — **done as merged slice**
 - `P2`: capture / visual verification — **done as merged slice with local real-app smoke verification**
-- `P2.5`: capture timestamp semantics — **next approved slice before any visual dataset / YOLO work**
+- `P2.5`: capture timestamp semantics — **done as merged slice with local real-app smoke verification and pushed to main**
+- `P3a`: visual dataset / evaluation harness from beatmap truth + corrected timestamped captures — **done as merged slice with local build/test verification**
 - `P3`: YOLO/CV as independent validation channel — **not started**
 
 ## Current Repo State
@@ -49,10 +50,11 @@ main...origin/main
 Recent commits that matter:
 
 ```text
+04ef4de feat(osu): add visual truth manifest from beatmap and capture traces
+7c63900 fix(osu): correct capture timestamp semantics
 33bdabf feat(osu): add capture verification evidence to dispatch benchmark
 4d7f06a feat(osu): add typed dispatch benchmark mode
 54394b4 feat(osu): add beatmap benchmark skeleton
-d394430 fix(auv-game-balatro): accept main menu play restart button
 ```
 
 Before coding again, verify live state:
@@ -154,9 +156,15 @@ Smoke verification completed locally against installed `osu!.app` and a real loc
 
 This preserves the active AUV core lane instead of forking a private benchmark recorder.
 
-### P2.5 in progress
+### P2.5 merged
 
-Current local slice after `33bdabf`:
+Commit:
+
+```text
+7c63900 fix(osu): correct capture timestamp semantics
+```
+
+What it did:
 
 - adds `pre_capture_offset_ms` with default `16`
 - moves before capture to `scheduled_time_ms - pre_capture_offset_ms`
@@ -166,7 +174,7 @@ Current local slice after `33bdabf`:
   - `relative_to_dispatch_ms`
 - keeps `VerificationSummary` aligned with dispatch-time semantics instead of mixing scheduled and dispatch references
 
-Local real-app smoke re-run passed against installed `osu!.app` and a real local beatmap file.
+Local real-app smoke re-run passed against installed `osu!.app` and a real local beatmap file before the commit was pushed.
 
 - run id: `run_1781278300171_81552_0`
 - output dir: `.tmp-osu-dispatch-p25`
@@ -179,6 +187,32 @@ Local real-app smoke re-run passed against installed `osu!.app` and a real local
 - `capture_trace.json` now records both scheduled-relative and dispatch-relative offsets
 
 Observed timing on that smoke confirms why P2.5 matters: dispatch itself was late (`scheduled_time_ms = 151`, `actual_dispatch_time_ms = 1283`), so scheduled-relative and dispatch-relative capture semantics must stay separate and explicit.
+
+### P3a implemented locally, not yet pushed
+
+P3a landed as local commit `04ef4de` on top of `7c63900`. Validation passed
+but the commit has not been pushed to `origin/main` yet.
+
+What it did:
+
+- adds `crates/auv-game-osu/src/visual_truth.rs` with `VisualTruthManifest`,
+  `VisualTruthFrame`, `ExpectedObjectTruth`, and `build_visual_truth_manifest`
+- joins schedule + dispatch + capture traces by `object_index`, cross-checks
+  kind / scheduled-time / dispatch-time / dispatch-error consistency, and
+  fails loudly on any mismatch instead of silently dropping frames
+- expands every capture sample into a `VisualTruthFrame` carrying both
+  scheduled-relative and dispatch-relative timing plus the beatmap-truth
+  expected object (playfield x/y, CS/AR/OD)
+- builds the manifest only when `capture_verify` is on, writes
+  `visual_truth_manifest.json` next to the other run artifacts, and stages it
+  through the existing recorded-operation artifact path in `src/osu.rs`
+- exports the new types from `crates/auv-game-osu/src/lib.rs`
+
+Boundaries held:
+
+- beatmap truth stays the primary source; the manifest is offline evidence only
+- reuses the existing P2/P2.5 capture artifacts, no parallel evidence path
+- no YOLO control, training, LLM in hit loop, or new core-wide contract
 
 ## Verification Already Run
 
@@ -196,7 +230,7 @@ cargo run -- osu dispatch <local beatmap> --target-app "osu!" --dispatch-limit 1
 auv-cli inspect run_1781276425182_80682_0
 ```
 
-Additional local verification for the current P2.5 slice:
+Additional verification for the merged P2.5 state:
 
 ```bash
 cargo fmt --check
@@ -249,18 +283,23 @@ Still true:
 
 Do not open a new goal.
 
-Next step is `P2.5`, then `P3a`:
+`P3a` is implemented locally and validated but not yet pushed. The immediate
+next step is to push the `P3a` commit to `origin/main`, then stop and let the
+owner choose whether to open `P3`.
 
-1. fix capture timestamp semantics so before/after captures are aligned to explicit pre-dispatch and absolute post-dispatch offsets
-2. keep `CaptureSample` / `VerificationSummary` field names and aggregates honest about scheduled-vs-dispatch timing
-3. only after that, open `P3a`: generate a minimal offline dataset/alignment path from beatmap truth + corrected P2 capture artifacts
-4. validate visual-only detection quality offline before any control-path experiments
+After `P3a` is pushed, the candidate next slice is `P3`:
 
-If continuing with `P2.5` / `P3a`, preserve these rules:
+1. introduce a YOLO/CV detector as an independent validation channel that reads
+   the staged `visual_truth_manifest.json` frames offline
+2. score detector output against beatmap truth instead of replacing it
+3. keep the detector out of the hit loop; it stays an evidence/validation lane
+
+If continuing into `P3`, preserve these rules:
 
 - beatmap truth remains the primary source; vision stays a validation lane
-- reuse P2 capture artifacts instead of inventing a parallel evidence path
+- reuse the P3a manifest + P2/P2.5 capture artifacts instead of inventing a parallel evidence path
 - do not put LLM or detector inference into the hit loop
+- do not introduce a new core-wide contract without owner-approved design
 
 ## Useful Mental Model
 

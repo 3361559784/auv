@@ -8,8 +8,8 @@ pub use benchmark::{
   VerificationSummary, run_benchmark,
 };
 pub use visual_eval::{
-  EvalProjection, FrameEvaluation, FrameLabelOutcome, FrameSpatialOutcome, LabelMap,
-  VisualEvalReport, evaluate_visual_truth, iou,
+  EvalProjection, FrameDetections, FrameEvaluation, FrameKey, FrameLabelOutcome,
+  FrameSpatialOutcome, LabelMap, VisualEvalReport, evaluate_visual_truth, iou,
 };
 pub use visual_truth::{
   CaptureFrame, ExpectedObjectTruth, VisualTruthFrame, VisualTruthManifest,

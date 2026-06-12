@@ -1,9 +1,40 @@
-use std::collections::BTreeMap;
-
 use auv_inference_common::{BoundingBox, DetectionSet};
 use serde::{Deserialize, Serialize};
 
-use crate::{ObjectKind, VisualTruthManifest};
+use crate::{CapturePhase, ObjectKind, VisualTruthManifest};
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct FrameKey {
+  pub object_index: usize,
+  pub phase: String,
+  pub capture_file_name: String,
+}
+
+impl FrameKey {
+  pub fn from_parts(
+    object_index: usize,
+    phase: CapturePhase,
+    capture_file_name: impl Into<String>,
+  ) -> Self {
+    Self {
+      object_index,
+      phase: capture_phase_key(&phase).to_string(),
+      capture_file_name: capture_file_name.into(),
+    }
+  }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct FrameDetections {
+  pub frame: FrameKey,
+  pub detections: DetectionSet,
+}
+
+impl FrameDetections {
+  pub fn new(frame: FrameKey, detections: DetectionSet) -> Self {
+    Self { frame, detections }
+  }
+}
 
 /// Maps an osu [`ObjectKind`] to the detection label a visual model is expected
 /// to emit for that object.
@@ -41,62 +72,44 @@ impl Default for LabelMap {
 
 /// Whether playfield-space truth can be projected into the capture pixel space
 /// the detections live in.
-///
-/// NOTICE: osu beatmap truth is in playfield coordinates (512x384). Detections
-/// are in source-image pixels. Without an explicit calibration the two spaces
-/// are not comparable, so spatial scoring must be skipped rather than faked.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum EvalProjection {
   Unavailable {
     reason: String,
   },
-  /// Linear playfield-to-pixel mapping: pixel = playfield * scale + offset.
   PlayfieldToPixels {
     scale_x: f32,
     scale_y: f32,
     offset_x: f32,
     offset_y: f32,
-    /// Maximum center distance (in pixels) for a detection to count as a
-    /// spatial hit for the expected object.
     match_radius_px: f32,
   },
 }
 
-/// Per-frame label-presence outcome.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FrameLabelOutcome {
-  /// A detection with the expected label exists in the frame.
   Matched,
-  /// No detection with the expected label exists in the frame.
   Missing,
-  /// No expected label is configured for this object kind, so the frame cannot
-  /// be scored for label presence.
   Unmapped,
 }
 
-/// Per-frame spatial outcome. Only meaningful when a projection is available.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FrameSpatialOutcome {
-  /// Projection available and a labeled detection fell within the match radius.
   Matched,
-  /// Projection available but no labeled detection fell within the radius.
   Missing,
-  /// Projection unavailable, so spatial scoring was skipped for this frame.
   NotScored,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct FrameEvaluation {
-  pub object_index: usize,
+  pub frame: FrameKey,
   pub object_kind: ObjectKind,
-  pub capture_file_name: String,
   pub expected_label: Option<String>,
   pub label_outcome: FrameLabelOutcome,
   pub spatial_outcome: FrameSpatialOutcome,
-  /// Detections in this frame that did not match the expected label.
   pub spurious_detection_count: usize,
 }
 
@@ -116,7 +129,6 @@ pub struct VisualEvalReport {
 }
 
 impl VisualEvalReport {
-  /// Label recall over frames that have an expected label.
   pub fn label_recall(&self) -> Option<f32> {
     let scorable = self.label_matched_frames + self.label_missing_frames;
     if scorable == 0 {
@@ -127,21 +139,16 @@ impl VisualEvalReport {
   }
 }
 
-/// Evaluate a [`VisualTruthManifest`] against per-frame detections.
-///
-/// `detections_by_object` pairs an `object_index` (matching a manifest frame)
-/// with the [`DetectionSet`] observed for that frame's capture. Frames without
-/// a detection entry are treated as having an empty detection set.
 pub fn evaluate_visual_truth(
   manifest: &VisualTruthManifest,
-  detections_by_object: &[(usize, DetectionSet)],
+  detections_by_frame: &[FrameDetections],
   projection: &EvalProjection,
   label_map: &LabelMap,
 ) -> VisualEvalReport {
-  let detections_lookup = detections_by_object
+  let detections_lookup = detections_by_frame
     .iter()
-    .map(|(object_index, set)| (*object_index, set))
-    .collect::<BTreeMap<_, _>>();
+    .map(|entry| (entry.frame.clone(), &entry.detections))
+    .collect::<std::collections::BTreeMap<_, _>>();
 
   let empty = Vec::new();
   let mut frames = Vec::with_capacity(manifest.frames.len());
@@ -154,35 +161,38 @@ pub fn evaluate_visual_truth(
   let mut spurious_detection_count = 0;
 
   for frame in &manifest.frames {
+    let frame_key = FrameKey::from_parts(
+      frame.object_index,
+      frame.capture.phase.clone(),
+      frame.capture.file_name.clone(),
+    );
     let detections = detections_lookup
-      .get(&frame.object_index)
+      .get(&frame_key)
       .map(|set| &set.detections)
       .unwrap_or(&empty);
     let expected_label = label_map
       .expected_label(&frame.expected_object.object_kind)
       .map(str::to_string);
 
-    let label_outcome = match &expected_label {
-      None => FrameLabelOutcome::Unmapped,
-      Some(label) => {
-        if detections.iter().any(|detection| &detection.label == label) {
-          FrameLabelOutcome::Matched
-        } else {
-          FrameLabelOutcome::Missing
-        }
-      }
-    };
-
-    let frame_spurious = match &expected_label {
-      None => detections.len(),
-      Some(label) => detections
+    let matched_detection_index = expected_label.as_ref().and_then(|label| {
+      detections
         .iter()
-        .filter(|detection| &detection.label != label)
-        .count(),
+        .position(|detection| detection.label == *label)
+    });
+
+    let label_outcome = match (&expected_label, matched_detection_index) {
+      (None, _) => FrameLabelOutcome::Unmapped,
+      (Some(_), Some(_)) => FrameLabelOutcome::Matched,
+      (Some(_), None) => FrameLabelOutcome::Missing,
     };
 
-    let spatial_outcome = match (projection, &expected_label) {
-      (EvalProjection::Unavailable { .. }, _) | (_, None) => FrameSpatialOutcome::NotScored,
+    let frame_spurious = match matched_detection_index {
+      Some(_) => detections.len().saturating_sub(1),
+      None => detections.len(),
+    };
+
+    let spatial_outcome = match (projection, &expected_label, matched_detection_index) {
+      (EvalProjection::Unavailable { .. }, _, _) | (_, None, _) => FrameSpatialOutcome::NotScored,
       (
         EvalProjection::PlayfieldToPixels {
           scale_x,
@@ -191,20 +201,19 @@ pub fn evaluate_visual_truth(
           offset_y,
           match_radius_px,
         },
-        Some(label),
+        Some(_),
+        Some(index),
       ) => {
         let target_x = frame.expected_object.expected_playfield_x * scale_x + offset_x;
         let target_y = frame.expected_object.expected_playfield_y * scale_y + offset_y;
-        let hit = detections.iter().any(|detection| {
-          &detection.label == label
-            && center_distance(&detection.bbox, target_x, target_y) <= *match_radius_px
-        });
-        if hit {
+        let detection = &detections[index];
+        if center_distance(&detection.bbox, target_x, target_y) <= *match_radius_px {
           FrameSpatialOutcome::Matched
         } else {
           FrameSpatialOutcome::Missing
         }
       }
+      (EvalProjection::PlayfieldToPixels { .. }, Some(_), None) => FrameSpatialOutcome::Missing,
     };
 
     match label_outcome {
@@ -220,17 +229,14 @@ pub fn evaluate_visual_truth(
     spurious_detection_count += frame_spurious;
 
     frames.push(FrameEvaluation {
-      object_index: frame.object_index,
+      frame: frame_key,
       object_kind: frame.expected_object.object_kind.clone(),
-      capture_file_name: frame.capture.file_name.clone(),
       expected_label,
       label_outcome,
       spatial_outcome,
       spurious_detection_count: frame_spurious,
     });
   }
-
-  let known_limits = build_known_limits(projection);
 
   VisualEvalReport {
     total_frames: manifest.frames.len(),
@@ -243,7 +249,14 @@ pub fn evaluate_visual_truth(
     spurious_detection_count,
     projection: projection.clone(),
     frames,
-    known_limits,
+    known_limits: build_known_limits(projection),
+  }
+}
+
+fn capture_phase_key(phase: &CapturePhase) -> &'static str {
+  match phase {
+    CapturePhase::BeforeDispatch => "before_dispatch",
+    CapturePhase::AfterDispatch => "after_dispatch",
   }
 }
 
@@ -274,7 +287,6 @@ fn center_distance(bbox: &BoundingBox, target_x: f32, target_y: f32) -> f32 {
   (dx * dx + dy * dy).sqrt()
 }
 
-/// Intersection-over-union of two boxes in the same coordinate space.
 pub fn iou(a: &BoundingBox, b: &BoundingBox) -> f32 {
   let inter_x1 = a.x1.max(b.x1);
   let inter_y1 = a.y1.max(b.y1);
@@ -297,7 +309,7 @@ pub fn iou(a: &BoundingBox, b: &BoundingBox) -> f32 {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::{CaptureFrame, CapturePhase, ExpectedObjectTruth, MapSummary, VisualTruthFrame};
+  use crate::{CaptureFrame, ExpectedObjectTruth, MapSummary, VisualTruthFrame};
   use auv_inference_common::{Detection, ImageSize, ModelId};
 
   fn test_map_summary() -> MapSummary {
@@ -318,18 +330,24 @@ mod tests {
     }
   }
 
-  fn circle_frame(object_index: usize, playfield_x: f32, playfield_y: f32) -> VisualTruthFrame {
+  fn circle_frame(
+    object_index: usize,
+    phase: CapturePhase,
+    file_name: &str,
+    playfield_x: f32,
+    playfield_y: f32,
+  ) -> VisualTruthFrame {
     VisualTruthFrame {
       object_index,
       scheduled_time_ms: 100,
       actual_dispatch_time_ms: 104,
       dispatch_error_ms: 4,
       capture: CaptureFrame {
-        phase: CapturePhase::AfterDispatch,
+        phase,
         capture_time_ms: 120,
         relative_to_scheduled_ms: 20,
         relative_to_dispatch_ms: 16,
-        file_name: format!("frame-{object_index}.png"),
+        file_name: file_name.to_string(),
         width: 640,
         height: 480,
         backend: "test".to_string(),
@@ -375,20 +393,36 @@ mod tests {
     }
   }
 
+  fn frame_detections(
+    object_index: usize,
+    phase: CapturePhase,
+    file_name: &str,
+    detections: Vec<Detection>,
+  ) -> FrameDetections {
+    FrameDetections::new(
+      FrameKey::from_parts(object_index, phase, file_name),
+      detection_set(detections),
+    )
+  }
+
   #[test]
   fn label_presence_counts_hits_and_misses_without_projection() {
     let manifest = manifest_with(vec![
-      circle_frame(0, 256.0, 192.0),
-      circle_frame(1, 100.0, 100.0),
+      circle_frame(0, CapturePhase::AfterDispatch, "frame-0.png", 256.0, 192.0),
+      circle_frame(1, CapturePhase::AfterDispatch, "frame-1.png", 100.0, 100.0),
     ]);
     let detections = vec![
-      (
+      frame_detections(
         0,
-        detection_set(vec![detection("hit_circle", 10.0, 10.0, 30.0, 30.0)]),
+        CapturePhase::AfterDispatch,
+        "frame-0.png",
+        vec![detection("hit_circle", 10.0, 10.0, 30.0, 30.0)],
       ),
-      (
+      frame_detections(
         1,
-        detection_set(vec![detection("slider", 0.0, 0.0, 5.0, 5.0)]),
+        CapturePhase::AfterDispatch,
+        "frame-1.png",
+        vec![detection("slider", 0.0, 0.0, 5.0, 5.0)],
       ),
     ];
 
@@ -405,16 +439,85 @@ mod tests {
     assert_eq!(report.label_matched_frames, 1);
     assert_eq!(report.label_missing_frames, 1);
     assert_eq!(report.label_recall(), Some(0.5));
-    // frame 0 has no spurious (only hit_circle); frame 1 has one spurious slider.
     assert_eq!(report.spurious_detection_count, 1);
   }
 
   #[test]
-  fn projection_unavailable_marks_all_spatial_frames_not_scored() {
-    let manifest = manifest_with(vec![circle_frame(0, 256.0, 192.0)]);
-    let detections = vec![(
+  fn frame_key_keeps_before_and_after_detections_separate() {
+    let manifest = manifest_with(vec![
+      circle_frame(0, CapturePhase::BeforeDispatch, "before.png", 256.0, 192.0),
+      circle_frame(0, CapturePhase::AfterDispatch, "after.png", 256.0, 192.0),
+    ]);
+    let detections = vec![frame_detections(
       0,
-      detection_set(vec![detection("hit_circle", 10.0, 10.0, 30.0, 30.0)]),
+      CapturePhase::AfterDispatch,
+      "after.png",
+      vec![detection("hit_circle", 10.0, 10.0, 30.0, 30.0)],
+    )];
+
+    let report = evaluate_visual_truth(
+      &manifest,
+      &detections,
+      &EvalProjection::Unavailable {
+        reason: "no calibration in test".to_string(),
+      },
+      &LabelMap::default(),
+    );
+
+    assert_eq!(report.frames[0].label_outcome, FrameLabelOutcome::Missing);
+    assert_eq!(report.frames[1].label_outcome, FrameLabelOutcome::Matched);
+    assert_eq!(report.label_matched_frames, 1);
+    assert_eq!(report.label_missing_frames, 1);
+  }
+
+  #[test]
+  fn repeated_expected_label_detections_count_as_spurious() {
+    let manifest = manifest_with(vec![circle_frame(
+      0,
+      CapturePhase::AfterDispatch,
+      "frame-0.png",
+      256.0,
+      192.0,
+    )]);
+    let detections = vec![frame_detections(
+      0,
+      CapturePhase::AfterDispatch,
+      "frame-0.png",
+      vec![
+        detection("hit_circle", 10.0, 10.0, 30.0, 30.0),
+        detection("hit_circle", 40.0, 40.0, 60.0, 60.0),
+        detection("hit_circle", 70.0, 70.0, 90.0, 90.0),
+      ],
+    )];
+
+    let report = evaluate_visual_truth(
+      &manifest,
+      &detections,
+      &EvalProjection::Unavailable {
+        reason: "no calibration".to_string(),
+      },
+      &LabelMap::default(),
+    );
+
+    assert_eq!(report.label_matched_frames, 1);
+    assert_eq!(report.spurious_detection_count, 2);
+    assert_eq!(report.frames[0].spurious_detection_count, 2);
+  }
+
+  #[test]
+  fn projection_unavailable_marks_all_spatial_frames_not_scored() {
+    let manifest = manifest_with(vec![circle_frame(
+      0,
+      CapturePhase::AfterDispatch,
+      "frame-0.png",
+      256.0,
+      192.0,
+    )]);
+    let detections = vec![frame_detections(
+      0,
+      CapturePhase::AfterDispatch,
+      "frame-0.png",
+      vec![detection("hit_circle", 10.0, 10.0, 30.0, 30.0)],
     )];
 
     let report = evaluate_visual_truth(
@@ -440,10 +543,9 @@ mod tests {
   #[test]
   fn projection_available_scores_spatial_hit_and_miss() {
     let manifest = manifest_with(vec![
-      circle_frame(0, 100.0, 100.0),
-      circle_frame(1, 100.0, 100.0),
+      circle_frame(0, CapturePhase::AfterDispatch, "frame-0.png", 100.0, 100.0),
+      circle_frame(1, CapturePhase::AfterDispatch, "frame-1.png", 100.0, 100.0),
     ]);
-    // Identity projection: pixel == playfield. Target center is (100, 100).
     let projection = EvalProjection::PlayfieldToPixels {
       scale_x: 1.0,
       scale_y: 1.0,
@@ -452,15 +554,17 @@ mod tests {
       match_radius_px: 20.0,
     };
     let detections = vec![
-      // frame 0: box centered at (100, 100) -> within radius.
-      (
+      frame_detections(
         0,
-        detection_set(vec![detection("hit_circle", 90.0, 90.0, 110.0, 110.0)]),
+        CapturePhase::AfterDispatch,
+        "frame-0.png",
+        vec![detection("hit_circle", 90.0, 90.0, 110.0, 110.0)],
       ),
-      // frame 1: box centered at (300, 300) -> outside radius.
-      (
+      frame_detections(
         1,
-        detection_set(vec![detection("hit_circle", 290.0, 290.0, 310.0, 310.0)]),
+        CapturePhase::AfterDispatch,
+        "frame-1.png",
+        vec![detection("hit_circle", 290.0, 290.0, 310.0, 310.0)],
       ),
     ];
 
@@ -469,13 +573,18 @@ mod tests {
     assert_eq!(report.spatial_matched_frames, 1);
     assert_eq!(report.spatial_missing_frames, 1);
     assert_eq!(report.spatial_unscored_frames, 0);
-    // Both frames still match on label presence.
     assert_eq!(report.label_matched_frames, 2);
   }
 
   #[test]
   fn missing_detection_entry_counts_as_label_miss() {
-    let manifest = manifest_with(vec![circle_frame(0, 256.0, 192.0)]);
+    let manifest = manifest_with(vec![circle_frame(
+      0,
+      CapturePhase::AfterDispatch,
+      "frame-0.png",
+      256.0,
+      192.0,
+    )]);
 
     let report = evaluate_visual_truth(
       &manifest,
@@ -504,7 +613,6 @@ mod tests {
       x2: 3.0,
       y2: 3.0,
     };
-    // intersection = 1, union = 4 + 4 - 1 = 7.
     let value = iou(&a, &b);
     assert!((value - 1.0 / 7.0).abs() < 1e-6);
 

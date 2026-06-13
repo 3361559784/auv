@@ -368,8 +368,8 @@ async fn run() -> Result<(), String> {
       }
     }
     CliCommand::Inspect { run_id } => {
-      let runtime = build_default_runtime(project_root.clone())?;
-      print!("{}", runtime.inspect(&run_id)?);
+      let store = auv_cli::build_default_store(project_root.clone())?;
+      print!("{}", auv_cli::inspect::inspect_run(&store, &run_id)?);
     }
     CliCommand::InspectServe { .. } => {
       unreachable!("inspect serve is handled before runtime setup")

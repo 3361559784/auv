@@ -33,44 +33,50 @@ real-app smoke wherever runtime behavior changes.
 ## Current State Snapshot (verified 2026-06-14)
 
 ```text
-C1a–c   DONE (working tree, uncommitted) — list-commands tombstone; invoke --help
-        metadata-only; InvokeDiscoveryCatalog decouples discovery from runtime
-        resolve; 10 canonical ids promoted. app-probe regression already FIXED
-        in tree (app/mod.rs canonical ids + app_probe_command_ids_resolve test).
-C1d     OPEN — finish the rename (remaining ~28 debug.*/verify.* ids → canonical)
-        + consumers + discovery expansion. Full spec in
-        2026-06-14-c1-completion-plan.md (rename map + decisions locked there).
-C1e     MOVED into C2 (catalog.rs deletion + Runtime registry extraction).
-C2      NOT STARTED — no tracing crate; recorded_operation.rs:14 still
-        `use crate::runtime::Runtime`; recorder substrate exists inside Runtime
-        (self.recording.recorder() @ runtime.rs:276, run_builder::RecordingRun).
-C3      PARTIALLY WIRED — steam.library.list.v0 is in the catalog (catalog.rs:910),
-        invokable + recorded + inspectable (mcp.rs test invokes it and asserts
-        inspect output), and calls the real auv-steam library (auv-cli depends on
-        auv-steam; src/driver/fixture.rs:108 steam_library_list). BUT it is
-        dispatched through the fixture.observe DRIVER (fixture.rs:24) — a real
-        capability squatting in the deterministic test fixture.
+C1a–d   DONE and pushed — list-commands tombstone; invoke --help metadata-only;
+        InvokeDiscoveryCatalog decouples discovery from runtime resolve; full
+        canonical rename/discovery/help completion landed; app-probe regression
+        was fixed and validated in the C1 lane.
+C1e     CLOSED by C2d — the deferred catalog/runtime-registry ownership split has
+        now landed inside the C2 lane.
+C2a     REJECTED as a standalone slice — exposing a hollow recorder handle without
+        a real consumer boundary was judged non-shippable.
+C2b     DONE locally, not pushed — recorded_operation no longer depends on
+        `Runtime`; local commits:
+        `e99b032` detach recorded-operation staging from runtime internals
+        `4fd30ba` complete gate for recorded-operation detach via
+        `RecordedOperationServices` + `RunRecordingBackend`.
+C2c     DONE locally and validated — read-only inspect/read helpers were moved off
+        `Runtime` into explicit read-side entry points in `inspect` / `run_read`.
+C2d     DONE locally and validated — `Runtime` no longer directly owns
+        `CommandCatalog`; registry ownership now flows through `RuntimeCommandRegistry`
+        while invoke behavior stays unchanged.
+C2e     NEXT — shrink Runtime toward a thinner facade and delete remaining dead
+        recording/registry paths without changing behavior.
+C3      PARTIALLY WIRED — `steam.library.list.v0` is in the catalog, invokable,
+        recorded, and inspectable, but still dispatched through the
+        `fixture.observe` driver, so backend honesty work remains.
 ```
 
 ## Sub-Slice Ladder + Dependencies
 
 ```text
-C1d   finish invoke id rename + consumers + discovery + guard tests   (next)
+C1d   done and pushed — canonical rename + consumers + discovery + guard tests
 
-C2a   stand up a Recorder handle usable without Runtime                needs nothing
-C2b   recorded_operation.rs depends on Recorder, not Runtime           needs C2a
-C2c   move read-only inspect/read helpers off Runtime                  needs C2a
-C2d   extract command registry from Runtime (folds old C1e)            needs C1d
-C2e   shrink Runtime to facade; delete dead recording/registry paths   needs C2b+C2c+C2d
+C2a   rejected as standalone recorder-handle slice                      superseded by C2b
+C2b   recorded_operation detached from Runtime via recorder services    done locally
+C2c   inspect/read helpers moved off Runtime                            done locally
+C2d   command registry ownership detached from Runtime                  done locally
+C2e   shrink Runtime to facade; delete dead recording/registry paths    next
 
-C3a   rehome steam.library.list.v0 off fixture.observe driver          needs C1d
-C3b   enforce thin-frontend: auv-steam bin reuses the core library fn  needs C3a
-C3c   confirm structured evidence + inspect shape for the command      needs C3a
+C3a   rehome steam.library.list.v0 off fixture.observe driver           needs C1d
+C3b   enforce thin-frontend: auv-steam bin reuses the core library fn   needs C3a
+C3c   confirm structured evidence + inspect shape for the command       needs C3a
 ```
 
-Default order: C1d → C2a → C2b → C2c → C2d → C2e, then C3a → C3b → C3c. C3 can run
-in parallel with C2 if desired, but must land after C1d (avoid registry churn). C2d
-must land after C1d (do not extract a registry mid-rename).
+Default order: C2e, then C3a → C3b → C3c. C3 can run
+in parallel with C2 if desired, but must land after C1d (avoid registry churn). C2a remains recorded as a
+rejected intermediate idea, not an execution prerequisite.
 
 ---
 

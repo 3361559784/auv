@@ -31,7 +31,7 @@ use std::path::PathBuf;
 use catalog::default_command_catalog;
 use driver::default_driver_registry;
 use model::AuvResult;
-use runtime::Runtime;
+use runtime::{Runtime, RuntimeCommandRegistry};
 use store::LocalStore;
 
 pub fn build_default_runtime(project_root: PathBuf) -> AuvResult<Runtime> {
@@ -44,11 +44,11 @@ pub fn build_runtime_with_store_root(
   store_root: PathBuf,
 ) -> AuvResult<Runtime> {
   let store = LocalStore::new(store_root)?;
-  let commands = default_command_catalog();
+  let registry = RuntimeCommandRegistry::new(default_command_catalog());
   let drivers = default_driver_registry();
   Ok(Runtime::new_with_catalogs(
     project_root,
-    commands,
+    registry,
     drivers,
     store,
   ))

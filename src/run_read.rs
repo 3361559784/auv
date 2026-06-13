@@ -28,6 +28,10 @@ use crate::stability::{StabilityAssessment, StabilityRejection};
 use crate::store::{CanonicalRun, LocalStore};
 use crate::trace::ArtifactRecordV1Alpha1;
 
+pub fn read_run(store: &LocalStore, run_id: &str) -> AuvResult<CanonicalRun> {
+  store.read_run(run_id)
+}
+
 const DETECTOR_RECOGNITION_ARTIFACT_ROLE: &str = "detector-recognition";
 const CANDIDATE_PROMOTION_ARTIFACT_ROLE: &str = "candidate-promotion";
 const CANDIDATE_ACTION_DECISION_ARTIFACT_ROLE: &str = "candidate-action-decision";

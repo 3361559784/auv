@@ -8,14 +8,77 @@
 use crate::contract::{
   FailureLayer, ObservationSnapshot, ObservationSource, VerificationMethod, VerificationResult,
 };
+use crate::model::AuvResult;
 use crate::run_read::{
   CandidateActionDecisionLineage, CandidateActionDecisionLineageStatus,
   CandidateActionExecutionLineage, CandidateActionExecutionLineageStatus,
   CandidatePromotionLineage, CandidatePromotionLineageStatus, DetectorRecognitionLineage,
 };
-use crate::store::CanonicalRun;
+use crate::store::{CanonicalRun, LocalStore};
 
-pub fn render_text(
+pub fn read_run(store: &LocalStore, run_id: &str) -> AuvResult<CanonicalRun> {
+  crate::run_read::read_run(store, run_id)
+}
+
+pub fn list_verifications(store: &LocalStore, run_id: &str) -> AuvResult<Vec<VerificationResult>> {
+  crate::run_read::list_verifications(store, run_id)
+}
+
+pub fn list_observation_snapshots(
+  store: &LocalStore,
+  run_id: &str,
+) -> AuvResult<Vec<ObservationSnapshot>> {
+  crate::run_read::list_observation_snapshots(store, run_id)
+}
+
+pub fn list_detector_recognition_lineage(
+  store: &LocalStore,
+  run_id: &str,
+) -> AuvResult<Vec<DetectorRecognitionLineage>> {
+  crate::run_read::list_detector_recognition_lineage(store, run_id)
+}
+
+pub fn list_candidate_promotion_lineage(
+  store: &LocalStore,
+  run_id: &str,
+) -> AuvResult<Vec<CandidatePromotionLineage>> {
+  crate::run_read::list_candidate_promotion_lineage(store, run_id)
+}
+
+pub fn list_candidate_action_decision_lineage(
+  store: &LocalStore,
+  run_id: &str,
+) -> AuvResult<Vec<CandidateActionDecisionLineage>> {
+  crate::run_read::list_candidate_action_decision_lineage(store, run_id)
+}
+
+pub fn list_candidate_action_execution_lineage(
+  store: &LocalStore,
+  run_id: &str,
+) -> AuvResult<Vec<CandidateActionExecutionLineage>> {
+  crate::run_read::list_candidate_action_execution_lineage(store, run_id)
+}
+
+pub fn inspect_run(store: &LocalStore, run_id: &str) -> AuvResult<String> {
+  let canonical = read_run(store, run_id)?;
+  let verifications = list_verifications(store, run_id)?;
+  let observation_snapshots = list_observation_snapshots(store, run_id)?;
+  let detector_recognition_lineage = list_detector_recognition_lineage(store, run_id)?;
+  let candidate_promotion_lineage = list_candidate_promotion_lineage(store, run_id)?;
+  let candidate_action_decision_lineage = list_candidate_action_decision_lineage(store, run_id)?;
+  let candidate_action_execution_lineage = list_candidate_action_execution_lineage(store, run_id)?;
+  Ok(render_run_text(
+    &canonical,
+    &verifications,
+    &observation_snapshots,
+    &detector_recognition_lineage,
+    &candidate_promotion_lineage,
+    &candidate_action_decision_lineage,
+    &candidate_action_execution_lineage,
+  ))
+}
+
+pub fn render_run_text(
   run: &CanonicalRun,
   verifications: &[VerificationResult],
   observation_snapshots: &[ObservationSnapshot],
@@ -466,7 +529,7 @@ fn render_recognition_source(source: crate::contract::RecognitionSource) -> &'st
 mod tests {
   use std::collections::BTreeMap;
 
-  use super::render_text;
+  use super::render_run_text;
   use crate::contract::{
     OBSERVATION_SNAPSHOT_API_VERSION, ObservationSnapshot, ObservationSource, RecognitionScope,
     RecognitionSource, RecognitionSurface, VERIFICATION_RESULT_API_VERSION, VerificationMethod,
@@ -487,7 +550,7 @@ mod tests {
   };
 
   #[test]
-  fn render_text_includes_run_span_event_artifact_verification_and_observation_records() {
+  fn render_run_text_includes_run_span_event_artifact_verification_and_observation_records() {
     let run_id = RunId::new("run_inspect_test");
     let root_span_id = SpanId::new("span_root");
     let event_id = EventId::new("event_test");
@@ -827,7 +890,7 @@ mod tests {
       issue: None,
     }];
 
-    let output = render_text(
+    let output = render_run_text(
       &run,
       &verifications,
       &observation_snapshots,

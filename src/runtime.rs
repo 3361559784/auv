@@ -29,37 +29,63 @@ use crate::trace::{
 
 pub struct Runtime {
   project_root: PathBuf,
-  commands: CommandCatalog,
+  registry: RuntimeCommandRegistry,
   drivers: DriverRegistry,
   recording: RunRecordingBackend,
+}
+
+pub struct RuntimeCommandRegistry {
+  commands: CommandCatalog,
+}
+
+impl RuntimeCommandRegistry {
+  pub fn new(commands: CommandCatalog) -> Self {
+    Self { commands }
+  }
+}
+
+impl From<CommandCatalog> for RuntimeCommandRegistry {
+  fn from(commands: CommandCatalog) -> Self {
+    Self::new(commands)
+  }
+}
+
+impl RuntimeCommandRegistry {
+  pub fn list_commands(&self) -> &[crate::model::CommandSpec] {
+    self.commands.all()
+  }
+
+  pub fn resolve(&self, command_id: &str) -> Option<&CommandSpec> {
+    self.commands.resolve(command_id)
+  }
 }
 
 impl Runtime {
   pub fn new(
     project_root: PathBuf,
-    commands: CommandCatalog,
+    registry: impl Into<RuntimeCommandRegistry>,
     drivers: DriverRegistry,
     store: LocalStore,
   ) -> Self {
-    Self::new_with_catalogs(project_root, commands, drivers, store)
+    Self::new_with_catalogs(project_root, registry, drivers, store)
   }
 
   pub fn new_with_catalogs(
     project_root: PathBuf,
-    commands: CommandCatalog,
+    registry: impl Into<RuntimeCommandRegistry>,
     drivers: DriverRegistry,
     store: LocalStore,
   ) -> Self {
     Self {
       project_root,
-      commands,
+      registry: registry.into(),
       drivers,
       recording: RunRecordingBackend::new(store, Arc::new(MemoryRunRecorder::new())),
     }
   }
 
   pub fn list_commands(&self) -> &[crate::model::CommandSpec] {
-    self.commands.all()
+    self.registry.list_commands()
   }
 
   pub fn project_root(&self) -> &Path {
@@ -71,72 +97,11 @@ impl Runtime {
   }
 
   pub fn inspect(&self, run_id: &str) -> AuvResult<String> {
-    let canonical = self.recording.read_run(run_id)?;
-    let verifications = crate::run_read::extract_verifications(self.recording.store(), &canonical)?;
-    let observation_snapshots =
-      crate::run_read::extract_observation_snapshots(self.recording.store(), &canonical)?;
-    let detector_recognition_lineage =
-      crate::run_read::extract_detector_recognition_lineage(self.recording.store(), &canonical)?;
-    let candidate_promotion_lineage =
-      crate::run_read::extract_candidate_promotion_lineage(self.recording.store(), &canonical)?;
-    let candidate_action_decision_lineage =
-      crate::run_read::extract_candidate_action_decision_lineage(
-        self.recording.store(),
-        &canonical,
-      )?;
-    let candidate_action_execution_lineage =
-      crate::run_read::extract_candidate_action_execution_lineage(
-        self.recording.store(),
-        &canonical,
-      )?;
-    Ok(crate::inspect::render_text(
-      &canonical,
-      &verifications,
-      &observation_snapshots,
-      &detector_recognition_lineage,
-      &candidate_promotion_lineage,
-      &candidate_action_decision_lineage,
-      &candidate_action_execution_lineage,
-    ))
+    crate::inspect::inspect_run(self.recording.store(), run_id)
   }
 
   pub fn read_run(&self, run_id: &str) -> AuvResult<crate::store::CanonicalRun> {
-    self.recording.read_run(run_id)
-  }
-
-  pub fn list_verifications(
-    &self,
-    run_id: &str,
-  ) -> AuvResult<Vec<crate::contract::VerificationResult>> {
-    crate::run_read::list_verifications(self.recording.store(), run_id)
-  }
-
-  pub fn list_observation_snapshots(
-    &self,
-    run_id: &str,
-  ) -> AuvResult<Vec<crate::contract::ObservationSnapshot>> {
-    crate::run_read::list_observation_snapshots(self.recording.store(), run_id)
-  }
-
-  pub fn list_detector_recognition_lineage(
-    &self,
-    run_id: &str,
-  ) -> AuvResult<Vec<crate::run_read::DetectorRecognitionLineage>> {
-    crate::run_read::list_detector_recognition_lineage(self.recording.store(), run_id)
-  }
-
-  pub fn list_candidate_promotion_lineage(
-    &self,
-    run_id: &str,
-  ) -> AuvResult<Vec<crate::run_read::CandidatePromotionLineage>> {
-    crate::run_read::list_candidate_promotion_lineage(self.recording.store(), run_id)
-  }
-
-  pub fn list_candidate_action_decision_lineage(
-    &self,
-    run_id: &str,
-  ) -> AuvResult<Vec<crate::run_read::CandidateActionDecisionLineage>> {
-    crate::run_read::list_candidate_action_decision_lineage(self.recording.store(), run_id)
+    crate::run_read::read_run(self.recording.store(), run_id)
   }
 
   pub fn run_recorded_operation<T, E, F>(
@@ -183,7 +148,7 @@ impl Runtime {
     &self,
     run_id: &str,
   ) -> AuvResult<Vec<crate::run_read::CandidateActionExecutionLineage>> {
-    crate::run_read::list_candidate_action_execution_lineage(self.recording.store(), run_id)
+    crate::inspect::list_candidate_action_execution_lineage(self.recording.store(), run_id)
   }
 
   pub fn run_candidate_action_command(
@@ -377,7 +342,7 @@ impl Runtime {
     request: InvokeRequest,
   ) -> AuvResult<InvokeResult> {
     let command_id = request.command_id.clone();
-    let direct_command = self.commands.resolve(&command_id);
+    let direct_command = self.registry.resolve(&command_id);
 
     match direct_command {
       Some(direct_command) => {

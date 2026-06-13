@@ -3172,9 +3172,11 @@ mod tests {
       artifact.input_action_result.selected_path,
       auv_driver::InputDeliveryPath::AxPress
     );
-    let verifications = runtime
-      .list_verifications(output.run_id.as_str())
-      .expect("operation-result verification should read");
+    let verifications = crate::run_read::list_verifications(
+      runtime.recording_backend().store(),
+      output.run_id.as_str(),
+    )
+    .expect("operation-result verification should read");
     assert_eq!(verifications.len(), 1);
     assert_eq!(
       verifications[0].method,
@@ -3412,9 +3414,11 @@ mod tests {
       json!("activation_only+post_action:semantic_match")
     );
     assert_eq!(artifact.detail["post_action_verification_count"], json!(1));
-    let verifications = runtime
-      .list_verifications(output.run_id.as_str())
-      .expect("recorded run verifications should read");
+    let verifications = crate::run_read::list_verifications(
+      runtime.recording_backend().store(),
+      output.run_id.as_str(),
+    )
+    .expect("recorded run verifications should read");
     assert_eq!(verifications.len(), 2);
     assert_eq!(
       verifications[0].method,

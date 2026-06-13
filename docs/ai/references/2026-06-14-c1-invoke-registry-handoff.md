@@ -1,7 +1,7 @@
 # C1d invoke Registry Rename — Handoff
 
 Date: 2026-06-14
-Status: **implementation completed locally, uncommitted; C1d done and validated**
+Status: **historical C1d handoff; C1d completed and pushed, C2c/C2d later completed locally and validated; next slice is C2e**
 Collabi sessions:
 - `auv-core-c1-invoke-registry-boundary` (C1a–c historical lane)
 - `auv-core-c1d-full-rename-boundary` (current startup gate + implementation lane)
@@ -209,15 +209,39 @@ These were explicitly investigated and should NOT be treated as unresolved comma
   - RunSpec name, not a command id
 
 ## What remains after C1d
-C1d itself is done for the approved scope.
+C1d itself is done for the approved scope and has since been pushed.
 
-Still explicitly deferred:
+This document should now be read as a historical C1d closure record, not as the
+current live execution state.
+
+Still explicitly deferred at C1d close:
 - `src/catalog.rs` deletion
 - Runtime registry extraction
 - any C1e work
 - any silent fold into C2
 
-The next slice, if chosen by the owner, must be approved separately.
+Later progress after this handoff:
+- C2a was rejected as a hollow standalone slice.
+- C2b became the first real C2 slice and is complete locally via:
+  - `e99b032` — `refactor(recording): detach recorded operation staging from runtime internals`
+  - `4fd30ba` — `refactor(recording): complete gate for C2b recorded operation detach`
+- C2b validation passed locally:
+  - `cargo fmt --check`
+  - `cargo check`
+  - `cargo test recorded_operation -- --nocapture`
+  - `cargo test`
+  - `git diff --check`
+- Fine-grained review passed after fix/re-review loops.
+- C2c completed locally and validated by moving inspect/read helpers off `Runtime`
+  into explicit read-side entry points in `inspect` / `run_read`.
+- C2d completed locally and validated by replacing direct `Runtime` ownership of
+  `CommandCatalog` with `RuntimeCommandRegistry`, while preserving invoke behavior.
+- C2d validation/review evidence was also checked into Collabi session
+  `auv-core-c2d-runtime-registry-detach`.
+- The next expected slice is C2e: shrink `Runtime` toward a thinner facade and
+  remove remaining dead recording/registry paths.
+
+The next slice, if chosen by the owner, must still be approved separately.
 
 ## One-line truth of repo state right now
-C1d is **complete for its approved scope, locally validated, and review-passed**, while `src/catalog.rs` deletion / Runtime registry extraction remain explicitly deferred to a separate future slice.
+C1d is historical and complete; C2c/C2d are now complete and validated locally, and the next core slice is C2e rather than deferred registry extraction.

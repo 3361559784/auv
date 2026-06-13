@@ -16,7 +16,9 @@ use serde_json::Value;
 use crate::candidate_action_command::CandidateActionCommandRequest;
 use crate::candidate_action_decision::CandidateActionKind;
 use crate::model::{ExecutionTarget, InvokeRequest};
-use crate::{build_default_runtime, build_runtime_with_store_root, model::now_millis};
+use crate::{
+  build_default_runtime, build_default_store, build_runtime_with_store_root, model::now_millis,
+};
 
 #[derive(Clone)]
 pub struct McpServer {
@@ -30,6 +32,14 @@ impl McpServer {
       project_root,
       tool_router: Self::tool_router(),
     }
+  }
+
+  fn store(&self, store_root: Option<String>) -> Result<crate::store::LocalStore, McpError> {
+    let store = match store_root {
+      Some(root) => crate::store::LocalStore::new(PathBuf::from(root)),
+      None => build_default_store(self.project_root.clone()),
+    };
+    store.map_err(invalid_params)
   }
 
   fn runtime(&self, store_root: Option<String>) -> Result<crate::runtime::Runtime, McpError> {
@@ -93,8 +103,8 @@ impl McpServer {
     &self,
     Parameters(req): Parameters<RunInspectRequest>,
   ) -> Result<CallToolResult, McpError> {
-    let runtime = self.runtime(req.store_root.clone())?;
-    let text = runtime.inspect(&req.run_id).map_err(invalid_params)?;
+    let store = self.store(req.store_root.clone())?;
+    let text = crate::inspect::inspect_run(&store, &req.run_id).map_err(invalid_params)?;
     json_result(serde_json::json!({
       "run_id": req.run_id,
       "text": text,

@@ -268,6 +268,36 @@ async fn run() -> Result<(), String> {
       );
       println!("output: {}", output.value.output_dir.display());
     }
+    CliCommand::OsuEvalDetections {
+      run_artifact_dir,
+      detections_path,
+      output_dir,
+    } => {
+      let runtime = build_default_runtime(project_root.clone())?;
+      let output = auv_cli::osu::run_osu_detection_eval(
+        &runtime,
+        PathBuf::from(run_artifact_dir),
+        PathBuf::from(detections_path),
+        output_dir
+          .map(PathBuf::from)
+          .unwrap_or_else(|| temp_runtime_store_root().join("osu-eval-detections-output")),
+      )?;
+      println!("runId: {}", output.run_id);
+      println!("status: completed");
+      println!(
+        "totalFrames: {}",
+        output.value.visual_eval_report.total_frames
+      );
+      println!(
+        "labelMatchedFrames: {}",
+        output.value.visual_eval_report.label_matched_frames
+      );
+      println!(
+        "spatialMatchedFrames: {}",
+        output.value.visual_eval_report.spatial_matched_frames
+      );
+      println!("output: {}", output.value.output_dir.display());
+    }
     CliCommand::Invoke { request, inspect } => {
       let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
       let result = runtime.invoke(request)?;

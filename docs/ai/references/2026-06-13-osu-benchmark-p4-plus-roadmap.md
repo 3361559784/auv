@@ -283,6 +283,8 @@ Gate: hand the dataset format to the detector owner (Neko), stop.
 
 Classification: approved feature (this document is the approval).
 
+Status: fixture stage completed locally; real-model smoke still open.
+
 Goal: close the loop `capture frames -> external detector -> DetectionSet
 -> FrameDetections -> evaluate_visual_truth(...) -> visual_eval_report.json`,
 entirely offline.

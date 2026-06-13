@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::thread;
@@ -8,8 +9,12 @@ use rosu_map::section::hit_objects::HitObjectKind;
 use serde::{Deserialize, Serialize};
 
 use crate::projection::{PlayfieldProjection, ProjectionArtifact};
-use crate::visual_eval::{FrameDetections, LabelMap, VisualEvalReport, evaluate_visual_truth};
+use crate::visual_eval::{
+  DetectorEvalProvenance, FrameDetections, FrameKey, LabelMap, VisualEvalReport,
+  evaluate_visual_truth_with_provenance,
+};
 use crate::visual_truth::{VisualTruthManifest, build_visual_truth_manifest};
+use auv_inference_common::{ClassLabelSource, DetectionEvidenceManifest, DetectionSet};
 
 #[cfg(target_os = "macos")]
 use auv_driver::capture::Capture;
@@ -194,6 +199,34 @@ pub struct BenchmarkOutput {
   pub output_dir: PathBuf,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DetectionEvalInputs {
+  pub run_artifact_dir: PathBuf,
+  pub detections_path: PathBuf,
+  pub output_dir: PathBuf,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DetectionEvalManifest {
+  pub source_run_artifact_dir: String,
+  pub detections_path: String,
+  pub detector_model_id: String,
+  pub label_map_source: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DetectionEvalOutput {
+  pub output_dir: PathBuf,
+  pub visual_eval_report: VisualEvalReport,
+  pub detection_eval_manifest: DetectionEvalManifest,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct DetectionFileRecord {
+  capture_file_name: String,
+  detection_set: DetectionSet,
+}
+
 pub fn run_benchmark(inputs: &BenchmarkInputs) -> OsuResult<BenchmarkOutput> {
   fs::create_dir_all(&inputs.output_dir).map_err(|error| {
     format!(
@@ -239,14 +272,7 @@ pub fn run_benchmark(inputs: &BenchmarkInputs) -> OsuResult<BenchmarkOutput> {
     None
   };
 
-  let visual_eval_report = match (&visual_truth_manifest, &projection) {
-    (Some(manifest), Some(projection_artifact)) => Some(build_visual_eval_report(
-      manifest,
-      projection_artifact,
-      &[],
-    )?),
-    _ => None,
-  };
+  let visual_eval_report = None;
 
   write_json(
     inputs.output_dir.join("parsed_map_summary.json"),
@@ -295,6 +321,7 @@ pub fn run_benchmark(inputs: &BenchmarkInputs) -> OsuResult<BenchmarkOutput> {
   })
 }
 
+#[cfg(test)]
 fn build_visual_eval_report(
   manifest: &VisualTruthManifest,
   projection_artifact: &ProjectionArtifact,
@@ -303,12 +330,60 @@ fn build_visual_eval_report(
   let projection = projection_artifact
     .to_eval_projection()
     .map_err(|error| format!("failed to adapt projection artifact for visual eval: {error}"))?;
-  Ok(evaluate_visual_truth(
+  Ok(crate::visual_eval::evaluate_visual_truth(
     manifest,
     detections_by_frame,
     &projection,
     &LabelMap::default(),
   ))
+}
+
+pub fn evaluate_detection_fixture(inputs: &DetectionEvalInputs) -> OsuResult<DetectionEvalOutput> {
+  fs::create_dir_all(&inputs.output_dir).map_err(|error| {
+    format!(
+      "failed to create detection eval output dir {}: {error}",
+      inputs.output_dir.display()
+    )
+  })?;
+
+  let manifest =
+    read_json::<VisualTruthManifest>(&inputs.run_artifact_dir.join("visual_truth_manifest.json"))?;
+  let projection_artifact =
+    read_json::<ProjectionArtifact>(&inputs.run_artifact_dir.join("projection.json"))?;
+  let loaded = load_detection_inputs(&inputs.detections_path)?;
+  let label_map = LabelMap::default();
+  let projection = projection_artifact
+    .to_eval_projection()
+    .map_err(|error| format!("failed to adapt projection artifact for visual eval: {error}"))?;
+  let report = evaluate_visual_truth_with_provenance(
+    &manifest,
+    &expand_frame_detections(&manifest, &loaded.detections_by_capture)?,
+    &projection,
+    &label_map,
+    Some(DetectorEvalProvenance {
+      model_id: loaded.model_id.clone(),
+      label_map_source: loaded.label_map_source.clone(),
+    }),
+  );
+
+  let detection_eval_manifest = DetectionEvalManifest {
+    source_run_artifact_dir: inputs.run_artifact_dir.display().to_string(),
+    detections_path: inputs.detections_path.display().to_string(),
+    detector_model_id: loaded.model_id,
+    label_map_source: loaded.label_map_source,
+  };
+
+  write_json(inputs.output_dir.join("visual_eval_report.json"), &report)?;
+  write_json(
+    inputs.output_dir.join("detection_eval_manifest.json"),
+    &detection_eval_manifest,
+  )?;
+
+  Ok(DetectionEvalOutput {
+    output_dir: inputs.output_dir.clone(),
+    visual_eval_report: report,
+    detection_eval_manifest,
+  })
 }
 
 fn build_schedule(beatmap: &Beatmap) -> Vec<ScheduledAction> {
@@ -327,6 +402,149 @@ fn build_schedule(beatmap: &Beatmap) -> Vec<ScheduledAction> {
       }
     })
     .collect()
+}
+
+struct LoadedDetectionInputs {
+  model_id: String,
+  label_map_source: String,
+  detections_by_capture: BTreeMap<String, DetectionSet>,
+}
+
+fn load_detection_inputs(path: &Path) -> OsuResult<LoadedDetectionInputs> {
+  if path.is_dir() {
+    return load_detection_dir(path);
+  }
+
+  if path
+    .extension()
+    .and_then(|extension| extension.to_str())
+    .is_some_and(|extension| extension.eq_ignore_ascii_case("json"))
+  {
+    if let Ok(manifest) = read_json::<DetectionEvidenceManifest>(path) {
+      let capture_file_name = detection_capture_file_name_from_manifest(&manifest)?;
+      let mut detections_by_capture = BTreeMap::new();
+      detections_by_capture.insert(capture_file_name, manifest.detection_set.clone());
+      return Ok(LoadedDetectionInputs {
+        model_id: manifest.model_run.model_id.0,
+        label_map_source: class_label_source_name(&manifest.model_run.class_label_source),
+        detections_by_capture,
+      });
+    }
+  }
+
+  let record = read_json::<DetectionFileRecord>(path)?;
+  let model_id = record.detection_set.model_id.0.clone();
+  let mut detections_by_capture = BTreeMap::new();
+  detections_by_capture.insert(record.capture_file_name, record.detection_set);
+  Ok(LoadedDetectionInputs {
+    model_id,
+    label_map_source: "inline_fixture".to_string(),
+    detections_by_capture,
+  })
+}
+
+fn load_detection_dir(path: &Path) -> OsuResult<LoadedDetectionInputs> {
+  let mut detections_by_capture = BTreeMap::new();
+  let mut model_id = None;
+  let mut label_map_source = None;
+  for entry in fs::read_dir(path)
+    .map_err(|error| format!("failed to read detections dir {}: {error}", path.display()))?
+  {
+    let entry = entry.map_err(|error| format!("failed to read detections dir entry: {error}"))?;
+    let entry_path = entry.path();
+    if !entry_path.is_file() {
+      continue;
+    }
+    let extension = entry_path.extension().and_then(|value| value.to_str());
+    if !extension.is_some_and(|value| value.eq_ignore_ascii_case("json")) {
+      continue;
+    }
+    let record = read_json::<DetectionFileRecord>(&entry_path)?;
+    let record_model_id = record.detection_set.model_id.0.clone();
+    if let Some(existing) = &model_id {
+      if existing != &record_model_id {
+        return Err(format!(
+          "detection fixture directory mixes model ids {} and {}",
+          existing, record_model_id
+        ));
+      }
+    } else {
+      model_id = Some(record_model_id);
+    }
+    detections_by_capture.insert(record.capture_file_name, record.detection_set);
+    label_map_source.get_or_insert_with(|| "inline_fixture_dir".to_string());
+  }
+
+  if detections_by_capture.is_empty() {
+    return Err(format!(
+      "detections path {} contains no JSON detection fixtures",
+      path.display()
+    ));
+  }
+
+  Ok(LoadedDetectionInputs {
+    model_id: model_id
+      .ok_or_else(|| format!("detections path {} contains no model id", path.display()))?,
+    label_map_source: label_map_source.unwrap_or_else(|| "inline_fixture_dir".to_string()),
+    detections_by_capture,
+  })
+}
+
+fn expand_frame_detections(
+  manifest: &VisualTruthManifest,
+  detections_by_capture: &BTreeMap<String, DetectionSet>,
+) -> OsuResult<Vec<FrameDetections>> {
+  manifest
+    .frames
+    .iter()
+    .map(|frame| {
+      let detection_set = detections_by_capture
+        .get(&frame.capture.file_name)
+        .ok_or_else(|| {
+          format!(
+            "missing detection fixture for capture file {}",
+            frame.capture.file_name
+          )
+        })?
+        .clone();
+      Ok(FrameDetections::new(
+        FrameKey::from_parts(
+          frame.object_index,
+          frame.capture.phase.clone(),
+          frame.capture.file_name.clone(),
+        ),
+        detection_set,
+      ))
+    })
+    .collect()
+}
+
+fn detection_capture_file_name_from_manifest(
+  manifest: &DetectionEvidenceManifest,
+) -> OsuResult<String> {
+  match &manifest.source_image.source_image_ref {
+    auv_inference_common::SourceImageRef::LocalPath { path } => path
+      .file_name()
+      .and_then(|name| name.to_str())
+      .map(str::to_string)
+      .ok_or_else(|| {
+        format!(
+          "detection evidence manifest source image path {} has invalid file name",
+          path.display()
+        )
+      }),
+    auv_inference_common::SourceImageRef::OpaqueId { id } => Ok(id.clone()),
+  }
+}
+
+fn class_label_source_name(source: &ClassLabelSource) -> String {
+  match source {
+    ClassLabelSource::OverrideFile { .. } => "override_file",
+    ClassLabelSource::EmbeddedModelMetadata => "embedded_model_metadata",
+    ClassLabelSource::InlineList => "inline_list",
+    ClassLabelSource::Unknown => "unknown",
+  }
+  .to_string()
 }
 
 fn build_map_summary(
@@ -806,6 +1024,13 @@ fn write_json(path: PathBuf, value: &impl Serialize) -> OsuResult<()> {
   fs::write(&path, rendered).map_err(|error| format!("failed to write {}: {error}", path.display()))
 }
 
+fn read_json<T: for<'de> serde::Deserialize<'de>>(path: &Path) -> OsuResult<T> {
+  let bytes =
+    fs::read(path).map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+  serde_json::from_slice(&bytes)
+    .map_err(|error| format!("failed to parse {}: {error}", path.display()))
+}
+
 fn default_pre_capture_offset_ms() -> u64 {
   16
 }
@@ -952,6 +1177,61 @@ mod tests {
 
     assert!(report_path.exists());
 
+    std::fs::remove_dir_all(&temp_dir).expect("remove temp dir");
+  }
+
+  #[test]
+  fn benchmark_does_not_write_visual_eval_report_without_detector_input() {
+    let temp_dir = std::env::temp_dir().join(format!(
+      "auv-osu-no-detector-visual-eval-{}",
+      std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("unix epoch")
+        .as_nanos()
+    ));
+    std::fs::create_dir_all(&temp_dir).expect("create temp dir");
+
+    let beatmap_path = std::env::temp_dir().join(format!(
+      "sample-beatmap-{}.osu",
+      std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("unix epoch")
+        .as_nanos()
+    ));
+    std::fs::write(
+      &beatmap_path,
+      r#"osu file format v14
+
+[General]
+AudioFilename: audio.mp3
+Mode: 0
+
+[Difficulty]
+HPDrainRate:3
+CircleSize:4
+OverallDifficulty:5
+ApproachRate:7
+
+[TimingPoints]
+0,500,4,2,1,100,1,0
+
+[HitObjects]
+256,192,1000,1,0,0:0:0:0:
+"#,
+    )
+    .expect("write beatmap");
+
+    let output_dir = temp_dir.join("output");
+    let result = run_benchmark(&BenchmarkInputs::new(
+      beatmap_path.clone(),
+      output_dir.clone(),
+    ))
+    .expect("benchmark should succeed");
+
+    assert!(result.visual_eval_report.is_none());
+    assert!(!output_dir.join("visual_eval_report.json").exists());
+
+    std::fs::remove_file(&beatmap_path).expect("remove beatmap");
     std::fs::remove_dir_all(&temp_dir).expect("remove temp dir");
   }
 

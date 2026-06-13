@@ -2,8 +2,8 @@ use std::fs;
 use std::path::PathBuf;
 
 use auv_game_osu::{
-  BenchmarkInputs, BenchmarkOutput, DatasetExportInputs, DatasetExportOutput, RunMode,
-  export_dataset, run_benchmark,
+  BenchmarkInputs, BenchmarkOutput, DatasetExportInputs, DatasetExportOutput, DetectionEvalInputs,
+  DetectionEvalOutput, RunMode, evaluate_detection_fixture, export_dataset, run_benchmark,
 };
 
 use crate::model::AuvResult;
@@ -56,7 +56,6 @@ pub fn run_osu_benchmark_with_inputs(
           "verification_summary.json",
           "visual_truth_manifest.json",
           "projection.json",
-          "visual_eval_report.json",
         ] {
           let artifact_path = result.output_dir.join(artifact_name);
           if artifact_path.exists() {
@@ -138,6 +137,49 @@ pub fn run_osu_dataset_export(
           "osu-dataset-overlay",
         )?;
 
+        Ok::<_, String>(())
+      })?;
+      Ok::<_, String>(result)
+    },
+  )
+}
+
+pub fn run_osu_detection_eval(
+  runtime: &Runtime,
+  run_artifact_dir: PathBuf,
+  detections_path: PathBuf,
+  output_dir: PathBuf,
+) -> AuvResult<RecordedOperationOutput<DetectionEvalOutput>> {
+  runtime.run_recorded_operation(
+    RunSpec::new(RunType::Execute, "auv.osu.eval_detections"),
+    "osu evaluate offline detections",
+    |context| {
+      context.record_event(
+        "osu.eval_detections.inputs",
+        Some(format!(
+          "run_artifact_dir={} detections_path={} output_dir={}",
+          run_artifact_dir.display(),
+          detections_path.display(),
+          output_dir.display()
+        )),
+      );
+      let result = evaluate_detection_fixture(&DetectionEvalInputs {
+        run_artifact_dir: run_artifact_dir.clone(),
+        detections_path: detections_path.clone(),
+        output_dir: output_dir.clone(),
+      })?;
+      context.in_span("osu.eval_detections.artifacts", |context| {
+        for artifact_name in ["visual_eval_report.json", "detection_eval_manifest.json"] {
+          let artifact_path = result.output_dir.join(artifact_name);
+          if artifact_path.exists() {
+            context.stage_artifact_file(
+              "osu-eval-detections",
+              &artifact_path,
+              artifact_name,
+              Some(format!("osu detection eval artifact {artifact_name}")),
+            )?;
+          }
+        }
         Ok::<_, String>(())
       })?;
       Ok::<_, String>(result)

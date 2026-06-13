@@ -114,6 +114,12 @@ pub struct FrameEvaluation {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DetectorEvalProvenance {
+  pub model_id: String,
+  pub label_map_source: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct VisualEvalReport {
   pub total_frames: usize,
   pub label_matched_frames: usize,
@@ -126,6 +132,8 @@ pub struct VisualEvalReport {
   pub projection: EvalProjection,
   pub frames: Vec<FrameEvaluation>,
   pub known_limits: Vec<String>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub detector_provenance: Option<DetectorEvalProvenance>,
 }
 
 impl VisualEvalReport {
@@ -144,6 +152,16 @@ pub fn evaluate_visual_truth(
   detections_by_frame: &[FrameDetections],
   projection: &EvalProjection,
   label_map: &LabelMap,
+) -> VisualEvalReport {
+  evaluate_visual_truth_with_provenance(manifest, detections_by_frame, projection, label_map, None)
+}
+
+pub fn evaluate_visual_truth_with_provenance(
+  manifest: &VisualTruthManifest,
+  detections_by_frame: &[FrameDetections],
+  projection: &EvalProjection,
+  label_map: &LabelMap,
+  detector_provenance: Option<DetectorEvalProvenance>,
 ) -> VisualEvalReport {
   let detections_lookup = detections_by_frame
     .iter()
@@ -250,6 +268,7 @@ pub fn evaluate_visual_truth(
     projection: projection.clone(),
     frames,
     known_limits: build_known_limits(projection),
+    detector_provenance,
   }
 }
 

@@ -91,6 +91,11 @@ pub enum CliCommand {
     run_artifact_dir: String,
     output_dir: String,
   },
+  OsuEvalDetections {
+    run_artifact_dir: String,
+    detections_path: String,
+    output_dir: Option<String>,
+  },
   Invoke {
     request: InvokeRequest,
     inspect: InspectClientOptions,
@@ -206,6 +211,7 @@ USAGE
   auv-cli osu benchmark <beatmap.osu> [--output-dir <dir>]
   auv-cli osu dispatch <beatmap.osu> --target-app <name> [--output-dir <dir>] [--dispatch-limit <n>] [--capture-verify]
   auv-cli osu export-dataset <run-artifact-dir> --output-dir <dir>
+  auv-cli osu eval-detections <run-artifact-dir> --detections <dir-or-json> [--output-dir <dir>]
   auv-cli invoke <command-id> [--dry-run] [--target <application-id>] [--label <text>] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
   auv-cli inspect <run-id>
   auv-cli inspect serve [--host <host>] [--port <port>] [--store-root <path>] [--enable-write] [--write-token <token>] [--write-token-file <path>] [--no-write-token]
@@ -568,8 +574,9 @@ fn parse_osu(arguments: &[String]) -> AuvResult<CliCommand> {
     "benchmark" => parse_osu_benchmark(arguments),
     "dispatch" => parse_osu_dispatch(arguments),
     "export-dataset" => parse_osu_export_dataset(arguments),
+    "eval-detections" => parse_osu_eval_detections(arguments),
     other => Err(format!(
-      "unknown osu subcommand {other}; use `auv-cli osu benchmark`, `auv-cli osu dispatch`, or `auv-cli osu export-dataset`"
+      "unknown osu subcommand {other}; use `auv-cli osu benchmark`, `auv-cli osu dispatch`, `auv-cli osu export-dataset`, or `auv-cli osu eval-detections`"
     )),
   }
 }
@@ -688,6 +695,44 @@ fn parse_osu_export_dataset(arguments: &[String]) -> AuvResult<CliCommand> {
   Ok(CliCommand::OsuExportDataset {
     run_artifact_dir,
     output_dir: output_dir.ok_or_else(|| "--output-dir is required".to_string())?,
+  })
+}
+
+fn parse_osu_eval_detections(arguments: &[String]) -> AuvResult<CliCommand> {
+  if arguments.len() < 5 {
+    return Err(
+      "usage: auv-cli osu eval-detections <run-artifact-dir> --detections <dir-or-json> [--output-dir <dir>]".to_string(),
+    );
+  }
+
+  let run_artifact_dir = arguments[2].clone();
+  let mut detections_path = None;
+  let mut output_dir = None;
+  let mut index = 3;
+  while index < arguments.len() {
+    match arguments[index].as_str() {
+      "--detections" => {
+        if index + 1 >= arguments.len() {
+          return Err("--detections requires a value".to_string());
+        }
+        detections_path = Some(arguments[index + 1].clone());
+        index += 2;
+      }
+      "--output-dir" => {
+        if index + 1 >= arguments.len() {
+          return Err("--output-dir requires a value".to_string());
+        }
+        output_dir = Some(arguments[index + 1].clone());
+        index += 2;
+      }
+      other => return Err(format!("unexpected osu-eval-detections argument {other}")),
+    }
+  }
+
+  Ok(CliCommand::OsuEvalDetections {
+    run_artifact_dir,
+    detections_path: detections_path.ok_or_else(|| "--detections is required".to_string())?,
+    output_dir,
   })
 }
 
@@ -1128,6 +1173,66 @@ mod tests {
     .expect_err("zero max pages should fail");
 
     assert!(error.contains("--max-pages must be greater than 0"));
+  }
+
+  #[test]
+  fn parse_osu_eval_detections_command() {
+    let command = parse_cli(&[
+      "osu".to_string(),
+      "eval-detections".to_string(),
+      "/tmp/run".to_string(),
+      "--detections".to_string(),
+      "/tmp/detections".to_string(),
+      "--output-dir".to_string(),
+      "/tmp/output".to_string(),
+    ])
+    .expect("osu eval-detections command should parse");
+
+    match command {
+      CliCommand::OsuEvalDetections {
+        run_artifact_dir,
+        detections_path,
+        output_dir,
+      } => {
+        assert_eq!(run_artifact_dir, "/tmp/run");
+        assert_eq!(detections_path, "/tmp/detections");
+        assert_eq!(output_dir.as_deref(), Some("/tmp/output"));
+      }
+      other => panic!("unexpected command: {other:?}"),
+    }
+  }
+
+  #[test]
+  fn parse_osu_eval_detections_requires_detections() {
+    let error = parse_cli(&[
+      "osu".to_string(),
+      "eval-detections".to_string(),
+      "/tmp/run".to_string(),
+      "--output-dir".to_string(),
+      "/tmp/output".to_string(),
+    ])
+    .expect_err("osu eval-detections should require --detections");
+
+    assert!(error.contains("--detections is required"));
+  }
+
+  #[test]
+  fn parse_osu_eval_detections_accepts_default_output_dir() {
+    let command = parse_cli(&[
+      "osu".to_string(),
+      "eval-detections".to_string(),
+      "/tmp/run".to_string(),
+      "--detections".to_string(),
+      "/tmp/detections.json".to_string(),
+    ])
+    .expect("osu eval-detections should allow omitted output dir");
+
+    match command {
+      CliCommand::OsuEvalDetections { output_dir, .. } => {
+        assert_eq!(output_dir, None);
+      }
+      other => panic!("unexpected command: {other:?}"),
+    }
   }
 
   #[test]

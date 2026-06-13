@@ -406,6 +406,57 @@ Manual visual check of `capture-object-0000-after-16ms.png` on that run showed
 visible hit feedback at the projected location, which is accepted evidence for
 this slice per the roadmap gate.
 
+### P7 fixture stage completed locally with offline detection-eval evidence
+
+What landed in the local P7 fixture-stage slice:
+
+- adds `auv-cli osu eval-detections <run-artifact-dir> --detections <dir-or-json> [--output-dir <dir>]`
+- consumes recorded `visual_truth_manifest.json` and `projection.json` from an existing capture-verified run
+- consumes offline detector fixture JSON in `DetectionSet` shape only; no live detector execution, no capture, no dispatch
+- expands detections onto exact `FrameKey { object_index, phase, capture_file_name }` semantics instead of collapsing before/after frames
+- writes `visual_eval_report.json` plus `detection_eval_manifest.json`
+- preserves detector provenance in the eval report via `model_id` and label-map source metadata
+
+Validation passed locally for the landed P7 fixture-stage code:
+
+- `cargo fmt --check`
+- `cargo check`
+- `cargo test`
+- `git diff --check`
+- `cargo test -p auv-game-osu detection_fixture_eval_writes_report_with_provenance`
+- `cargo test -p auv-cli parse_osu_eval_detections_command`
+- `cargo test -p auv-cli parse_osu_eval_detections_requires_detections`
+- `cargo test -p auv-cli parse_osu_eval_detections_accepts_default_output_dir`
+- `cargo run --quiet -- osu eval-detections /Users/liuziheng/https-github-com-moeru-ai-auv/.tmp-osu-dispatch-p4ab-closeout --detections /Users/liuziheng/https-github-com-moeru-ai-auv/crates/auv-game-osu/tests/fixtures/osu_eval_detection --output-dir /Users/liuziheng/https-github-com-moeru-ai-auv/.tmp-osu-eval-detections-p7`
+
+Real offline detection-eval smoke evidence:
+
+- eval run id: `run_1781347858406_22548_0`
+- source run dir: `.tmp-osu-dispatch-p4ab-closeout`
+- detections fixture dir: `crates/auv-game-osu/tests/fixtures/osu_eval_detection`
+- output dir: `.tmp-osu-eval-detections-p7`
+- report summary:
+  - `total_frames = 3`
+  - `label_matched_frames = 1`
+  - `spatial_matched_frames = 1`
+- detector provenance:
+  - `model_id = "test-osu-fixture-detector"`
+  - `label_map_source = "inline_fixture_dir"`
+
+Fixture-stage interpretation:
+
+- P7 stage 1 is now closed locally: the AUV-side offline eval wiring works end to end on a recorded smoke run plus checked-in detector fixtures
+- P7 stage 2 is still open: no real detector smoke has been run yet against the P6 dataset, so the full roadmap slice is not honestly closed beyond fixture stage
+
+Evidence note for P7 lives in:
+
+- `docs/ai/references/2026-06-13-osu-benchmark-p7-detection-eval-evidence.md`
+
+Open follow-up observations, not started:
+
+- P7 still lacks negative fixture coverage for bad detection fixture inputs such as missing frames, duplicate frame-key semantics, or malformed detector fixture JSON.
+- `visual_eval` still scores the first same-label detection rather than the nearest same-label detection, which keeps instance-level spatial honesty weaker than it could be.
+
 ### P6 completed locally with dataset export evidence
 
 What landed in the local P6 slice:
@@ -458,6 +509,7 @@ Failure smoke evidence:
 Evidence note for P6 lives in:
 
 - `docs/ai/references/2026-06-13-osu-benchmark-p6-dataset-evidence.md`
+
 ### P5 completed locally with app-local `PidTargeted` evidence
 
 What landed across the local P5 slices:

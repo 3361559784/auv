@@ -68,3 +68,6 @@ docs/notes/
 
 # Temporary fixture artifact emitted by scroll-scan tests.
 scan-page-*-observe.json
+
+# Local run artifacts & review scratch
+.tmp-*/

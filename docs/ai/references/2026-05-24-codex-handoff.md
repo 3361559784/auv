@@ -22,13 +22,15 @@ Read these files first, in this order:
 
 ## Current Goal
 
-Active goal is still:
+Active goal is now:
 
 ```text
-AUV realtime benchmark lane for osu!, benchmark-first rather than YOLO-first
+AUV core lane mainline: runtime surfaces + osu graduation, with C1 next
 ```
 
-There is no new goal beyond this lane.
+The osu bounded benchmark lane is closed locally for its approved mission and the
+owner lane has returned to core graduation / runtime-surface work. The active
+roadmap now lives in `docs/ai/references/2026-06-13-auv-core-lane-roadmap.md`.
 
 Current shape of the lane:
 
@@ -354,16 +356,12 @@ Still true:
 
 ## Next Single Best Step
 
-Do not open a new goal.
+Do not reopen the osu ladder as the main owner lane.
 
-The owner has approved the post-P3 ladder; per-slice scope, acceptance, and
-gates now live in
-`docs/ai/references/2026-06-13-osu-benchmark-p4-plus-roadmap.md`. Start at
-P4a there.
-
-`P3a` and the first `P3` eval slice are merged and pushed. The owner chose
-playfield-to-pixel calibration as the next slice; it is specified as `P4a`
-in the roadmap document above.
+The active forward plan is now `docs/ai/references/2026-06-13-auv-core-lane-roadmap.md`.
+The next owner-approved slice is `C1: auv-cli-invoke Metadata/Registry Boundary`.
+When work resumes, start there, use that document's slice boundary/gate, then stop
+for owner selection after C1 completes.
 
 ### P4a completed locally with real-app smoke evidence
 

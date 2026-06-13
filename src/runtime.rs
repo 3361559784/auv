@@ -215,8 +215,8 @@ impl Runtime {
     self.recording.run_dir(run_id)
   }
 
-  pub fn recorder(&self) -> Arc<dyn RunRecorder> {
-    self.recording.recorder()
+  pub(crate) fn recording_backend(&self) -> &RunRecordingBackend {
+    &self.recording
   }
 
   pub fn with_recording(mut self, recording: RunRecordingBackend) -> Self {

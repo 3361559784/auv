@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 
 use crate::contract::ArtifactRef;
 use crate::model::{AuvResult, now_millis};
+use crate::recording::RunRecordingBackend;
 use crate::run_builder::{Attributes, RecordingRun, RunFinish, RunSpec, SpanFinish, SpanRef};
 use crate::runtime::Runtime;
 use crate::trace::{
@@ -18,15 +19,15 @@ use crate::trace::{
 };
 
 pub struct RecordedOperationContext<'a> {
-  runtime: &'a Runtime,
+  recording: &'a RunRecordingBackend,
   run: &'a mut RecordingRun,
   root: SpanRef,
   current: SpanRef,
 }
 
 impl<'a> RecordedOperationContext<'a> {
-  pub fn runtime(&self) -> &Runtime {
-    self.runtime
+  pub fn recording(&self) -> &RunRecordingBackend {
+    self.recording
   }
 
   pub fn run(&self) -> &RecordingRun {
@@ -72,9 +73,36 @@ impl<'a> RecordedOperationContext<'a> {
     preferred_name: impl Into<String>,
     summary: Option<String>,
   ) -> AuvResult<PathBuf> {
+    let event_id = new_event_id();
+    let artifact = self.recording().stage_artifact_file(
+      self.run.id(),
+      self.run.artifact_count(),
+      span.id(),
+      Some(event_id.clone()),
+      crate::store::ArtifactFileSource {
+        role: role.into(),
+        source_path: source_path.to_path_buf(),
+        preferred_name: preferred_name.into(),
+        summary,
+      },
+    )?;
+    record_event_with_id(
+      self.run,
+      span.id(),
+      event_id,
+      "artifact.captured",
+      Some(render_artifact_event(&artifact)),
+      vec![artifact.artifact_id.clone()],
+    );
+    let staged_path = self
+      .recording()
+      .run_dir(self.run.id())?
+      .join(&artifact.path);
+    self.run.record_artifact(artifact.clone());
     self
-      .runtime
-      .stage_artifact_file(self.run, span, role, source_path, preferred_name, summary)
+      .recording()
+      .record_artifact_bytes(self.run.id(), &artifact, &staged_path)?;
+    Ok(staged_path)
   }
 
   pub fn stage_artifact_file_with_ref(
@@ -96,14 +124,42 @@ impl<'a> RecordedOperationContext<'a> {
     preferred_name: impl Into<String>,
     summary: Option<String>,
   ) -> AuvResult<(PathBuf, ArtifactRef)> {
-    self.runtime.stage_artifact_file_with_ref(
+    let event_id = new_event_id();
+    let artifact = self.recording().stage_artifact_file(
+      self.run.id(),
+      self.run.artifact_count(),
+      span.id(),
+      Some(event_id.clone()),
+      crate::store::ArtifactFileSource {
+        role: role.into(),
+        source_path: source_path.to_path_buf(),
+        preferred_name: preferred_name.into(),
+        summary,
+      },
+    )?;
+    record_event_with_id(
       self.run,
-      span,
-      role,
-      source_path,
-      preferred_name,
-      summary,
-    )
+      span.id(),
+      event_id.clone(),
+      "artifact.captured",
+      Some(render_artifact_event(&artifact)),
+      vec![artifact.artifact_id.clone()],
+    );
+    let staged_path = self
+      .recording()
+      .run_dir(self.run.id())?
+      .join(&artifact.path);
+    let artifact_ref = ArtifactRef {
+      run_id: self.run.id().clone(),
+      artifact_id: artifact.artifact_id.clone(),
+      span_id: span.id().clone(),
+      captured_event_id: Some(event_id),
+    };
+    self.run.record_artifact(artifact.clone());
+    self
+      .recording()
+      .record_artifact_bytes(self.run.id(), &artifact, &staged_path)?;
+    Ok((staged_path, artifact_ref))
   }
 
   pub fn in_span<T, E, F>(&mut self, name: impl Into<String>, operation: F) -> Result<T, E>
@@ -205,7 +261,7 @@ impl Runtime {
 
     let result = {
       let mut context = RecordedOperationContext {
-        runtime: self,
+        recording: self.recording_backend(),
         run: &mut run,
         root: root.clone(),
         current: root.clone(),
@@ -261,22 +317,6 @@ impl Runtime {
   }
 }
 
-fn operation_span_record(name: &str, attributes: Attributes) -> SpanRecordV1Alpha1 {
-  SpanRecordV1Alpha1 {
-    api_version: SPAN_API_VERSION.to_string(),
-    span_id: new_span_id(),
-    parent_span_id: None,
-    name: name.to_string(),
-    state: TraceState::Running,
-    status_code: TraceStatusCode::Unset,
-    started_at_millis: now_millis(),
-    finished_at_millis: None,
-    attributes,
-    summary: None,
-    failure: None,
-  }
-}
-
 fn record_operation_event(
   run: &mut RecordingRun,
   span: &SpanRef,
@@ -293,6 +333,53 @@ fn record_operation_event(
     message,
     artifact_ids: Vec::new(),
   })
+}
+
+fn operation_span_record(name: &str, attributes: Attributes) -> SpanRecordV1Alpha1 {
+  SpanRecordV1Alpha1 {
+    api_version: SPAN_API_VERSION.to_string(),
+    span_id: new_span_id(),
+    parent_span_id: None,
+    name: name.to_string(),
+    state: TraceState::Running,
+    status_code: TraceStatusCode::Unset,
+    started_at_millis: now_millis(),
+    finished_at_millis: None,
+    attributes,
+    summary: None,
+    failure: None,
+  }
+}
+
+fn record_event_with_id(
+  run: &mut RecordingRun,
+  span_id: &crate::trace::SpanId,
+  event_id: crate::trace::EventId,
+  name: &str,
+  message: Option<String>,
+  artifact_ids: Vec<crate::trace::ArtifactId>,
+) {
+  run.record_event(EventRecordV1Alpha1 {
+    api_version: EVENT_API_VERSION.to_string(),
+    event_id,
+    span_id: span_id.clone(),
+    name: name.to_string(),
+    timestamp_millis: now_millis(),
+    attributes: Default::default(),
+    message,
+    artifact_ids,
+  });
+}
+
+fn render_artifact_event(artifact: &crate::trace::ArtifactRecordV1Alpha1) -> String {
+  let note = artifact
+    .summary
+    .clone()
+    .unwrap_or_else(|| "n/a".to_string());
+  format!(
+    "{} kind={} path={} note={}",
+    artifact.artifact_id, artifact.role, artifact.path, note
+  )
 }
 
 #[cfg(test)]

@@ -240,9 +240,11 @@ pub fn run_benchmark(inputs: &BenchmarkInputs) -> OsuResult<BenchmarkOutput> {
   };
 
   let visual_eval_report = match (&visual_truth_manifest, &projection) {
-    (Some(manifest), Some(projection_artifact)) => {
-      Some(build_visual_eval_report(manifest, projection_artifact, &[])? )
-    }
+    (Some(manifest), Some(projection_artifact)) => Some(build_visual_eval_report(
+      manifest,
+      projection_artifact,
+      &[],
+    )?),
     _ => None,
   };
 
@@ -460,7 +462,10 @@ fn run_typed_dispatch(
         None,
         inputs.pre_capture_offset_ms,
       )?);
-      if projection_artifact.as_ref().is_some_and(|artifact| artifact.capture_bounds.is_none()) {
+      if projection_artifact
+        .as_ref()
+        .is_some_and(|artifact| artifact.capture_bounds.is_none())
+      {
         if let Some(capture) = captures.last() {
           let capture_projection = PlayfieldProjection::for_capture(
             f64::from(capture.width),
@@ -569,7 +574,12 @@ fn warm_up_typed_dispatch_path(
       },
     )
     .map(|_| ())
-    .map_err(|error| format!("typed dispatch warm-up failed at object {}: {error}", action.object_index))
+    .map_err(|error| {
+      format!(
+        "typed dispatch warm-up failed at object {}: {error}",
+        action.object_index
+      )
+    })
 }
 
 #[cfg(target_os = "macos")]
@@ -1038,11 +1048,8 @@ mod tests {
 
   #[test]
   fn warm_up_path_preserves_single_click_defaults() {
-    let inputs = BenchmarkInputs::typed_dispatch(
-      PathBuf::from("map.osu"),
-      PathBuf::from("out"),
-      "osu!",
-    );
+    let inputs =
+      BenchmarkInputs::typed_dispatch(PathBuf::from("map.osu"), PathBuf::from("out"), "osu!");
 
     assert_eq!(inputs.run_mode, RunMode::TypedDispatch);
     assert_eq!(inputs.dispatch_limit, Some(8));

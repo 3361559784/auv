@@ -1,6 +1,10 @@
+use std::fs;
 use std::path::PathBuf;
 
-use auv_game_osu::{BenchmarkInputs, BenchmarkOutput, RunMode, run_benchmark};
+use auv_game_osu::{
+  BenchmarkInputs, BenchmarkOutput, DatasetExportInputs, DatasetExportOutput, RunMode,
+  export_dataset, run_benchmark,
+};
 
 use crate::model::AuvResult;
 use crate::recorded_operation::RecordedOperationOutput;
@@ -82,4 +86,96 @@ pub fn run_osu_benchmark_with_inputs(
       Ok::<_, String>(result)
     },
   )
+}
+
+pub fn run_osu_dataset_export(
+  runtime: &Runtime,
+  run_artifact_dir: PathBuf,
+  output_dir: PathBuf,
+) -> AuvResult<RecordedOperationOutput<DatasetExportOutput>> {
+  runtime.run_recorded_operation(
+    RunSpec::new(RunType::Execute, "auv.osu.export_dataset"),
+    "osu export labeled dataset",
+    |context| {
+      context.record_event(
+        "osu.export_dataset.inputs",
+        Some(format!(
+          "run_artifact_dir={} output_dir={}",
+          run_artifact_dir.display(),
+          output_dir.display()
+        )),
+      );
+      let result = export_dataset(&DatasetExportInputs {
+        run_artifact_dir: run_artifact_dir.clone(),
+        output_dir: output_dir.clone(),
+      })?;
+      context.in_span("osu.export_dataset.artifacts", |context| {
+        for artifact_name in ["dataset_manifest.json"] {
+          let artifact_path = result.output_dir.join(artifact_name);
+          if artifact_path.exists() {
+            context.stage_artifact_file(
+              "osu-dataset",
+              &artifact_path,
+              artifact_name,
+              Some(format!("osu dataset artifact {artifact_name}")),
+            )?;
+          }
+        }
+
+        stage_dataset_dir(
+          context,
+          &result.output_dir.join("images"),
+          "osu-dataset-image",
+        )?;
+        stage_dataset_dir(
+          context,
+          &result.output_dir.join("labels"),
+          "osu-dataset-label",
+        )?;
+        stage_dataset_dir(
+          context,
+          &result.output_dir.join("overlays"),
+          "osu-dataset-overlay",
+        )?;
+
+        Ok::<_, String>(())
+      })?;
+      Ok::<_, String>(result)
+    },
+  )
+}
+
+fn stage_dataset_dir(
+  context: &mut crate::recorded_operation::RecordedOperationContext<'_>,
+  dir: &std::path::Path,
+  artifact_kind: &str,
+) -> Result<(), String> {
+  if !dir.exists() {
+    return Ok(());
+  }
+
+  let entries = fs::read_dir(dir)
+    .map_err(|error| format!("failed to read dataset dir {}: {error}", dir.display()))?;
+  for entry in entries {
+    let entry = entry.map_err(|error| format!("failed to read dataset entry: {error}"))?;
+    let path = entry.path();
+    if path.is_file() {
+      let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| {
+          format!(
+            "dataset artifact path {} has invalid file name",
+            path.display()
+          )
+        })?;
+      context.stage_artifact_file(
+        artifact_kind,
+        &path,
+        file_name,
+        Some(format!("osu dataset artifact {file_name}")),
+      )?;
+    }
+  }
+  Ok(())
 }

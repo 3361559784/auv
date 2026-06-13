@@ -422,9 +422,11 @@ dependencies = [
  "auv-driver",
  "auv-driver-macos",
  "auv-inference-common",
+ "image",
  "rosu-map",
  "serde",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]

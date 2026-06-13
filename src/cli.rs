@@ -87,6 +87,10 @@ pub enum CliCommand {
     dispatch_limit: Option<usize>,
     capture_verify: bool,
   },
+  OsuExportDataset {
+    run_artifact_dir: String,
+    output_dir: String,
+  },
   Invoke {
     request: InvokeRequest,
     inspect: InspectClientOptions,
@@ -201,6 +205,7 @@ USAGE
   auv-cli app analyze <probe-dir-or-probe-json>
   auv-cli osu benchmark <beatmap.osu> [--output-dir <dir>]
   auv-cli osu dispatch <beatmap.osu> --target-app <name> [--output-dir <dir>] [--dispatch-limit <n>] [--capture-verify]
+  auv-cli osu export-dataset <run-artifact-dir> --output-dir <dir>
   auv-cli invoke <command-id> [--dry-run] [--target <application-id>] [--label <text>] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
   auv-cli inspect <run-id>
   auv-cli inspect serve [--host <host>] [--port <port>] [--store-root <path>] [--enable-write] [--write-token <token>] [--write-token-file <path>] [--no-write-token]
@@ -562,8 +567,9 @@ fn parse_osu(arguments: &[String]) -> AuvResult<CliCommand> {
   match arguments[1].as_str() {
     "benchmark" => parse_osu_benchmark(arguments),
     "dispatch" => parse_osu_dispatch(arguments),
+    "export-dataset" => parse_osu_export_dataset(arguments),
     other => Err(format!(
-      "unknown osu subcommand {other}; use `auv-cli osu benchmark` or `auv-cli osu dispatch`"
+      "unknown osu subcommand {other}; use `auv-cli osu benchmark`, `auv-cli osu dispatch`, or `auv-cli osu export-dataset`"
     )),
   }
 }
@@ -653,6 +659,35 @@ fn parse_osu_dispatch(arguments: &[String]) -> AuvResult<CliCommand> {
     output_dir,
     dispatch_limit,
     capture_verify,
+  })
+}
+
+fn parse_osu_export_dataset(arguments: &[String]) -> AuvResult<CliCommand> {
+  if arguments.len() < 5 {
+    return Err(
+      "usage: auv-cli osu export-dataset <run-artifact-dir> --output-dir <dir>".to_string(),
+    );
+  }
+
+  let run_artifact_dir = arguments[2].clone();
+  let mut output_dir = None;
+  let mut index = 3;
+  while index < arguments.len() {
+    match arguments[index].as_str() {
+      "--output-dir" => {
+        if index + 1 >= arguments.len() {
+          return Err("--output-dir requires a value".to_string());
+        }
+        output_dir = Some(arguments[index + 1].clone());
+        index += 2;
+      }
+      other => return Err(format!("unexpected osu-export-dataset argument {other}")),
+    }
+  }
+
+  Ok(CliCommand::OsuExportDataset {
+    run_artifact_dir,
+    output_dir: output_dir.ok_or_else(|| "--output-dir is required".to_string())?,
   })
 }
 

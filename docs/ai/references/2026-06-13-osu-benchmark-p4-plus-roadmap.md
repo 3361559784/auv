@@ -228,6 +228,8 @@ Gate: report both distributions, stop.
 
 Classification: approved feature (this document is the approval).
 
+Status: completed locally with single-run dataset export smoke evidence.
+
 Goal: turn capture-verified runs into a labeled detection dataset: beatmap
 truth + projection => pixel bounding boxes on staged capture PNGs. This is
 the "free annotation machine" the detector lane consumes.

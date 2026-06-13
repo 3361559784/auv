@@ -246,6 +246,28 @@ async fn run() -> Result<(), String> {
       }
       println!("output: {}", output.value.output_dir.display());
     }
+    CliCommand::OsuExportDataset {
+      run_artifact_dir,
+      output_dir,
+    } => {
+      let runtime = build_default_runtime(project_root.clone())?;
+      let output = auv_cli::osu::run_osu_dataset_export(
+        &runtime,
+        PathBuf::from(run_artifact_dir),
+        PathBuf::from(output_dir),
+      )?;
+      println!("runId: {}", output.run_id);
+      println!("status: completed");
+      println!(
+        "exportedFrames: {}",
+        output.value.dataset_manifest.exported_frames.len()
+      );
+      println!(
+        "skippedFrames: {}",
+        output.value.dataset_manifest.skipped_frames.len()
+      );
+      println!("output: {}", output.value.output_dir.display());
+    }
     CliCommand::Invoke { request, inspect } => {
       let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
       let result = runtime.invoke(request)?;

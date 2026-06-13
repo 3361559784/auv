@@ -15,9 +15,13 @@ repository.workspace = true
 [dependencies]
 auv-driver = { path = "../auv-driver" }
 auv-inference-common = { path = "../auv-inference-common" }
+image.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 rosu-map = "0.2"
+
+[dev-dependencies]
+tempfile = "3"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 auv-driver-macos = { path = "../auv-driver-macos" }

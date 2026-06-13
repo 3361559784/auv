@@ -406,6 +406,58 @@ Manual visual check of `capture-object-0000-after-16ms.png` on that run showed
 visible hit feedback at the projected location, which is accepted evidence for
 this slice per the roadmap gate.
 
+### P6 completed locally with dataset export evidence
+
+What landed in the local P6 slice:
+
+- adds `crates/auv-game-osu/src/dataset.rs`
+- adds `auv-cli osu export-dataset <run-artifact-dir> --output-dir <dir>` as an
+  artifact-driven exporter for a single capture-verified run
+- consumes existing `visual_truth_manifest.json`, `projection.json`, and staged
+  capture PNG artifacts only; no new capture or detector path
+- exports a dataset directory with:
+  - `images/`
+  - `labels/` (YOLO txt)
+  - `overlays/` (human-auditable rendered boxes)
+  - `dataset_manifest.json`
+- reuses `LabelMap::default()` label names and emits boxes in
+  `source_image_pixels` space
+- applies a conservative visibility rule and records it in the dataset manifest
+- fails loudly when required capture-verified source artifacts are missing
+
+Validation passed locally for the landed P6 code:
+
+- `cargo fmt --check`
+- `cargo check`
+- `cargo test`
+- `cargo build`
+- `git diff --check`
+- `cargo run --quiet -- osu export-dataset /Users/liuziheng/https-github-com-moeru-ai-auv/.tmp-osu-dispatch-p4ab-closeout --output-dir /Users/liuziheng/https-github-com-moeru-ai-auv/.tmp-osu-dataset-p6`
+- `cargo run --quiet -- osu export-dataset /Users/liuziheng/https-github-com-moeru-ai-auv/.tmp-osu-dispatch-p5-pid-targeted --output-dir /Users/liuziheng/https-github-com-moeru-ai-auv/.tmp-osu-dataset-p6-fail`
+
+Real dataset export smoke evidence:
+
+- export run id: `run_1781341861941_13652_0`
+- source run dir: `.tmp-osu-dispatch-p4ab-closeout`
+- output dir: `.tmp-osu-dataset-p6`
+- exported frames: `1`
+- skipped frames: `2`
+- overlay/image spot-check:
+  - `capture-object-0000-before-16ms.png` exported in both `images/` and `overlays/`
+  - overlay and copied image both stayed `1512x949`
+- generated YOLO label:
+  - `labels/capture-object-0000-before-16ms.txt` => `0 0.241750 0.179688 0.104608 0.166667`
+
+Failure smoke evidence:
+
+- failure run id: `run_1781341877086_13676_0`
+- exporting from `.tmp-osu-dispatch-p5-pid-targeted` fails immediately because
+  `visual_truth_manifest.json` is missing, so the exporter does not silently
+  produce an empty dataset from a non-capture-verified source
+
+Evidence note for P6 lives in:
+
+- `docs/ai/references/2026-06-13-osu-benchmark-p6-dataset-evidence.md`
 ### P5 completed locally with app-local `PidTargeted` evidence
 
 What landed across the local P5 slices:

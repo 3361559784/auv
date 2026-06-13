@@ -66,7 +66,10 @@ impl PlayfieldProjection {
       ));
     }
 
-    let scale = f64::min(capture_width / PLAYFIELD_WIDTH, capture_height / PLAYFIELD_HEIGHT);
+    let scale = f64::min(
+      capture_width / PLAYFIELD_WIDTH,
+      capture_height / PLAYFIELD_HEIGHT,
+    );
     if !scale.is_finite() || scale <= 0.0 {
       return Err(format!(
         "failed to derive finite playfield scale from capture {}x{}",

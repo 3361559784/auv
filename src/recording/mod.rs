@@ -20,7 +20,7 @@ pub mod recorder;
 pub mod update;
 pub mod wire;
 
-pub use backend::RunRecordingBackend;
+pub use backend::{RecordingHandle, RunRecordingBackend};
 pub use recorder::{
   BroadcastRunRecorder, CompositeRunRecorder, InspectServerRunRecorder, MemoryRunRecorder,
   NoopRunRecorder, RunRecorder,

@@ -203,6 +203,10 @@ impl Runtime {
     &self.recording
   }
 
+  pub fn recording(&self) -> &RunRecordingBackend {
+    &self.recording
+  }
+
   pub fn with_recording(mut self, recording: RunRecordingBackend) -> Self {
     self.recording = recording;
     self

@@ -8,16 +8,13 @@ use crate::window::WindowRef;
 
 pub type ImageView<'a> = SubImage<&'a RgbaImage>;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub enum Activation {
+  #[default]
   KeepCurrent,
-  ActivateFirst { settle: Duration },
-}
-
-impl Default for Activation {
-  fn default() -> Self {
-    Self::KeepCurrent
-  }
+  ActivateFirst {
+    settle: Duration,
+  },
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]

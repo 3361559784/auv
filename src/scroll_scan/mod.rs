@@ -24,6 +24,7 @@ use std::path::{Path, PathBuf};
 
 use crate::contract::{ObservationSnapshot, RecognitionResult, SurfaceNode};
 use crate::model::{AuvResult, ExecutionTarget, InvokeRequest, InvokeResult, RunStatus};
+use crate::recording::RecordingHandle;
 use crate::trace::{RunId, SpanId};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -313,14 +314,15 @@ pub fn scan_window_region(
   runtime: &crate::runtime::Runtime,
   options: ScanWindowRegionOptions,
 ) -> AuvResult<crate::trace::RunId> {
-  let mut run = runtime.start_run(crate::run_builder::RunSpec::new(
+  let recording = runtime.recording().handle();
+  let mut run = recording.start_run(crate::run_builder::RunSpec::new(
     crate::trace::RunType::Execute,
     "auv.scan.window_region",
   ))?;
   let root = run.root_span();
 
-  match scan_window_region_into_run(runtime, &mut run, &root, options) {
-    Ok(summary) => runtime.finish_run(
+  match scan_window_region_into_run(&recording, runtime, &mut run, &root, options) {
+    Ok(summary) => recording.finish_run(
       run,
       crate::run_builder::RunFinish {
         status_code: crate::trace::TraceStatusCode::Ok,
@@ -329,7 +331,7 @@ pub fn scan_window_region(
       },
     ),
     Err(error) => {
-      let finish_result = runtime.finish_run(
+      let finish_result = recording.finish_run(
         run,
         crate::run_builder::RunFinish {
           status_code: crate::trace::TraceStatusCode::Error,
@@ -348,6 +350,7 @@ pub fn scan_window_region(
 }
 
 fn scan_window_region_into_run(
+  recording: &RecordingHandle,
   runtime: &crate::runtime::Runtime,
   run: &mut crate::run_builder::RecordingRun,
   root: &crate::run_builder::SpanRef,
@@ -367,7 +370,9 @@ fn scan_window_region_into_run(
   let mut scan_error = None;
 
   for page_index in 0..max_pages_for_policy(&options.stop_policy) {
-    let page_result = scan_window_region_page(runtime, run, root, page_index, &options, &mut state);
+    let page_result = scan_window_region_page(
+      recording, runtime, run, root, page_index, &options, &mut state,
+    );
     let page_outcome = match page_result {
       Ok(page_outcome) => page_outcome,
       Err(error) => {
@@ -449,6 +454,7 @@ fn scan_window_region_into_run(
     }
 
     match invoke_scan_command(
+      recording,
       runtime,
       run,
       root,
@@ -490,7 +496,7 @@ fn scan_window_region_into_run(
     options.stop_policy,
     final_decision,
   );
-  if let Err(stage_error) = stage_scan_artifact(runtime, run, root, &artifact) {
+  if let Err(stage_error) = stage_scan_artifact(recording, run, root, &artifact) {
     if let Some(error) = scan_error {
       return Err(format!(
         "{error}; additionally failed to stage partial scroll-scan artifact: {stage_error}"
@@ -700,6 +706,7 @@ fn region_inputs(target: &ScanTarget) -> BTreeMap<String, String> {
 }
 
 fn scan_window_region_page(
+  recording: &RecordingHandle,
   runtime: &crate::runtime::Runtime,
   run: &mut crate::run_builder::RecordingRun,
   root: &crate::run_builder::SpanRef,
@@ -708,6 +715,7 @@ fn scan_window_region_page(
   state: &mut ScanWindowRegionState,
 ) -> AuvResult<PageScanOutcome> {
   let observe_result = invoke_scan_command(
+    recording,
     runtime,
     run,
     root,
@@ -722,6 +730,7 @@ fn scan_window_region_page(
   let mut page_observations =
     observations_from_first_json_artifact(page_index, &observe_result, source_artifact)?;
   enrich_list_item_observations_with_crops(
+    recording,
     runtime,
     run,
     root,
@@ -1144,6 +1153,7 @@ fn scroll_boundary_name(boundary: ScrollBoundary) -> &'static str {
 }
 
 fn invoke_scan_command(
+  _recording: &RecordingHandle,
   runtime: &crate::runtime::Runtime,
   run: &mut crate::run_builder::RecordingRun,
   root: &crate::run_builder::SpanRef,
@@ -1321,7 +1331,8 @@ impl ListItemCandidateContextArtifact {
 }
 
 fn enrich_list_item_observations_with_crops(
-  runtime: &crate::runtime::Runtime,
+  recording: &RecordingHandle,
+  _runtime: &crate::runtime::Runtime,
   run: &mut crate::run_builder::RecordingRun,
   root: &crate::run_builder::SpanRef,
   page_index: usize,
@@ -1357,7 +1368,7 @@ fn enrich_list_item_observations_with_crops(
       .get(observation_index)
       .cloned()
       .unwrap_or_default();
-    let crop_artifact = runtime.stage_artifact_file(
+    let crop_artifact = recording.stage_artifact_file(
       run,
       root,
       "list-item-crop",
@@ -1371,7 +1382,7 @@ fn enrich_list_item_observations_with_crops(
     )?;
     let context_temp_path =
       write_list_item_context_artifact(observation, &crop_artifact, &text_fragments)?;
-    let context_artifact = runtime.stage_artifact_file(
+    let context_artifact = recording.stage_artifact_file(
       run,
       root,
       "list-item-context",
@@ -1624,13 +1635,13 @@ fn sanitize_scan_artifact_component(raw: &str) -> String {
 }
 
 fn stage_scan_artifact(
-  runtime: &crate::runtime::Runtime,
+  recording: &RecordingHandle,
   run: &mut crate::run_builder::RecordingRun,
   root: &crate::run_builder::SpanRef,
   artifact: &ScrollScanArtifact,
 ) -> AuvResult<PathBuf> {
   let temp_path = write_scan_artifact(artifact)?;
-  let stage_result = runtime.stage_artifact_file(
+  let stage_result = recording.stage_artifact_file(
     run,
     root,
     "scroll-scan",
@@ -2825,7 +2836,10 @@ mod tests {
     let max_pages = max_pages_for_policy(&options.stop_policy);
 
     let run_id = scan_window_region(&runtime, options).expect("scan should succeed");
-    let canonical = runtime.read_run(run_id.as_str()).expect("run should read");
+    let recording = runtime.recording().handle();
+    let canonical = recording
+      .read_run(run_id.as_str())
+      .expect("run should read");
 
     let artifact_record = canonical
       .artifacts

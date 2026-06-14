@@ -2,18 +2,13 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MouseButton {
+  #[default]
   Left,
   Right,
   Middle,
-}
-
-impl Default for MouseButton {
-  fn default() -> Self {
-    Self::Left
-  }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

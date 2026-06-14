@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::model::{AuvResult, ExecutionTarget, InvokeRequest, RunStatus, now_millis};
+use crate::recording::RecordingHandle;
 use crate::run_builder::{RecordingRun, RunFinish, SpanFinish, SpanRef};
 use crate::runtime::Runtime;
 use crate::store::sanitized_artifact_name;
@@ -312,14 +313,14 @@ pub(crate) fn write_pretty_json<T: Serialize>(path: &Path, value: &T) -> AuvResu
 }
 
 pub(crate) fn stage_app_artifact(
-  runtime: &Runtime,
+  recording: &RecordingHandle,
   run: &mut RecordingRun,
   span: &SpanRef,
   role: &str,
   path: &Path,
   preferred_name: &str,
 ) -> AuvResult<()> {
-  runtime.stage_artifact_file(
+  recording.stage_artifact_file(
     run,
     span,
     role,
@@ -331,12 +332,12 @@ pub(crate) fn stage_app_artifact(
 }
 
 pub(crate) fn finish_failed_app_run<T>(
-  runtime: &Runtime,
+  recording: &RecordingHandle,
   run: RecordingRun,
   error: String,
   summary: String,
 ) -> AuvResult<T> {
-  if let Err(finish_error) = runtime.finish_run(
+  if let Err(finish_error) = recording.finish_run(
     run,
     RunFinish {
       status_code: TraceStatusCode::Error,

@@ -8,29 +8,29 @@ use auv_game_osu::{
 
 use crate::model::AuvResult;
 use crate::recorded_operation::RecordedOperationOutput;
+use crate::recording::RecordingHandle;
 use crate::run_builder::RunSpec;
-use crate::runtime::Runtime;
 use crate::trace::RunType;
 
 pub fn run_osu_benchmark(
-  runtime: &Runtime,
+  recording: &RecordingHandle,
   beatmap_path: PathBuf,
   output_dir: PathBuf,
 ) -> AuvResult<RecordedOperationOutput<BenchmarkOutput>> {
   run_osu_benchmark_with_inputs(
-    runtime,
+    recording,
     BenchmarkInputs::new(beatmap_path, output_dir),
     "osu benchmark dry-run",
   )
 }
 
 pub fn run_osu_benchmark_with_inputs(
-  runtime: &Runtime,
+  recording: &RecordingHandle,
   inputs: BenchmarkInputs,
   operation_label: &str,
 ) -> AuvResult<RecordedOperationOutput<BenchmarkOutput>> {
   let beatmap_path = inputs.beatmap_path.clone();
-  runtime.run_recorded_operation(
+  recording.run_recorded_operation(
     RunSpec::new(RunType::Execute, "auv.osu.benchmark"),
     operation_label,
     |context| {
@@ -89,11 +89,11 @@ pub fn run_osu_benchmark_with_inputs(
 }
 
 pub fn run_osu_dataset_export(
-  runtime: &Runtime,
+  recording: &RecordingHandle,
   run_artifact_dir: PathBuf,
   output_dir: PathBuf,
 ) -> AuvResult<RecordedOperationOutput<DatasetExportOutput>> {
-  runtime.run_recorded_operation(
+  recording.run_recorded_operation(
     RunSpec::new(RunType::Execute, "auv.osu.export_dataset"),
     "osu export labeled dataset",
     |context| {
@@ -146,12 +146,12 @@ pub fn run_osu_dataset_export(
 }
 
 pub fn run_osu_detection_eval(
-  runtime: &Runtime,
+  recording: &RecordingHandle,
   run_artifact_dir: PathBuf,
   detections_path: PathBuf,
   output_dir: PathBuf,
 ) -> AuvResult<RecordedOperationOutput<DetectionEvalOutput>> {
-  runtime.run_recorded_operation(
+  recording.run_recorded_operation(
     RunSpec::new(RunType::Execute, "auv.osu.eval_detections"),
     "osu evaluate offline detections",
     |context| {
@@ -189,7 +189,7 @@ pub fn run_osu_detection_eval(
 }
 
 pub fn run_osu_vision_demo(
-  runtime: &Runtime,
+  recording: &RecordingHandle,
   beatmap_path: PathBuf,
   target_app: String,
   output_dir: PathBuf,
@@ -201,7 +201,7 @@ pub fn run_osu_vision_demo(
   inputs.dispatch_limit = Some(dispatch_limit.unwrap_or(8).min(8));
   inputs.capture_verify = capture_verify;
   // TODO(osu-p8): broader vision-only control policy is deferred until the owner approves a slice beyond this bounded local demo command.
-  runtime.run_recorded_operation(
+  recording.run_recorded_operation(
     RunSpec::new(RunType::Execute, "auv.osu.vision_demo"),
     "osu vision-only low-difficulty demo",
     |context| {

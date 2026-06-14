@@ -28,6 +28,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::contract::ArtifactRef;
 use crate::model::{AuvResult, now_millis};
+use crate::recording::RecordingHandle;
 use crate::run_builder::{RecordingRun, RunFinish, RunSpec, SpanRef};
 use crate::runtime::Runtime;
 use crate::store::sanitized_artifact_name;
@@ -484,19 +485,21 @@ pub fn probe_app(
     )
   })?;
 
-  let mut run = runtime.start_run(RunSpec::new(RunType::Probe, "auv.probe"))?;
+  let recording = runtime.recording().handle();
+  let mut run = recording.start_run(RunSpec::new(RunType::Probe, "auv.probe"))?;
   let root_span = run.root_span();
   let result = probe_app_into_run(
     project_root,
     runtime,
     &app,
     &output_dir,
+    &recording,
     &mut run,
     &root_span,
   );
   match result {
     Ok(probe) => {
-      runtime.finish_run(
+      recording.finish_run(
         run,
         RunFinish {
           status_code: TraceStatusCode::Ok,
@@ -506,9 +509,12 @@ pub fn probe_app(
       )?;
       Ok(probe)
     }
-    Err(error) => {
-      finish_failed_app_run(runtime, run, error, format!("App probe {bundle_id} failed"))
-    }
+    Err(error) => finish_failed_app_run(
+      &recording,
+      run,
+      error,
+      format!("App probe {bundle_id} failed"),
+    ),
   }
 }
 
@@ -517,6 +523,7 @@ fn probe_app_into_run(
   runtime: &Runtime,
   app: &AppIdentity,
   output_dir: &Path,
+  recording: &RecordingHandle,
   run: &mut RecordingRun,
   parent: &SpanRef,
 ) -> AuvResult<AppProbe> {
@@ -669,7 +676,7 @@ fn probe_app_into_run(
   let probe_path = output_dir.join("probe.json");
   write_pretty_json(&probe_path, &probe)?;
   stage_app_artifact(
-    runtime,
+    &recording,
     run,
     parent,
     "probe.output",
@@ -680,12 +687,13 @@ fn probe_app_into_run(
 }
 
 pub fn analyze_app_probe(runtime: &Runtime, query: &Path) -> AuvResult<AppAnalyzeOutput> {
-  let mut run = runtime.start_run(RunSpec::new(RunType::Analyze, "auv.analyze"))?;
+  let recording = runtime.recording().handle();
+  let mut run = recording.start_run(RunSpec::new(RunType::Analyze, "auv.analyze"))?;
   let root_span = run.root_span();
-  let result = analyze_app_probe_into_run(runtime, &mut run, &root_span, query);
+  let result = analyze_app_probe_into_run(runtime, &recording, &mut run, &root_span, query);
   match result {
     Ok(output) => {
-      runtime.finish_run(
+      recording.finish_run(
         run,
         RunFinish {
           status_code: TraceStatusCode::Ok,
@@ -698,12 +706,13 @@ pub fn analyze_app_probe(runtime: &Runtime, query: &Path) -> AuvResult<AppAnalyz
       )?;
       Ok(output)
     }
-    Err(error) => finish_failed_app_run(runtime, run, error, "App analysis failed".to_string()),
+    Err(error) => finish_failed_app_run(&recording, run, error, "App analysis failed".to_string()),
   }
 }
 
 fn analyze_app_probe_into_run(
-  runtime: &Runtime,
+  _runtime: &Runtime,
+  recording: &RecordingHandle,
   run: &mut RecordingRun,
   span: &SpanRef,
   query: &Path,
@@ -721,7 +730,7 @@ fn analyze_app_probe_into_run(
     )
   })?;
   stage_app_artifact(
-    runtime,
+    &recording,
     run,
     span,
     "analysis.output",
@@ -729,7 +738,7 @@ fn analyze_app_probe_into_run(
     "analysis.json",
   )?;
   stage_app_artifact(
-    runtime,
+    &recording,
     run,
     span,
     "analysis.report",

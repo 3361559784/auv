@@ -180,11 +180,12 @@ async fn run() -> Result<(), String> {
       output_dir,
     } => {
       let runtime = build_default_runtime(project_root.clone())?;
+      let recording = runtime.recording().handle();
       let beatmap_path = PathBuf::from(beatmap_path);
       let output_dir = output_dir
         .map(PathBuf::from)
         .unwrap_or_else(|| temp_runtime_store_root().join("osu-benchmark-output"));
-      let output = auv_cli::osu::run_osu_benchmark(&runtime, beatmap_path, output_dir)?;
+      let output = auv_cli::osu::run_osu_benchmark(&recording, beatmap_path, output_dir)?;
       println!("runId: {}", output.run_id);
       println!("status: completed");
       println!("beatmap: {}", output.value.map_summary.beatmap_path);
@@ -201,6 +202,7 @@ async fn run() -> Result<(), String> {
       capture_verify,
     } => {
       let runtime = build_default_runtime(project_root.clone())?;
+      let recording = runtime.recording().handle();
       let beatmap_path = PathBuf::from(beatmap_path);
       let output_dir = output_dir
         .map(PathBuf::from)
@@ -212,7 +214,7 @@ async fn run() -> Result<(), String> {
       }
       inputs.capture_verify = capture_verify;
       let output = auv_cli::osu::run_osu_benchmark_with_inputs(
-        &runtime,
+        &recording,
         inputs,
         if capture_verify {
           "osu benchmark typed dispatch with capture verification"
@@ -240,8 +242,9 @@ async fn run() -> Result<(), String> {
       output_dir,
     } => {
       let runtime = build_default_runtime(project_root.clone())?;
+      let recording = runtime.recording().handle();
       let output = auv_cli::osu::run_osu_dataset_export(
-        &runtime,
+        &recording,
         PathBuf::from(run_artifact_dir),
         PathBuf::from(output_dir),
       )?;
@@ -263,8 +266,9 @@ async fn run() -> Result<(), String> {
       output_dir,
     } => {
       let runtime = build_default_runtime(project_root.clone())?;
+      let recording = runtime.recording().handle();
       let output = auv_cli::osu::run_osu_detection_eval(
-        &runtime,
+        &recording,
         PathBuf::from(run_artifact_dir),
         PathBuf::from(detections_path),
         output_dir
@@ -295,8 +299,9 @@ async fn run() -> Result<(), String> {
       capture_verify,
     } => {
       let runtime = build_default_runtime(project_root.clone())?;
+      let recording = runtime.recording().handle();
       let output = auv_cli::osu::run_osu_vision_demo(
-        &runtime,
+        &recording,
         PathBuf::from(beatmap_path),
         target_app,
         output_dir

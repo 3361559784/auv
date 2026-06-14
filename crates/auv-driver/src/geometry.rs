@@ -1,17 +1,12 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CoordinateSpace {
+  #[default]
   Screen,
   Display(String),
   Window(String),
-}
-
-impl Default for CoordinateSpace {
-  fn default() -> Self {
-    Self::Screen
-  }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]

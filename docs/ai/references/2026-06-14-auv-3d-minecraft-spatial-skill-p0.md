@@ -167,16 +167,60 @@ Gate: report the probe doc; stop.
 ### MC-1 — Fabric read-only telemetry mod (external; Java)
 
 Build the mod that exports, per rendered frame, the `SpatialFrame` telemetry over
-a local transport (file/socket/HTTP — pick the simplest the AUV client can read):
+one local **read-only** transport. `MC-1` should start with append-only JSONL,
+not HTTP/WS, because it is the lightest path that matches AUV's existing
+run/store/read-side discipline and keeps the sidecar boundary strictly
+one-directional.
+
+Minimum `MC-1` schema (keep the main shape narrow):
 `spatial_frame_id, world_tick, monotonic_timestamp, viewport_size,
-camera_view_matrix, camera_projection_matrix, player_pose, raycast_hit,
-nearby_blocks, nearby_entities, inventory_summary`.
+player_pose, raycast_hit, nearby_blocks, nearby_entities, inventory_summary`.
+Small context keys like `dimension_id` and `player_id/session_id` are allowed if
+needed to keep frames attributable, but do not widen the schema into world dumps,
+training labels, planner state, or render-buffer artifacts.
+
+Sampling boundary:
+- Use one **tick-side** sampling spine for `world_tick`, `player_pose`,
+  `raycast_hit`, `nearby_blocks`, `nearby_entities`, and
+  `inventory_summary`.
+- Treat `viewport_size` as **frame-side** data.
+- Record `monotonic_timestamp` from a monotonic clock, not from world time.
+- Do not derive camera truth from HUD/render output.
+
+Hooking boundary (research result):
+- Preferred client-side spine: `ClientTickEvents.END_CLIENT_TICK` for the
+  tick-side fields.
+- Preferred viewport read path: client window/framebuffer size from the window
+  abstraction at render time.
+- Do **not** anchor business sampling in deep render internals such as
+  `MinecraftClient#render` mid-pipeline, `GameRenderer`/`WorldRenderer` private
+  internals, `BufferBuilder`/`VertexConsumer`/`RenderSystem`, or HUD/screen draw
+  mixins. Those are version-fragile and couple telemetry to presentation.
+
+Persistence/read-side boundary:
+- The first implementation should write telemetry as persisted facts, e.g. a
+  `telemetry.jsonl` stream under the run artifact root or equivalent sidecar
+  output directory.
+- Readers should consume only **flushed durable records**, never live runtime
+  memory.
+- If AIRI later consumes `MC-1` telemetry, the least invasive attachment point is
+  a debug-server-side read-only reader, not the query runtime, reflex context,
+  or cognitive engine state.
 
 Hard line (KG2): **no `goTo` / `dig` / `place` / `pathfind` / any Mineflayer
 action.** This mod is an answer-key, not a controller.
 
-Gate: show a live telemetry sample (matrices + raycast + tick) from a running
-client; stop. **Claude Code stops here — do not free-wheel into MC-2+.**
+Current environment caveat from the probe:
+- The local machine shows Minecraft `1.21.11` plus Fabric/Forge/NeoForge loader
+  traces, but the current visible client directory still lacks `logs/`, `mods/`,
+  and `instances/` evidence.
+- That does **not** block `MC-1` design work, but it **does** block confident
+  implementation validation until the real instance root and launch logs are
+  visible.
+
+Gate: show a live telemetry sample (at minimum `world_tick`,
+`monotonic_timestamp`, `viewport_size`, `player_pose`, `raycast_hit`) from a
+running client; stop. **Claude Code stops here — do not free-wheel into MC-2+.**
 
 ### MC-2 — auv-game-minecraft: projection + overlay (no real click)
 

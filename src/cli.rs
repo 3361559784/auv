@@ -233,6 +233,7 @@ NOTES
   - Names are provisional and reflect the current phase-0/1 runtime skeleton.
   - The CLI is a thin frontend over the library runtime in src/lib.rs.
   - `invoke --help` is the discovery surface for canonical invoke commands in the current C1 scaffold.
+  - `list-commands` has been retired; use `auv-cli invoke --help` instead.
   - `overlay.showCursor`, `overlay.hideCursor`, and `overlay.shutdown` are visual-only macOS overlay probes; standalone `invoke` calls run in separate Rust processes, so use `--hold_ms` on show when manually observing the overlay.
   - `window.captureAxTree`, `input.focusText`, and `input.pressButton` accept `--reveal_shortcut cmd+f`-style hints when an app hides the target UI until a keyboard shortcut reveals it.
   - `candidate-action run` is a frozen archived macOS AX copilot vertical kept for recovery and reference. It stays buildable, but it is not the active AUV roadmap or the default product path.
@@ -1171,16 +1172,12 @@ mod tests {
   }
 
   #[test]
-  fn help_text_no_longer_lists_skill_or_recipe_app_commands() {
+  fn help_text_lists_list_commands_tombstone() {
     let help = help_text();
 
-    assert!(!help.contains("auv-cli skill"));
-    assert!(!help.contains("skill run"));
-    assert!(!help.contains("skill cases"));
-    assert!(!help.contains("app distill"));
-    assert!(!help.contains("app validate"));
-    assert!(help.contains("auv-cli app probe"));
-    assert!(help.contains("auv-cli app analyze"));
+    assert!(help.contains("list-commands"));
+    assert!(help.contains("auv-cli invoke --help"));
+    assert!(help.contains("retired"));
   }
 
   #[test]

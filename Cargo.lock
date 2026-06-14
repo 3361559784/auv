@@ -352,6 +352,7 @@ dependencies = [
  "auv-cli-invoke",
  "auv-driver",
  "auv-driver-macos",
+ "auv-game-minecraft",
  "auv-game-osu",
  "auv-inference-common",
  "auv-media-macos",
@@ -427,6 +428,17 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "auv-game-minecraft"
+version = "0.0.1"
+dependencies = [
+ "auv-driver",
+ "image",
+ "serde",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]

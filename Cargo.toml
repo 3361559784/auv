@@ -9,6 +9,7 @@ members = [
   "crates/auv-driver",
   "crates/auv-driver-macos",
   "crates/auv-game-balatro",
+  "crates/auv-game-minecraft",
   "crates/auv-game-osu",
   "crates/auv-inference-common",
   "crates/auv-inference-ort",
@@ -62,6 +63,7 @@ objc2-core-foundation = "0.3"
 
 [dependencies]
 auv-game-osu = { path = "crates/auv-game-osu" }
+auv-game-minecraft = { path = "crates/auv-game-minecraft" }
 auv-inference-common = { path = "crates/auv-inference-common" }
 auv-driver = { path = "crates/auv-driver" }
 auv-cli-invoke = { path = "crates/auv-cli-invoke" }

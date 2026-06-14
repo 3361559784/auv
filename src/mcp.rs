@@ -397,6 +397,16 @@ mod tests {
       .and_then(|value| value.as_str())
       .expect("summary should exist");
     assert!(output_summary.contains("Listed"));
+    let artifacts = invoke_json
+      .get("artifacts")
+      .and_then(|value| value.as_array())
+      .expect("artifacts should exist");
+    assert_eq!(artifacts.len(), 1);
+    assert_eq!(artifacts[0]["role"], "steam-library-list");
+    let artifact_path = artifacts[0]["path"]
+      .as_str()
+      .expect("artifact path should exist");
+    assert!(artifact_path.contains("steam-library-list.json"));
 
     let inspect = client
       .call_tool(CallToolRequestParam {
@@ -425,8 +435,16 @@ mod tests {
       .get("text")
       .and_then(|value| value.as_str())
       .expect("inspect text should exist");
-    assert!(inspect_text.contains("steam.library.list.v0"));
-    assert!(inspect_text.contains("artifact_0001"));
+    assert!(inspect_text.contains("Summary: Listed"));
+    assert!(
+      inspect_text.contains("resolved steam.library.list.v0 -> steam.local.steam_library_list")
+    );
+    assert!(inspect_text.contains("backend=steam.local_appmanifest.library-list"));
+    assert!(inspect_text.contains("artifact.captured"));
+    assert!(inspect_text.contains("kind=steam-library-list"));
+    assert!(inspect_text.contains(artifact_path));
+    assert!(inspect_text.contains("resolvedSource=local_appmanifest"));
+    assert!(inspect_text.contains("appCount="));
 
     client.cancel().await?;
     server_handle.await??;

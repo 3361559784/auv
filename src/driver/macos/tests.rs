@@ -32,7 +32,7 @@ use super::{
   },
 };
 use crate::{
-  driver::{Driver, DriverRegistry, fixture::FixtureObserveDriver},
+  driver::{Driver, DriverRegistry, fixture::FixtureObserveDriver, steam::SteamLocalDriver},
   model::{DriverCall, DriverRunContext, ExecutionTarget, now_millis},
 };
 
@@ -80,6 +80,18 @@ fn dispatch_routes_teach_click_operation() {
 
   assert!(error.contains("operation requires --target"));
   assert!(!error.contains("does not support operation"));
+}
+
+#[test]
+fn fixture_driver_rejects_steam_library_operation() {
+  let driver = FixtureObserveDriver;
+  let mut call = build_call([]);
+  call.operation = "steam_library_list".to_string();
+
+  let error = driver
+    .invoke(&call)
+    .expect_err("fixture.observe should reject steam library operation");
+  assert!(error.contains("driver fixture.observe does not support operation steam_library_list"));
 }
 
 #[test]
@@ -1159,11 +1171,16 @@ fn filter_windows_for_app_keeps_resolved_app_subset() {
 
 #[test]
 fn driver_registry_stores_and_retrieves_drivers() {
-  let registry = DriverRegistry::new(vec![Box::new(FixtureObserveDriver)]);
+  let registry = DriverRegistry::new(vec![
+    Box::new(FixtureObserveDriver),
+    Box::new(SteamLocalDriver),
+  ]);
   assert!(registry.get("fixture.observe").is_some());
+  assert!(registry.get("steam.local").is_some());
   assert!(registry.get("missing").is_none());
-  assert_eq!(registry.descriptors().len(), 1);
+  assert_eq!(registry.descriptors().len(), 2);
   assert_eq!(registry.descriptors()[0].id, "fixture.observe");
+  assert_eq!(registry.descriptors()[1].id, "steam.local");
 }
 
 fn build_call<const N: usize>(entries: [(&str, &str); N]) -> DriverCall {

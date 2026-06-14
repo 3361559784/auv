@@ -910,7 +910,7 @@ pub fn default_command_catalog() -> CommandCatalog {
       id: "steam.library.list.v0",
       namespace: DOMAIN,
       summary: "List installed Steam library apps through auv-steam local appmanifest grounding and record the result into the shared run/artifact store.",
-      driver_id: "fixture.observe",
+      driver_id: "steam.local",
       operation: "steam_library_list",
       disturbance_classes: NONE,
       max_disturbance: DisturbanceClass::None,
@@ -1259,6 +1259,17 @@ mod tests {
         command.id
       );
     }
+  }
+
+  #[test]
+  fn default_catalog_routes_steam_library_through_steam_local() {
+    let catalog = default_command_catalog();
+    let command = catalog
+      .resolve("steam.library.list.v0")
+      .expect("steam.library.list.v0 must resolve");
+
+    assert_eq!(command.driver_id, "steam.local");
+    assert_eq!(command.operation, "steam_library_list");
   }
 
   #[test]

@@ -3,7 +3,7 @@ use std::{fs, path::PathBuf, process::ExitCode};
 use clap::{Parser, Subcommand, ValueEnum};
 
 use crate::{
-  app::Steam,
+  app::query_local_library_apps,
   library::{
     LibraryDiagnostic, LibraryQuery, LibrarySource, LibraryStatus, SteamError, resolve_scope,
   },
@@ -72,8 +72,7 @@ fn dispatch(cli: Cli) -> Result<(), CliError> {
 fn run_library_ls(args: LibraryLsArgs) -> Result<(), CliError> {
   let query = args.library_query();
   resolve_scope(&query)?;
-  let steam = Steam::locate()?;
-  let result = steam.library_apps(query)?;
+  let result = query_local_library_apps(query)?;
 
   if let Some(path) = args.json_out {
     let output = build_library_ls_json_output(&result);
@@ -238,14 +237,19 @@ mod tests {
   }
 
   #[test]
-  fn library_ls_rejects_unsupported_scope_before_steam_discovery() {
-    let cli = Cli::try_parse_from(["auv-steam", "library", "ls", "--status", "owned"])
-      .expect("valid command shape");
-    let Command::Library(LibraryCommand::Ls(args)) = cli.command;
+  fn library_ls_uses_shared_local_query_entry() {
+    let query = LibraryQuery {
+      name: None,
+      status: LibraryStatus::Owned,
+      source: LibrarySource::Auto,
+    };
 
-    let diagnostic = resolve_scope(&args.library_query())
-      .expect_err("owned status should fail before Steam discovery");
+    let shared_result =
+      query_local_library_apps(query.clone()).expect_err("owned status should fail");
+    let scoped_result =
+      resolve_scope(&query).expect_err("owned status should fail before discovery");
 
-    assert_eq!(diagnostic.code, "unsupported_library_status");
+    assert_eq!(shared_result.code, scoped_result.code);
+    assert_eq!(shared_result.message, scoped_result.message);
   }
 }

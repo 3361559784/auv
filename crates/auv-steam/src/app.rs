@@ -18,3 +18,15 @@ impl Steam {
     self.library.query(query)
   }
 }
+
+pub fn query_local_library_apps(
+  query: LibraryQuery,
+) -> Result<LibraryQueryResult, LibraryDiagnostic> {
+  let steam = Steam::locate().map_err(|error| LibraryDiagnostic {
+    severity: crate::library::LibraryDiagnosticSeverity::Error,
+    code: "steam_not_found".to_string(),
+    message: error.to_string(),
+    path: None,
+  })?;
+  steam.library_apps(query)
+}

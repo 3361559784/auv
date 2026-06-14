@@ -240,6 +240,15 @@ Later progress after this handoff:
   `auv-core-c2d-runtime-registry-detach`.
 - The next expected slice is C2e: shrink `Runtime` toward a thinner facade and
   remove remaining dead recording/registry paths.
+- Later progress after this handoff also closed the whole C3 lane locally:
+  - `C3a` rehomed `steam.library.list.v0` from `fixture.observe` to the honest
+    `steam.local` driver.
+  - `C3b` made the `auv-steam` bin and the core command share the same library
+    entry via `query_local_library_apps(...)`.
+  - `C3c` added regression coverage that pins structured evidence and inspect
+    shape for the command.
+  - C3 closure details live in
+    `docs/ai/references/2026-06-14-c3-steam-core-lane-closure.md`.
 
 The next slice, if chosen by the owner, must still be approved separately.
 

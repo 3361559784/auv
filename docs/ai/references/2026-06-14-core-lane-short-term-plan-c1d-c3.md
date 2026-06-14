@@ -53,9 +53,10 @@ C2d     DONE locally and validated — `Runtime` no longer directly owns
         while invoke behavior stays unchanged.
 C2e     NEXT — shrink Runtime toward a thinner facade and delete remaining dead
         recording/registry paths without changing behavior.
-C3      PARTIALLY WIRED — `steam.library.list.v0` is in the catalog, invokable,
-        recorded, and inspectable, but still dispatched through the
-        `fixture.observe` driver, so backend honesty work remains.
+C3      DONE locally and validated — `steam.library.list.v0` now runs through the
+        honest `steam.local` backend, the `auv-steam` bin and core command share
+        `query_local_library_apps(...)`, and MCP/inspect regression coverage now
+        pins structured evidence plus inspect shape.
 ```
 
 ## Sub-Slice Ladder + Dependencies
@@ -69,9 +70,9 @@ C2c   inspect/read helpers moved off Runtime                            done loc
 C2d   command registry ownership detached from Runtime                  done locally
 C2e   shrink Runtime to facade; delete dead recording/registry paths    next
 
-C3a   rehome steam.library.list.v0 off fixture.observe driver           needs C1d
-C3b   enforce thin-frontend: auv-steam bin reuses the core library fn   needs C3a
-C3c   confirm structured evidence + inspect shape for the command       needs C3a
+C3a   rehome steam.library.list.v0 off fixture.observe driver           done locally
+C3b   enforce thin-frontend: auv-steam bin reuses the core library fn   done locally
+C3c   confirm structured evidence + inspect shape for the command       done locally
 ```
 
 Default order: C2e, then C3a → C3b → C3c. C3 can run

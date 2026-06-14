@@ -6,10 +6,12 @@ use crate::model::{AuvResult, DriverCall, DriverDescriptor, DriverResponse};
 use self::fixture::FixtureObserveDriver;
 #[cfg(target_os = "macos")]
 use self::macos::LegacyMacosCommandDriver;
+use self::steam::SteamLocalDriver;
 
 mod fixture;
 #[cfg(target_os = "macos")]
 pub(crate) mod macos;
+mod steam;
 
 pub trait Driver {
   fn descriptor(&self) -> DriverDescriptor;
@@ -46,7 +48,8 @@ impl DriverRegistry {
 }
 
 pub fn default_driver_registry() -> DriverRegistry {
-  let mut drivers: Vec<Box<dyn Driver>> = vec![Box::new(FixtureObserveDriver)];
+  let mut drivers: Vec<Box<dyn Driver>> =
+    vec![Box::new(FixtureObserveDriver), Box::new(SteamLocalDriver)];
   #[cfg(target_os = "macos")]
   drivers.push(Box::new(LegacyMacosCommandDriver));
   DriverRegistry::new(drivers)

@@ -1,0 +1,217 @@
+# 2026-06-15 Minecraft series handoff
+
+Status: handoff-only summary for the current Minecraft lane. This note records what is already closed, what remains open, which bug-fix wording slices already landed, and what the next implementation cuts should be. It is not itself an approval to widen scope.
+
+## Scope classification
+
+`docs-only`
+
+Why this classification is correct:
+- This file summarizes verified repo state across MC-1 through MC-5.
+- It does not add runtime behavior, contracts, or CLI surfaces.
+- It exists to let the next slice start from a stable boundary instead of re-deriving recent work.
+
+## One-line state
+
+The Minecraft lane now has:
+- crate-local MC-2 projection/overlay logic
+- crate-local MC-3 world-diff verdict logic
+- crate-local MC-4 mismatch-refusal logic
+- a build-gated MC-1 telemetry mod tree
+- a read-side-visible MC-3/MC-4 execution evidence closure in AUV core
+
+What it still does **not** have is a real running-client MC-1 durable sample, live screenshot/telemetry binding, or a full live MC-2/MC-3/MC-4 end-to-end proof.
+
+## Source documents
+
+Primary references for this handoff:
+- `docs/ai/references/2026-06-14-auv-3d-minecraft-spatial-skill-p0.md`
+- `docs/ai/references/2026-06-15-minecraft-mc2-closure-mc3-handoff.md`
+- `docs/ai/references/2026-06-15-minecraft-mc5-graduation-design-closure.md`
+
+Recent implementation commits relevant to the lane:
+- `58d70c1 feat(game): add minecraft mc-2 projection crate`
+- `2efb30c feat(auv-game-minecraft): add offline mc-3 verdict logic`
+- `aa8b6f5 feat(auv-game-minecraft): add mc-4 mismatch refusal closure`
+- `292bbbd feat(candidate-action): record mc-5 g3 binding fact artifact`
+- `18c34f1 feat(read-side): surface candidate action evidence closure`
+
+Recent wording / bug-fix commits that tightened boundary claims:
+- `3606b6b docs(ai): clarify mc-5 design closure status`
+- `f12140e docs(ai): tighten mc-2 to mc-4 closure wording`
+- `37e3006 docs(ai): tighten mc-5 boundary wording`
+
+## MC-1 — telemetry producer + durable sample
+
+### What is already true
+
+- A sidecar tree exists at `sidecar/minecraft-telemetry/`.
+- The lane already documents append-only JSONL as the intended first persistence shape.
+- The MC-2/MC-3/MC-4 handoff records that the sidecar tree is buildable and includes a telemetry writer shape.
+
+### What is **not** yet true
+
+- No verified real running-client telemetry sample is recorded in-repo as durable evidence.
+- No confirmed end-to-end proof yet shows one flushed sample being consumed through an AUV read-side path.
+- The repo still lacks a completed “real sample exists and can be inspected” closure for MC-1.
+
+### Current boundary
+
+Treat MC-1 as a producer/sample evidence gap, not as a mere wording issue.
+The next valid MC-1 slice should prove one durable sample path, not redesign telemetry shape.
+
+### Most relevant files for the next MC-1 slice
+
+- `sidecar/minecraft-telemetry/`
+- `src/run_builder.rs`
+- `src/model.rs`
+- `src/inspect.rs`
+- `src/inspect_server/mod.rs`
+- `src/mcp.rs`
+
+## MC-2 — projection / screenshot / overlay evidence boundary
+
+### What is already true
+
+- `crates/auv-game-minecraft/` contains crate-local projection, artifact, and overlay logic.
+- The current MC-2 handoff now clearly states that this is an offline geometry/projection artifact closure, not live end-to-end proof.
+- The current projection contract already distinguishes what is implemented from what remains out of scope.
+
+### What is **not** yet true
+
+- No live screenshot/frame binding proof exists yet.
+- No real overlay-on-frame proof has been recorded as durable evidence.
+- No runtime/store/read-side bridge yet makes MC-2 projection evidence first-class in AUV core.
+
+### Current boundary
+
+MC-2 should next move by bridging projection/screenshot evidence into the existing artifact seam, not by expanding visual polish or inventing a new result family.
+
+### Most relevant files for the next MC-2 slice
+
+- `crates/auv-game-minecraft/src/projection.rs`
+- `crates/auv-game-minecraft/src/artifact.rs`
+- `crates/auv-game-minecraft/src/overlay.rs`
+- `crates/auv-game-minecraft/src/input_target.rs`
+- and, only if necessary for persistence/read-side visibility:
+  - `src/candidate_action_decision.rs`
+  - `src/run_read.rs`
+  - `src/inspect.rs`
+
+## MC-3 / MC-4 — runtime/store/read-side evidence closure
+
+### What is already true
+
+This lane now has a minimal AUV-core read-side closure for candidate action execution evidence.
+
+Specifically, `18c34f1 feat(read-side): surface candidate action evidence closure` added:
+- a derived `CandidateActionExecutionClosureState` in `src/run_read.rs`
+- read-side extraction of closure state from existing execution artifacts
+- inspect rendering of `closure_state` in `src/inspect.rs`
+
+The read-side can now distinguish:
+- `evidence_closed`
+- `semantic_open`
+- `blocked_by_readiness`
+
+This means MC-3/MC-4 execution evidence is now:
+- persisted through the existing runtime/store path
+- extracted through the existing read-side lineage path
+- visible in inspect without introducing a new action-result schema
+
+### What is **not** yet true
+
+- This is not yet a full live-client MC-3/MC-4 closure.
+- The lane still lacks a real MC-1 sample, live screenshot binding, and live driver-on-client proof.
+- MC-4 refusal categories are still not backed by a real-client refusal sample matrix recorded through live evidence.
+
+### Current boundary
+
+The closure that is now done is **read-side visibility of execution evidence**, not full live acceptance.
+That distinction should remain explicit in future work.
+
+### Files changed for the completed closure
+
+- `src/run_read.rs`
+- `src/inspect.rs`
+
+### Validation that already passed
+
+For the completed read-side closure slice, the following passed:
+- `cargo fmt --check`
+- `cargo check`
+- `cargo test`
+- `git diff --check`
+
+## MC-5 — graduation design boundary
+
+### What is already true
+
+- MC-5 remains a design-boundary note, not a whole-lane implementation closure.
+- The repo now also contains one minimal G3 proof through the existing candidate-action artifact seam.
+- No third action-result schema was introduced.
+- No Minecraft-specific nouns were graduated into core contracts.
+
+### What is **not** yet true
+
+- G2 is still open.
+- G4 is still open.
+- No full graduation claim is justified yet.
+- Live MC-1 / MC-3 / MC-4 evidence gates still remain.
+
+### Current boundary
+
+Treat MC-5 as “design eligibility + one narrow G3 proof,” not as Minecraft graduation complete.
+
+## Bug-fix history already closed
+
+The following bug-fix slices are done and should not need to be re-opened unless a new contradiction is introduced:
+
+1. `docs(ai): clarify mc-5 design closure status`
+   - fixed wording that made MC-5 read too much like an implementation/graduation completion claim
+
+2. `docs(ai): tighten mc-2 to mc-4 closure wording`
+   - fixed wording that made crate-local/offline closures read too much like live end-to-end closure
+
+3. `docs(ai): tighten mc-5 boundary wording`
+   - removed remaining “final closure” tone from the MC-5 design note
+
+These cleaned up the major P1 documentation misreads.
+Remaining issues are now primarily implementation/evidence gaps, not wording bugs.
+
+## Current recommended next order
+
+If continuing implementation rather than more wording cleanup, the most sensible order is:
+
+1. **MC-1 real telemetry durable sample**
+   - prove one real running-client sample is flushed as durable evidence
+2. **MC-2 screenshot / projection evidence bridge**
+   - make projection/screenshot/overlay evidence persist through the current artifact seam
+3. **MC-3 / MC-4 live-client promotion of the already-closed read-side path**
+   - feed real client evidence into the closure path already exposed in inspect/read-side
+
+## What to avoid next
+
+Do **not** do these unless explicitly approved:
+- widen MC work into a broad multi-slice refactor
+- introduce a third action-result schema
+- graduate Minecraft nouns into core
+- treat the read-side closure as proof that live MC-3/MC-4 are now done
+- spend the next slice polishing archived AX-like verticals instead of the active core runtime seam
+
+## Fast restart checklist for the next agent
+
+Before editing, re-read:
+- `CLAUDE.md`
+- `AGENTS.md`
+- `docs/ai/references/2026-06-14-auv-3d-minecraft-spatial-skill-p0.md`
+- `docs/ai/references/2026-06-15-minecraft-mc2-closure-mc3-handoff.md`
+- `docs/ai/references/2026-06-15-minecraft-mc5-graduation-design-closure.md`
+
+If continuing from the completed read-side closure, inspect these first:
+- `src/run_read.rs`
+- `src/inspect.rs`
+- `src/candidate_action_decision.rs`
+- `crates/auv-game-minecraft/src/projection.rs`
+- `crates/auv-game-minecraft/src/artifact.rs`
+- `sidecar/minecraft-telemetry/`

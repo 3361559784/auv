@@ -12,6 +12,9 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+pub const TELEMETRY_SAMPLE_ARTIFACT_ROLE: &str = "telemetry-sample";
+
+use crate::catalog::CommandCatalog;
 use crate::contract::ArtifactRef;
 use crate::driver::DriverRegistry;
 use crate::model::{
@@ -128,6 +131,44 @@ impl Runtime {
         crate::candidate_action_decision::record_candidate_action_decision_artifact(
           context, promotion, &request,
         )
+      },
+    )
+  }
+
+  pub fn record_telemetry_sample_artifact(
+    &self,
+    sample_path: impl Into<PathBuf>,
+  ) -> AuvResult<crate::recorded_operation::RecordedOperationOutput<ArtifactRef>> {
+    let sample_path = sample_path.into();
+    let preferred_name = sample_path
+      .file_name()
+      .and_then(|name| name.to_str())
+      .ok_or_else(|| {
+        format!(
+          "telemetry sample path {:?} has no valid file name",
+          sample_path
+        )
+      })?
+      .to_string();
+
+    if !sample_path.is_file() {
+      return Err(format!(
+        "telemetry sample path {:?} is not a readable file",
+        sample_path
+      ));
+    }
+
+    self.run_recorded_operation(
+      crate::run_builder::RunSpec::new(RunType::Execute, "auv.minecraft.telemetry.sample"),
+      "Minecraft telemetry sample artifact recording",
+      |context| {
+        let (_, artifact_ref) = context.stage_artifact_file_with_ref(
+          TELEMETRY_SAMPLE_ARTIFACT_ROLE,
+          &sample_path,
+          &preferred_name,
+          Some("durable minecraft telemetry sample".to_string()),
+        )?;
+        Ok::<_, String>(artifact_ref)
       },
     )
   }
@@ -777,7 +818,8 @@ mod tests {
 
   use serde_json::json;
 
-  use super::Runtime;
+  use super::{Runtime, TELEMETRY_SAMPLE_ARTIFACT_ROLE};
+  use crate::catalog::CommandCatalog;
   use crate::driver::{Driver, DriverRegistry};
   use crate::model::{
     AuvResult, DriverCall, DriverDescriptor, DriverResponse, ExecutionTarget, InvokeRequest,
@@ -936,6 +978,59 @@ mod tests {
         artifacts: vec![],
       })
     }
+  }
+
+  #[test]
+  fn record_telemetry_sample_artifact_persists_sample_for_inspect() {
+    let project_root = temp_dir("runtime-telemetry-project");
+    let store_root = temp_dir("runtime-telemetry-store");
+    fs::create_dir_all(&project_root).expect("project root should exist");
+    let source_path = project_root.join("telemetry.jsonl");
+    fs::write(&source_path, "{\"sample\":true}\n").expect("telemetry sample should write");
+
+    let runtime = runtime_with_success_driver(project_root.clone(), store_root.clone());
+    let output = runtime
+      .record_telemetry_sample_artifact(source_path.clone())
+      .expect("telemetry sample recording should succeed");
+
+    assert_eq!(output.value.run_id.as_str(), output.run_id.as_str());
+    let run = runtime
+      .read_run(output.run_id.as_str())
+      .expect("run should persist");
+    assert_eq!(run.artifacts.len(), 1);
+    assert_eq!(run.artifacts[0].role, TELEMETRY_SAMPLE_ARTIFACT_ROLE);
+    assert_eq!(
+      run.artifacts[0].path,
+      "artifacts/artifact_0001_telemetry.jsonl"
+    );
+
+    let inspect_text = runtime
+      .inspect(output.run_id.as_str())
+      .expect("inspect should render run");
+    assert!(inspect_text.contains("Artifacts:"));
+    assert!(inspect_text.contains("role=telemetry-sample"));
+    assert!(inspect_text.contains("path=artifacts/artifact_0001_telemetry.jsonl"));
+
+    let _ = fs::remove_dir_all(project_root);
+    let _ = fs::remove_dir_all(store_root);
+  }
+
+  #[test]
+  fn record_telemetry_sample_artifact_rejects_missing_file() {
+    let project_root = temp_dir("runtime-telemetry-missing-project");
+    let store_root = temp_dir("runtime-telemetry-missing-store");
+    fs::create_dir_all(&project_root).expect("project root should exist");
+    let source_path = project_root.join("missing-telemetry.jsonl");
+
+    let runtime = runtime_with_success_driver(project_root.clone(), store_root.clone());
+    let error = runtime
+      .record_telemetry_sample_artifact(source_path.clone())
+      .expect_err("missing telemetry sample should fail");
+
+    assert!(error.contains("is not a readable file"));
+
+    let _ = fs::remove_dir_all(project_root);
+    let _ = fs::remove_dir_all(store_root);
   }
 
   #[test]

@@ -1,4 +1,5 @@
 pub mod artifact;
+pub mod bind;
 pub mod ingest;
 pub mod input_target;
 pub mod overlay;
@@ -7,6 +8,7 @@ pub mod types;
 pub mod verify;
 
 pub use artifact::{MinecraftProjectionArtifact, ProjectionViewportBounds};
+pub use bind::{BoundSpatialFrame, bind_capture_to_frame};
 pub use ingest::{LatestFrameScan, read_latest_spatial_frame, scan_latest_spatial_frame};
 pub use input_target::projected_window_point;
 pub use overlay::render_projection_overlay;

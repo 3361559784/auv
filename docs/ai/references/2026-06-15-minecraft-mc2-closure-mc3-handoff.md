@@ -1,6 +1,6 @@
 # 2026-06-15 Minecraft MC-2 closure, MC-3 closure, and MC-4 handoff
 
-Status: MC-2 code slice landed locally and validated; a crate-local MC-3 offline logic closure is landed; a crate-local MC-4 mismatch-refusal closure is now landed too, while live MC-3/MC-4 remain blocked on a real MC-1 client sample and screenshot binding.
+Status: MC-2 crate-local code slice landed and validated; a crate-local MC-3 offline logic closure is landed; a crate-local MC-4 mismatch-refusal closure is landed too. Live MC-3 / MC-4 are still blocked on a real MC-1 client sample, screenshot binding, and runtime wiring.
 
 ## What changed
 
@@ -32,7 +32,7 @@ Local commits created:
 
 ## MC-2 scope actually implemented
 
-This stayed inside the approved **pure-crate, no-click** boundary.
+This stayed inside the approved **pure-crate, no-click** boundary. The result is an offline geometry/projection artifact closure, not a live end-to-end proof.
 
 Implemented:
 - Minecraft-local telemetry/data types:
@@ -68,7 +68,7 @@ Explicitly not implemented in MC-2:
 
 ## Crate-local MC-3 scope actually implemented
 
-This stayed inside the owner-chosen **offline logic closure inside the vertical crate only** boundary.
+This stayed inside the owner-chosen **offline logic closure inside the vertical crate only** boundary. It closes the verdict logic against crate-local evidence, not live driver/runtime execution.
 
 Implemented:
 - Offline world-diff verdict contract:
@@ -94,7 +94,7 @@ Explicitly not implemented in this MC-3 crate-local closure:
 
 ## Crate-local MC-4 scope actually implemented
 
-This stayed inside the owner-approved **crate-local mismatch-refusal closure** boundary.
+This stayed inside the owner-approved **crate-local mismatch-refusal closure** boundary. It closes refusal logic from crate-local evidence only, not live acceptance.
 
 Implemented:
 - Mismatch-refusal contract:

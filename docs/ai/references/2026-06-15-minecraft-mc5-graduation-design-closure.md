@@ -1,6 +1,6 @@
 # 2026-06-15 Minecraft MC-5 graduation design closure
 
-Status: docs-only design closure for the owner-approved MC-5 graduation note. This does **not** implement core graduation. It closes the design question for what may graduate later from the Minecraft vertical into AUV core, and what must remain vertical-only until live MC-1/MC-3/MC-4 evidence exists.
+Status: docs-only design closure for the owner-approved MC-5 graduation note. This does **not** mean MC-5 is implemented, fully graduated, or complete. It only closes the design question for what may become eligible for later graduation from the Minecraft vertical into AUV core, and what must remain vertical-only until live MC-1/MC-3/MC-4 evidence exists.
 
 ## Scope classification
 

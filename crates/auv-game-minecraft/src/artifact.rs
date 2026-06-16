@@ -28,6 +28,10 @@ pub struct MinecraftProjectionArtifact {
   pub spatial_frame_id: String,
   pub world_tick: u64,
   pub monotonic_timestamp_ms: u64,
+  #[serde(default)]
+  pub screenshot_artifact_ref: Option<String>,
+  #[serde(default)]
+  pub mc_capture_skew_ms: Option<i64>,
   pub viewport_bounds: ProjectionViewportBounds,
   pub projected_point: Option<MinecraftProjectedPoint>,
   pub visibility: ProjectionVisibility,
@@ -45,6 +49,8 @@ impl MinecraftProjectionArtifact {
       spatial_frame_id: frame.spatial_frame_id.clone(),
       world_tick: frame.world_tick,
       monotonic_timestamp_ms: frame.monotonic_timestamp_ms,
+      screenshot_artifact_ref: frame.screenshot_artifact_ref.clone(),
+      mc_capture_skew_ms: frame.mc_capture_skew_ms,
       viewport_bounds: ProjectionViewportBounds::from_rect(frame.viewport.bounds()),
       visibility: projected_point
         .as_ref()
@@ -172,5 +178,20 @@ mod tests {
 
     let error = artifact.validate().expect_err("must fail");
     assert!(error.contains("non-finite viewport values"));
+  }
+
+  #[test]
+  fn projection_artifact_carries_capture_binding_evidence() {
+    let mut frame = test_frame();
+    frame.screenshot_artifact_ref = Some("artifact://screenshot-1".to_string());
+    frame.mc_capture_skew_ms = Some(180);
+
+    let artifact = MinecraftProjectionArtifact::for_frame(&frame, None, None);
+
+    assert_eq!(
+      artifact.screenshot_artifact_ref.as_deref(),
+      Some("artifact://screenshot-1")
+    );
+    assert_eq!(artifact.mc_capture_skew_ms, Some(180));
   }
 }

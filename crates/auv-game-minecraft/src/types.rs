@@ -132,12 +132,18 @@ pub struct MinecraftSpatialFrame {
   pub view_matrix: [f64; 16],
   pub projection_matrix: [f64; 16],
   pub player_pose: PlayerPose,
+  #[serde(default)]
   pub raycast_hit: Option<RaycastHit>,
+  #[serde(default)]
   pub nearby_blocks: Vec<NearbyBlock>,
+  #[serde(default)]
   pub nearby_entities: Vec<NearbyEntity>,
+  #[serde(default)]
   pub inventory_summary: Vec<InventorySummaryEntry>,
+  #[serde(default)]
   pub screenshot_artifact_ref: Option<String>,
   // NOTICE(mc3-live-binding): populated only after real screenshot/frame binding lands.
+  #[serde(default)]
   pub mc_capture_skew_ms: Option<i64>,
 }
 

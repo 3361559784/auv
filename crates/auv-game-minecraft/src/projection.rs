@@ -142,9 +142,31 @@ impl MinecraftProjector {
   }
 
   fn project_vec4(&self, world: Vec3) -> [f64; 4] {
-    let world_vec = [world.x, world.y, world.z, 1.0];
+    let world_vec = if self.uses_rotation_only_view_matrix() {
+      // NOTICE(mc2-telemetry-v0-compat): older MC-1 live samples recorded only
+      // camera rotation in `view_matrix` and left the translation column at
+      // zero. Until those samples are regenerated after the sidecar writes the
+      // full render-time `positionMatrix`, subtract the eye position here so
+      // MC-2 can still project against telemetry v0 fixtures instead of
+      // misclassifying visible targets as behind-camera.
+      let eye = self.frame.player_pose.eye_position;
+      [world.x - eye.x, world.y - eye.y, world.z - eye.z, 1.0]
+    } else {
+      [world.x, world.y, world.z, 1.0]
+    };
     let view = multiply_mat4_vec4(&self.frame.view_matrix, world_vec);
     multiply_mat4_vec4(&self.frame.projection_matrix, view)
+  }
+
+  fn uses_rotation_only_view_matrix(&self) -> bool {
+    const EPSILON: f64 = 1e-6;
+
+    self.frame.view_matrix[12].abs() <= EPSILON
+      && self.frame.view_matrix[13].abs() <= EPSILON
+      && self.frame.view_matrix[14].abs() <= EPSILON
+      && (self.frame.player_pose.eye_position.x.abs() > EPSILON
+        || self.frame.player_pose.eye_position.y.abs() > EPSILON
+        || self.frame.player_pose.eye_position.z.abs() > EPSILON)
   }
 }
 
@@ -216,6 +238,17 @@ mod tests {
       screenshot_artifact_ref: None,
       mc_capture_skew_ms: None,
     }
+  }
+
+  fn test_frame_with_eye(
+    view_matrix: [f64; 16],
+    projection_matrix: [f64; 16],
+    viewport: Viewport,
+    eye_position: Vec3,
+  ) -> MinecraftSpatialFrame {
+    let mut frame = test_frame(view_matrix, projection_matrix, viewport);
+    frame.player_pose.eye_position = eye_position;
+    frame
   }
 
   #[test]
@@ -316,5 +349,33 @@ mod tests {
     ))
     .expect_err("must fail");
     assert!(error.contains("view_matrix contains non-finite values"));
+  }
+
+  #[test]
+  fn projects_live_rotation_only_matrix_with_eye_position_fallback() {
+    let frame = test_frame_with_eye(
+      [
+        0.719950, 0.115742, -0.684307, 0.0, -0.0, 0.985996, 0.166769, 0.0, 0.694026, -0.120065,
+        0.709867, 0.0, 0.0, 0.0, 0.0, 1.0,
+      ],
+      [
+        0.802706, 0.0, -0.0, -0.0, 0.0, 1.428148, -0.0, -0.0, 0.0, 0.0, -1.000130, -1.0, -0.0,
+        -0.0, -0.100007, -0.0,
+      ],
+      Viewport::new(1708, 960),
+      Vec3::new(511.028439, 73.62, 728.652906),
+    );
+    let projector = MinecraftProjector::new(frame).expect("projector");
+
+    let point = projector
+      .project_block_target(&MinecraftBlockTarget::new(BlockPosition::new(513, 72, 726)))
+      .expect("projected point");
+
+    assert_eq!(point.visibility, ProjectionVisibility::Visible);
+    let screen_point = point.screen_point.expect("visible point");
+    assert!(screen_point.x > 0.0);
+    assert!(screen_point.x < 1708.0);
+    assert!(screen_point.y > 0.0);
+    assert!(screen_point.y < 960.0);
   }
 }

@@ -1,29 +1,12 @@
-//! Run update delivery transport.
+//! Root compatibility re-exports for durable recording primitives.
 //!
-//! This module owns the data + machinery for streaming run/span/event/artifact
-//! updates from runtime to recording sinks:
-//!
-//! - [`update`]: `RunUpdate` event enum (canonical snake_case serialization).
-//! - [`wire`]: `WireUpdate` newtype that re-serializes `RunUpdate` as camelCase
-//!   for the inspect server HTTP write API.
-//! - [`recorder`]: `RunRecorder` trait and concrete backends (Noop, Memory,
-//!   Broadcast, Composite, InspectServer HTTP).
-//! - [`backend`]: `RunRecordingBackend` façade combining one store with one
-//!   recorder.
-//!
-//! Boundary: recorders deliver/replicate trace data; they do not execute
-//! commands or interpret automation semantics. The in-memory snapshot builder
-//! that consumes this transport lives in `run_builder`.
+//! NOTICE(recording-handle-root-methods): the pre-extraction root-specific
+//! `RecordingHandle` helpers such as inspect and candidate-action facades are
+//! intentionally not preserved on this re-exported handle. This project is still
+//! pre-public, and keeping those inherent methods would require a root wrapper
+//! that re-couples the extracted recording crate to root-only behavior. Use
+//! `Runtime` for root read/command facades, or `RecordingHandle` directly for
+//! durable run recording. Restore a wrapper only if the owner approves a public
+//! compatibility slice.
 
-pub mod backend;
-pub mod recorder;
-pub mod update;
-pub mod wire;
-
-pub use backend::{RecordingHandle, RunRecordingBackend};
-pub use recorder::{
-  BroadcastRunRecorder, CompositeRunRecorder, InspectServerRunRecorder, MemoryRunRecorder,
-  NoopRunRecorder, RunRecorder,
-};
-pub use update::RunUpdate;
-pub use wire::WireUpdate;
+pub use auv_tracing_driver::recording::*;

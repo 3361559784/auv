@@ -11,8 +11,11 @@ use crate::contract::{
 use crate::model::AuvResult;
 use crate::run_read::{
   CandidateActionDecisionLineage, CandidateActionDecisionLineageStatus,
-  CandidateActionExecutionLineage, CandidateActionExecutionLineageStatus,
-  CandidatePromotionLineage, CandidatePromotionLineageStatus, DetectorRecognitionLineage,
+  CandidateActionExecutionClosureState, CandidateActionExecutionLineage,
+  CandidateActionExecutionLineageStatus, CandidatePromotionLineage,
+  CandidatePromotionLineageStatus, DetectorRecognitionLineage,
+  MinecraftTelemetrySampleArtifactLineage, list_minecraft_projection_artifacts,
+  list_minecraft_telemetry_sample_artifacts,
 };
 use crate::store::{CanonicalRun, LocalStore};
 
@@ -67,6 +70,9 @@ pub fn inspect_run(store: &LocalStore, run_id: &str) -> AuvResult<String> {
   let candidate_promotion_lineage = list_candidate_promotion_lineage(store, run_id)?;
   let candidate_action_decision_lineage = list_candidate_action_decision_lineage(store, run_id)?;
   let candidate_action_execution_lineage = list_candidate_action_execution_lineage(store, run_id)?;
+  let minecraft_projection_artifacts = list_minecraft_projection_artifacts(store, run_id)?;
+  let minecraft_telemetry_sample_artifacts =
+    list_minecraft_telemetry_sample_artifacts(store, run_id)?;
   Ok(render_run_text(
     &canonical,
     &verifications,
@@ -75,6 +81,8 @@ pub fn inspect_run(store: &LocalStore, run_id: &str) -> AuvResult<String> {
     &candidate_promotion_lineage,
     &candidate_action_decision_lineage,
     &candidate_action_execution_lineage,
+    &minecraft_projection_artifacts,
+    &minecraft_telemetry_sample_artifacts,
   ))
 }
 
@@ -86,6 +94,8 @@ pub fn render_run_text(
   candidate_promotion_lineage: &[CandidatePromotionLineage],
   candidate_action_decision_lineage: &[CandidateActionDecisionLineage],
   candidate_action_execution_lineage: &[CandidateActionExecutionLineage],
+  minecraft_projection_artifacts: &[auv_game_minecraft::artifact::MinecraftProjectionArtifact],
+  minecraft_telemetry_sample_artifacts: &[MinecraftTelemetrySampleArtifactLineage],
 ) -> String {
   let mut output = format!(
     "Run {}\nType: {}\nStatus: {}\nState: {}\n",
@@ -101,8 +111,8 @@ pub fn render_run_text(
     output.push_str(&format!("Failure: {}\n", failure.message));
   }
 
-  output.push_str("\nSpans:\n");
-  for span in &run.spans {
+  output.push_str(&format!("\nSpans: {}\n", run.spans.len()));
+  for span in run.spans.iter().take(20) {
     output.push_str(&format!(
       "- {} name={} parent={} status={}\n",
       span.span_id,
@@ -115,31 +125,31 @@ pub fn render_run_text(
       span.status_code.as_str()
     ));
   }
+  if run.spans.len() > 20 {
+    output.push_str(&format!("- … {} more\n", run.spans.len() - 20));
+  }
 
-  output.push_str("\nEvents:\n");
-  for event in &run.events {
+  output.push_str(&format!("\nEvents: {}\n", run.events.len()));
+  for event in run.events.iter().take(20) {
     let message = event.message.as_deref().unwrap_or("");
     output.push_str(&format!(
       "- {} span={} name={} {}\n",
       event.event_id, event.span_id, event.name, message
     ));
-    if !event.artifact_ids.is_empty() {
-      let artifact_ids = event
-        .artifact_ids
-        .iter()
-        .map(|artifact_id| artifact_id.as_str())
-        .collect::<Vec<_>>()
-        .join(", ");
-      output.push_str(&format!("  artifacts={artifact_ids}\n"));
-    }
+  }
+  if run.events.len() > 20 {
+    output.push_str(&format!("- … {} more\n", run.events.len() - 20));
   }
 
-  output.push_str("\nArtifacts:\n");
-  for artifact in &run.artifacts {
+  output.push_str(&format!("\nArtifacts: {}\n", run.artifacts.len()));
+  for artifact in run.artifacts.iter().take(20) {
     output.push_str(&format!(
       "- {} span={} role={} path={}\n",
       artifact.artifact_id, artifact.span_id, artifact.role, artifact.path
     ));
+  }
+  if run.artifacts.len() > 20 {
+    output.push_str(&format!("- … {} more\n", run.artifacts.len() - 20));
   }
 
   output.push_str("\nVerifications:\n");
@@ -344,15 +354,68 @@ pub fn render_run_text(
     }
   }
 
+  output.push_str("\nMC-1 Telemetry Samples:\n");
+  if minecraft_telemetry_sample_artifacts.is_empty() {
+    output.push_str("- none\n");
+  } else {
+    for lineage in minecraft_telemetry_sample_artifacts {
+      output.push_str(&format!(
+        "- artifact={} line_count={} bytes={} path={} issue={}\n",
+        lineage.artifact.artifact_id,
+        lineage
+          .line_count
+          .map(|value| value.to_string())
+          .unwrap_or_else(|| "n/a".to_string()),
+        lineage
+          .byte_size
+          .map(|value| value.to_string())
+          .unwrap_or_else(|| "n/a".to_string()),
+        lineage.artifact.path.as_deref().unwrap_or("n/a"),
+        lineage.issue.as_deref().unwrap_or("n/a"),
+      ));
+    }
+  }
+
+  output.push_str("\nMC-2 Projection Artifacts:\n");
+  if minecraft_projection_artifacts.is_empty() {
+    output.push_str("- none\n");
+  } else {
+    for artifact in minecraft_projection_artifacts {
+      output.push_str(&format!(
+        "- frame={} tick={} timestamp_ms={} screenshot_artifact_ref={} capture_skew_ms={} viewport={}x{}@{},{} visibility={} raycast={} verification_reference={} projected_point={}\n",
+        artifact.spatial_frame_id,
+        artifact.world_tick,
+        artifact.monotonic_timestamp_ms,
+        artifact
+          .screenshot_artifact_ref
+          .as_deref()
+          .unwrap_or("n/a"),
+        artifact
+          .mc_capture_skew_ms
+          .map(|value| value.to_string())
+          .unwrap_or_else(|| "n/a".to_string()),
+        artifact.viewport_bounds.width,
+        artifact.viewport_bounds.height,
+        artifact.viewport_bounds.x,
+        artifact.viewport_bounds.y,
+        render_projection_visibility(&artifact.visibility),
+        artifact.raycast_block_id.as_deref().unwrap_or("n/a"),
+        artifact.verification_reference.as_deref().unwrap_or("n/a"),
+        render_minecraft_projected_point(artifact.projected_point.as_ref()),
+      ));
+    }
+  }
+
   output.push_str("\nCandidate Action Execution Lineage:\n");
   if candidate_action_execution_lineage.is_empty() {
     output.push_str("- none\n");
   } else {
     for lineage in candidate_action_execution_lineage {
       output.push_str(&format!(
-        "- artifact={} status={} execution_id={} source_decision={} operation_result_artifact={} candidate={} resolver={} selected={} input_delivery={} selected_path={} operation_status={} verification={} semantic_matched={} readiness={} blocker={} side_effect={} consent={} by={} consent_provenance={} consent_grade={} issue={}\n",
+        "- artifact={} status={} closure_state={} execution_id={} source_decision={} operation_result_artifact={} candidate={} resolver={} selected={} input_delivery={} selected_path={} operation_status={} verification={} semantic_matched={} readiness={} blocker={} side_effect={} consent={} by={} consent_provenance={} consent_grade={} issue={}\n",
         lineage.artifact.artifact_id,
         render_candidate_action_execution_status(&lineage.status),
+        render_candidate_action_execution_closure_state(&lineage.closure_state),
         lineage.execution_id.as_deref().unwrap_or("n/a"),
         lineage
           .source_candidate_action_decision_artifact
@@ -473,11 +536,55 @@ fn render_candidate_action_execution_status(
   }
 }
 
+fn render_candidate_action_execution_closure_state(
+  state: &CandidateActionExecutionClosureState,
+) -> &'static str {
+  match state {
+    CandidateActionExecutionClosureState::EvidenceClosed => "evidence_closed",
+    CandidateActionExecutionClosureState::SemanticOpen => "semantic_open",
+    CandidateActionExecutionClosureState::BlockedByReadiness => "blocked_by_readiness",
+  }
+}
+
 fn render_optional_bool(value: Option<bool>) -> &'static str {
   match value {
     Some(true) => "true",
     Some(false) => "false",
     None => "n/a",
+  }
+}
+
+fn render_projection_visibility(
+  visibility: &auv_game_minecraft::types::ProjectionVisibility,
+) -> &'static str {
+  match visibility {
+    auv_game_minecraft::types::ProjectionVisibility::Visible => "visible",
+    auv_game_minecraft::types::ProjectionVisibility::BehindCamera => "behind_camera",
+    auv_game_minecraft::types::ProjectionVisibility::OutOfFrustum => "out_of_frustum",
+    auv_game_minecraft::types::ProjectionVisibility::OutsideWindow => "outside_window",
+  }
+}
+
+fn render_minecraft_projected_point(
+  projected_point: Option<&auv_game_minecraft::types::MinecraftProjectedPoint>,
+) -> String {
+  match projected_point {
+    Some(projected_point) => {
+      let screen_point = projected_point
+        .screen_point
+        .as_ref()
+        .map(|point| format!("{},{}", point.x, point.y))
+        .unwrap_or_else(|| "n/a".to_string());
+      format!(
+        "screen={} visibility={} radius_px={} confidence={} basis={}",
+        screen_point,
+        render_projection_visibility(&projected_point.visibility),
+        projected_point.match_radius_px,
+        projected_point.confidence,
+        projected_point.basis_frame_id,
+      )
+    }
+    None => "n/a".to_string(),
   }
 }
 
@@ -537,10 +644,11 @@ mod tests {
   };
   use crate::run_read::{
     ArtifactRefLineage, CandidateActionDecisionLineage, CandidateActionDecisionLineageStatus,
-    CandidateActionExecutionLineage, CandidateActionExecutionLineageStatus,
-    CandidatePromotionLineage, CandidatePromotionLineageStatus,
-    DetectorRecognitionArtifactRefLineage, DetectorRecognitionLineage,
-    DetectorRecognitionLineageStatus,
+    CandidateActionExecutionClosureState, CandidateActionExecutionLineage,
+    CandidateActionExecutionLineageStatus, CandidatePromotionLineage,
+    CandidatePromotionLineageStatus, DetectorRecognitionArtifactRefLineage,
+    DetectorRecognitionLineage, DetectorRecognitionLineageStatus,
+    MinecraftTelemetrySampleArtifactLineage,
   };
   use crate::store::CanonicalRun;
   use crate::trace::{
@@ -876,6 +984,7 @@ mod tests {
       attempts_succeeded: Some(1),
       operation_status: Some("completed".to_string()),
       verification: Some("activation_only".to_string()),
+      closure_state: CandidateActionExecutionClosureState::SemanticOpen,
       semantic_matched: None,
       readiness: Some("ready".to_string()),
       readiness_blocker: None,
@@ -890,6 +999,46 @@ mod tests {
       issue: None,
     }];
 
+    let minecraft_projection_artifacts =
+      vec![auv_game_minecraft::artifact::MinecraftProjectionArtifact {
+        spatial_frame_id: "frame-1".to_string(),
+        world_tick: 42,
+        monotonic_timestamp_ms: 1_000,
+        viewport_bounds: auv_game_minecraft::artifact::ProjectionViewportBounds {
+          x: 0.0,
+          y: 0.0,
+          width: 800.0,
+          height: 600.0,
+        },
+        projected_point: Some(auv_game_minecraft::types::MinecraftProjectedPoint {
+          screen_point: Some(auv_driver::geometry::Point::new(320.0, 240.0)),
+          visibility: auv_game_minecraft::types::ProjectionVisibility::Visible,
+          match_radius_px: 12.0,
+          basis_frame_id: "frame-1".to_string(),
+          confidence: 1.0,
+        }),
+        screenshot_artifact_ref: Some("artifact://screenshot-1".to_string()),
+        mc_capture_skew_ms: Some(180),
+        visibility: auv_game_minecraft::types::ProjectionVisibility::Visible,
+        raycast_block_id: Some("minecraft:stone".to_string()),
+        verification_reference: Some("verification-1".to_string()),
+      }];
+    let minecraft_telemetry_sample_artifacts = vec![MinecraftTelemetrySampleArtifactLineage {
+      artifact: crate::run_read::ArtifactRefLineage {
+        run_id: run.run.run_id.clone(),
+        artifact_id: crate::trace::ArtifactId::new("artifact_mc1".to_string()),
+        span_id: crate::trace::SpanId::new("span_mc1".to_string()),
+        captured_event_id: None,
+        role: Some("telemetry-sample".to_string()),
+        path: Some("artifacts/telemetry.jsonl".to_string()),
+        summary: Some("durable minecraft telemetry sample".to_string()),
+        resolved: true,
+      },
+      line_count: Some(1),
+      byte_size: Some(16),
+      issue: None,
+    }];
+
     let output = render_run_text(
       &run,
       &verifications,
@@ -898,6 +1047,8 @@ mod tests {
       &candidate_promotion_lineage,
       &candidate_action_decision_lineage,
       &candidate_action_execution_lineage,
+      &minecraft_projection_artifacts,
+      &minecraft_telemetry_sample_artifacts,
     );
 
     assert!(output.contains("Run run_inspect_test"));
@@ -938,6 +1089,14 @@ mod tests {
     assert!(output.contains("operation_result=not_produced"));
     assert!(output.contains("verification_result=not_produced"));
     assert!(output.contains("cursor=warp-visible"));
+    assert!(output.contains("MC-2 Projection Artifacts:"));
+    assert!(output.contains("frame=frame-1"));
+    assert!(output.contains("screenshot_artifact_ref=artifact://screenshot-1"));
+    assert!(output.contains("capture_skew_ms=180"));
+    assert!(output.contains("verification_reference=verification-1"));
+    assert!(output.contains(
+      "projected_point=screen=320,240 visibility=visible radius_px=12 confidence=1 basis=frame-1"
+    ));
     assert!(output.contains("Candidate Action Execution Lineage:"));
     assert!(output.contains("artifact=artifact_candidate_action_execution"));
     assert!(output.contains("execution_id=execution_end_turn"));
@@ -945,6 +1104,7 @@ mod tests {
     assert!(output.contains("selected_path=window_targeted_mouse"));
     assert!(output.contains("operation_status=completed"));
     assert!(output.contains("verification=activation_only"));
+    assert!(output.contains("closure_state=semantic_open"));
     assert!(output.contains("semantic_matched=n/a"));
     assert!(output.contains("side_effect=single_input_delivered"));
     assert!(output.contains("consent=consent_execute_end_turn"));

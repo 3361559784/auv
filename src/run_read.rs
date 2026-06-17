@@ -9,6 +9,7 @@
 //!   double-counting artifacts that also populate `OperationResult.verifications`
 
 use std::fs;
+use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 
 use serde::de::DeserializeOwned;
@@ -27,6 +28,14 @@ use crate::scroll_scan::ScrollScanArtifact;
 use crate::stability::{StabilityAssessment, StabilityRejection};
 use crate::store::{CanonicalRun, LocalStore};
 use crate::trace::ArtifactRecordV1Alpha1;
+use auv_game_minecraft::artifact::MinecraftProjectionArtifact;
+
+pub struct MinecraftTelemetrySampleArtifactLineage {
+  pub artifact: ArtifactRefLineage,
+  pub line_count: Option<usize>,
+  pub byte_size: Option<u64>,
+  pub issue: Option<String>,
+}
 
 pub fn read_run(store: &LocalStore, run_id: &str) -> AuvResult<CanonicalRun> {
   store.read_run(run_id)
@@ -173,6 +182,14 @@ pub enum CandidateActionExecutionLineageStatus {
   Malformed,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CandidateActionExecutionClosureState {
+  EvidenceClosed,
+  SemanticOpen,
+  BlockedByReadiness,
+}
+
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct CandidateActionExecutionLineage {
   pub artifact: ArtifactRefLineage,
@@ -192,6 +209,7 @@ pub struct CandidateActionExecutionLineage {
   pub attempts_succeeded: Option<usize>,
   pub operation_status: Option<String>,
   pub verification: Option<String>,
+  pub closure_state: CandidateActionExecutionClosureState,
   pub semantic_matched: Option<bool>,
   pub readiness: Option<String>,
   pub readiness_blocker: Option<String>,
@@ -288,6 +306,113 @@ pub(crate) fn list_candidate_action_execution_lineage(
 ) -> AuvResult<Vec<CandidateActionExecutionLineage>> {
   let run = store.read_run(run_id)?;
   extract_candidate_action_execution_lineage(store, &run)
+}
+
+pub(crate) fn list_minecraft_projection_artifacts(
+  store: &LocalStore,
+  run_id: &str,
+) -> AuvResult<Vec<MinecraftProjectionArtifact>> {
+  let run = store.read_run(run_id)?;
+  extract_minecraft_projection_artifacts(store, &run)
+}
+
+pub(crate) fn extract_minecraft_projection_artifacts(
+  store: &LocalStore,
+  run: &CanonicalRun,
+) -> AuvResult<Vec<MinecraftProjectionArtifact>> {
+  let mut artifacts = Vec::new();
+  for artifact in &run.artifacts {
+    if artifact.role != crate::runtime::MINECRAFT_PROJECTION_ARTIFACT_ROLE
+      || !is_json_mime(&artifact.mime_type)
+    {
+      continue;
+    }
+
+    let parsed = read_artifact_bytes(
+      store,
+      run.run.run_id.as_str(),
+      artifact,
+      crate::runtime::MINECRAFT_PROJECTION_ARTIFACT_ROLE,
+    )
+    .and_then(|(bytes, artifact_path)| {
+      serde_json::from_slice::<MinecraftProjectionArtifact>(&bytes).map_err(|error| {
+        format!(
+          "failed to parse {} artifact {} for run {} from {}: {error}",
+          crate::runtime::MINECRAFT_PROJECTION_ARTIFACT_ROLE,
+          artifact.artifact_id,
+          run.run.run_id,
+          artifact_path.display()
+        )
+      })
+    });
+
+    if let Ok(projection) = parsed {
+      artifacts.push(projection);
+    }
+  }
+  Ok(artifacts)
+}
+
+pub(crate) fn list_minecraft_telemetry_sample_artifacts(
+  store: &LocalStore,
+  run_id: &str,
+) -> AuvResult<Vec<MinecraftTelemetrySampleArtifactLineage>> {
+  let run = store.read_run(run_id)?;
+  extract_minecraft_telemetry_sample_artifacts(store, &run)
+}
+
+pub(crate) fn extract_minecraft_telemetry_sample_artifacts(
+  store: &LocalStore,
+  run: &CanonicalRun,
+) -> AuvResult<Vec<MinecraftTelemetrySampleArtifactLineage>> {
+  let mut artifacts = Vec::new();
+  for artifact in &run.artifacts {
+    if artifact.role != crate::runtime::TELEMETRY_SAMPLE_ARTIFACT_ROLE {
+      continue;
+    }
+
+    let artifact_ref = artifact_record_lineage(run.run.run_id.clone(), artifact);
+    if !is_json_mime(&artifact.mime_type) {
+      artifacts.push(MinecraftTelemetrySampleArtifactLineage {
+        artifact: artifact_ref,
+        line_count: None,
+        byte_size: None,
+        issue: Some(format!(
+          "minecraft telemetry sample artifact mime_type {} is not JSON",
+          artifact.mime_type
+        )),
+      });
+      continue;
+    }
+
+    let parsed = read_telemetry_artifact_summary(
+      store,
+      run.run.run_id.as_str(),
+      artifact,
+      crate::runtime::TELEMETRY_SAMPLE_ARTIFACT_ROLE,
+    );
+
+    match parsed {
+      Ok((artifact_path, line_count, byte_size)) => {
+        artifacts.push(MinecraftTelemetrySampleArtifactLineage {
+          artifact: ArtifactRefLineage {
+            path: Some(artifact_path.display().to_string()),
+            ..artifact_ref
+          },
+          line_count: Some(line_count),
+          byte_size: Some(byte_size),
+          issue: None,
+        })
+      }
+      Err(error) => artifacts.push(MinecraftTelemetrySampleArtifactLineage {
+        artifact: artifact_ref,
+        line_count: None,
+        byte_size: None,
+        issue: Some(error),
+      }),
+    }
+  }
+  Ok(artifacts)
 }
 
 pub(crate) fn extract_detector_recognition_lineage(
@@ -790,6 +915,14 @@ fn candidate_action_execution_lineage_entry(
     source_candidate_action_decision_artifact.as_ref(),
     operation_result_artifact.as_ref(),
   );
+  let semantic_matched = execution
+    .operation_result
+    .verifications
+    .iter()
+    .find(|verification| verification.semantic_matched.is_some())
+    .or_else(|| execution.operation_result.verifications.first())
+    .and_then(|verification| verification.semantic_matched);
+  let closure_state = candidate_action_execution_closure_state(&execution);
 
   CandidateActionExecutionLineage {
     artifact: artifact_record_lineage(run.run.run_id.clone(), artifact),
@@ -815,13 +948,8 @@ fn candidate_action_execution_lineage_entry(
       .and_then(|value| value.as_u64().and_then(|count| usize::try_from(count).ok())),
     operation_status: detail_string(&execution.detail, &["operation_status"]),
     verification: detail_string(&execution.detail, &["verification"]),
-    semantic_matched: execution
-      .operation_result
-      .verifications
-      .iter()
-      .find(|verification| verification.semantic_matched.is_some())
-      .or_else(|| execution.operation_result.verifications.first())
-      .and_then(|verification| verification.semantic_matched),
+    closure_state,
+    semantic_matched,
     readiness: detail_string(&execution.detail, &["readiness"]),
     readiness_blocker: detail_string(&execution.detail, &["readiness_blocker"]),
     consent_id: Some(execution.consent.consent_id),
@@ -858,6 +986,7 @@ fn malformed_candidate_action_execution_lineage(
     attempts_succeeded: None,
     operation_status: None,
     verification: None,
+    closure_state: CandidateActionExecutionClosureState::SemanticOpen,
     semantic_matched: None,
     readiness: None,
     readiness_blocker: None,
@@ -868,6 +997,32 @@ fn malformed_candidate_action_execution_lineage(
     side_effect: None,
     known_limits: Vec::new(),
     issue: Some(issue),
+  }
+}
+
+fn candidate_action_execution_closure_state(
+  execution: &CandidateActionExecutionArtifact,
+) -> CandidateActionExecutionClosureState {
+  if execution
+    .detail
+    .get("readiness")
+    .and_then(|value| value.as_str())
+    == Some("not_ready")
+  {
+    return CandidateActionExecutionClosureState::BlockedByReadiness;
+  }
+
+  let semantic_matched = execution
+    .operation_result
+    .verifications
+    .iter()
+    .find(|verification| verification.semantic_matched.is_some())
+    .or_else(|| execution.operation_result.verifications.first())
+    .and_then(|verification| verification.semantic_matched);
+
+  match semantic_matched {
+    Some(false) | None => CandidateActionExecutionClosureState::SemanticOpen,
+    Some(true) => CandidateActionExecutionClosureState::EvidenceClosed,
   }
 }
 
@@ -1238,6 +1393,46 @@ fn read_artifact_bytes(
   Ok((bytes, artifact_path))
 }
 
+fn read_telemetry_artifact_summary(
+  store: &LocalStore,
+  run_id: &str,
+  artifact: &ArtifactRecordV1Alpha1,
+  artifact_role: &str,
+) -> AuvResult<(PathBuf, usize, u64)> {
+  let (_, artifact_path) = store.artifact_file_scoped(
+    run_id,
+    artifact.artifact_id.as_str(),
+    Some(artifact.span_id.as_str()),
+  )?;
+  let metadata = fs::metadata(&artifact_path).map_err(|error| {
+    format!(
+      "failed to stat {artifact_role} artifact {} for run {run_id} from {}: {error}",
+      artifact.artifact_id,
+      artifact_path.display()
+    )
+  })?;
+  let file = fs::File::open(&artifact_path).map_err(|error| {
+    format!(
+      "failed to open {artifact_role} artifact {} for run {run_id} from {}: {error}",
+      artifact.artifact_id,
+      artifact_path.display()
+    )
+  })?;
+  let line_count = BufReader::new(file)
+    .lines()
+    .try_fold(0usize, |count, line| {
+      let line = line.map_err(|error| {
+        format!(
+          "failed to read {artifact_role} artifact {} for run {run_id} from {}: {error}",
+          artifact.artifact_id,
+          artifact_path.display()
+        )
+      })?;
+      Ok::<_, String>(count + usize::from(!line.trim().is_empty()))
+    })?;
+  Ok((artifact_path, line_count, metadata.len()))
+}
+
 #[cfg(test)]
 mod tests {
   use std::collections::BTreeMap;
@@ -1251,13 +1446,14 @@ mod tests {
   use super::{
     CANDIDATE_ACTION_DECISION_ARTIFACT_ROLE, CANDIDATE_ACTION_EXECUTION_ARTIFACT_ROLE,
     CANDIDATE_PROMOTION_ARTIFACT_ROLE, CandidateActionDecisionLineageStatus,
-    CandidateActionExecutionLineageStatus, CandidatePromotionLineageStatus,
-    DETECTOR_RECOGNITION_ARTIFACT_ROLE, DetectorRecognitionLineageStatus,
-    extract_candidate_action_decision_lineage, extract_candidate_action_execution_lineage,
-    extract_candidate_promotion_lineage, extract_detector_recognition_lineage,
-    extract_observation_snapshots, extract_verifications, list_candidate_action_decision_lineage,
-    list_candidate_action_execution_lineage, list_candidate_promotion_lineage,
-    list_detector_recognition_lineage, list_observation_snapshots, list_verifications,
+    CandidateActionExecutionClosureState, CandidateActionExecutionLineageStatus,
+    CandidatePromotionLineageStatus, DETECTOR_RECOGNITION_ARTIFACT_ROLE,
+    DetectorRecognitionLineageStatus, extract_candidate_action_decision_lineage,
+    extract_candidate_action_execution_lineage, extract_candidate_promotion_lineage,
+    extract_detector_recognition_lineage, extract_observation_snapshots, extract_verifications,
+    list_candidate_action_decision_lineage, list_candidate_action_execution_lineage,
+    list_candidate_promotion_lineage, list_detector_recognition_lineage,
+    list_observation_snapshots, list_verifications,
   };
   use crate::action_resolver_decision::{ActionResolverDecision, ActionResolverDecisionInput};
   use crate::candidate_action_decision::{
@@ -2238,6 +2434,10 @@ mod tests {
       extracted[0].verification.as_deref(),
       Some("activation_only")
     );
+    assert_eq!(
+      extracted[0].closure_state,
+      CandidateActionExecutionClosureState::SemanticOpen
+    );
     assert_eq!(extracted[0].semantic_matched, None);
     assert_eq!(extracted[0].attempts, Some(1));
     assert_eq!(extracted[0].attempts_succeeded, Some(1));
@@ -2256,6 +2456,10 @@ mod tests {
     assert_eq!(
       extracted[3].verification.as_deref(),
       Some("activation_only+post_action:semantic_match")
+    );
+    assert_eq!(
+      extracted[3].closure_state,
+      CandidateActionExecutionClosureState::EvidenceClosed
     );
     assert_eq!(extracted[3].semantic_matched, Some(true));
     assert_eq!(

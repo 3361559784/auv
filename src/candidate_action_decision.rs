@@ -675,6 +675,35 @@ pub fn record_candidate_action_execution_artifact(
   )?;
   artifact.operation_result_artifact = Some(operation_result_ref);
 
+  let binding_fact_ref = stage_json_artifact(
+    context,
+    "g3-binding-fact",
+    &format!("{}-binding-fact", request.artifact_label),
+    "MC-5 G3 binding fact recorded through the existing operation-result seam.",
+    &serde_json::json!({
+      "artifact_version": "g3_binding_fact_v0",
+      "producer": "candidate_action_execution",
+      "run_id": context.run_id(),
+      "promotion_id": promotion.promotion_id,
+      "decision_id": decision.decision_id,
+      "execution_id": request.execution_id,
+      "source_candidate_action_decision_artifact": artifact.source_candidate_action_decision_artifact,
+      "operation_result_artifact": artifact.operation_result_artifact,
+      "input_action_result": artifact.input_action_result,
+      "side_effect": artifact.side_effect,
+      "operation_status": artifact.operation_result.status,
+      "verification_result": artifact.verification_result,
+    }),
+  )?;
+
+  context.record_event(
+    "candidate.action.execution.binding_fact_recorded",
+    Some(format!(
+      "recorded G3 binding fact {} for candidate {}",
+      binding_fact_ref.artifact_id, artifact.candidate_local_id
+    )),
+  );
+
   let artifact_ref = stage_json_artifact(
     context,
     &request.artifact_role,
@@ -2383,6 +2412,8 @@ mod tests {
       require_stable_text: true,
     };
     request.projection = crate::candidate_promotion::PromotionProjection::IdentityWindowAddressable;
+    // Historical fixture operation id: this checks capture-backed recognition
+    // freshness, not generic invoke command resolution.
     request.freshness = Some(
       freshness_from_capture_backed_recognition(latest, "debug.captureAxTree", "fresh")
         .expect("latest recognition is capture-backed"),
@@ -2457,6 +2488,8 @@ mod tests {
       require_stable_text: true,
     };
     request.projection = crate::candidate_promotion::PromotionProjection::IdentityWindowAddressable;
+    // Historical fixture operation id: this checks capture-backed recognition
+    // freshness, not generic invoke command resolution.
     request.freshness = Some(
       freshness_from_capture_backed_recognition(latest, "debug.captureAxTree", "fresh")
         .expect("latest recognition is capture-backed"),
@@ -3162,10 +3195,11 @@ mod tests {
       .read_run(output.run_id.as_str())
       .expect("recorded run should persist");
     assert_eq!(run.run.status_code, TraceStatusCode::Ok);
-    assert_eq!(run.artifacts.len(), 3);
+    assert_eq!(run.artifacts.len(), 4);
     assert_eq!(run.artifacts[0].role, "candidate-action-decision");
     assert_eq!(run.artifacts[1].role, "operation-result");
-    assert_eq!(run.artifacts[2].role, "candidate-action-execution");
+    assert_eq!(run.artifacts[2].role, "g3-binding-fact");
+    assert_eq!(run.artifacts[3].role, "candidate-action-execution");
     let (_artifact_ref, artifact) = output.value;
     assert!(artifact.operation_result_artifact.is_some());
     assert_eq!(
@@ -3248,10 +3282,11 @@ mod tests {
     let run = runtime
       .read_run(output.run_id.as_str())
       .expect("recorded run should persist");
-    assert_eq!(run.artifacts.len(), 3);
+    assert_eq!(run.artifacts.len(), 4);
     assert_eq!(run.artifacts[0].role, "candidate-action-decision");
     assert_eq!(run.artifacts[1].role, "operation-result");
-    assert_eq!(run.artifacts[2].role, "candidate-action-execution");
+    assert_eq!(run.artifacts[2].role, "g3-binding-fact");
+    assert_eq!(run.artifacts[3].role, "candidate-action-execution");
     let inspect = runtime
       .inspect(output.run_id.as_str())
       .expect("execute-and-record run should inspect");
@@ -3400,7 +3435,7 @@ mod tests {
     let run = runtime
       .read_run(output.run_id.as_str())
       .expect("recorded run should persist");
-    assert_eq!(run.artifacts.len(), 3);
+    assert_eq!(run.artifacts.len(), 4);
     let (_artifact_ref, artifact) = output.value;
     assert_eq!(artifact.operation_result.status, OperationStatus::Completed);
     assert_eq!(artifact.operation_result.verifications.len(), 2);
@@ -4103,6 +4138,8 @@ mod tests {
     };
     promotion_request.projection =
       crate::candidate_promotion::PromotionProjection::IdentityWindowAddressable;
+    // Historical fixture operation id: this checks capture-backed recognition
+    // freshness, not generic invoke command resolution.
     promotion_request.freshness = Some(
       freshness_from_capture_backed_recognition(latest, "debug.captureAxTree", "fresh")
         .expect("latest recognition is capture-backed"),

@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 2,
+  "description": "Buildable MC-1 telemetry sample shape required to unblock real MC-2 projection and live MC-3 world-diff inputs.",
+  "record": {
+    "spatial_frame_id": "frame-123456-1718438400123456789",
+    "world_tick": 123456,
+    "monotonic_timestamp_ms": 1718438400123,
+    "viewport": {
+      "width": 1920,
+      "height": 1080
+    },
+    "view_matrix": [
+      1.0, 0.0, 0.0, 0.0,
+      0.0, 1.0, 0.0, 0.0,
+      0.0, 0.0, 1.0, 0.0,
+      0.0, 0.0, 0.0, 1.0
+    ],
+    "projection_matrix": [
+      1.0, 0.0, 0.0, 0.0,
+      0.0, 1.0, 0.0, 0.0,
+      0.0, 0.0, 1.0, 0.0,
+      0.0, 0.0, 0.0, 1.0
+    ],
+    "player_pose": {
+      "eye_position": {
+        "x": 12.5,
+        "y": 64.62,
+        "z": -3.25
+      },
+      "yaw": 90.0,
+      "pitch": -12.5
+    },
+    "raycast_hit": {
+      "block_pos": {
+        "x": 13,
+        "y": 64,
+        "z": -1
+      },
+      "face": "north",
+      "block_id": "minecraft:stone"
+    },
+    "nearby_blocks": [
+      {
+        "block_pos": {
+          "x": 13,
+          "y": 64,
+          "z": -1
+        },
+        "block_id": "minecraft:stone"
+      }
+    ],
+    "inventory_summary": [
+      {
+        "item_id": "minecraft:stone",
+        "count": 2
+      }
+    ]
+  },
+  "notice": "Matrices are serialized in column-major order to match the Rust projector. This schema still does not prove screenshot binding, live input, or live world-diff verification."
+}

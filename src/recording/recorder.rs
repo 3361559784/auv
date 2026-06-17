@@ -185,8 +185,12 @@ impl RunRecorder for InspectServerRunRecorder {
     let mime_type = artifact.mime_type.clone();
     let path = path.to_path_buf();
     let result = std::thread::spawn(move || {
-      let bytes = std::fs::read(&path)
+      let file = std::fs::File::open(&path)
         .map_err(|error| format!("inspect server artifact upload read failed: {error}"))?;
+      let metadata = file
+        .metadata()
+        .map_err(|error| format!("inspect server artifact upload stat failed: {error}"))?;
+      let body = reqwest::blocking::Body::sized(file, metadata.len());
       let mut url = reqwest::Url::parse(&format!(
         "{base_url}/write/runs/{run_id}/artifacts/{artifact_id}"
       ))
@@ -200,7 +204,7 @@ impl RunRecorder for InspectServerRunRecorder {
       let mut request = client
         .post(url)
         .header(reqwest::header::CONTENT_TYPE, mime_type)
-        .body(bytes);
+        .body(body);
       if let Some(token) = token {
         request = request.bearer_auth(token);
       }

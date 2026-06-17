@@ -10,7 +10,7 @@
 
 use std::fs;
 use std::io::ErrorKind;
-use std::io::Write;
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 
 use crate::model::{AuvResult, ProducedArtifact, now_millis};
@@ -654,14 +654,22 @@ fn read_versioned_jsonl<T: serde::de::DeserializeOwned>(
   expected_api_version: &str,
   label: &str,
 ) -> AuvResult<Vec<T>> {
-  let raw = fs::read_to_string(path)
-    .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+  let file =
+    fs::File::open(path).map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+  let reader = BufReader::new(file);
   let mut records = Vec::new();
-  for (index, line) in raw.lines().enumerate() {
+  for (index, line) in reader.lines().enumerate() {
+    let line = line.map_err(|error| {
+      format!(
+        "failed to read {} line {}: {error}",
+        path.display(),
+        index + 1
+      )
+    })?;
     if line.trim().is_empty() {
       continue;
     }
-    let value: serde_json::Value = serde_json::from_str(line).map_err(|error| {
+    let value: serde_json::Value = serde_json::from_str(&line).map_err(|error| {
       format!(
         "failed to parse {} line {}: {error}",
         path.display(),

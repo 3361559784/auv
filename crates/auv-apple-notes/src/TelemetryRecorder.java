@@ -9,7 +9,6 @@ import java.util.Map;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderEvents;
 import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderContext;
-import net.minecraft.block.BlockState;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.item.ItemStack;
@@ -21,10 +20,12 @@ import org.joml.Matrix4f;
 import org.lwjgl.BufferUtils;
 
 public final class TelemetryRecorder {
-  private static final int NEARBY_BLOCK_RADIUS = 2;
+  private static final long RENDER_SAMPLE_INTERVAL_NS = 50_000_000L;
   private static final Object SAMPLE_LOCK = new Object();
   private static volatile boolean started = false;
   private static TelemetrySample latestTickSample;
+  private static TelemetryWriter writer;
+  private static long lastRenderSampleNs = Long.MIN_VALUE;
 
   private TelemetryRecorder() {}
 
@@ -50,7 +51,6 @@ public final class TelemetryRecorder {
     sample.viewportHeight = client.getWindow().getFramebufferHeight();
     populatePlayerPose(client.player, sample);
     populateRaycast(client, sample);
-    populateNearbyBlocks(client, sample);
     populateInventory(client.player, sample);
     synchronized (SAMPLE_LOCK) {
       latestTickSample = sample;
@@ -59,8 +59,16 @@ public final class TelemetryRecorder {
 
   private static void recordRender(WorldRenderContext context) {
     MinecraftClient client = MinecraftClient.getInstance();
-    if (client.getWindow() == null) {
+    if (client.getWindow() == null || client.player == null || client.world == null) {
       return;
+    }
+
+    long nowNs = System.nanoTime();
+    synchronized (SAMPLE_LOCK) {
+      if (nowNs - lastRenderSampleNs < RENDER_SAMPLE_INTERVAL_NS) {
+        return;
+      }
+      lastRenderSampleNs = nowNs;
     }
 
     TelemetrySample sample;
@@ -68,10 +76,11 @@ public final class TelemetryRecorder {
       if (latestTickSample == null) {
         return;
       }
-      sample = latestTickSample.copy();
+      sample = latestTickSample;
+      latestTickSample = null;
     }
 
-    sample.monotonicTimestampMs = System.nanoTime() / 1_000_000L;
+    sample.monotonicTimestampMs = nowNs / 1_000_000L;
     Matrix4f projectionMatrix = new Matrix4f(context.projectionMatrix());
     Matrix4f viewMatrix = new Matrix4f(context.positionMatrix());
 
@@ -107,24 +116,6 @@ public final class TelemetryRecorder {
     sample.raycastBlockZ = hitResult.getBlockPos().getZ();
     sample.raycastFace = hitResult.getSide().asString();
     sample.raycastBlockId = Registries.BLOCK.getId(blockState.getBlock()).toString();
-  }
-
-  private static void populateNearbyBlocks(MinecraftClient client, TelemetrySample sample) {
-    BlockPos origin = BlockPos.ofFloored(client.player.getPos());
-    for (int dx = -NEARBY_BLOCK_RADIUS; dx <= NEARBY_BLOCK_RADIUS; dx += 1) {
-      for (int dy = -NEARBY_BLOCK_RADIUS; dy <= NEARBY_BLOCK_RADIUS; dy += 1) {
-        for (int dz = -NEARBY_BLOCK_RADIUS; dz <= NEARBY_BLOCK_RADIUS; dz += 1) {
-          BlockPos blockPos = origin.add(dx, dy, dz);
-          BlockState blockState = client.world.getBlockState(blockPos);
-          TelemetrySample.NearbyBlockSample block = new TelemetrySample.NearbyBlockSample();
-          block.x = blockPos.getX();
-          block.y = blockPos.getY();
-          block.z = blockPos.getZ();
-          block.blockId = Registries.BLOCK.getId(blockState.getBlock()).toString();
-          sample.nearbyBlocks.add(block);
-        }
-      }
-    }
   }
 
   private static void populateInventory(ClientPlayerEntity player, TelemetrySample sample) {
@@ -165,7 +156,10 @@ public final class TelemetryRecorder {
   }
 
   private static TelemetryWriter telemetryWriter(MinecraftClient client) {
-    Path runDir = client.runDirectory.toPath();
-    return new TelemetryWriter(runDir.resolve("auv").resolve("telemetry.jsonl"));
+    if (writer == null) {
+      Path runDir = client.runDirectory.toPath();
+      writer = new TelemetryWriter(runDir.resolve("auv").resolve("telemetry.jsonl"));
+    }
+    return writer;
   }
 }

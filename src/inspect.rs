@@ -111,8 +111,8 @@ pub fn render_run_text(
     output.push_str(&format!("Failure: {}\n", failure.message));
   }
 
-  output.push_str("\nSpans:\n");
-  for span in &run.spans {
+  output.push_str(&format!("\nSpans: {}\n", run.spans.len()));
+  for span in run.spans.iter().take(20) {
     output.push_str(&format!(
       "- {} name={} parent={} status={}\n",
       span.span_id,
@@ -125,31 +125,31 @@ pub fn render_run_text(
       span.status_code.as_str()
     ));
   }
+  if run.spans.len() > 20 {
+    output.push_str(&format!("- … {} more\n", run.spans.len() - 20));
+  }
 
-  output.push_str("\nEvents:\n");
-  for event in &run.events {
+  output.push_str(&format!("\nEvents: {}\n", run.events.len()));
+  for event in run.events.iter().take(20) {
     let message = event.message.as_deref().unwrap_or("");
     output.push_str(&format!(
       "- {} span={} name={} {}\n",
       event.event_id, event.span_id, event.name, message
     ));
-    if !event.artifact_ids.is_empty() {
-      let artifact_ids = event
-        .artifact_ids
-        .iter()
-        .map(|artifact_id| artifact_id.as_str())
-        .collect::<Vec<_>>()
-        .join(", ");
-      output.push_str(&format!("  artifacts={artifact_ids}\n"));
-    }
+  }
+  if run.events.len() > 20 {
+    output.push_str(&format!("- … {} more\n", run.events.len() - 20));
   }
 
-  output.push_str("\nArtifacts:\n");
-  for artifact in &run.artifacts {
+  output.push_str(&format!("\nArtifacts: {}\n", run.artifacts.len()));
+  for artifact in run.artifacts.iter().take(20) {
     output.push_str(&format!(
       "- {} span={} role={} path={}\n",
       artifact.artifact_id, artifact.span_id, artifact.role, artifact.path
     ));
+  }
+  if run.artifacts.len() > 20 {
+    output.push_str(&format!("- … {} more\n", run.artifacts.len() - 20));
   }
 
   output.push_str("\nVerifications:\n");

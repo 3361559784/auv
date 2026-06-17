@@ -32,6 +32,9 @@ impl LatestFrameScan {
 /// well-formed line. This streams line by line and retains only the latest
 /// parsed frame, so a multi-hundred-megabyte sample costs one line of peak
 /// memory rather than the whole file.
+#[deprecated(
+  note = "live MC-2 bridge must use read_latest_spatial_frame_from_tail; the full-scan variant exists only for tests/imports"
+)]
 pub fn read_latest_spatial_frame(path: &Path) -> Result<LatestFrameScan, String> {
   let file = std::fs::File::open(path).map_err(|error| {
     format!(
@@ -65,6 +68,9 @@ pub fn read_latest_spatial_frame_from_tail(
 
 /// Core scan over any byte reader. Separated from file opening so the binding
 /// logic is unit-testable without touching the filesystem.
+#[deprecated(
+  note = "live MC-2 bridge must use read_latest_spatial_frame_from_tail; the full-scan variant exists only for tests/imports"
+)]
 pub fn scan_latest_spatial_frame<R: Read>(reader: R) -> Result<LatestFrameScan, String> {
   let mut buffered = BufReader::new(reader);
   let mut scan = LatestFrameScan::empty();

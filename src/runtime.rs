@@ -9,10 +9,12 @@
 //! agent, and it does not choose strategies beyond what the request/cmd
 //! specifies.
 
+use std::io::{BufRead, BufReader, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 pub const TELEMETRY_SAMPLE_ARTIFACT_ROLE: &str = "telemetry-sample";
+pub const TELEMETRY_SAMPLE_MAX_BYTES: u64 = 128 * 1024;
 pub const MINECRAFT_PROJECTION_ARTIFACT_ROLE: &str = "minecraft-projection";
 
 use crate::contract::ArtifactRef;
@@ -33,6 +35,77 @@ pub struct Runtime {
   project_root: PathBuf,
   drivers: DriverRegistry,
   recording: RunRecordingBackend,
+}
+
+// NOTICE(mc2-live-telemetry-tail-artifact): live telemetry.jsonl can grow to
+// multi-GB files during long Minecraft sessions. The current artifact staging
+// path still copies and server-uploads the artifact as a whole, so recording
+// the full live file would amplify disk and memory use badly. For the current
+// MC-2 slice we only persist a capped tail sample as durable evidence. If a
+// future slice needs full-session archival, that path must stream copy/upload
+// instead of routing the live file through the existing artifact staging seam.
+fn prepare_telemetry_sample_artifact(path: &Path) -> AuvResult<Option<PathBuf>> {
+  let metadata = std::fs::metadata(path).map_err(|error| {
+    format!(
+      "failed to stat telemetry sample artifact {}: {error}",
+      path.display()
+    )
+  })?;
+  if metadata.len() <= TELEMETRY_SAMPLE_MAX_BYTES {
+    return Ok(None);
+  }
+
+  let file = std::fs::File::open(path).map_err(|error| {
+    format!(
+      "failed to open telemetry sample artifact {}: {error}",
+      path.display()
+    )
+  })?;
+  let mut reader = BufReader::new(file);
+  let start = metadata.len().saturating_sub(TELEMETRY_SAMPLE_MAX_BYTES);
+  reader.seek(SeekFrom::Start(start)).map_err(|error| {
+    format!(
+      "failed to seek telemetry sample artifact {}: {error}",
+      path.display()
+    )
+  })?;
+
+  if start > 0 {
+    let mut discarded = String::new();
+    reader.read_line(&mut discarded).map_err(|error| {
+      format!(
+        "failed to align telemetry sample artifact {} to next line: {error}",
+        path.display()
+      )
+    })?;
+  }
+
+  let temp_path = std::env::temp_dir().join(format!(
+    "auv-telemetry-tail-{}-{}.jsonl",
+    std::process::id(),
+    crate::model::now_millis()
+  ));
+  let mut temp = std::fs::File::create(&temp_path).map_err(|error| {
+    format!(
+      "failed to create trimmed telemetry sample artifact {}: {error}",
+      temp_path.display()
+    )
+  })?;
+  std::io::copy(&mut reader, &mut temp).map_err(|error| {
+    format!(
+      "failed to trim telemetry sample artifact {}: {error}",
+      path.display()
+    )
+  })?;
+  temp.flush().map_err(|error| {
+    format!(
+      "failed to flush trimmed telemetry sample artifact {}: {error}",
+      temp_path.display()
+    )
+  })?;
+  drop(temp);
+
+  Ok(Some(temp_path))
 }
 
 impl Runtime {
@@ -162,12 +235,18 @@ impl Runtime {
       crate::run_builder::RunSpec::new(RunType::Execute, "auv.minecraft.telemetry.sample"),
       "Minecraft telemetry sample artifact recording",
       |context| {
-        let (_, artifact_ref) = context.stage_artifact_file_with_ref(
+        let artifact_source =
+          prepare_telemetry_sample_artifact(&sample_path)?.unwrap_or_else(|| sample_path.clone());
+        let stage_result = context.stage_artifact_file_with_ref(
           TELEMETRY_SAMPLE_ARTIFACT_ROLE,
-          &sample_path,
+          &artifact_source,
           &preferred_name,
           Some("durable minecraft telemetry sample".to_string()),
-        )?;
+        );
+        if artifact_source != sample_path {
+          let _ = std::fs::remove_file(&artifact_source);
+        }
+        let (_, artifact_ref) = stage_result?;
         Ok::<_, String>(artifact_ref)
       },
     )

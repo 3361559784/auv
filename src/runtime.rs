@@ -26,6 +26,13 @@ impl Runtime {
       recording: RunRecordingBackend::new(store, Arc::new(MemoryRunRecorder::new())),
     }
   }
+
+  pub fn open_session(
+    &self,
+    options: crate::session::SessionOptions,
+  ) -> crate::session::SessionRuntime {
+    crate::session::SessionRuntime::new(options)
+  }
   pub fn read_run(&self, run_id: &str) -> AuvResult<auv_tracing_driver::store::CanonicalRun> {
     self.recording.read_run(run_id)
   }

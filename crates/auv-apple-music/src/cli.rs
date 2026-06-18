@@ -1,0 +1,191 @@
+//! CLI entry point for `auv-apple-music`.
+use std::path::PathBuf;
+use std::process::ExitCode;
+
+use clap::{Args, Parser, Subcommand};
+
+use crate::commands::launch::OpenWindowInputs;
+use crate::commands::playback::PlaybackStatusInputs;
+use crate::commands::transport::{TransportAction, TransportInputs};
+use crate::{run_open_window, run_playback_status, run_transport_action};
+
+#[derive(Clone, Debug, Parser)]
+#[command(
+  name = "auv-apple-music",
+  disable_help_subcommand = true,
+  about = "Apple Music app commands (Windows)"
+)]
+struct CliArgs {
+  #[command(subcommand)]
+  command: CliCommand,
+}
+
+#[derive(Clone, Debug, Subcommand)]
+enum CliCommand {
+  /// Ensure Apple Music is running and its window is visible.
+  OpenWindow(OpenWindowArgs),
+  /// Read playback state, track title, and artist from Apple Music.
+  Playback(PlaybackArgs),
+  /// Send a transport control action (play/pause, next, previous).
+  Transport(TransportArgs),
+}
+
+#[derive(Clone, Debug, Args)]
+struct OpenWindowArgs {
+  /// How long to wait (ms) for the window to appear after launching.
+  /// Set to 0 to disable waiting.
+  #[arg(long = "settle-ms", default_value_t = 8000)]
+  settle_ms: u64,
+
+  /// Output as JSON instead of human-readable text.
+  #[arg(long)]
+  json: bool,
+}
+
+#[derive(Clone, Debug, Args)]
+struct PlaybackArgs {
+  /// Save a window capture PNG to this directory (for debugging).
+  #[arg(long = "artifact-dir", value_name = "DIR")]
+  artifact_dir: Option<PathBuf>,
+
+  /// Output as JSON instead of human-readable text.
+  #[arg(long)]
+  json: bool,
+}
+
+#[derive(Clone, Debug, Args)]
+struct TransportArgs {
+  /// Action to perform.
+  #[command(subcommand)]
+  action: TransportSubcommand,
+
+  /// How long to wait after the click for the app to react (ms).
+  #[arg(long = "settle-ms", default_value_t = 150, global = true)]
+  settle_ms: u64,
+
+  /// Output as JSON instead of human-readable text.
+  #[arg(long, global = true)]
+  json: bool,
+}
+
+#[derive(Clone, Debug, Subcommand)]
+enum TransportSubcommand {
+  /// Toggle play/pause.
+  PlayPause,
+  /// Skip to the next track.
+  Next,
+  /// Skip to the previous track (or restart the current one).
+  Previous,
+}
+
+pub fn run() -> ExitCode {
+  let args = CliArgs::parse();
+
+  match args.command {
+    CliCommand::OpenWindow(args) => run_open_window_cmd(args),
+    CliCommand::Playback(args) => run_playback_cmd(args),
+    CliCommand::Transport(args) => run_transport_cmd(args),
+  }
+}
+
+fn run_open_window_cmd(args: OpenWindowArgs) -> ExitCode {
+  let inputs = OpenWindowInputs {
+    settle_ms: args.settle_ms,
+    ..OpenWindowInputs::default()
+  };
+
+  match run_open_window(&inputs) {
+    Err(error) => {
+      eprintln!("error: {error}");
+      ExitCode::FAILURE
+    }
+    Ok(result) => {
+      if args.json {
+        println!("{}", serde_json::to_string_pretty(&result).unwrap());
+      } else {
+        let status = if result.window_found { "found" } else { "not found" };
+        let title = result.window_title.as_deref().unwrap_or("<no title>");
+        println!("window: {status}");
+        if result.window_found {
+          println!("  title: {title}");
+        }
+        for step in &result.steps {
+          let note = step
+            .note
+            .as_deref()
+            .map(|n| format!(" ({n})"))
+            .unwrap_or_default();
+          println!("  step: {} -> {}{}", step.name, step.outcome, note);
+        }
+      }
+      if result.window_found { ExitCode::SUCCESS } else { ExitCode::FAILURE }
+    }
+  }
+}
+
+fn run_playback_cmd(args: PlaybackArgs) -> ExitCode {
+  let inputs = PlaybackStatusInputs {
+    artifact_dir: args.artifact_dir,
+    ..PlaybackStatusInputs::default()
+  };
+
+  match run_playback_status(&inputs) {
+    Err(error) => {
+      eprintln!("error: {error}");
+      ExitCode::FAILURE
+    }
+    Ok(result) => {
+      if args.json {
+        println!("{}", serde_json::to_string_pretty(&result).unwrap());
+      } else {
+        println!("state:   {}", result.state);
+        println!(
+          "title:   {}",
+          result.track_title.as_deref().unwrap_or("-")
+        );
+        println!("artist:  {}", result.artist.as_deref().unwrap_or("-"));
+        println!("source:  {}", result.metadata_source);
+        if let Some(artifact) = &result.artifact {
+          println!("artifact: {artifact}");
+        }
+        for note in &result.diagnostics {
+          println!("note:    {note}");
+        }
+      }
+      ExitCode::SUCCESS
+    }
+  }
+}
+
+fn run_transport_cmd(args: TransportArgs) -> ExitCode {
+  let action = match args.action {
+    TransportSubcommand::PlayPause => TransportAction::PlayPause,
+    TransportSubcommand::Next => TransportAction::Next,
+    TransportSubcommand::Previous => TransportAction::Previous,
+  };
+
+  let inputs = TransportInputs {
+    action,
+    settle_ms: args.settle_ms,
+    ..TransportInputs::new(action)
+  };
+
+  match run_transport_action(&inputs) {
+    Err(error) => {
+      eprintln!("error: {error}");
+      ExitCode::FAILURE
+    }
+    Ok(result) => {
+      if args.json {
+        println!("{}", serde_json::to_string_pretty(&result).unwrap());
+      } else {
+        println!("action:  {}", result.action);
+        println!("key:     {}", result.key);
+        for note in &result.diagnostics {
+          println!("note:    {note}");
+        }
+      }
+      ExitCode::SUCCESS
+    }
+  }
+}

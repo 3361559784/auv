@@ -52,6 +52,6 @@ pub fn windows_driver_descriptor() -> WindowsDriverDescriptor {
   WindowsDriverDescriptor {
     id: "windows.desktop",
     platform: PlatformKind::Windows,
-    summary: "Windows desktop primitives. Currently system OCR; capture, window, input, and clipboard control are planned.",
+    summary: "Windows desktop driver: system OCR, display/region/window capture, window enumeration and mutation, foreground input, clipboard, permission probe, and UIA accessibility tree snapshot.",
   }
 }

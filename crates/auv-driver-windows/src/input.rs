@@ -35,6 +35,11 @@ mod vk {
   pub const SPACE: u16 = 0x20;
   pub const DELETE: u16 = 0x2E;
   pub const LWIN: u16 = 0x5B;
+  // Media keys (global — no app focus required).
+  pub const MEDIA_NEXT_TRACK: u16 = 0xB0;
+  pub const MEDIA_PREV_TRACK: u16 = 0xB1;
+  pub const MEDIA_STOP: u16 = 0xB2;
+  pub const MEDIA_PLAY_PAUSE: u16 = 0xB3;
 }
 
 /// A parsed key request: zero or more modifier virtual-keys plus one target key.
@@ -243,6 +248,10 @@ fn special_virtual_key(raw: &str) -> Option<u16> {
     "space" => Some(vk::SPACE),
     "delete" => Some(vk::DELETE),
     "backspace" | "back" => Some(vk::BACK),
+    "media_play_pause" | "play_pause" => Some(vk::MEDIA_PLAY_PAUSE),
+    "media_next" | "next_track" => Some(vk::MEDIA_NEXT_TRACK),
+    "media_prev" | "prev_track" => Some(vk::MEDIA_PREV_TRACK),
+    "media_stop" | "stop" => Some(vk::MEDIA_STOP),
     _ => None,
   }
 }

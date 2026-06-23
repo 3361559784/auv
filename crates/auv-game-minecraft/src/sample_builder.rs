@@ -1,6 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
+use std::io::BufReader;
 use std::path::{Path, PathBuf};
+
+use serde::de::DeserializeOwned;
 
 use crate::dataset::{SpatialBundleDirectory, SpatialBundleManifest};
 use crate::measurement::{TextureSweepSample, TextureSweepSampleSet, TextureSweepSampleSource};
@@ -29,8 +32,7 @@ struct ProfileFrames {
   texture_profile: String,
   first_timestamp_ms: Option<u64>,
   last_timestamp_ms: Option<u64>,
-  frames: Vec<MinecraftSpatialFrame>,
-  refused_noise_count: usize,
+  samples: Vec<TextureSweepSample>,
 }
 
 impl ProfileFrames {
@@ -84,10 +86,10 @@ pub fn build_texture_sweep_samples_from_bundles(
 
   let mut samples = Vec::new();
   for frames in profile_frames.values() {
-    if frames.frames.is_empty() {
+    if frames.samples.is_empty() {
       continue;
     }
-    samples.extend(samples_for_profile(frames)?);
+    samples.extend(samples_for_profile(frames));
   }
   if samples.is_empty() {
     return Err(
@@ -166,8 +168,7 @@ fn collect_manifest_frames(
         texture_profile: texture_profile.clone(),
         first_timestamp_ms: None,
         last_timestamp_ms: None,
-        frames: Vec::new(),
-        refused_noise_count: 0,
+        samples: Vec::new(),
       });
     if entry.texture_profile != texture_profile {
       return Err(format!(
@@ -176,61 +177,73 @@ fn collect_manifest_frames(
       ));
     }
     entry.record_observation(&frame);
-    if is_refused_noise(&frame) {
-      entry.refused_noise_count += 1;
-    } else {
-      entry.frames.push(frame);
-    }
+    entry
+      .samples
+      .push(sample_for_frame(&frame, &resource_pack, &texture_profile)?);
   }
   Ok(())
 }
 
-fn samples_for_profile(frames: &ProfileFrames) -> SampleBuildResult<Vec<TextureSweepSample>> {
+fn samples_for_profile(frames: &ProfileFrames) -> Vec<TextureSweepSample> {
   let observed_duration = frames.observed_duration_seconds();
-  let mut samples = Vec::new();
-  for frame in &frames.frames {
-    let raycast_hit = frame.raycast_hit.as_ref().ok_or_else(|| {
-      format!(
-        "frame {} in resource pack {} lacks raycast ground truth",
-        frame.spatial_frame_id, frames.resource_pack
-      )
-    })?;
-    let projected = MinecraftProjector::new(frame.clone())?
-      .project_block_target(&MinecraftBlockTarget::new(raycast_hit.block_pos))?;
-    let pose_error_px = match projected.visibility {
-      ProjectionVisibility::Visible => {
-        let point = projected.screen_point.ok_or_else(|| {
-          format!(
-            "frame {} projected visible without a screen point",
-            frame.spatial_frame_id
-          )
-        })?;
-        let center_x = f64::from(frame.viewport.width) / 2.0;
-        let center_y = f64::from(frame.viewport.height) / 2.0;
-        ((point.x - center_x).powi(2) + (point.y - center_y).powi(2)).sqrt()
-      }
-      _ => projected.match_radius_px + f64::from(frame.viewport.width.max(frame.viewport.height)),
-    };
-    samples.push(TextureSweepSample {
-      resource_pack: frames.resource_pack.clone(),
-      texture_profile: frames.texture_profile.clone(),
-      duration_seconds: observed_duration,
-      pose_error_px,
-      occlusion_iou: 1.0,
-      refused_noise: false,
-    });
-  }
-  for _ in 0..frames.refused_noise_count {
-    samples.push(TextureSweepSample {
-      resource_pack: frames.resource_pack.clone(),
-      texture_profile: frames.texture_profile.clone(),
-      duration_seconds: observed_duration,
+  frames
+    .samples
+    .iter()
+    .cloned()
+    .map(|mut sample| {
+      sample.duration_seconds = observed_duration;
+      sample
+    })
+    .collect()
+}
+
+fn sample_for_frame(
+  frame: &MinecraftSpatialFrame,
+  resource_pack: &str,
+  texture_profile: &str,
+) -> SampleBuildResult<TextureSweepSample> {
+  if is_refused_noise(frame) {
+    return Ok(TextureSweepSample {
+      resource_pack: resource_pack.to_string(),
+      texture_profile: texture_profile.to_string(),
+      duration_seconds: 0.0,
       pose_error_px: 0.0,
       occlusion_iou: 0.0,
       refused_noise: true,
     });
   }
-  Ok(samples)
+
+  let raycast_hit = frame.raycast_hit.as_ref().ok_or_else(|| {
+    format!(
+      "frame {} in resource pack {} lacks raycast ground truth",
+      frame.spatial_frame_id, resource_pack
+    )
+  })?;
+  let projected = MinecraftProjector::new(frame.clone())?
+    .project_block_target(&MinecraftBlockTarget::new(raycast_hit.block_pos))?;
+  let pose_error_px = match projected.visibility {
+    ProjectionVisibility::Visible => {
+      let point = projected.screen_point.ok_or_else(|| {
+        format!(
+          "frame {} projected visible without a screen point",
+          frame.spatial_frame_id
+        )
+      })?;
+      let center_x = f64::from(frame.viewport.width) / 2.0;
+      let center_y = f64::from(frame.viewport.height) / 2.0;
+      ((point.x - center_x).powi(2) + (point.y - center_y).powi(2)).sqrt()
+    }
+    _ => projected.match_radius_px + f64::from(frame.viewport.width.max(frame.viewport.height)),
+  };
+
+  Ok(TextureSweepSample {
+    resource_pack: resource_pack.to_string(),
+    texture_profile: texture_profile.to_string(),
+    duration_seconds: 0.0,
+    pose_error_px,
+    occlusion_iou: 1.0,
+    refused_noise: false,
+  })
 }
 
 fn classify_profile(frame: &MinecraftSpatialFrame) -> SampleBuildResult<Option<(String, String)>> {
@@ -274,33 +287,18 @@ fn is_refused_noise(frame: &MinecraftSpatialFrame) -> bool {
 }
 
 fn read_manifest(path: &Path) -> SampleBuildResult<SpatialBundleManifest> {
-  let bytes = fs::read(path).map_err(|error| {
-    format!(
-      "failed to read MC-6 spatial bundle manifest {}: {error}",
-      path.display()
-    )
-  })?;
-  serde_json::from_slice::<SpatialBundleManifest>(&bytes).map_err(|error| {
-    format!(
-      "failed to parse MC-6 spatial bundle manifest {}: {error}",
-      path.display()
-    )
-  })
+  read_json_file(path, "MC-6 spatial bundle manifest")
 }
 
 fn read_frame(path: &Path) -> SampleBuildResult<MinecraftSpatialFrame> {
-  let bytes = fs::read(path).map_err(|error| {
-    format!(
-      "failed to read MC-6 spatial frame artifact {}: {error}",
-      path.display()
-    )
-  })?;
-  serde_json::from_slice::<MinecraftSpatialFrame>(&bytes).map_err(|error| {
-    format!(
-      "failed to parse MC-6 spatial frame artifact {}: {error}",
-      path.display()
-    )
-  })
+  read_json_file(path, "MC-6 spatial frame artifact")
+}
+
+fn read_json_file<T: DeserializeOwned>(path: &Path, label: &str) -> SampleBuildResult<T> {
+  let file = fs::File::open(path)
+    .map_err(|error| format!("failed to open {label} {}: {error}", path.display()))?;
+  serde_json::from_reader(BufReader::new(file))
+    .map_err(|error| format!("failed to parse {label} {}: {error}", path.display()))
 }
 
 #[cfg(test)]

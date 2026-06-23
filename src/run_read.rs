@@ -27,7 +27,7 @@ use crate::model::AuvResult;
 use crate::scroll_scan::ScrollScanArtifact;
 use crate::stability::{StabilityAssessment, StabilityRejection};
 use auv_game_minecraft::artifact::MinecraftProjectionArtifact;
-use auv_game_minecraft::dataset::SpatialBundleManifest;
+use auv_game_minecraft::dataset::{SourceRunSummary, SpatialBundleCounts};
 use auv_tracing_driver::store::{CanonicalRun, LocalStore};
 use auv_tracing_driver::trace::ArtifactRecordV1Alpha1;
 
@@ -40,8 +40,15 @@ pub struct MinecraftTelemetrySampleArtifactLineage {
 
 pub struct MinecraftSpatialBundleManifestLineage {
   pub artifact: ArtifactRefLineage,
-  pub manifest: Option<SpatialBundleManifest>,
+  pub manifest: Option<MinecraftSpatialBundleManifestSummary>,
   pub issue: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct MinecraftSpatialBundleManifestSummary {
+  pub schema_version: u32,
+  pub source_run: SourceRunSummary,
+  pub counts: SpatialBundleCounts,
 }
 
 pub fn read_run(store: &LocalStore, run_id: &str) -> AuvResult<CanonicalRun> {
@@ -335,23 +342,12 @@ pub(crate) fn extract_minecraft_projection_artifacts(
       continue;
     }
 
-    let parsed = read_artifact_bytes(
+    let parsed = read_artifact_json::<MinecraftProjectionArtifact>(
       store,
       run.run.run_id.as_str(),
       artifact,
       crate::contract::MINECRAFT_PROJECTION_ARTIFACT_ROLE,
-    )
-    .and_then(|(bytes, artifact_path)| {
-      serde_json::from_slice::<MinecraftProjectionArtifact>(&bytes).map_err(|error| {
-        format!(
-          "failed to parse {} artifact {} for run {} from {}: {error}",
-          crate::contract::MINECRAFT_PROJECTION_ARTIFACT_ROLE,
-          artifact.artifact_id,
-          run.run.run_id,
-          artifact_path.display()
-        )
-      })
-    });
+    );
 
     if let Ok(projection) = parsed {
       artifacts.push(projection);
@@ -399,23 +395,12 @@ pub(crate) fn extract_minecraft_spatial_bundle_manifests(
       continue;
     }
 
-    let parsed = read_artifact_bytes(
+    let parsed = read_artifact_json::<MinecraftSpatialBundleManifestSummary>(
       store,
       run.run.run_id.as_str(),
       artifact,
       crate::minecraft::MINECRAFT_SPATIAL_BUNDLE_ARTIFACT_ROLE,
-    )
-    .and_then(|(bytes, artifact_path)| {
-      serde_json::from_slice::<SpatialBundleManifest>(&bytes).map_err(|error| {
-        format!(
-          "failed to parse {} artifact {} for run {} from {}: {error}",
-          crate::minecraft::MINECRAFT_SPATIAL_BUNDLE_ARTIFACT_ROLE,
-          artifact.artifact_id,
-          run.run.run_id,
-          artifact_path.display()
-        )
-      })
-    });
+    );
 
     match parsed {
       Ok(manifest) => manifests.push(MinecraftSpatialBundleManifestLineage {
@@ -524,22 +509,12 @@ pub(crate) fn extract_detector_recognition_lineage(
       continue;
     }
 
-    let parsed = read_artifact_bytes(
+    let parsed = read_artifact_json::<RecognitionResult>(
       store,
       run.run.run_id.as_str(),
       artifact,
       DETECTOR_RECOGNITION_ARTIFACT_ROLE,
-    )
-    .and_then(|(bytes, artifact_path)| {
-      serde_json::from_slice::<RecognitionResult>(&bytes).map_err(|error| {
-        format!(
-          "failed to parse detector-recognition artifact {} for run {} from {}: {error}",
-          artifact.artifact_id,
-          run.run.run_id,
-          artifact_path.display()
-        )
-      })
-    });
+    );
 
     match parsed {
       Ok(recognition) => lineage.push(detector_recognition_lineage_entry(
@@ -620,22 +595,12 @@ pub(crate) fn extract_candidate_promotion_lineage(
       continue;
     }
 
-    let parsed = read_artifact_bytes(
+    let parsed = read_artifact_json::<CandidatePromotionArtifact>(
       store,
       run.run.run_id.as_str(),
       artifact,
       CANDIDATE_PROMOTION_ARTIFACT_ROLE,
-    )
-    .and_then(|(bytes, artifact_path)| {
-      serde_json::from_slice::<CandidatePromotionArtifact>(&bytes).map_err(|error| {
-        format!(
-          "failed to parse candidate-promotion artifact {} for run {} from {}: {error}",
-          artifact.artifact_id,
-          run.run.run_id,
-          artifact_path.display()
-        )
-      })
-    });
+    );
 
     match parsed {
       Ok(promotion) => lineage.push(candidate_promotion_lineage_entry(run, artifact, promotion)),
@@ -697,22 +662,12 @@ pub(crate) fn extract_candidate_action_decision_lineage(
       continue;
     }
 
-    let parsed = read_artifact_bytes(
+    let parsed = read_artifact_json::<CandidateActionDecisionArtifact>(
       store,
       run.run.run_id.as_str(),
       artifact,
       CANDIDATE_ACTION_DECISION_ARTIFACT_ROLE,
-    )
-    .and_then(|(bytes, artifact_path)| {
-      serde_json::from_slice::<CandidateActionDecisionArtifact>(&bytes).map_err(|error| {
-        format!(
-          "failed to parse candidate-action-decision artifact {} for run {} from {}: {error}",
-          artifact.artifact_id,
-          run.run.run_id,
-          artifact_path.display()
-        )
-      })
-    });
+    );
 
     match parsed {
       Ok(decision) => lineage.push(candidate_action_decision_lineage_entry(
@@ -749,22 +704,12 @@ pub(crate) fn extract_candidate_action_execution_lineage(
       continue;
     }
 
-    let parsed = read_artifact_bytes(
+    let parsed = read_artifact_json::<CandidateActionExecutionArtifact>(
       store,
       run.run.run_id.as_str(),
       artifact,
       CANDIDATE_ACTION_EXECUTION_ARTIFACT_ROLE,
-    )
-    .and_then(|(bytes, artifact_path)| {
-      serde_json::from_slice::<CandidateActionExecutionArtifact>(&bytes).map_err(|error| {
-        format!(
-          "failed to parse candidate-action-execution artifact {} for run {} from {}: {error}",
-          artifact.artifact_id,
-          run.run.run_id,
-          artifact_path.display()
-        )
-      })
-    });
+    );
 
     match parsed {
       Ok(execution) => lineage.push(candidate_action_execution_lineage_entry(
@@ -1434,8 +1379,8 @@ fn read_artifact_json<T: DeserializeOwned>(
   artifact: &ArtifactRecordV1Alpha1,
   artifact_role: &str,
 ) -> AuvResult<T> {
-  let (bytes, artifact_path) = read_artifact_bytes(store, run_id, artifact, artifact_role)?;
-  serde_json::from_slice(&bytes).map_err(|error| {
+  let (file, artifact_path) = open_artifact_file(store, run_id, artifact, artifact_role)?;
+  serde_json::from_reader(BufReader::new(file)).map_err(|error| {
     format!(
       "failed to parse {artifact_role} artifact {} for run {run_id} from {}: {error}",
       artifact.artifact_id,
@@ -1444,25 +1389,25 @@ fn read_artifact_json<T: DeserializeOwned>(
   })
 }
 
-fn read_artifact_bytes(
+fn open_artifact_file(
   store: &LocalStore,
   run_id: &str,
   artifact: &ArtifactRecordV1Alpha1,
   artifact_role: &str,
-) -> AuvResult<(Vec<u8>, PathBuf)> {
+) -> AuvResult<(fs::File, PathBuf)> {
   let (_, artifact_path) = store.artifact_file_scoped(
     run_id,
     artifact.artifact_id.as_str(),
     Some(artifact.span_id.as_str()),
   )?;
-  let bytes = fs::read(&artifact_path).map_err(|error| {
+  let file = fs::File::open(&artifact_path).map_err(|error| {
     format!(
-      "failed to read {artifact_role} artifact {} for run {run_id} from {}: {error}",
+      "failed to open {artifact_role} artifact {} for run {run_id} from {}: {error}",
       artifact.artifact_id,
       artifact_path.display()
     )
   })?;
-  Ok((bytes, artifact_path))
+  Ok((file, artifact_path))
 }
 
 fn read_telemetry_artifact_summary(
@@ -1483,13 +1428,7 @@ fn read_telemetry_artifact_summary(
       artifact_path.display()
     )
   })?;
-  let file = fs::File::open(&artifact_path).map_err(|error| {
-    format!(
-      "failed to open {artifact_role} artifact {} for run {run_id} from {}: {error}",
-      artifact.artifact_id,
-      artifact_path.display()
-    )
-  })?;
+  let (file, _) = open_artifact_file(store, run_id, artifact, artifact_role)?;
   let line_count = BufReader::new(file)
     .lines()
     .try_fold(0usize, |count, line| {
@@ -1520,11 +1459,12 @@ mod tests {
     CANDIDATE_PROMOTION_ARTIFACT_ROLE, CandidateActionDecisionLineageStatus,
     CandidateActionExecutionClosureState, CandidateActionExecutionLineageStatus,
     CandidatePromotionLineageStatus, DETECTOR_RECOGNITION_ARTIFACT_ROLE,
-    DetectorRecognitionLineageStatus, extract_candidate_action_decision_lineage,
-    extract_candidate_action_execution_lineage, extract_candidate_promotion_lineage,
-    extract_detector_recognition_lineage, extract_observation_snapshots, extract_verifications,
-    list_candidate_action_decision_lineage, list_candidate_action_execution_lineage,
-    list_candidate_promotion_lineage, list_detector_recognition_lineage,
+    DetectorRecognitionLineageStatus, MinecraftSpatialBundleManifestSummary,
+    extract_candidate_action_decision_lineage, extract_candidate_action_execution_lineage,
+    extract_candidate_promotion_lineage, extract_detector_recognition_lineage,
+    extract_observation_snapshots, extract_verifications, list_candidate_action_decision_lineage,
+    list_candidate_action_execution_lineage, list_candidate_promotion_lineage,
+    list_detector_recognition_lineage, list_minecraft_spatial_bundle_manifests,
     list_observation_snapshots, list_verifications,
   };
   use crate::action_resolver_decision::{ActionResolverDecision, ActionResolverDecisionInput};
@@ -1551,6 +1491,7 @@ mod tests {
     SectionCandidate, StopEvidence, StopPolicy, StopReason,
   };
   use crate::stability::{StabilityAssessment, StabilityPolicy, StabilityRejection};
+  use auv_game_minecraft::dataset::{SourceRunSummary, SpatialBundleCounts};
   use auv_tracing_driver::ArtifactFileSource;
   use auv_tracing_driver::store::{CanonicalRun, LocalStore};
   use auv_tracing_driver::trace::{
@@ -1891,6 +1832,80 @@ mod tests {
     let listed = list_detector_recognition_lineage(&store, "run_read_detector_recognition")
       .expect("detector recognition lineage should list");
     assert_eq!(listed, extracted);
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn minecraft_spatial_bundle_manifest_lineage_reads_summary_without_artifact_payload() {
+    let root = temp_dir("run-read-minecraft-spatial-bundle");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let run = dummy_run("run_read_minecraft_spatial_bundle");
+    let span = dummy_span(&run.root_span_id);
+
+    let bundle_manifest = MinecraftSpatialBundleManifestSummary {
+      schema_version: 1,
+      source_run: SourceRunSummary {
+        source_run_id: "source_run_1".to_string(),
+        source_operation: "auv.minecraft.bridge".to_string(),
+        source_run_type: "execute".to_string(),
+        source_status: "ok".to_string(),
+        generated_at_millis: 1,
+        auv_git_commit: None,
+        exporter_git_commit: None,
+      },
+      counts: SpatialBundleCounts {
+        screenshots: 2,
+        spatial_frames: 3,
+        actions: 4,
+        verification: 5,
+        overlays: 6,
+        skipped: 7,
+      },
+    };
+
+    let artifacts = vec![stage_json_artifact(
+      &store,
+      &root,
+      &run.run_id,
+      &span.span_id,
+      0,
+      crate::minecraft::MINECRAFT_SPATIAL_BUNDLE_ARTIFACT_ROLE,
+      "bundle-run.json",
+      &serde_json::json!({
+        "schema_version": bundle_manifest.schema_version,
+        "source_run": bundle_manifest.source_run,
+        "counts": bundle_manifest.counts,
+        "artifacts": [
+          {
+            "artifact_id": "artifact_0001",
+            "role": "minecraft-spatial-frame",
+            "source_path": "artifacts/frame.json",
+            "bundle_path": "spatial_frames/artifact_0001-frame.json",
+            "directory": "spatial_frames",
+            "summary": "big payload should be ignored by read-side summary"
+          }
+        ],
+        "known_limits": ["fixture"]
+      }),
+    )];
+
+    store
+      .write_run_snapshot(&CanonicalRun {
+        run,
+        spans: vec![span],
+        events: Vec::new(),
+        artifacts,
+      })
+      .expect("run snapshot should persist");
+
+    let listed =
+      list_minecraft_spatial_bundle_manifests(&store, "run_read_minecraft_spatial_bundle")
+        .expect("spatial bundle manifests should list");
+    assert_eq!(listed.len(), 1);
+    let manifest = listed[0].manifest.as_ref().expect("summary should parse");
+    assert_eq!(manifest.source_run.source_run_id, "source_run_1");
+    assert_eq!(manifest.counts.spatial_frames, 3);
 
     let _ = fs::remove_dir_all(root);
   }

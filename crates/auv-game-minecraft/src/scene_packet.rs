@@ -1,7 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
+use std::io::{BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use crate::dataset::{SpatialBundleDirectory, SpatialBundleManifest};
@@ -92,6 +94,20 @@ pub struct ScenePacketCameraRecord {
   pub raycast_hit: Option<RaycastHit>,
 }
 
+#[derive(Serialize)]
+struct ScenePacketFramePayloadRef<'a> {
+  pub frame_index: usize,
+  pub source_run_id: &'a str,
+  pub source_bundle_manifest_path: &'a str,
+  pub source_frame_artifact_id: &'a str,
+  pub source_frame_bundle_path: &'a str,
+  #[serde(default)]
+  pub screenshot_artifact_id: Option<&'a str>,
+  #[serde(default)]
+  pub screenshot_path: Option<&'a str>,
+  pub spatial_frame: &'a MinecraftSpatialFrame,
+}
+
 pub fn export_3dgs_scene_packet(inputs: ScenePacketInputs) -> ScenePacketResult<ScenePacketOutput> {
   if inputs.bundle_manifest_paths.is_empty() {
     return Err("at least one MC-7 source spatial bundle manifest is required".to_string());
@@ -106,11 +122,12 @@ pub fn export_3dgs_scene_packet(inputs: ScenePacketInputs) -> ScenePacketResult<
   })?;
 
   let mut frames = Vec::new();
-  let mut cameras = Vec::new();
   let mut source_run_ids = BTreeSet::new();
   let mut known_limits = BTreeSet::new();
   let mut screenshot_count = 0;
   let mut missing_screenshot_count = 0;
+  let cameras_path = inputs.output_dir.join("cameras.json");
+  let mut camera_writer = JsonArrayWriter::create(&cameras_path, "MC-7 scene packet cameras JSON")?;
 
   for manifest_path in &inputs.bundle_manifest_paths {
     let manifest = read_manifest(manifest_path)?;
@@ -163,19 +180,21 @@ pub fn export_3dgs_scene_packet(inputs: ScenePacketInputs) -> ScenePacketResult<
         (None, None)
       };
 
-      let payload = ScenePacketFramePayload {
+      let source_run_id = manifest.source_run.source_run_id.as_str();
+      let source_bundle_manifest_path = manifest_path.to_string_lossy().into_owned();
+      let payload = ScenePacketFramePayloadRef {
         frame_index,
-        source_run_id: manifest.source_run.source_run_id.clone(),
-        source_bundle_manifest_path: manifest_path.to_string_lossy().into_owned(),
-        source_frame_artifact_id: artifact.artifact_id.clone(),
-        source_frame_bundle_path: artifact.bundle_path.clone(),
-        screenshot_artifact_id: screenshot_artifact_id.clone(),
-        screenshot_path: screenshot_path.clone(),
-        spatial_frame: spatial_frame.clone(),
+        source_run_id,
+        source_bundle_manifest_path: source_bundle_manifest_path.as_str(),
+        source_frame_artifact_id: artifact.artifact_id.as_str(),
+        source_frame_bundle_path: artifact.bundle_path.as_str(),
+        screenshot_artifact_id: screenshot_artifact_id.as_deref(),
+        screenshot_path: screenshot_path.as_deref(),
+        spatial_frame: &spatial_frame,
       };
       write_json(&inputs.output_dir.join(&frame_json_path), &payload)?;
 
-      cameras.push(ScenePacketCameraRecord {
+      camera_writer.push(&ScenePacketCameraRecord {
         frame_index,
         spatial_frame_id: spatial_frame.spatial_frame_id.clone(),
         monotonic_timestamp_ms: spatial_frame.monotonic_timestamp_ms,
@@ -184,12 +203,12 @@ pub fn export_3dgs_scene_packet(inputs: ScenePacketInputs) -> ScenePacketResult<
         projection_matrix: spatial_frame.projection_matrix,
         player_pose: spatial_frame.player_pose,
         raycast_hit: spatial_frame.raycast_hit.clone(),
-      });
+      })?;
       frames.push(ScenePacketFrameRecord {
         frame_index,
         spatial_frame_id: spatial_frame.spatial_frame_id,
-        source_run_id: manifest.source_run.source_run_id.clone(),
-        source_bundle_manifest_path: manifest_path.to_string_lossy().into_owned(),
+        source_run_id: source_run_id.to_string(),
+        source_bundle_manifest_path,
         source_frame_artifact_id: artifact.artifact_id.clone(),
         source_frame_bundle_path: artifact.bundle_path.clone(),
         frame_json_path,
@@ -237,10 +256,9 @@ pub fn export_3dgs_scene_packet(inputs: ScenePacketInputs) -> ScenePacketResult<
   };
 
   let manifest_path = inputs.output_dir.join("run.json");
-  let cameras_path = inputs.output_dir.join("cameras.json");
   let known_limits_path = inputs.output_dir.join("known_limits.json");
   write_json(&manifest_path, &manifest)?;
-  write_json(&cameras_path, &cameras)?;
+  camera_writer.finish()?;
   write_json(&known_limits_path, &manifest.known_limits)?;
 
   Ok(ScenePacketOutput {
@@ -253,33 +271,11 @@ pub fn export_3dgs_scene_packet(inputs: ScenePacketInputs) -> ScenePacketResult<
 }
 
 fn read_manifest(path: &Path) -> ScenePacketResult<SpatialBundleManifest> {
-  let bytes = fs::read(path).map_err(|error| {
-    format!(
-      "failed to read MC-7 source bundle manifest {}: {error}",
-      path.display()
-    )
-  })?;
-  serde_json::from_slice::<SpatialBundleManifest>(&bytes).map_err(|error| {
-    format!(
-      "failed to parse MC-7 source bundle manifest {}: {error}",
-      path.display()
-    )
-  })
+  read_json_file(path, "MC-7 source bundle manifest")
 }
 
 fn read_frame(path: &Path) -> ScenePacketResult<MinecraftSpatialFrame> {
-  let bytes = fs::read(path).map_err(|error| {
-    format!(
-      "failed to read MC-7 source spatial frame {}: {error}",
-      path.display()
-    )
-  })?;
-  serde_json::from_slice::<MinecraftSpatialFrame>(&bytes).map_err(|error| {
-    format!(
-      "failed to parse MC-7 source spatial frame {}: {error}",
-      path.display()
-    )
-  })
+  read_json_file(path, "MC-7 source spatial frame")
 }
 
 fn extension_for(path: &str) -> String {
@@ -331,6 +327,76 @@ fn write_json(path: &Path, value: &impl Serialize) -> ScenePacketResult<()> {
       path.display()
     )
   })
+}
+
+fn read_json_file<T: DeserializeOwned>(path: &Path, label: &str) -> ScenePacketResult<T> {
+  let file = fs::File::open(path)
+    .map_err(|error| format!("failed to open {label} {}: {error}", path.display()))?;
+  serde_json::from_reader(BufReader::new(file))
+    .map_err(|error| format!("failed to parse {label} {}: {error}", path.display()))
+}
+
+struct JsonArrayWriter {
+  path: PathBuf,
+  writer: BufWriter<fs::File>,
+  first: bool,
+}
+
+impl JsonArrayWriter {
+  fn create(path: &Path, label: &str) -> ScenePacketResult<Self> {
+    if let Some(parent) = path.parent() {
+      fs::create_dir_all(parent).map_err(|error| {
+        format!(
+          "failed to create {label} directory {}: {error}",
+          parent.display()
+        )
+      })?;
+    }
+    let file = fs::File::create(path)
+      .map_err(|error| format!("failed to create {label} {}: {error}", path.display()))?;
+    let mut writer = BufWriter::new(file);
+    writer
+      .write_all(b"[\n")
+      .map_err(|error| format!("failed to start {label} {}: {error}", path.display()))?;
+    Ok(Self {
+      path: path.to_path_buf(),
+      writer,
+      first: true,
+    })
+  }
+
+  fn push(&mut self, value: &impl Serialize) -> ScenePacketResult<()> {
+    if !self.first {
+      self.writer.write_all(b",\n").map_err(|error| {
+        format!(
+          "failed to append JSON array separator {}: {error}",
+          self.path.display()
+        )
+      })?;
+    }
+    self.first = false;
+    serde_json::to_writer_pretty(&mut self.writer, value).map_err(|error| {
+      format!(
+        "failed to serialize MC-7 scene packet JSON array entry {}: {error}",
+        self.path.display()
+      )
+    })
+  }
+
+  fn finish(mut self) -> ScenePacketResult<()> {
+    self.writer.write_all(b"\n]\n").map_err(|error| {
+      format!(
+        "failed to finish JSON array {}: {error}",
+        self.path.display()
+      )
+    })?;
+    self.writer.flush().map_err(|error| {
+      format!(
+        "failed to flush JSON array {}: {error}",
+        self.path.display()
+      )
+    })
+  }
 }
 
 #[cfg(test)]
@@ -458,6 +524,10 @@ mod tests {
     assert!(output.manifest_path.is_file());
     assert!(output.cameras_path.is_file());
     assert!(output.known_limits_path.is_file());
+    let cameras: Vec<ScenePacketCameraRecord> =
+      serde_json::from_slice(&fs::read(&output.cameras_path).expect("cameras json should read"))
+        .expect("cameras json should parse");
+    assert_eq!(cameras.len(), 1);
     assert!(
       output
         .output_dir

@@ -828,22 +828,7 @@ fn run_minecraft_live_click(
       )
     })?;
   let post_sample_path = post_telemetry_sample.unwrap_or_else(|| telemetry_sample.clone());
-  let screenshot_image = ImageReader::open(&screenshot)
-    .map_err(|error| {
-      format!(
-        "failed to open screenshot {}: {error}",
-        screenshot.display()
-      )
-    })?
-    .decode()
-    .map_err(|error| {
-      format!(
-        "failed to decode screenshot {}: {error}",
-        screenshot.display()
-      )
-    })?
-    .to_rgb8();
-  let screenshot_dimensions = (screenshot_image.width(), screenshot_image.height());
+  let screenshot_dimensions = read_screenshot_dimensions(&screenshot)?;
 
   runtime.run_recorded_operation(
     RunSpec::new(
@@ -876,39 +861,38 @@ fn run_minecraft_live_click(
         pre_frame.monotonic_timestamp_ms
       };
 
-      let evidence = auv_game_minecraft::evidence::build_projection_evidence(
+      let bound = auv_game_minecraft::bind_capture_to_frame(
         pre_frame.clone(),
-        auv_game_minecraft::evidence::ScreenshotCapture {
-          image: screenshot_image,
-          artifact_ref: format!("artifact://{screenshot_artifact_id}"),
-          capture_monotonic_timestamp_ms: capture_timestamp_ms,
-          is_minecraft_window: screenshot_is_minecraft_window,
-          screenshot_dimensions: Some(screenshot_dimensions),
-        },
+        format!("artifact://{screenshot_artifact_id}"),
+        capture_timestamp_ms,
+      );
+      let assessment = auv_game_minecraft::evidence::assess_bound_projection(
+        bound.frame,
+        screenshot_dimensions,
+        screenshot_is_minecraft_window,
         &auv_game_minecraft::MinecraftBlockTarget::new(target_block),
         Some(250),
       )?;
 
-      let projection_artifact = match &evidence {
-        auv_game_minecraft::evidence::ProjectionEvidence::Bound { artifact, .. } => {
+      let projection_artifact = match &assessment {
+        auv_game_minecraft::evidence::ProjectionAssessment::Bound { artifact, .. } => {
           artifact.clone()
         }
-        auv_game_minecraft::evidence::ProjectionEvidence::Refused { refusal, .. } => evidence
-          .artifact()
-          .clone()
-          .with_mismatch_refusal_reason(refusal.reason),
+        auv_game_minecraft::evidence::ProjectionAssessment::Refused { artifact, .. } => {
+          artifact.clone()
+        }
       };
       let (staged_projection_path, projection_ref) =
         stage_minecraft_projection_artifact(context, &projection_artifact)?;
       let projection_artifact_id = projection_ref.artifact_id.as_str().to_string();
 
-      let projected_point = match &evidence {
-        auv_game_minecraft::evidence::ProjectionEvidence::Bound { artifact, .. } => {
+      let projected_point = match &assessment {
+        auv_game_minecraft::evidence::ProjectionAssessment::Bound { artifact, .. } => {
           artifact.projected_point.clone().ok_or_else(|| {
             "minecraft projection evidence is bound but missing projected point".to_string()
           })?
         }
-        auv_game_minecraft::evidence::ProjectionEvidence::Refused { refusal, .. } => {
+        auv_game_minecraft::evidence::ProjectionAssessment::Refused { refusal, .. } => {
           return Err(format!(
             "minecraft live click refused before input dispatch: {:?}",
             refusal.reason
@@ -1004,22 +988,7 @@ fn run_minecraft_projection_bridge(
       )
     })?;
 
-  let screenshot_image = ImageReader::open(&screenshot)
-    .map_err(|error| {
-      format!(
-        "failed to open screenshot {}: {error}",
-        screenshot.display()
-      )
-    })?
-    .decode()
-    .map_err(|error| {
-      format!(
-        "failed to decode screenshot {}: {error}",
-        screenshot.display()
-      )
-    })?
-    .to_rgb8();
-  let screenshot_dimensions = (screenshot_image.width(), screenshot_image.height());
+  let screenshot_dimensions = read_screenshot_dimensions(&screenshot)?;
 
   runtime.run_recorded_operation(
     auv_tracing_driver::run_builder::RunSpec::new(
@@ -1057,27 +1026,21 @@ fn run_minecraft_projection_bridge(
       let (staged_frame_path, _frame_ref) =
         stage_minecraft_spatial_frame_artifact(context, &bound.frame)?;
 
-      let evidence = auv_game_minecraft::evidence::build_projection_evidence(
+      let assessment = auv_game_minecraft::evidence::assess_bound_projection(
         bound.frame,
-        auv_game_minecraft::evidence::ScreenshotCapture {
-          image: screenshot_image,
-          artifact_ref: format!("artifact://{screenshot_artifact_id}"),
-          capture_monotonic_timestamp_ms: capture_timestamp_ms,
-          is_minecraft_window: screenshot_is_minecraft_window,
-          screenshot_dimensions: Some(screenshot_dimensions),
-        },
+        screenshot_dimensions,
+        screenshot_is_minecraft_window,
         &auv_game_minecraft::MinecraftBlockTarget::new(target_block),
         Some(250),
       )?;
 
-      let projection_artifact = match &evidence {
-        auv_game_minecraft::evidence::ProjectionEvidence::Bound { artifact, .. } => {
+      let projection_artifact = match &assessment {
+        auv_game_minecraft::evidence::ProjectionAssessment::Bound { artifact, .. } => {
           artifact.clone()
         }
-        auv_game_minecraft::evidence::ProjectionEvidence::Refused { refusal, .. } => evidence
-          .artifact()
-          .clone()
-          .with_mismatch_refusal_reason(refusal.reason),
+        auv_game_minecraft::evidence::ProjectionAssessment::Refused { artifact, .. } => {
+          artifact.clone()
+        }
       };
       let (staged_projection_path, projection_ref) =
         stage_minecraft_projection_artifact(context, &projection_artifact)?;
@@ -1090,7 +1053,20 @@ fn run_minecraft_projection_bridge(
       let mut overlay_artifact_id = None;
       let mut refusal_reason = None;
 
-      if let auv_game_minecraft::evidence::ProjectionEvidence::Bound { overlay, .. } = evidence {
+      if let auv_game_minecraft::evidence::ProjectionAssessment::Bound {
+        artifact,
+        raycast_hit,
+      } = assessment
+      {
+        let screenshot_image = decode_screenshot_rgb(&screenshot)?;
+        let projected = artifact.projected_point.clone().ok_or_else(|| {
+          "minecraft bridge bound projection is missing projected point".to_string()
+        })?;
+        let overlay = auv_game_minecraft::render_projection_overlay(
+          screenshot_image,
+          &projected,
+          raycast_hit.as_ref(),
+        );
         let overlay_path = std::env::temp_dir().join(format!(
           "auv-minecraft-overlay-{}-{}.png",
           context.run_id(),
@@ -1108,8 +1084,9 @@ fn run_minecraft_projection_bridge(
         let _ = fs::remove_file(&overlay_path);
         overlay_artifact_id = Some(overlay_ref.artifact_id.as_str().to_string());
         artifact_paths.push(staged_overlay_path);
-      } else if let auv_game_minecraft::evidence::ProjectionEvidence::Refused { refusal, .. } =
-        evidence
+      } else if let auv_game_minecraft::evidence::ProjectionAssessment::Refused {
+        refusal, ..
+      } = assessment
       {
         refusal_reason = refusal.reason.map(|reason| format!("{:?}", reason));
       }
@@ -1123,6 +1100,26 @@ fn run_minecraft_projection_bridge(
       })
     },
   )
+}
+
+fn read_screenshot_dimensions(path: &Path) -> Result<(u32, u32), String> {
+  ImageReader::open(path)
+    .map_err(|error| format!("failed to open screenshot {}: {error}", path.display()))?
+    .into_dimensions()
+    .map_err(|error| {
+      format!(
+        "failed to read screenshot dimensions {}: {error}",
+        path.display()
+      )
+    })
+}
+
+fn decode_screenshot_rgb(path: &Path) -> Result<image::RgbImage, String> {
+  let image = ImageReader::open(path)
+    .map_err(|error| format!("failed to open screenshot {}: {error}", path.display()))?
+    .decode()
+    .map_err(|error| format!("failed to decode screenshot {}: {error}", path.display()))?;
+  Ok(image.to_rgb8())
 }
 
 fn stage_minecraft_projection_artifact(

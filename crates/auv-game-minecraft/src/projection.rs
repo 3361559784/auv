@@ -5,6 +5,18 @@ use crate::types::{
   ProjectionVisibility, Vec3,
 };
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct ScreenProjection {
+  x: f64,
+  y: f64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum ProjectedScreenPoint {
+  Visible(ScreenProjection),
+  Hidden(ProjectionVisibility),
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct MinecraftProjector {
   frame: MinecraftSpatialFrame,
@@ -37,39 +49,17 @@ impl MinecraftProjector {
       );
     }
 
-    let clip = self.project_vec4(target.aim_point());
-    if !clip.iter().all(|value| value.is_finite()) {
-      return Err("projection produced non-finite clip coordinates".to_string());
+    let clip = self.project_vec4(target.block_pos.center());
+    let screen_projection = self.projected_screen_point_from_clip(clip, 1.0)?;
+    if let ProjectedScreenPoint::Hidden(visibility) = screen_projection {
+      return Ok(self.non_visible_point(visibility));
     }
-    if clip[3] <= 0.0 {
-      return Ok(self.non_visible_point(ProjectionVisibility::BehindCamera));
-    }
-
-    let ndc_x = clip[0] / clip[3];
-    let ndc_y = clip[1] / clip[3];
-    let ndc_z = clip[2] / clip[3];
-    if [ndc_x, ndc_y, ndc_z].iter().any(|value| !value.is_finite()) {
-      return Err("projection produced non-finite normalized device coordinates".to_string());
-    }
-    if !(-1.0..=1.0).contains(&ndc_x)
-      || !(-1.0..=1.0).contains(&ndc_y)
-      || !(-1.0..=1.0).contains(&ndc_z)
-    {
-      return Ok(self.non_visible_point(ProjectionVisibility::OutOfFrustum));
-    }
-
-    // Y is flipped because image-space origin is top-left while NDC origin is centered.
-    let width = f64::from(self.frame.viewport.width);
-    let height = f64::from(self.frame.viewport.height);
-    let x = (ndc_x * 0.5 + 0.5) * width;
-    let y = (1.0 - (ndc_y * 0.5 + 0.5)) * height;
-    let screen_point = Point::new(x, y);
-    if !(0.0..=width).contains(&x) || !(0.0..=height).contains(&y) {
-      return Ok(self.non_visible_point(ProjectionVisibility::OutsideWindow));
-    }
+    let ProjectedScreenPoint::Visible(screen_projection) = screen_projection else {
+      unreachable!("hidden block targets must return early");
+    };
 
     Ok(MinecraftProjectedPoint {
-      screen_point: Some(screen_point),
+      screen_point: Some(Point::new(screen_projection.x, screen_projection.y)),
       visibility: ProjectionVisibility::Visible,
       match_radius_px: self.project_block_match_radius(target.block_pos)?,
       basis_frame_id: self.frame.spatial_frame_id.clone(),
@@ -85,28 +75,16 @@ impl MinecraftProjector {
     let mut visible_corner_count = 0usize;
 
     for corner in block_pos.aabb_corners() {
-      let clip = self.project_vec4(corner);
-      if clip[3] <= 0.0 {
-        continue;
+      match self.project_screen_point(corner, 1.5)? {
+        Some(screen_projection) => {
+          min_x = min_x.min(screen_projection.x);
+          max_x = max_x.max(screen_projection.x);
+          min_y = min_y.min(screen_projection.y);
+          max_y = max_y.max(screen_projection.y);
+          visible_corner_count += 1;
+        }
+        None => continue,
       }
-      let ndc_x = clip[0] / clip[3];
-      let ndc_y = clip[1] / clip[3];
-      let ndc_z = clip[2] / clip[3];
-      if !(-1.5..=1.5).contains(&ndc_x)
-        || !(-1.5..=1.5).contains(&ndc_y)
-        || !(-1.5..=1.5).contains(&ndc_z)
-      {
-        continue;
-      }
-      let width = f64::from(self.frame.viewport.width);
-      let height = f64::from(self.frame.viewport.height);
-      let x = (ndc_x * 0.5 + 0.5) * width;
-      let y = (1.0 - (ndc_y * 0.5 + 0.5)) * height;
-      min_x = min_x.min(x);
-      max_x = max_x.max(x);
-      min_y = min_y.min(y);
-      max_y = max_y.max(y);
-      visible_corner_count += 1;
     }
 
     if visible_corner_count == 0 {
@@ -145,6 +123,96 @@ impl MinecraftProjector {
       basis_frame_id: self.frame.spatial_frame_id.clone(),
       confidence: 1.0,
     }
+  }
+
+  fn project_screen_point(
+    &self,
+    world: Vec3,
+    ndc_limit: f64,
+  ) -> Result<Option<ScreenProjection>, String> {
+    let clip = self.project_vec4(world);
+    self.clip_to_screen_projection(clip, ndc_limit)
+  }
+
+  fn projected_screen_point_from_clip(
+    &self,
+    clip: [f64; 4],
+    ndc_limit: f64,
+  ) -> Result<ProjectedScreenPoint, String> {
+    if let Some(screen_projection) = self.clip_to_screen_projection(clip, ndc_limit)? {
+      return Ok(ProjectedScreenPoint::Visible(screen_projection));
+    }
+
+    Ok(ProjectedScreenPoint::Hidden(
+      self.hidden_visibility_from_clip(clip, ndc_limit)?,
+    ))
+  }
+
+  fn hidden_visibility_from_clip(
+    &self,
+    clip: [f64; 4],
+    ndc_limit: f64,
+  ) -> Result<ProjectionVisibility, String> {
+    if !clip.iter().all(|value| value.is_finite()) {
+      return Err("projection produced non-finite clip coordinates".to_string());
+    }
+    if clip[3] <= 0.0 {
+      return Ok(ProjectionVisibility::BehindCamera);
+    }
+
+    let ndc_x = clip[0] / clip[3];
+    let ndc_y = clip[1] / clip[3];
+    let ndc_z = clip[2] / clip[3];
+    if [ndc_x, ndc_y, ndc_z].iter().any(|value| !value.is_finite()) {
+      return Err("projection produced non-finite normalized device coordinates".to_string());
+    }
+
+    Ok(
+      if !(-ndc_limit..=ndc_limit).contains(&ndc_x)
+        || !(-ndc_limit..=ndc_limit).contains(&ndc_y)
+        || !(-ndc_limit..=ndc_limit).contains(&ndc_z)
+      {
+        ProjectionVisibility::OutOfFrustum
+      } else {
+        ProjectionVisibility::OutsideWindow
+      },
+    )
+  }
+
+  fn clip_to_screen_projection(
+    &self,
+    clip: [f64; 4],
+    ndc_limit: f64,
+  ) -> Result<Option<ScreenProjection>, String> {
+    if !clip.iter().all(|value| value.is_finite()) {
+      return Err("projection produced non-finite clip coordinates".to_string());
+    }
+    if clip[3] <= 0.0 {
+      return Ok(None);
+    }
+
+    let ndc_x = clip[0] / clip[3];
+    let ndc_y = clip[1] / clip[3];
+    let ndc_z = clip[2] / clip[3];
+    if [ndc_x, ndc_y, ndc_z].iter().any(|value| !value.is_finite()) {
+      return Err("projection produced non-finite normalized device coordinates".to_string());
+    }
+    if !(-ndc_limit..=ndc_limit).contains(&ndc_x)
+      || !(-ndc_limit..=ndc_limit).contains(&ndc_y)
+      || !(-ndc_limit..=ndc_limit).contains(&ndc_z)
+    {
+      return Ok(None);
+    }
+
+    let width = f64::from(self.frame.viewport.width);
+    let height = f64::from(self.frame.viewport.height);
+    let x = (ndc_x * 0.5 + 0.5) * width;
+    let y = (1.0 - (ndc_y * 0.5 + 0.5)) * height;
+    if !(0.0..=width).contains(&x) || !(0.0..=height).contains(&y) {
+      return Ok(None);
+    }
+
+    Ok(Some(ScreenProjection { x, y }))
   }
 
   fn project_vec4(&self, world: Vec3) -> [f64; 4] {

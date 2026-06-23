@@ -4,7 +4,7 @@ use crate::artifact::MinecraftProjectionArtifact;
 use crate::bind::bind_capture_to_frame;
 use crate::overlay::render_projection_overlay;
 use crate::projection::MinecraftProjector;
-use crate::types::{MinecraftBlockTarget, MinecraftSpatialFrame};
+use crate::types::{MinecraftBlockTarget, MinecraftSpatialFrame, RaycastHit};
 use crate::verify::{MismatchRefusal, evaluate_mismatch_refusal};
 
 /// A real captured screenshot plus the monotonic timestamp taken at the capture
@@ -26,6 +26,50 @@ impl ScreenshotCapture {
     self
       .screenshot_dimensions
       .unwrap_or((self.image.width(), self.image.height()))
+  }
+}
+
+#[derive(Clone, Debug)]
+pub enum ProjectionAssessment {
+  Bound {
+    artifact: MinecraftProjectionArtifact,
+    raycast_hit: Option<RaycastHit>,
+  },
+  Refused {
+    artifact: MinecraftProjectionArtifact,
+    refusal: MismatchRefusal,
+  },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct ProjectionScale {
+  x: f64,
+  y: f64,
+}
+
+impl ProjectionScale {
+  fn for_dimensions(
+    screenshot_width: u32,
+    screenshot_height: u32,
+    frame: &MinecraftSpatialFrame,
+  ) -> Option<Self> {
+    if screenshot_width == frame.viewport.width && screenshot_height == frame.viewport.height {
+      return None;
+    }
+
+    Some(Self {
+      x: f64::from(screenshot_width) / f64::from(frame.viewport.width),
+      y: f64::from(screenshot_height) / f64::from(frame.viewport.height),
+    })
+  }
+
+  fn apply_to_point(self, point: &mut auv_driver::geometry::Point) {
+    point.x *= self.x;
+    point.y *= self.y;
+  }
+
+  fn apply_to_radius(self, radius_px: &mut f64) {
+    *radius_px *= self.x.max(self.y);
   }
 }
 
@@ -82,49 +126,75 @@ pub fn build_projection_evidence(
   target: &MinecraftBlockTarget,
   max_capture_skew_ms: Option<i64>,
 ) -> Result<ProjectionEvidence, String> {
-  let (screenshot_width, screenshot_height) = capture.dimensions();
+  let screenshot_dimensions = capture.dimensions();
   let bound = bind_capture_to_frame(
     frame,
     capture.artifact_ref,
     capture.capture_monotonic_timestamp_ms,
   );
-  let projector = MinecraftProjector::new(bound.frame.clone())?;
+
+  match assess_bound_projection(
+    bound.frame,
+    screenshot_dimensions,
+    capture.is_minecraft_window,
+    target,
+    max_capture_skew_ms,
+  )? {
+    ProjectionAssessment::Bound {
+      artifact,
+      raycast_hit,
+    } => {
+      let projected = artifact
+        .projected_point
+        .clone()
+        .ok_or_else(|| "projection evidence is bound but missing projected point".to_string())?;
+      let overlay = render_projection_overlay(capture.image, &projected, raycast_hit.as_ref());
+      Ok(ProjectionEvidence::Bound { artifact, overlay })
+    }
+    ProjectionAssessment::Refused { artifact, refusal } => {
+      Ok(ProjectionEvidence::Refused { artifact, refusal })
+    }
+  }
+}
+
+pub fn assess_bound_projection(
+  frame: MinecraftSpatialFrame,
+  screenshot_dimensions: (u32, u32),
+  is_minecraft_window: bool,
+  target: &MinecraftBlockTarget,
+  max_capture_skew_ms: Option<i64>,
+) -> Result<ProjectionAssessment, String> {
+  let projection_scale =
+    ProjectionScale::for_dimensions(screenshot_dimensions.0, screenshot_dimensions.1, &frame);
+  let projector = MinecraftProjector::new(frame.clone())?;
   let mut projected = projector.project_block_target(target)?;
 
-  // Scale projection coordinates if screenshot dimensions differ from viewport
-  if screenshot_width != bound.frame.viewport.width
-    || screenshot_height != bound.frame.viewport.height
-  {
-    let viewport_width = f64::from(bound.frame.viewport.width);
-    let viewport_height = f64::from(bound.frame.viewport.height);
-    let scale_x = f64::from(screenshot_width) / viewport_width;
-    let scale_y = f64::from(screenshot_height) / viewport_height;
-
+  if let Some(scale) = projection_scale {
     if let Some(ref mut screen_point) = projected.screen_point {
-      screen_point.x *= scale_x;
-      screen_point.y *= scale_y;
+      scale.apply_to_point(screen_point);
     }
-    projected.match_radius_px *= scale_x.max(scale_y);
+    scale.apply_to_radius(&mut projected.match_radius_px);
   }
-
-  let artifact = projector.build_projection_artifact(Some(projected.clone()), None);
 
   let refusal = evaluate_mismatch_refusal(
-    &bound.frame,
+    &frame,
     &projected,
     target,
-    capture.is_minecraft_window,
+    is_minecraft_window,
     max_capture_skew_ms,
   );
+  let artifact = projector.build_projection_artifact(Some(projected.clone()), None);
   if refusal.refused {
-    let artifact = artifact.with_mismatch_refusal_reason(refusal.reason);
-    return Ok(ProjectionEvidence::Refused { artifact, refusal });
+    return Ok(ProjectionAssessment::Refused {
+      artifact: artifact.with_mismatch_refusal_reason(refusal.reason),
+      refusal,
+    });
   }
 
-  // Not refused implies a visible projected point with a real screen point.
-  let raycast_hit = bound.frame.raycast_hit.as_ref();
-  let overlay = render_projection_overlay(capture.image, &projected, raycast_hit);
-  Ok(ProjectionEvidence::Bound { artifact, overlay })
+  Ok(ProjectionAssessment::Bound {
+    artifact,
+    raycast_hit: frame.raycast_hit.clone(),
+  })
 }
 
 #[cfg(test)]

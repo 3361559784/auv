@@ -843,6 +843,7 @@ fn run_minecraft_live_click(
       )
     })?
     .to_rgb8();
+  let screenshot_dimensions = (screenshot_image.width(), screenshot_image.height());
 
   runtime.run_recorded_operation(
     RunSpec::new(
@@ -851,8 +852,6 @@ fn run_minecraft_live_click(
     ),
     "Minecraft live click",
     |context| {
-      let (staged_frame_path, _frame_ref) =
-        stage_minecraft_spatial_frame_artifact(context, &pre_frame)?;
       let (staged_screenshot_path, screenshot_ref) = context.stage_artifact_file_with_ref(
         "minecraft-screenshot",
         &screenshot,
@@ -863,6 +862,8 @@ fn run_minecraft_live_click(
         Some("minecraft screenshot bound to live telemetry frame".to_string()),
       )?;
       let screenshot_artifact_id = screenshot_ref.artifact_id.as_str().to_string();
+      let (staged_frame_path, _frame_ref) =
+        stage_minecraft_spatial_frame_artifact(context, &pre_frame)?;
       let capture_timestamp_ms = if let Some(skew) = capture_skew_ms {
         if skew >= 0 {
           pre_frame.monotonic_timestamp_ms.saturating_sub(skew as u64)
@@ -882,6 +883,7 @@ fn run_minecraft_live_click(
           artifact_ref: format!("artifact://{screenshot_artifact_id}"),
           capture_monotonic_timestamp_ms: capture_timestamp_ms,
           is_minecraft_window: screenshot_is_minecraft_window,
+          screenshot_dimensions: Some(screenshot_dimensions),
         },
         &auv_game_minecraft::MinecraftBlockTarget::new(target_block),
         Some(250),
@@ -972,8 +974,8 @@ fn run_minecraft_live_click(
         operation_result_artifact_id: operation_result_ref.artifact_id.as_str().to_string(),
         input_summary: invoke_result.output_summary,
         artifact_paths: vec![
-          staged_frame_path,
           staged_screenshot_path,
+          staged_frame_path,
           staged_projection_path,
           staged_operation_result_path,
         ],
@@ -1017,6 +1019,7 @@ fn run_minecraft_projection_bridge(
       )
     })?
     .to_rgb8();
+  let screenshot_dimensions = (screenshot_image.width(), screenshot_image.height());
 
   runtime.run_recorded_operation(
     auv_tracing_driver::run_builder::RunSpec::new(
@@ -1061,6 +1064,7 @@ fn run_minecraft_projection_bridge(
           artifact_ref: format!("artifact://{screenshot_artifact_id}"),
           capture_monotonic_timestamp_ms: capture_timestamp_ms,
           is_minecraft_window: screenshot_is_minecraft_window,
+          screenshot_dimensions: Some(screenshot_dimensions),
         },
         &auv_game_minecraft::MinecraftBlockTarget::new(target_block),
         Some(250),

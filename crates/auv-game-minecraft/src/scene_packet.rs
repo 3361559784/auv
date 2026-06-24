@@ -419,6 +419,7 @@ mod tests {
       spatial_frame_id: "frame-rich".to_string(),
       world_tick: 1,
       monotonic_timestamp_ms: 1_000,
+      telemetry_session_id: None,
       viewport: Viewport::new(800, 600),
       view_matrix: identity_matrix(),
       projection_matrix: identity_matrix(),

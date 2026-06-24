@@ -4,6 +4,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::verify::MismatchRefusalReason;
+
 pub type MeasurementResult<T> = Result<T, String>;
 
 pub const TEXTURE_SWEEP_REPORT_SCHEMA_VERSION: u32 = 1;
@@ -144,6 +146,8 @@ pub struct TextureSweepSample {
   pub occlusion_iou: f64,
   #[serde(default)]
   pub refused_noise: bool,
+  #[serde(default)]
+  pub refusal_reason: Option<MismatchRefusalReason>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -299,7 +303,9 @@ pub fn build_texture_sweep_report(
     .iter()
     .cloned()
     .collect::<BTreeSet<_>>();
-  let noise_refusal_exercised = rows.iter().any(|row| row.refused_noise_count > 0);
+  let noise_refusal_exercised = samples
+    .iter()
+    .any(|sample| sample.refused_noise && counts_as_exercised_noise_refusal(sample.refusal_reason));
   let actual_resource_pack_count = rows.len();
   let expected_resource_pack_count = thresholds.resource_pack_count;
   let passed = actual_resource_pack_count == thresholds.resource_pack_count
@@ -319,9 +325,23 @@ pub fn build_texture_sweep_report(
     passed,
     known_limits: vec![
       "texture sweep report consumes precomputed MC-6 measurement samples; it does not collect live frames".to_string(),
-      "refused noisy samples exercise the refusal rule and are excluded from p95/IoU metrics".to_string(),
+      "refused noisy samples are excluded from p95/IoU metrics; only qualifying live refusal reasons exercise the refusal rule".to_string(),
     ],
   })
+}
+
+fn counts_as_exercised_noise_refusal(reason: Option<MismatchRefusalReason>) -> bool {
+  matches!(
+    reason,
+    Some(
+      MismatchRefusalReason::MenuLoadingScreen
+        | MismatchRefusalReason::NotMinecraftWindow
+        | MismatchRefusalReason::ProjectedOutsideWindow
+        | MismatchRefusalReason::TargetBehindCamera
+        | MismatchRefusalReason::TargetOutOfFrustum
+        | MismatchRefusalReason::TargetOccluded
+    )
+  )
 }
 
 fn read_sample_set(path: &Path) -> MeasurementResult<TextureSweepSampleSet> {
@@ -410,6 +430,23 @@ mod tests {
       pose_error_px,
       occlusion_iou,
       refused_noise,
+      refusal_reason: refused_noise.then_some(MismatchRefusalReason::MenuLoadingScreen),
+    }
+  }
+
+  fn refused_sample_with_reason(
+    resource_pack: &str,
+    texture_profile: &str,
+    reason: MismatchRefusalReason,
+  ) -> TextureSweepSample {
+    TextureSweepSample {
+      resource_pack: resource_pack.to_string(),
+      texture_profile: texture_profile.to_string(),
+      duration_seconds: 30.0,
+      pose_error_px: 0.0,
+      occlusion_iou: 0.0,
+      refused_noise: true,
+      refusal_reason: Some(reason),
     }
   }
 
@@ -463,6 +500,11 @@ mod tests {
     let samples = vec![
       sample("rich-pack", "rich", 2.0, 0.95, false),
       sample("flat-pack", "flat_color", 4.0, 0.92, false),
+      refused_sample_with_reason(
+        "flat-pack",
+        "flat_color",
+        MismatchRefusalReason::ScreenshotUnavailable,
+      ),
       sample("repeat-pack", "repetitive", 3.0, 0.93, false),
     ];
 
@@ -518,7 +560,11 @@ mod tests {
         samples: vec![
           sample("rich-pack", "rich", 2.0, 0.95, false),
           sample("flat-pack", "flat_color", 4.0, 0.92, false),
-          sample("flat-pack", "flat_color", 20.0, 0.10, true),
+          refused_sample_with_reason(
+            "flat-pack",
+            "flat_color",
+            MismatchRefusalReason::MenuLoadingScreen,
+          ),
           sample("repeat-pack", "repetitive", 3.0, 0.93, false),
         ],
       })
@@ -553,7 +599,11 @@ mod tests {
         samples: vec![
           sample("rich-pack", "rich", 2.0, 0.95, false),
           sample("flat-pack", "flat_color", 4.0, 0.92, false),
-          sample("flat-pack", "flat_color", 20.0, 0.10, true),
+          refused_sample_with_reason(
+            "flat-pack",
+            "flat_color",
+            MismatchRefusalReason::MenuLoadingScreen,
+          ),
           sample("repeat-pack", "repetitive", 3.0, 0.93, false),
         ],
       })

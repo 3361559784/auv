@@ -8,6 +8,7 @@ public final class TelemetrySample {
   public String spatialFrameId;
   public long worldTick;
   public long monotonicTimestampMs;
+  public String telemetrySessionId;
   public int viewportWidth;
   public int viewportHeight;
   public double[] viewMatrix = new double[16];
@@ -32,6 +33,7 @@ public final class TelemetrySample {
     copy.spatialFrameId = spatialFrameId;
     copy.worldTick = worldTick;
     copy.monotonicTimestampMs = monotonicTimestampMs;
+    copy.telemetrySessionId = telemetrySessionId;
     copy.viewportWidth = viewportWidth;
     copy.viewportHeight = viewportHeight;
     copy.viewMatrix = viewMatrix.clone();
@@ -71,6 +73,10 @@ public final class TelemetrySample {
     appendString(builder, "spatial_frame_id", spatialFrameId);
     appendLong(builder, "world_tick", worldTick);
     appendLong(builder, "monotonic_timestamp_ms", monotonicTimestampMs);
+    if (telemetrySessionId != null) {
+      builder.append(",\"telemetry_session_id\":");
+      appendJsonStringValue(builder, telemetrySessionId);
+    }
     builder.append(",\"viewport\":{");
     builder.append("\"width\":").append(viewportWidth).append(',');
     builder.append("\"height\":").append(viewportHeight).append('}');

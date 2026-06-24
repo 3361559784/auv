@@ -3,9 +3,13 @@
 Date: 2026-06-18
 
 Status: exploration ledger plus implemented preparation-slice handoff. This is
-not a closure report. As of 2026-06-18 owner override, MC-6 is intentionally
-held in this unlive / not-numerically-closed state while MC-7 starts as a
-separate offline inspect-artifact lane.
+not a closure report. As of 2026-06-18 owner override, MC-6 was intentionally
+held in an unlive / not-numerically-closed state while MC-7 started as a
+separate offline inspect-artifact lane. As of 2026-06-23 owner reopen, that
+prepare-only hold is lifted for the next slice: MC-6 may re-enter the live
+chain, but it is still not numerically closed and must first clear the constant
+~119 px projection/convention bug signature recorded in
+`2026-06-19-minecraft-mc6-texture-sweep-gate-verdict.md`.
 
 ## Current repo state checked
 
@@ -28,8 +32,14 @@ From `2026-06-18-auv-mc5-onward-execution-plan.md` and
   containing `fixture`, `smoke`, or `test`.
 - The Fabric sidecar code has fields for `screen_state` and
   `resource_pack_ids`.
+- The Fabric sidecar telemetry shape now also carries `telemetry_session_id`
+  so accepted duration does not silently span multiple client sessions.
 - The evaluator is intentionally offline and consumes precomputed
   `TextureSweepSampleSet` JSON.
+- The sample builder now dedupes repeated observations by
+  `(spatial_frame_id, refused_noise)`, computes duration from accepted frames
+  only, and reads `minecraft-projection.mismatch_refusal_reason` before falling
+  back to conservative refusal classification.
 
 ## What is not closed
 
@@ -56,7 +66,11 @@ auv-cli minecraft eval-texture-sweep \
 ```
 
 Do not claim MC-6 closed until the report table comes from real sample
-provenance citing source run ids and bundle manifest paths.
+provenance citing source run ids and bundle manifest paths. Also do not claim
+closure from tables whose `sample_count` came from duplicate frame copies,
+whose `duration_seconds` crosses telemetry sessions, or whose
+`noise_refusal_exercised` was satisfied only by `screenshot_unavailable` /
+`telemetry_unreliable`.
 
 ## Evidence inventory checked
 
@@ -106,7 +120,9 @@ Checked local Minecraft/Fabric cache:
   or a tiny Java/Gradle probe rather than guessing.
 
 Conclusion: current sidecar output proves the telemetry writer is alive enough
-to emit `screen_state`, but it is not sufficient MC-6 resource-pack provenance.
+to emit `screen_state`, but the historical snapshot checked in this exploration
+is not sufficient MC-6 resource-pack provenance. New closure runs should expect
+`resource_pack_ids` plus `telemetry_session_id` on fresh telemetry.
 
 ## Existing code shape
 
@@ -135,18 +151,28 @@ Important shape:
 
 ## Scope decision for the next slice
 
-Owner said: "先不跑真实链路,先准备跑".
+Owner said on 2026-06-18: "先不跑真实链路,先准备跑".
 
-Therefore the next slice should prepare MC-6 execution without launching
-Minecraft or claiming closure:
+That statement explains why this note originally stopped at a preparation-only
+substrate. It is now historical context, not the current execution boundary.
+The owner has since explicitly reopened MC-6 live work on 2026-06-23, so the
+next slice may launch Minecraft/Fabric and continue the real chain again — but
+only after a single-frame projection/overlay check clears the constant ~119 px
+offset signature from the 2026-06-19 verdict.
 
-1. Generate the K=3 local resource-pack inputs into ignored sidecar run state.
-2. Produce a runbook/manifest that fixes the pack ids, profiles, expected
-   options entry, and final commands.
-3. Add or expose a narrow conversion path from real spatial bundles to
-   `TextureSweepSampleSet` so later live runs do not require hand-written JSON.
-4. Keep `--require-real-source` as the closure gate.
-5. Update docs to say "ready to run", not "numerically closed".
+Therefore the next slice should reopen MC-6 execution in this order:
+
+1. Reconfirm the projection basis on one real frame / overlay pair through the
+   dedicated `minecraft calibrate-projection` path.
+2. If needed, fix the constant-offset convention bug before widening the live
+    sweep.
+3. Run the real client and collect new live source runs through the MC-6 bridge
+   path, preferably using direct `window.capture` selection instead of ad-hoc
+   external screenshots.
+4. Export spatial bundles, build `TextureSweepSampleSet`, and keep
+    `--require-real-source` as the closure gate.
+5. Update docs/report state to "reopened, still not numerically closed until the
+    rebuilt table passes".
 
 ## Implemented preparation substrate
 
@@ -190,11 +216,13 @@ bundle provenance.
 
 ## Red lines
 
-- Do not treat MC-6 as live-run or numerically closed.
+- Do not treat MC-6 as live-run or numerically closed **until new post-reopen
+  live evidence exists**.
 - Do not use MC-7 work as a substitute for the missing MC-6 K-pack table.
 - MC-7 may proceed only under the separate owner-opened offline
   inspect-artifact lane; it does not change this MC-6 status.
-- Do not run Minecraft/Fabric while this slice is "prepare only".
+- Do not jump straight to a widened K-pack sweep while the constant ~119 px
+  projection/convention bug signature remains unvalidated.
 - Do not fabricate real-source sample JSON by hand.
 - Do not commit generated resource pack zips or sidecar `run/` output.
 - Do not put Minecraft nouns into AUV core.
@@ -202,9 +230,9 @@ bundle provenance.
 - Sidecar remains read-only truth/verifier; actions still go through AUV
   driver paths.
 
-## Validation target for preparation only
+## Validation target for the reopened closure substrate
 
-Minimum before committing the prep slice:
+Minimum before committing the reopened MC-6 closure slice:
 
 ```bash
 cargo fmt --check
@@ -214,13 +242,17 @@ cargo test --bin auv-cli minecraft
 git diff --check
 ```
 
-Optional smoke for prep commands only:
+Optional smoke after the code slice is stable:
 
 ```bash
-auv-cli minecraft prepare-texture-sweep \
-  --sidecar-run-dir sidecar/minecraft-telemetry/run \
-  --output-dir .tmp-mc6-prep
+auv-cli minecraft calibrate-projection \
+  --frame <canonical-frame.json> \
+  --screenshot <canonical-frame.png> \
+  --target-block 511,73,728 \
+  --target-semantics hit_face_center \
+  --screenshot-is-minecraft-window true
 ```
 
-This smoke may write ignored local artifacts. It must not launch the real
-client.
+This smoke may write ignored local artifacts and recorded run evidence. It is
+still narrower than the fresh live mini-sweep and should be used to clear the
+geometry gate before relaunching the real client.

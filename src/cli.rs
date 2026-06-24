@@ -106,9 +106,19 @@ pub enum CliCommand {
   },
   MinecraftProjectionBridge {
     telemetry_sample: String,
-    screenshot: String,
+    screenshot: Option<String>,
+    capture_target_app: Option<String>,
+    capture_target_title: Option<String>,
     target_block: String,
     capture_skew_ms: Option<i64>,
+    screenshot_is_minecraft_window: bool,
+    inspect: InspectClientOptions,
+  },
+  MinecraftCalibrateProjection {
+    frame_path: String,
+    screenshot: String,
+    target_block: String,
+    target_semantics: String,
     screenshot_is_minecraft_window: bool,
     inspect: InspectClientOptions,
   },
@@ -268,7 +278,8 @@ USAGE
   auv-cli inspect <run-id>
   auv-cli inspect serve [--host <host>] [--port <port>] [--store-root <path>] [--enable-write] [--write-token <token>] [--write-token-file <path>] [--no-write-token]
   auv-cli mcp serve
-  auv-cli minecraft bridge --sample <telemetry.jsonl> --screenshot <frame.png> --target-block <x,y,z> [--capture-skew-ms <ms>] [--screenshot-is-minecraft-window true|false] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
+  auv-cli minecraft bridge --sample <telemetry.jsonl> (--screenshot <frame.png> | --capture-target-app <bundle-id> [--capture-target-title <window-title-substring>]) --target-block <x,y,z> [--capture-skew-ms <ms>] [--screenshot-is-minecraft-window true|false] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
+  auv-cli minecraft calibrate-projection --frame <minecraft-spatial-frame.json> --screenshot <frame.png> --target-block <x,y,z> [--target-semantics hit_face_center|block_center] [--screenshot-is-minecraft-window true|false] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
   auv-cli minecraft live-click --sample <telemetry.jsonl> --screenshot <frame.png> --target-block <x,y,z> --target-app <application-id> --target-title <window title> [--post-sample <telemetry.jsonl>] [--capture-skew-ms <ms>] [--screenshot-is-minecraft-window true|false] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
   auv-cli minecraft export-spatial-bundle <run-id> --output-dir <dir> [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
   auv-cli minecraft export-3dgs-scene-packet --bundle-manifest <bundle/run.json>... --output-dir <dir> [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
@@ -1055,13 +1066,14 @@ fn parse_invoke(arguments: &[String]) -> AuvResult<CliCommand> {
 fn parse_minecraft(arguments: &[String]) -> AuvResult<CliCommand> {
   if arguments.len() < 2 {
     return Err(
-      "usage: auv-cli minecraft <bridge|live-click|export-spatial-bundle|export-3dgs-scene-packet|prepare-texture-sweep|build-texture-sweep-samples|eval-texture-sweep> ..."
+      "usage: auv-cli minecraft <bridge|calibrate-projection|live-click|export-spatial-bundle|export-3dgs-scene-packet|prepare-texture-sweep|build-texture-sweep-samples|eval-texture-sweep> ..."
         .to_string(),
     );
   }
 
   match arguments[1].as_str() {
     "bridge" => parse_minecraft_bridge(arguments),
+    "calibrate-projection" => parse_minecraft_calibrate_projection(arguments),
     "live-click" => parse_minecraft_live_click(arguments),
     "export-spatial-bundle" => parse_minecraft_export_spatial_bundle(arguments),
     "export-3dgs-scene-packet" => parse_minecraft_export_3dgs_scene_packet(arguments),
@@ -1069,7 +1081,7 @@ fn parse_minecraft(arguments: &[String]) -> AuvResult<CliCommand> {
     "build-texture-sweep-samples" => parse_minecraft_build_texture_sweep_samples(arguments),
     "eval-texture-sweep" => parse_minecraft_eval_texture_sweep(arguments),
     other => Err(format!(
-      "unknown minecraft subcommand {other}; expected bridge, live-click, export-spatial-bundle, export-3dgs-scene-packet, prepare-texture-sweep, build-texture-sweep-samples, or eval-texture-sweep"
+      "unknown minecraft subcommand {other}; expected bridge, calibrate-projection, live-click, export-spatial-bundle, export-3dgs-scene-packet, prepare-texture-sweep, build-texture-sweep-samples, or eval-texture-sweep"
     )),
   }
 }
@@ -1286,6 +1298,8 @@ fn parse_minecraft_eval_texture_sweep(arguments: &[String]) -> AuvResult<CliComm
 fn parse_minecraft_bridge(arguments: &[String]) -> AuvResult<CliCommand> {
   let mut telemetry_sample = None;
   let mut screenshot = None;
+  let mut capture_target_app = None;
+  let mut capture_target_title = None;
   let mut target_block = None;
   let mut capture_skew_ms = None;
   let mut screenshot_is_minecraft_window = true;
@@ -1311,6 +1325,22 @@ fn parse_minecraft_bridge(arguments: &[String]) -> AuvResult<CliCommand> {
         screenshot = Some(required_flag_value(arguments, index, "--screenshot")?);
         index += 2;
       }
+      "--capture-target-app" => {
+        capture_target_app = Some(required_flag_value(
+          arguments,
+          index,
+          "--capture-target-app",
+        )?);
+        index += 2;
+      }
+      "--capture-target-title" => {
+        capture_target_title = Some(required_flag_value(
+          arguments,
+          index,
+          "--capture-target-title",
+        )?);
+        index += 2;
+      }
       "--target-block" => {
         target_block = Some(required_flag_value(arguments, index, "--target-block")?);
         index += 2;
@@ -1334,11 +1364,97 @@ fn parse_minecraft_bridge(arguments: &[String]) -> AuvResult<CliCommand> {
     }
   }
 
+  if screenshot.is_some() && capture_target_app.is_some() {
+    return Err(
+      "--screenshot cannot be combined with --capture-target-app/--capture-target-title"
+        .to_string(),
+    );
+  }
+  if screenshot.is_none() && capture_target_app.is_none() {
+    return Err(
+      "minecraft bridge requires either --screenshot or --capture-target-app".to_string(),
+    );
+  }
+  if capture_target_title.is_some() && capture_target_app.is_none() {
+    return Err("--capture-target-title requires --capture-target-app".to_string());
+  }
+
   Ok(CliCommand::MinecraftProjectionBridge {
     telemetry_sample: telemetry_sample.ok_or_else(|| "--sample is required".to_string())?,
-    screenshot: screenshot.ok_or_else(|| "--screenshot is required".to_string())?,
+    screenshot,
+    capture_target_app,
+    capture_target_title,
     target_block: target_block.ok_or_else(|| "--target-block is required".to_string())?,
     capture_skew_ms,
+    screenshot_is_minecraft_window,
+    inspect,
+  })
+}
+
+fn parse_minecraft_calibrate_projection(arguments: &[String]) -> AuvResult<CliCommand> {
+  let mut frame_path = None;
+  let mut screenshot = None;
+  let mut target_block = None;
+  let mut target_semantics = "hit_face_center".to_string();
+  let mut screenshot_is_minecraft_window = true;
+  let mut inspect = InspectClientOptions::default();
+  let mut index = 2;
+
+  while index < arguments.len() {
+    if let Some(consumed) = parse_inspect_client_option(
+      arguments[index].as_str(),
+      arguments.get(index + 1),
+      &mut inspect,
+    )? {
+      index += consumed;
+      continue;
+    }
+
+    match arguments[index].as_str() {
+      "--frame" => {
+        frame_path = Some(required_flag_value(arguments, index, "--frame")?);
+        index += 2;
+      }
+      "--screenshot" => {
+        screenshot = Some(required_flag_value(arguments, index, "--screenshot")?);
+        index += 2;
+      }
+      "--target-block" => {
+        target_block = Some(required_flag_value(arguments, index, "--target-block")?);
+        index += 2;
+      }
+      "--target-semantics" => {
+        let value = required_flag_value(arguments, index, "--target-semantics")?;
+        match value.as_str() {
+          "hit_face_center" | "block_center" => target_semantics = value,
+          other => {
+            return Err(format!(
+              "invalid --target-semantics {other:?}; expected hit_face_center or block_center"
+            ));
+          }
+        }
+        index += 2;
+      }
+      "--screenshot-is-minecraft-window" => {
+        screenshot_is_minecraft_window =
+          required_flag_value(arguments, index, "--screenshot-is-minecraft-window")?
+            .parse::<bool>()
+            .map_err(|error| format!("invalid --screenshot-is-minecraft-window: {error}"))?;
+        index += 2;
+      }
+      other => {
+        return Err(format!(
+          "unexpected minecraft calibrate-projection argument {other}"
+        ));
+      }
+    }
+  }
+
+  Ok(CliCommand::MinecraftCalibrateProjection {
+    frame_path: frame_path.ok_or_else(|| "--frame is required".to_string())?,
+    screenshot: screenshot.ok_or_else(|| "--screenshot is required".to_string())?,
+    target_block: target_block.ok_or_else(|| "--target-block is required".to_string())?,
+    target_semantics,
     screenshot_is_minecraft_window,
     inspect,
   })
@@ -1849,13 +1965,17 @@ mod tests {
       CliCommand::MinecraftProjectionBridge {
         telemetry_sample,
         screenshot,
+        capture_target_app,
+        capture_target_title,
         target_block,
         capture_skew_ms,
         screenshot_is_minecraft_window,
         ..
       } => {
         assert_eq!(telemetry_sample, "/tmp/telemetry.jsonl");
-        assert_eq!(screenshot, "/tmp/frame.png");
+        assert_eq!(screenshot.as_deref(), Some("/tmp/frame.png"));
+        assert_eq!(capture_target_app, None);
+        assert_eq!(capture_target_title, None);
         assert_eq!(target_block, "1,2,3");
         assert_eq!(capture_skew_ms, Some(120));
         assert_eq!(screenshot_is_minecraft_window, false);
@@ -1921,11 +2041,99 @@ mod tests {
       "--sample".to_string(),
       "/tmp/telemetry.jsonl".to_string(),
     ])
-    .expect_err("minecraft bridge should require screenshot and target");
+    .expect_err("minecraft bridge should require screenshot/capture target and target");
 
     assert!(
-      error.contains("--screenshot is required") || error.contains("--target-block is required")
+      error.contains("requires either --screenshot or --capture-target-app")
+        || error.contains("--target-block is required")
     );
+  }
+
+  #[test]
+  fn parse_minecraft_bridge_capture_command() {
+    let command = parse_cli(&[
+      "minecraft".to_string(),
+      "bridge".to_string(),
+      "--sample".to_string(),
+      "/tmp/telemetry.jsonl".to_string(),
+      "--capture-target-app".to_string(),
+      "com.mojang.minecraft".to_string(),
+      "--capture-target-title".to_string(),
+      "Minecraft".to_string(),
+      "--target-block".to_string(),
+      "1,2,3".to_string(),
+    ])
+    .expect("minecraft bridge capture command should parse");
+
+    match command {
+      CliCommand::MinecraftProjectionBridge {
+        screenshot,
+        capture_target_app,
+        capture_target_title,
+        ..
+      } => {
+        assert_eq!(screenshot, None);
+        assert_eq!(capture_target_app.as_deref(), Some("com.mojang.minecraft"));
+        assert_eq!(capture_target_title.as_deref(), Some("Minecraft"));
+      }
+      other => panic!("unexpected command: {other:?}"),
+    }
+  }
+
+  #[test]
+  fn parse_minecraft_bridge_rejects_mixed_capture_modes() {
+    let error = parse_cli(&[
+      "minecraft".to_string(),
+      "bridge".to_string(),
+      "--sample".to_string(),
+      "/tmp/telemetry.jsonl".to_string(),
+      "--screenshot".to_string(),
+      "/tmp/frame.png".to_string(),
+      "--capture-target-app".to_string(),
+      "com.mojang.minecraft".to_string(),
+      "--target-block".to_string(),
+      "1,2,3".to_string(),
+    ])
+    .expect_err("mixed capture modes should fail");
+
+    assert!(error.contains("--screenshot cannot be combined"));
+  }
+
+  #[test]
+  fn parse_minecraft_calibrate_projection_command() {
+    let command = parse_cli(&[
+      "minecraft".to_string(),
+      "calibrate-projection".to_string(),
+      "--frame".to_string(),
+      "/tmp/frame.json".to_string(),
+      "--screenshot".to_string(),
+      "/tmp/frame.png".to_string(),
+      "--target-block".to_string(),
+      "1,2,3".to_string(),
+      "--target-semantics".to_string(),
+      "block_center".to_string(),
+      "--screenshot-is-minecraft-window".to_string(),
+      "false".to_string(),
+    ])
+    .expect("minecraft calibrate-projection should parse");
+
+    match command {
+      CliCommand::MinecraftCalibrateProjection {
+        frame_path,
+        screenshot,
+        target_block,
+        target_semantics,
+        screenshot_is_minecraft_window,
+        ..
+      } => {
+        assert_eq!(frame_path, "/tmp/frame.json");
+        assert_eq!(screenshot, "/tmp/frame.png");
+        assert_eq!(target_block, "1,2,3");
+        assert_eq!(target_semantics, "block_center");
+        assert!(!screenshot_is_minecraft_window);
+      }
+      other => panic!("unexpected command: {other:?}"),
+    }
   }
 
   #[test]

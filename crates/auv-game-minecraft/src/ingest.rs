@@ -172,6 +172,7 @@ mod tests {
       spatial_frame_id: id.to_string(),
       world_tick: tick,
       monotonic_timestamp_ms: ts,
+      telemetry_session_id: None,
       viewport: Viewport::new(1708, 960),
       view_matrix: [0.0; 16],
       projection_matrix: [0.0; 16],
@@ -197,6 +198,7 @@ mod tests {
       spatial_frame_id: id.to_string(),
       world_tick: tick,
       monotonic_timestamp_ms: ts,
+      telemetry_session_id: None,
       viewport: Viewport::new(1708, 960),
       view_matrix: [0.0; 16],
       projection_matrix: [0.0; 16],
@@ -332,5 +334,49 @@ mod tests {
     assert_eq!(frame.spatial_frame_id, "frame-big");
     assert_eq!(frame.world_tick, 9);
     assert_eq!(frame.monotonic_timestamp_ms, 9000);
+  }
+
+  #[test]
+  fn parses_legacy_frame_without_telemetry_session_id() {
+    let body = r#"{"spatial_frame_id":"frame-legacy","world_tick":7,"monotonic_timestamp_ms":7000,"viewport":{"width":1708,"height":960},"view_matrix":[0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0],"projection_matrix":[0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0],"player_pose":{"eye_position":{"x":0.0,"y":64.0,"z":0.0},"yaw":0.0,"pitch":0.0},"raycast_hit":null,"nearby_blocks":[],"nearby_entities":[],"inventory_summary":[],"screenshot_artifact_ref":null,"mc_capture_skew_ms":null,"screen_state":null,"resource_pack_ids":[]}"#;
+
+    let scan = scan_latest_spatial_frame(body.as_bytes()).expect("scan succeeds");
+
+    let frame = scan.frame.expect("frame should parse");
+    assert_eq!(frame.spatial_frame_id, "frame-legacy");
+    assert_eq!(frame.telemetry_session_id, None);
+  }
+
+  #[test]
+  fn parses_frame_with_telemetry_session_id() {
+    let body = serde_json::to_string(&MinecraftSpatialFrame {
+      spatial_frame_id: "frame-session".to_string(),
+      world_tick: 8,
+      monotonic_timestamp_ms: 8_000,
+      telemetry_session_id: Some("session-123".to_string()),
+      viewport: Viewport::new(1708, 960),
+      view_matrix: [0.0; 16],
+      projection_matrix: [0.0; 16],
+      player_pose: PlayerPose {
+        eye_position: Vec3::new(-3.5, 70.62, -9.5),
+        yaw: 0.0,
+        pitch: 0.0,
+      },
+      raycast_hit: None,
+      nearby_blocks: Vec::new(),
+      nearby_entities: Vec::new(),
+      inventory_summary: Vec::new(),
+      screenshot_artifact_ref: None,
+      mc_capture_skew_ms: None,
+      screen_state: None,
+      resource_pack_ids: Vec::new(),
+    })
+    .expect("frame serializes");
+
+    let scan = scan_latest_spatial_frame(body.as_bytes()).expect("scan succeeds");
+
+    let frame = scan.frame.expect("frame should parse");
+    assert_eq!(frame.spatial_frame_id, "frame-session");
+    assert_eq!(frame.telemetry_session_id.as_deref(), Some("session-123"));
   }
 }

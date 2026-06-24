@@ -24,6 +24,7 @@ pub const MINECRAFT_TEXTURE_SWEEP_ARTIFACT_ROLE: &str = "minecraft-texture-sweep
 pub const MINECRAFT_TEXTURE_SWEEP_PREP_ARTIFACT_ROLE: &str = "minecraft-texture-sweep-prep";
 pub const MINECRAFT_TEXTURE_SWEEP_RUNBOOK_ARTIFACT_ROLE: &str = "minecraft-texture-sweep-runbook";
 pub const MINECRAFT_3DGS_SCENE_PACKET_ARTIFACT_ROLE: &str = "minecraft-3dgs-scene-packet";
+pub const MINECRAFT_PROJECTION_CALIBRATION_ARTIFACT_ROLE: &str = "minecraft-projection-calibration";
 
 pub fn run_minecraft_3dgs_scene_packet_export(
   recording: &RecordingHandle,
@@ -341,6 +342,7 @@ mod tests {
       spatial_frame_id: "frame-rich".to_string(),
       world_tick: 1,
       monotonic_timestamp_ms: 1_000,
+      telemetry_session_id: None,
       viewport: auv_game_minecraft::Viewport::new(800, 600),
       view_matrix: identity_matrix(),
       projection_matrix: identity_matrix(),
@@ -583,6 +585,7 @@ mod tests {
             pose_error_px: 2.0,
             occlusion_iou: 0.95,
             refused_noise: false,
+            refusal_reason: None,
           },
           auv_game_minecraft::TextureSweepSample {
             resource_pack: "flat-pack".to_string(),
@@ -591,6 +594,7 @@ mod tests {
             pose_error_px: 4.0,
             occlusion_iou: 0.92,
             refused_noise: false,
+            refusal_reason: None,
           },
           auv_game_minecraft::TextureSweepSample {
             resource_pack: "flat-pack".to_string(),
@@ -599,6 +603,7 @@ mod tests {
             pose_error_px: 20.0,
             occlusion_iou: 0.10,
             refused_noise: true,
+            refusal_reason: Some(auv_game_minecraft::MismatchRefusalReason::MenuLoadingScreen),
           },
           auv_game_minecraft::TextureSweepSample {
             resource_pack: "repeat-pack".to_string(),
@@ -607,6 +612,7 @@ mod tests {
             pose_error_px: 3.0,
             occlusion_iou: 0.93,
             refused_noise: false,
+            refusal_reason: None,
           },
         ],
       })

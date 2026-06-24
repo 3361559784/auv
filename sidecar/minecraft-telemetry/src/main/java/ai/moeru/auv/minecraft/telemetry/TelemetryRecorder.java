@@ -5,6 +5,7 @@ import java.nio.FloatBuffer;
 import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.UUID;
 
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderContext;
@@ -25,6 +26,7 @@ import org.lwjgl.opengl.GL11;
 
 public final class TelemetryRecorder {
   private static final Object SAMPLE_LOCK = new Object();
+  private static final String TELEMETRY_SESSION_ID = UUID.randomUUID().toString();
   private static volatile boolean started = false;
   private static TelemetrySample latestTickSample;
   private static TelemetryWriter writer;
@@ -49,6 +51,7 @@ public final class TelemetryRecorder {
     sample.spatialFrameId = String.format("frame-%d-%d", client.world.getTime(), System.nanoTime());
     sample.worldTick = client.world.getTime();
     sample.monotonicTimestampMs = System.nanoTime() / 1_000_000L;
+    sample.telemetrySessionId = TELEMETRY_SESSION_ID;
     sample.viewportWidth = client.getWindow().getFramebufferWidth();
     sample.viewportHeight = client.getWindow().getFramebufferHeight();
     populatePlayerPose(client.player, sample);

@@ -3,12 +3,15 @@ use std::fs;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
 
+use auv_driver::geometry::Point;
 use serde::de::DeserializeOwned;
 
+use crate::MinecraftProjector;
+use crate::artifact::MinecraftProjectionArtifact;
 use crate::dataset::{SpatialBundleDirectory, SpatialBundleManifest};
 use crate::measurement::{TextureSweepSample, TextureSweepSampleSet, TextureSweepSampleSource};
-use crate::types::{MinecraftSpatialFrame, ProjectionVisibility};
-use crate::{MinecraftBlockTarget, MinecraftProjector};
+use crate::types::{MinecraftSpatialFrame, MinecraftTargetSemantics, ProjectionVisibility};
+use crate::verify::MismatchRefusalReason;
 
 pub type SampleBuildResult<T> = Result<T, String>;
 
@@ -30,13 +33,19 @@ pub struct TextureSweepSampleBuildOutput {
 struct ProfileFrames {
   resource_pack: String,
   texture_profile: String,
-  first_timestamp_ms: Option<u64>,
-  last_timestamp_ms: Option<u64>,
-  samples: Vec<TextureSweepSample>,
+  session_windows: BTreeMap<String, SessionWindow>,
+  observed_samples: BTreeSet<(String, bool)>,
+  samples: Vec<ProfileSampleEntry>,
 }
 
-impl ProfileFrames {
-  fn record_observation(&mut self, frame: &MinecraftSpatialFrame) {
+#[derive(Clone, Debug, Default, PartialEq)]
+struct SessionWindow {
+  first_timestamp_ms: Option<u64>,
+  last_timestamp_ms: Option<u64>,
+}
+
+impl SessionWindow {
+  fn record_accepted_frame(&mut self, frame: &MinecraftSpatialFrame) {
     self.first_timestamp_ms = Some(
       self
         .first_timestamp_ms
@@ -64,6 +73,39 @@ impl ProfileFrames {
     } else {
       0.0
     }
+  }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct ProfileSampleEntry {
+  sample: TextureSweepSample,
+  session_bucket: String,
+}
+
+impl ProfileFrames {
+  fn record_sample(
+    &mut self,
+    frame: &MinecraftSpatialFrame,
+    source_run_id: &str,
+    sample: TextureSweepSample,
+  ) {
+    let dedupe_key = (frame.spatial_frame_id.clone(), sample.refused_noise);
+    if !self.observed_samples.insert(dedupe_key) {
+      return;
+    }
+
+    let session_bucket = session_bucket_key(frame, source_run_id);
+    if !sample.refused_noise {
+      self
+        .session_windows
+        .entry(session_bucket.clone())
+        .or_default()
+        .record_accepted_frame(frame);
+    }
+    self.samples.push(ProfileSampleEntry {
+      sample,
+      session_bucket,
+    });
   }
 }
 
@@ -150,6 +192,7 @@ fn collect_manifest_frames(
       manifest_path.display()
     )
   })?;
+  let projection_refusal_reasons = read_projection_refusal_reasons(bundle_dir, manifest)?;
   for artifact in &manifest.artifacts {
     if artifact.directory != SpatialBundleDirectory::SpatialFrames
       || artifact.role != "minecraft-spatial-frame"
@@ -161,13 +204,17 @@ fn collect_manifest_frames(
     let Some((resource_pack, texture_profile)) = classify_profile(&frame)? else {
       continue;
     };
+    let projection_refusal_reason = projection_refusal_reasons
+      .get(&frame.spatial_frame_id)
+      .copied()
+      .flatten();
     let entry = profile_frames
       .entry(resource_pack.clone())
       .or_insert_with(|| ProfileFrames {
         resource_pack: resource_pack.clone(),
         texture_profile: texture_profile.clone(),
-        first_timestamp_ms: None,
-        last_timestamp_ms: None,
+        session_windows: BTreeMap::new(),
+        observed_samples: BTreeSet::new(),
         samples: Vec::new(),
       });
     if entry.texture_profile != texture_profile {
@@ -176,23 +223,28 @@ fn collect_manifest_frames(
         entry.texture_profile
       ));
     }
-    entry.record_observation(&frame);
-    entry
-      .samples
-      .push(sample_for_frame(&frame, &resource_pack, &texture_profile)?);
+    let sample = sample_for_frame(
+      &frame,
+      &resource_pack,
+      &texture_profile,
+      projection_refusal_reason,
+    )?;
+    entry.record_sample(&frame, &manifest.source_run.source_run_id, sample);
   }
   Ok(())
 }
 
 fn samples_for_profile(frames: &ProfileFrames) -> Vec<TextureSweepSample> {
-  let observed_duration = frames.observed_duration_seconds();
   frames
     .samples
     .iter()
     .cloned()
-    .map(|mut sample| {
-      sample.duration_seconds = observed_duration;
-      sample
+    .map(|mut entry| {
+      entry.sample.duration_seconds = frames
+        .session_windows
+        .get(&entry.session_bucket)
+        .map_or(0.0, SessionWindow::observed_duration_seconds);
+      entry.sample
     })
     .collect()
 }
@@ -201,16 +253,10 @@ fn sample_for_frame(
   frame: &MinecraftSpatialFrame,
   resource_pack: &str,
   texture_profile: &str,
+  projection_refusal_reason: Option<MismatchRefusalReason>,
 ) -> SampleBuildResult<TextureSweepSample> {
-  if is_refused_noise(frame) {
-    return Ok(TextureSweepSample {
-      resource_pack: resource_pack.to_string(),
-      texture_profile: texture_profile.to_string(),
-      duration_seconds: 0.0,
-      pose_error_px: 0.0,
-      occlusion_iou: 0.0,
-      refused_noise: true,
-    });
+  if let Some(reason) = projection_refusal_reason.or_else(|| fallback_refusal_reason(frame)) {
+    return Ok(refused_sample(resource_pack, texture_profile, reason));
   }
 
   let raycast_hit = frame.raycast_hit.as_ref().ok_or_else(|| {
@@ -219,31 +265,110 @@ fn sample_for_frame(
       frame.spatial_frame_id, resource_pack
     )
   })?;
-  let projected = MinecraftProjector::new(frame.clone())?
-    .project_block_target(&MinecraftBlockTarget::new(raycast_hit.block_pos))?;
-  let pose_error_px = match projected.visibility {
-    ProjectionVisibility::Visible => {
-      let point = projected.screen_point.ok_or_else(|| {
-        format!(
-          "frame {} projected visible without a screen point",
-          frame.spatial_frame_id
-        )
-      })?;
-      let center_x = f64::from(frame.viewport.width) / 2.0;
-      let center_y = f64::from(frame.viewport.height) / 2.0;
-      ((point.x - center_x).powi(2) + (point.y - center_y).powi(2)).sqrt()
-    }
-    _ => projected.match_radius_px + f64::from(frame.viewport.width.max(frame.viewport.height)),
-  };
+  let target = crate::mc6_projection_target_for_frame(
+    raycast_hit.block_pos,
+    frame,
+    MinecraftTargetSemantics::HitFaceCenter,
+  );
+  let projected = MinecraftProjector::new(frame.clone())?.project_block_target(&target)?;
+  if let Some(reason) =
+    refusal_reason_from_projection(&projected.visibility, projected.screen_point)
+  {
+    return Ok(refused_sample(resource_pack, texture_profile, reason));
+  }
 
   Ok(TextureSweepSample {
     resource_pack: resource_pack.to_string(),
     texture_profile: texture_profile.to_string(),
     duration_seconds: 0.0,
-    pose_error_px,
+    // TODO(mc6-pose-metric): true pose metric needs independent 2D labels or richer verification
+    // evidence; bridge-only MC-6 samples intentionally do not encode center-distance as pose error.
+    pose_error_px: 0.0,
     occlusion_iou: 1.0,
     refused_noise: false,
+    refusal_reason: None,
   })
+}
+
+fn read_projection_refusal_reasons(
+  bundle_dir: &Path,
+  manifest: &SpatialBundleManifest,
+) -> SampleBuildResult<BTreeMap<String, Option<MismatchRefusalReason>>> {
+  let mut reasons = BTreeMap::new();
+  for artifact in &manifest.artifacts {
+    if artifact.directory != SpatialBundleDirectory::SpatialFrames
+      || artifact.role != "minecraft-projection"
+    {
+      continue;
+    }
+    let projection_path = bundle_dir.join(&artifact.bundle_path);
+    let projection = read_projection_artifact(&projection_path)?;
+    if reasons
+      .insert(
+        projection.spatial_frame_id.clone(),
+        projection.mismatch_refusal_reason,
+      )
+      .is_some()
+    {
+      return Err(format!(
+        "MC-6 bundle has multiple minecraft-projection artifacts for frame {}",
+        projection.spatial_frame_id
+      ));
+    }
+  }
+  Ok(reasons)
+}
+
+fn fallback_refusal_reason(frame: &MinecraftSpatialFrame) -> Option<MismatchRefusalReason> {
+  match frame.screen_state.as_deref() {
+    Some("in_game") => {}
+    Some(_) => return Some(MismatchRefusalReason::MenuLoadingScreen),
+    None => return Some(MismatchRefusalReason::TelemetryUnreliable),
+  }
+  if frame.screenshot_artifact_ref.is_none() {
+    return Some(MismatchRefusalReason::ScreenshotUnavailable);
+  }
+  if frame.raycast_hit.is_none() {
+    return Some(MismatchRefusalReason::TelemetryUnreliable);
+  }
+  None
+}
+
+fn refusal_reason_from_projection(
+  visibility: &ProjectionVisibility,
+  screen_point: Option<Point>,
+) -> Option<MismatchRefusalReason> {
+  match visibility {
+    ProjectionVisibility::Visible if screen_point.is_some() => None,
+    ProjectionVisibility::Visible => Some(MismatchRefusalReason::TelemetryUnreliable),
+    ProjectionVisibility::BehindCamera => Some(MismatchRefusalReason::TargetBehindCamera),
+    ProjectionVisibility::OutOfFrustum => Some(MismatchRefusalReason::TargetOutOfFrustum),
+    ProjectionVisibility::OutsideWindow => Some(MismatchRefusalReason::ProjectedOutsideWindow),
+  }
+}
+
+fn refused_sample(
+  resource_pack: &str,
+  texture_profile: &str,
+  reason: MismatchRefusalReason,
+) -> TextureSweepSample {
+  TextureSweepSample {
+    resource_pack: resource_pack.to_string(),
+    texture_profile: texture_profile.to_string(),
+    duration_seconds: 0.0,
+    pose_error_px: 0.0,
+    occlusion_iou: 0.0,
+    refused_noise: true,
+    refusal_reason: Some(reason),
+  }
+}
+
+fn session_bucket_key(frame: &MinecraftSpatialFrame, source_run_id: &str) -> String {
+  frame
+    .telemetry_session_id
+    .clone()
+    .filter(|id| !id.trim().is_empty())
+    .unwrap_or_else(|| source_run_id.to_string())
 }
 
 fn classify_profile(frame: &MinecraftSpatialFrame) -> SampleBuildResult<Option<(String, String)>> {
@@ -280,10 +405,8 @@ fn profile_for_resource_pack_id(pack_id: &str) -> Option<&'static str> {
   }
 }
 
-fn is_refused_noise(frame: &MinecraftSpatialFrame) -> bool {
-  !matches!(frame.screen_state.as_deref(), Some("in_game"))
-    || frame.raycast_hit.is_none()
-    || frame.screenshot_artifact_ref.is_none()
+fn read_projection_artifact(path: &Path) -> SampleBuildResult<MinecraftProjectionArtifact> {
+  read_json_file(path, "MC-6 projection artifact")
 }
 
 fn read_manifest(path: &Path) -> SampleBuildResult<SpatialBundleManifest> {
@@ -304,11 +427,13 @@ fn read_json_file<T: DeserializeOwned>(path: &Path, label: &str) -> SampleBuildR
 #[cfg(test)]
 mod tests {
   use super::*;
+  use crate::artifact::MinecraftProjectionArtifact;
   use crate::dataset::{
     SPATIAL_BUNDLE_SCHEMA_VERSION, SourceRunSummary, SpatialBundleArtifactRecord,
     SpatialBundleCounts,
   };
   use crate::types::{BlockFace, BlockPosition, PlayerPose, RaycastHit, Vec3, Viewport};
+  use crate::verify::MismatchRefusalReason;
 
   fn identity_matrix() -> [f64; 16] {
     [
@@ -330,6 +455,7 @@ mod tests {
       spatial_frame_id: id.to_string(),
       world_tick: 1,
       monotonic_timestamp_ms,
+      telemetry_session_id: None,
       viewport: Viewport::new(800, 600),
       view_matrix: identity_matrix(),
       projection_matrix: identity_matrix(),
@@ -353,7 +479,43 @@ mod tests {
     }
   }
 
-  fn write_bundle(temp: &tempfile::TempDir, frames: Vec<(&str, MinecraftSpatialFrame)>) -> PathBuf {
+  fn with_telemetry_session_id(
+    mut frame: MinecraftSpatialFrame,
+    telemetry_session_id: &str,
+  ) -> MinecraftSpatialFrame {
+    frame.telemetry_session_id = Some(telemetry_session_id.to_string());
+    frame
+  }
+
+  fn projection_artifact(
+    frame: &MinecraftSpatialFrame,
+    reason: Option<MismatchRefusalReason>,
+  ) -> MinecraftProjectionArtifact {
+    MinecraftProjectionArtifact {
+      spatial_frame_id: frame.spatial_frame_id.clone(),
+      world_tick: frame.world_tick,
+      monotonic_timestamp_ms: frame.monotonic_timestamp_ms,
+      screenshot_artifact_ref: frame.screenshot_artifact_ref.clone(),
+      mc_capture_skew_ms: frame.mc_capture_skew_ms,
+      viewport_bounds: crate::artifact::ProjectionViewportBounds::from_rect(
+        frame.viewport.bounds(),
+      ),
+      projected_point: None,
+      visibility: ProjectionVisibility::OutsideWindow,
+      raycast_block_id: frame.raycast_hit.as_ref().map(|hit| hit.block_id.clone()),
+      screen_state: frame.screen_state.clone(),
+      resource_pack_ids: frame.resource_pack_ids.clone(),
+      mismatch_refusal_reason: reason,
+      verification_reference: None,
+    }
+  }
+
+  fn write_bundle(
+    temp: &tempfile::TempDir,
+    frames: Vec<(&str, MinecraftSpatialFrame)>,
+    projections: Vec<(&str, MinecraftProjectionArtifact)>,
+    source_run_id: &str,
+  ) -> PathBuf {
     let bundle_dir = temp.path().join("bundle");
     let frames_dir = bundle_dir.join("spatial_frames");
     fs::create_dir_all(&frames_dir).expect("frames dir");
@@ -374,10 +536,27 @@ mod tests {
         summary: None,
       });
     }
+    let base_index = artifacts.len();
+    for (offset, (name, projection)) in projections.iter().enumerate() {
+      let file_name = format!("artifact_{:04}-{name}.json", base_index + offset);
+      fs::write(
+        frames_dir.join(&file_name),
+        serde_json::to_vec_pretty(projection).expect("projection json"),
+      )
+      .expect("projection write");
+      artifacts.push(SpatialBundleArtifactRecord {
+        artifact_id: format!("artifact_{:04}", base_index + offset),
+        role: "minecraft-projection".to_string(),
+        source_path: format!("artifacts/{name}.json"),
+        bundle_path: format!("spatial_frames/{file_name}"),
+        directory: SpatialBundleDirectory::SpatialFrames,
+        summary: None,
+      });
+    }
     let manifest = SpatialBundleManifest {
       schema_version: SPATIAL_BUNDLE_SCHEMA_VERSION,
       source_run: SourceRunSummary {
-        source_run_id: "run_1".to_string(),
+        source_run_id: source_run_id.to_string(),
         source_operation: "auv.minecraft.bridge".to_string(),
         source_run_type: "execute".to_string(),
         source_status: "ok".to_string(),
@@ -402,6 +581,21 @@ mod tests {
   }
 
   #[test]
+  fn visible_off_center_target_does_not_turn_center_distance_into_pose_error() {
+    let sample = sample_for_frame(
+      &test_frame("frame-rich", "file/auv-mc6-rich", "in_game"),
+      "file/auv-mc6-rich",
+      "rich",
+      None,
+    )
+    .expect("sample build should succeed");
+
+    assert!(!sample.refused_noise);
+    assert_eq!(sample.pose_error_px, 0.0);
+    assert_eq!(sample.occlusion_iou, 1.0);
+  }
+
+  #[test]
   fn builds_samples_from_real_bundle_spatial_frames() {
     let temp = tempfile::tempdir().expect("temp dir");
     let manifest_path = write_bundle(
@@ -416,6 +610,8 @@ mod tests {
           test_frame("frame-refusal", "file/auv-mc6-rich", "menu"),
         ),
       ],
+      Vec::new(),
+      "run_1",
     );
 
     let output = build_texture_sweep_samples_from_bundles(TextureSweepSampleBuildInputs {
@@ -443,7 +639,7 @@ mod tests {
   }
 
   #[test]
-  fn duration_uses_all_profile_timestamps_even_when_refusals_are_unordered() {
+  fn duration_uses_only_accepted_frames_even_when_refusals_are_unordered() {
     let temp = tempfile::tempdir().expect("temp dir");
     let manifest_path = write_bundle(
       &temp,
@@ -466,6 +662,8 @@ mod tests {
           test_frame_at("frame-middle", "file/auv-mc6-rich", Some("in_game"), 5_000),
         ),
       ],
+      Vec::new(),
+      "run_1",
     );
 
     let output = build_texture_sweep_samples_from_bundles(TextureSweepSampleBuildInputs {
@@ -484,12 +682,25 @@ mod tests {
         .count(),
       1
     );
+    let accepted = output
+      .sample_set
+      .samples
+      .iter()
+      .filter(|sample| !sample.refused_noise)
+      .collect::<Vec<_>>();
+    assert_eq!(accepted.len(), 2);
+    assert!(
+      accepted
+        .iter()
+        .all(|sample| sample.duration_seconds == 26.0)
+    );
     assert!(
       output
         .sample_set
         .samples
         .iter()
-        .all(|sample| sample.duration_seconds == 30.0)
+        .filter(|sample| sample.refused_noise)
+        .all(|sample| sample.duration_seconds == 26.0)
     );
   }
 
@@ -518,6 +729,8 @@ mod tests {
           ),
         ),
       ],
+      Vec::new(),
+      "run_1",
     );
 
     let output = build_texture_sweep_samples_from_bundles(TextureSweepSampleBuildInputs {
@@ -542,12 +755,140 @@ mod tests {
         .count(),
       1
     );
+    assert_eq!(accepted[0].duration_seconds, 0.0);
+    let refusal = output
+      .sample_set
+      .samples
+      .iter()
+      .find(|sample| sample.refused_noise)
+      .expect("refusal sample");
+    assert_eq!(
+      refusal.refusal_reason,
+      Some(MismatchRefusalReason::TelemetryUnreliable)
+    );
+    assert_eq!(refusal.duration_seconds, 0.0);
+  }
+
+  #[test]
+  fn duplicate_accepted_observation_for_same_frame_is_deduped() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let shared = with_telemetry_session_id(
+      test_frame("frame-shared", "file/auv-mc6-rich", "in_game"),
+      "session-a",
+    );
+    let manifest_path = write_bundle(
+      &temp,
+      vec![("shared-a", shared.clone()), ("shared-b", shared)],
+      Vec::new(),
+      "run_1",
+    );
+
+    let output = build_texture_sweep_samples_from_bundles(TextureSweepSampleBuildInputs {
+      bundle_manifest_paths: vec![manifest_path],
+      output_path: temp.path().join("samples.json"),
+    })
+    .expect("sample build should succeed");
+
+    assert_eq!(output.sample_set.samples.len(), 1);
+    assert_eq!(output.sample_set.samples[0].duration_seconds, 0.0);
+  }
+
+  #[test]
+  fn duration_does_not_cross_telemetry_sessions() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let manifest_path = write_bundle(
+      &temp,
+      vec![
+        (
+          "session-a",
+          with_telemetry_session_id(
+            test_frame_at("frame-a", "file/auv-mc6-rich", Some("in_game"), 1_000),
+            "session-a",
+          ),
+        ),
+        (
+          "session-b",
+          with_telemetry_session_id(
+            test_frame_at("frame-b", "file/auv-mc6-rich", Some("in_game"), 61_000),
+            "session-b",
+          ),
+        ),
+      ],
+      Vec::new(),
+      "run_1",
+    );
+
+    let output = build_texture_sweep_samples_from_bundles(TextureSweepSampleBuildInputs {
+      bundle_manifest_paths: vec![manifest_path],
+      output_path: temp.path().join("samples.json"),
+    })
+    .expect("sample build should succeed");
+
+    assert_eq!(output.sample_set.samples.len(), 2);
     assert!(
       output
         .sample_set
         .samples
         .iter()
-        .all(|sample| sample.duration_seconds == 10.0)
+        .all(|sample| sample.duration_seconds == 0.0)
     );
+  }
+
+  #[test]
+  fn projection_refusal_reason_beats_fallback_and_counts_as_refusal() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let frame = test_frame("frame-menu", "file/auv-mc6-rich", "in_game");
+    let manifest_path = write_bundle(
+      &temp,
+      vec![("frame", frame.clone())],
+      vec![(
+        "projection",
+        projection_artifact(&frame, Some(MismatchRefusalReason::MenuLoadingScreen)),
+      )],
+      "run_1",
+    );
+
+    let output = build_texture_sweep_samples_from_bundles(TextureSweepSampleBuildInputs {
+      bundle_manifest_paths: vec![manifest_path],
+      output_path: temp.path().join("samples.json"),
+    })
+    .expect("sample build should succeed");
+
+    assert_eq!(output.sample_set.samples.len(), 1);
+    let sample = &output.sample_set.samples[0];
+    assert!(sample.refused_noise);
+    assert_eq!(
+      sample.refusal_reason,
+      Some(MismatchRefusalReason::MenuLoadingScreen)
+    );
+  }
+
+  #[test]
+  fn duplicate_projection_artifacts_for_same_frame_are_rejected() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let frame = test_frame("frame-rich", "file/auv-mc6-rich", "in_game");
+    let manifest_path = write_bundle(
+      &temp,
+      vec![("frame", frame.clone())],
+      vec![
+        (
+          "projection-a",
+          projection_artifact(&frame, Some(MismatchRefusalReason::MenuLoadingScreen)),
+        ),
+        (
+          "projection-b",
+          projection_artifact(&frame, Some(MismatchRefusalReason::TargetOccluded)),
+        ),
+      ],
+      "run_1",
+    );
+
+    let error = build_texture_sweep_samples_from_bundles(TextureSweepSampleBuildInputs {
+      bundle_manifest_paths: vec![manifest_path],
+      output_path: temp.path().join("samples.json"),
+    })
+    .expect_err("duplicate projection artifacts should fail");
+
+    assert!(error.contains("multiple minecraft-projection artifacts"));
   }
 }

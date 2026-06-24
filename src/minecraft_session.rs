@@ -130,6 +130,7 @@ mod tests {
       spatial_frame_id: "frame-session-1".to_string(),
       world_tick: 42,
       monotonic_timestamp_ms: 1_000,
+      telemetry_session_id: None,
       viewport: Viewport::new(800, 600),
       view_matrix: [0.0; 16],
       projection_matrix: [0.0; 16],

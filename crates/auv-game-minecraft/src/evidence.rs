@@ -216,6 +216,7 @@ mod tests {
       spatial_frame_id: "frame-1".to_string(),
       world_tick: 1,
       monotonic_timestamp_ms: ts,
+      telemetry_session_id: None,
       viewport: Viewport::new(64, 64),
       view_matrix: identity_matrix(),
       projection_matrix: identity_matrix(),

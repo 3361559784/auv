@@ -172,6 +172,7 @@ mod tests {
       spatial_frame_id: "frame-1".to_string(),
       world_tick: 42,
       monotonic_timestamp_ms: 1_000,
+      telemetry_session_id: None,
       viewport: Viewport::new(800, 600),
       view_matrix: [
         1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,

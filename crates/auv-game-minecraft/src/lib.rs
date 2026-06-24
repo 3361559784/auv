@@ -54,8 +54,8 @@ pub use session_observation::{
 };
 pub use types::{
   BlockFace, BlockPosition, InventorySummaryEntry, MinecraftBlockTarget, MinecraftProjectedPoint,
-  MinecraftSpatialFrame, NearbyBlock, NearbyEntity, PlayerPose, ProjectionVisibility, RaycastHit,
-  Vec3, Viewport,
+  MinecraftSpatialFrame, MinecraftTargetSemantics, NearbyBlock, NearbyEntity, PlayerPose,
+  ProjectionVisibility, RaycastHit, Vec3, Viewport, mc6_projection_target_for_frame,
 };
 pub use verify::{
   MismatchRefusal, MismatchRefusalReason, WorldDiffFailure, WorldDiffRequest, WorldDiffVerdict,

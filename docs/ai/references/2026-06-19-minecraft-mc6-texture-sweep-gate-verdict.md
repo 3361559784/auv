@@ -7,6 +7,16 @@ pre-committed numerical gate and records the verdict. Adds no code, contract, or
 core surface. This note does **not** reopen, close, or numerically pass MC-6 by
 itself; it reads off the table that already exists from real-source samples.
 
+Historical boundary after 2026-06-24:
+
+- this note remains valid as the verdict for the older three-run texture-sweep
+  table and as evidence of the constant-offset projection bug signature
+- it is not the current MC-6 closure verdict anymore
+- the current closure artifact is
+  `.auv/runs/run_1782284485217_79709_0/artifacts/artifact_0002_texture_sweep_report.json`
+  and is tracked in
+  `docs/ai/references/2026-06-24-minecraft-mc6-dual-gate-closure-reference.md`
+
 ## What this verdict is for
 
 The execution plan (`2026-06-18-auv-mc5-onward-execution-plan.md`, Slice C) and
@@ -24,6 +34,15 @@ verdict against the thresholds that were fixed *before* the run.
   `run_1781881896971_19131_0` / `run_1781881897582_19207_0` / `run_1781881898175_19213_0`,
   bundles `/tmp/auv-mc67-live/mc6-bundle-{rich,flat,repetitive}-fixed/run.json`.
 - `report.passed = false`, `noise_refusal_exercised = false`.
+
+Important read boundary after the 2026-06-24 measurement-integrity fix: this
+report remains historically valid as evidence of the constant ~119 px offset
+signature, but its sample semantics are now known to be too weak for closure.
+At that time the builder still treated repeated bridge copies as extra samples,
+did not bucket duration by `telemetry_session_id`, and could let missing-data
+refusals blur together with exercised live refusals. So this report should now
+be read as a projection-debugging clue, not as a closure-grade MC-6 measurement
+table.
 
 Pre-committed thresholds (fixed before the run):
 
@@ -45,6 +64,10 @@ refuse_on_noise_rule      = exercised at least once
 
 Overall: **FAIL.** Every pack fails pose and duration; the noise-refusal rule was
 never exercised; expected K=3 profiles are present but each has a single sample.
+After the 2026-06-24 semantics fix, that "single sample" reading is stricter:
+future rebuilds must use deduped unique observations and session-bounded
+accepted duration, so this table is even more clearly incomplete rather than
+technical-forcing.
 
 ## Reading — the part that matters
 
@@ -52,13 +75,14 @@ The naive read — "119 ≫ 8, so 2.5D fails on texture, therefore 3DGS is force
 is exactly the mouth-decision this gate exists to prevent. The table does **not**
 support it, for three independent reasons:
 
-1. **It is a single shot, not a sweep.** 1 sample per pack, `duration = 0.0 s`
+1. **It is a single shot, not a sweep.** 1 unique sample per pack, `duration = 0.0 s`
    against a 30 s/pack budget, and the refusal rule never fired. By the gate's own
    overall-pass rule and the plan's explicit wording ("a failed or missing report
    does not imply 'start 3DGS'; it means MC-6 is incomplete"), this is an
    **incomplete** MC-6, not a technical-forcing result. Note the real-source gate
    only certifies *provenance* (the samples cite real run ids / bundle manifests);
-   it does not certify *sufficiency* (one frame per pack).
+   it does not certify *sufficiency* (one frame per pack), and the stricter
+   2026-06-24 builder semantics reinforce that.
 
 2. **No degradation curve — the opposite of what the experiment measures.** The
    sweep exists to watch pose error climb as texture goes rich → flat → repetitive.
@@ -81,16 +105,29 @@ So ~119 px most plausibly measures a **constant transform bug**, not 2.5D's
 texture limit. It cannot be cited as evidence for or against 3DGS in either
 direction.
 
-## What this authorizes (per the plan's own rules)
+## What this verdict authorizes now
 
-- MC-6 stays **not numerically closed / not live-passed** — unchanged status.
-- 3DGS gets **no technical-forcing credit** from this table. The three judges are
-  untouched: technical forcing = not satisfied (no valid curve; likely a units
-  bug); refusal-seam = still **0 of MC-4's 7 classes** need dense photometric
-  comparison; market forcing = unchanged owner question.
-- MC-7 may continue **only** as the owner-opened offline inspect-artifact lane
-  (read-side, never action/verification path). It must not cite this report as
-  closure or forcing evidence.
+As of 2026-06-23, the owner has explicitly reopened MC-6 live execution. That
+reopen does **not** change the numerical reading of this table; it changes what
+work is allowed next.
+
+What remains true from this verdict:
+
+- MC-6 is still **not numerically closed / not live-passed** by the evidence in
+  this report.
+- 3DGS still gets **no technical-forcing credit** from this table.
+- The constant ~119 px signature is still read as a likely projection /
+  coordinate-convention bug, not as texture-robustness evidence.
+
+What the reopen authorizes:
+
+- The old "prepare only / do not continue the live chain" hold is lifted for
+  the next slice.
+- The next live slice may launch Minecraft/Fabric again, but it must start with
+  the dedicated `minecraft calibrate-projection` single-frame
+  projection/overlay validation against real evidence.
+- Only after that single-frame check lands correctly should the K-pack live
+  sweep be widened and rebuilt into a new real-source table.
 
 ## Authorized next slice (one, then stop)
 
@@ -99,9 +136,11 @@ step: take one real bundle frame, render the projected block box as
 overlay-on-frame, and check whether the box lands on the block.
 
 - If it is off by a roughly constant amount, fix the projection convention
-  (matrix order / pixel space / framebuffer scale) and re-measure that one frame.
+  (matrix order / pixel space / framebuffer scale or target semantics) and
+  re-measure that one frame.
 - Only once a single frame lands correctly does a K-pack sweep (≥1 real refusal,
-  real 30 s/pack, many frames) become meaningful.
+  real 30 s/pack inside one telemetry session per pack, many deduped accepted
+  frames) become meaningful.
 
 Do not stack more resource-pack runs on top of an unvalidated projection; that
 just multiplies the same constant error across three columns, which is precisely

@@ -36,7 +36,7 @@ pub struct MismatchRefusal {
   pub observed_block_id: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct WorldDiffRequest {
   pub target: MinecraftBlockTarget,
   pub expected_item_id: Option<String>,
@@ -313,6 +313,7 @@ mod tests {
       spatial_frame_id: format!("frame-{world_tick}"),
       world_tick,
       monotonic_timestamp_ms: timestamp_ms,
+      telemetry_session_id: None,
       viewport: Viewport::new(800, 600),
       view_matrix: [
         1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
@@ -343,6 +344,7 @@ mod tests {
     MinecraftBlockTarget {
       block_pos: BlockPosition::new(1, 2, 3),
       face: Some(BlockFace::North),
+      precise_point: None,
     }
   }
 

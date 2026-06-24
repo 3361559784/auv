@@ -139,6 +139,8 @@ async fn run() -> Result<(), String> {
     CliCommand::MinecraftProjectionBridge {
       telemetry_sample,
       screenshot,
+      capture_target_app,
+      capture_target_title,
       target_block,
       capture_skew_ms,
       screenshot_is_minecraft_window,
@@ -148,7 +150,9 @@ async fn run() -> Result<(), String> {
       let output = run_minecraft_projection_bridge(
         &runtime,
         PathBuf::from(telemetry_sample),
-        PathBuf::from(screenshot),
+        screenshot.as_ref().map(PathBuf::from),
+        capture_target_app.as_deref(),
+        capture_target_title.as_deref(),
         &target_block,
         capture_skew_ms,
         screenshot_is_minecraft_window,
@@ -161,6 +165,48 @@ async fn run() -> Result<(), String> {
       println!(
         "screenshotArtifact: {}",
         output.value.screenshot_artifact_id
+      );
+      if let Some(overlay_artifact_id) = output.value.overlay_artifact_id.as_deref() {
+        println!("overlayArtifact: {overlay_artifact_id}");
+      }
+      if let Some(refusal_reason) = output.value.refusal_reason.as_deref() {
+        println!("refusalReason: {refusal_reason}");
+      } else {
+        println!("refusalReason: none");
+      }
+      for artifact in &output.value.artifact_paths {
+        println!("artifact: {}", artifact.display());
+      }
+    }
+    CliCommand::MinecraftCalibrateProjection {
+      frame_path,
+      screenshot,
+      target_block,
+      target_semantics,
+      screenshot_is_minecraft_window,
+      inspect,
+    } => {
+      let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
+      let output = run_minecraft_calibrate_projection(
+        &runtime,
+        PathBuf::from(frame_path),
+        PathBuf::from(screenshot),
+        &target_block,
+        &target_semantics,
+        screenshot_is_minecraft_window,
+      )?;
+      println!("runId: {}", output.run_id);
+      println!(
+        "projectionArtifact: {}",
+        output.value.projection_artifact_id
+      );
+      println!(
+        "screenshotArtifact: {}",
+        output.value.screenshot_artifact_id
+      );
+      println!(
+        "calibrationArtifact: {}",
+        output.value.calibration_artifact_id
       );
       if let Some(overlay_artifact_id) = output.value.overlay_artifact_id.as_deref() {
         println!("overlayArtifact: {overlay_artifact_id}");
@@ -685,12 +731,34 @@ struct MinecraftBridgeOutput {
 }
 
 #[derive(Debug)]
+struct MinecraftCalibrationOutput {
+  screenshot_artifact_id: String,
+  projection_artifact_id: String,
+  calibration_artifact_id: String,
+  overlay_artifact_id: Option<String>,
+  refusal_reason: Option<String>,
+  artifact_paths: Vec<PathBuf>,
+}
+
+#[derive(Debug)]
 struct MinecraftLiveClickOutput {
   screenshot_artifact_id: String,
   projection_artifact_id: String,
   operation_result_artifact_id: String,
   input_summary: String,
   artifact_paths: Vec<PathBuf>,
+}
+
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+struct MinecraftProjectionCalibrationArtifact {
+  frame_id: String,
+  target_block: String,
+  target_semantics: String,
+  raycast_hit_block_pos: Option<String>,
+  raycast_hit_face: Option<String>,
+  refusal_reason: Option<String>,
+  overlay_ref: Option<String>,
+  known_limits: Vec<String>,
 }
 
 fn build_minecraft_world_diff_verification(
@@ -971,7 +1039,9 @@ fn run_minecraft_live_click(
 fn run_minecraft_projection_bridge(
   runtime: &auv_cli::runtime::Runtime,
   telemetry_sample: PathBuf,
-  screenshot: PathBuf,
+  screenshot: Option<PathBuf>,
+  capture_target_app: Option<&str>,
+  capture_target_title: Option<&str>,
   target_block: &str,
   capture_skew_ms: Option<i64>,
   screenshot_is_minecraft_window: bool,
@@ -988,8 +1058,6 @@ fn run_minecraft_projection_bridge(
       )
     })?;
 
-  let screenshot_dimensions = read_screenshot_dimensions(&screenshot)?;
-
   runtime.run_recorded_operation(
     auv_tracing_driver::run_builder::RunSpec::new(
       auv_tracing_driver::trace::RunType::Execute,
@@ -997,15 +1065,16 @@ fn run_minecraft_projection_bridge(
     ),
     "Minecraft projection bridge",
     |context| {
-      let (staged_screenshot_path, screenshot_ref) = context.stage_artifact_file_with_ref(
-        "minecraft-screenshot",
-        &screenshot,
-        screenshot
-          .file_name()
-          .and_then(|name| name.to_str())
-          .unwrap_or("minecraft-screenshot.png"),
-        Some("minecraft screenshot bound to live telemetry frame".to_string()),
+      let captured = capture_or_stage_bridge_screenshot(
+        runtime,
+        context,
+        screenshot.as_deref(),
+        capture_target_app,
+        capture_target_title,
       )?;
+      let screenshot_dimensions = read_screenshot_dimensions(&captured.staged_path)?;
+      let screenshot_path = captured.staged_path.clone();
+      let screenshot_ref = captured.artifact_ref.clone();
       let screenshot_artifact_id = screenshot_ref.artifact_id.as_str().to_string();
 
       let capture_timestamp_ms = if let Some(skew) = capture_skew_ms {
@@ -1027,10 +1096,14 @@ fn run_minecraft_projection_bridge(
         stage_minecraft_spatial_frame_artifact(context, &bound.frame)?;
 
       let assessment = auv_game_minecraft::evidence::assess_bound_projection(
-        bound.frame,
+        bound.frame.clone(),
         screenshot_dimensions,
         screenshot_is_minecraft_window,
-        &auv_game_minecraft::MinecraftBlockTarget::new(target_block),
+        &auv_game_minecraft::mc6_projection_target_for_frame(
+          target_block,
+          &bound.frame,
+          auv_game_minecraft::MinecraftTargetSemantics::HitFaceCenter,
+        ),
         Some(250),
       )?;
 
@@ -1047,7 +1120,7 @@ fn run_minecraft_projection_bridge(
       let projection_artifact_id = projection_ref.artifact_id.as_str().to_string();
       let mut artifact_paths = vec![
         staged_frame_path,
-        staged_screenshot_path,
+        screenshot_path.clone(),
         staged_projection_path,
       ];
       let mut overlay_artifact_id = None;
@@ -1058,7 +1131,7 @@ fn run_minecraft_projection_bridge(
         raycast_hit,
       } = assessment
       {
-        let screenshot_image = decode_screenshot_rgb(&screenshot)?;
+        let screenshot_image = decode_screenshot_rgb(&screenshot_path)?;
         let projected = artifact.projected_point.clone().ok_or_else(|| {
           "minecraft bridge bound projection is missing projected point".to_string()
         })?;
@@ -1114,6 +1187,96 @@ fn read_screenshot_dimensions(path: &Path) -> Result<(u32, u32), String> {
     })
 }
 
+fn parse_target_semantics(
+  raw: &str,
+) -> Result<auv_game_minecraft::MinecraftTargetSemantics, String> {
+  match raw {
+    "hit_face_center" => Ok(auv_game_minecraft::MinecraftTargetSemantics::HitFaceCenter),
+    "block_center" => Ok(auv_game_minecraft::MinecraftTargetSemantics::BlockCenter),
+    other => Err(format!(
+      "invalid target semantics {other:?}; expected hit_face_center or block_center"
+    )),
+  }
+}
+
+#[derive(Clone, Debug)]
+struct BridgeCapturedScreenshot {
+  staged_path: PathBuf,
+  artifact_ref: auv_cli::contract::ArtifactRef,
+}
+
+fn capture_or_stage_bridge_screenshot(
+  runtime: &auv_cli::runtime::Runtime,
+  context: &mut auv_tracing_driver::recorded_operation::RecordedOperationContext<'_>,
+  screenshot: Option<&Path>,
+  capture_target_app: Option<&str>,
+  capture_target_title: Option<&str>,
+) -> Result<BridgeCapturedScreenshot, String> {
+  if let Some(screenshot) = screenshot {
+    let (staged_screenshot_path, screenshot_ref) = context.stage_artifact_file_with_ref(
+      "minecraft-screenshot",
+      screenshot,
+      screenshot
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("minecraft-screenshot.png"),
+      Some("minecraft screenshot bound to live telemetry frame".to_string()),
+    )?;
+    return Ok(BridgeCapturedScreenshot {
+      staged_path: staged_screenshot_path,
+      artifact_ref: screenshot_ref,
+    });
+  }
+
+  let target_app =
+    capture_target_app.ok_or_else(|| "bridge capture requires target app".to_string())?;
+  let mut inputs = std::collections::BTreeMap::new();
+  if let Some(title) = capture_target_title {
+    inputs.insert("title".to_string(), title.to_string());
+  }
+  let registry = auv_cli_invoke::default_registry();
+  let command = registry
+    .resolve("window.capture")
+    .ok_or_else(|| "window.capture command is not registered".to_string())?;
+  let parent = context.current_span().clone();
+  let invoke_result = auv_cli_invoke::invoke_resolved_recorded_in_span(
+    runtime.recording(),
+    context.run_mut(),
+    &parent,
+    command,
+    InvokeRequest {
+      command_id: "window.capture".to_string(),
+      target: auv_cli::model::ExecutionTarget {
+        application_id: Some(target_app.to_string()),
+        target_label: None,
+      },
+      inputs,
+      dry_run: false,
+    },
+  )?;
+  let artifact = invoke_result
+    .artifacts
+    .iter()
+    .find(|artifact| artifact.role == "window-capture")
+    .ok_or_else(|| "window.capture produced no window-capture artifact".to_string())?;
+  let run_dir = runtime.recording().run_dir(&invoke_result.run_id)?;
+  let capture_path = run_dir.join(&artifact.path);
+  let preferred_name = Path::new(&artifact.path)
+    .file_name()
+    .and_then(|name| name.to_str())
+    .unwrap_or("minecraft-screenshot.png");
+  let (staged_screenshot_path, screenshot_ref) = context.stage_artifact_file_with_ref(
+    "minecraft-screenshot",
+    &capture_path,
+    preferred_name,
+    Some("minecraft screenshot captured through window.capture".to_string()),
+  )?;
+  Ok(BridgeCapturedScreenshot {
+    staged_path: staged_screenshot_path,
+    artifact_ref: screenshot_ref,
+  })
+}
+
 fn decode_screenshot_rgb(path: &Path) -> Result<image::RgbImage, String> {
   let image = ImageReader::open(path)
     .map_err(|error| format!("failed to open screenshot {}: {error}", path.display()))?
@@ -1144,6 +1307,191 @@ fn stage_minecraft_projection_artifact(
   );
   let _ = fs::remove_file(&artifact_path);
   staged.map_err(|error| error.to_string())
+}
+
+fn stage_minecraft_projection_calibration_artifact(
+  context: &mut auv_tracing_driver::recorded_operation::RecordedOperationContext<'_>,
+  calibration_artifact: &MinecraftProjectionCalibrationArtifact,
+) -> Result<(PathBuf, auv_cli::contract::ArtifactRef), String> {
+  let artifact_json = serde_json::to_string_pretty(calibration_artifact)
+    .map_err(|error| format!("failed to serialize minecraft calibration artifact: {error}"))?;
+  let artifact_path = std::env::temp_dir().join(format!(
+    "auv-minecraft-projection-calibration-{}-{}.json",
+    context.run_id(),
+    auv_cli::model::now_millis()
+  ));
+  fs::write(&artifact_path, artifact_json.as_bytes())
+    .map_err(|error| format!("failed to write minecraft calibration artifact: {error}"))?;
+  let staged = context.stage_artifact_file_with_ref(
+    auv_cli::minecraft::MINECRAFT_PROJECTION_CALIBRATION_ARTIFACT_ROLE,
+    &artifact_path,
+    "projection-calibration.json",
+    Some("durable minecraft projection calibration summary".to_string()),
+  );
+  let _ = fs::remove_file(&artifact_path);
+  staged.map_err(|error| error.to_string())
+}
+
+fn read_minecraft_spatial_frame_file(
+  path: &Path,
+) -> Result<auv_game_minecraft::MinecraftSpatialFrame, String> {
+  let bytes = fs::read(path).map_err(|error| {
+    format!(
+      "failed to read minecraft spatial frame {}: {error}",
+      path.display()
+    )
+  })?;
+  serde_json::from_slice(&bytes).map_err(|error| {
+    format!(
+      "failed to parse minecraft spatial frame {}: {error}",
+      path.display()
+    )
+  })
+}
+
+fn run_minecraft_calibrate_projection(
+  runtime: &auv_cli::runtime::Runtime,
+  frame_path: PathBuf,
+  screenshot: PathBuf,
+  target_block: &str,
+  target_semantics: &str,
+  screenshot_is_minecraft_window: bool,
+) -> Result<
+  auv_tracing_driver::recorded_operation::RecordedOperationOutput<MinecraftCalibrationOutput>,
+  String,
+> {
+  let frame = read_minecraft_spatial_frame_file(&frame_path)?;
+  let target_block = parse_block_position(target_block)?;
+  let semantics = parse_target_semantics(target_semantics)?;
+  let screenshot_dimensions = read_screenshot_dimensions(&screenshot)?;
+
+  runtime.run_recorded_operation(
+    RunSpec::new(
+      auv_tracing_driver::trace::RunType::Execute,
+      "auv.minecraft.calibrate_projection",
+    ),
+    "Minecraft projection calibration",
+    |context| {
+      let (staged_screenshot_path, screenshot_ref) = context.stage_artifact_file_with_ref(
+        "minecraft-screenshot",
+        &screenshot,
+        screenshot
+          .file_name()
+          .and_then(|name| name.to_str())
+          .unwrap_or("minecraft-screenshot.png"),
+        Some("minecraft screenshot used for calibration".to_string()),
+      )?;
+      let screenshot_artifact_id = screenshot_ref.artifact_id.as_str().to_string();
+      let bound = auv_game_minecraft::bind_capture_to_frame(
+        frame.clone(),
+        format!("artifact://{screenshot_artifact_id}"),
+        frame.monotonic_timestamp_ms,
+      );
+      let (staged_frame_path, _frame_ref) =
+        stage_minecraft_spatial_frame_artifact(context, &bound.frame)?;
+      let target =
+        auv_game_minecraft::mc6_projection_target_for_frame(target_block, &bound.frame, semantics);
+      let assessment = auv_game_minecraft::evidence::assess_bound_projection(
+        bound.frame.clone(),
+        screenshot_dimensions,
+        screenshot_is_minecraft_window,
+        &target,
+        Some(250),
+      )?;
+      let projection_artifact = match &assessment {
+        auv_game_minecraft::evidence::ProjectionAssessment::Bound { artifact, .. } => {
+          artifact.clone()
+        }
+        auv_game_minecraft::evidence::ProjectionAssessment::Refused { artifact, .. } => {
+          artifact.clone()
+        }
+      };
+      let (staged_projection_path, projection_ref) =
+        stage_minecraft_projection_artifact(context, &projection_artifact)?;
+      let projection_artifact_id = projection_ref.artifact_id.as_str().to_string();
+      let mut artifact_paths = vec![
+        staged_frame_path,
+        staged_screenshot_path,
+        staged_projection_path,
+      ];
+      let mut overlay_artifact_id = None;
+      let refusal_reason = match &assessment {
+        auv_game_minecraft::evidence::ProjectionAssessment::Bound {
+          artifact,
+          raycast_hit,
+        } => {
+          let screenshot_image = decode_screenshot_rgb(&screenshot)?;
+          let projected = artifact.projected_point.clone().ok_or_else(|| {
+            "minecraft calibration bound projection is missing projected point".to_string()
+          })?;
+          let overlay = auv_game_minecraft::render_projection_overlay(
+            screenshot_image,
+            &projected,
+            raycast_hit.as_ref(),
+          );
+          let overlay_path = std::env::temp_dir().join(format!(
+            "auv-minecraft-overlay-{}-{}.png",
+            context.run_id(),
+            auv_cli::model::now_millis()
+          ));
+          overlay
+            .save(&overlay_path)
+            .map_err(|error| format!("failed to save overlay image: {error}"))?;
+          let (staged_overlay_path, overlay_ref) = context.stage_artifact_file_with_ref(
+            "minecraft-overlay",
+            &overlay_path,
+            "minecraft-overlay.png",
+            Some("projected minecraft overlay for calibration".to_string()),
+          )?;
+          let _ = fs::remove_file(&overlay_path);
+          overlay_artifact_id = Some(overlay_ref.artifact_id.as_str().to_string());
+          artifact_paths.push(staged_overlay_path);
+          None
+        }
+        auv_game_minecraft::evidence::ProjectionAssessment::Refused { refusal, .. } => {
+          refusal.reason.map(|reason| format!("{reason:?}"))
+        }
+      };
+      let calibration = MinecraftProjectionCalibrationArtifact {
+        frame_id: bound.frame.spatial_frame_id.clone(),
+        target_block: format!("{},{},{}", target_block.x, target_block.y, target_block.z),
+        target_semantics: target_semantics.to_string(),
+        raycast_hit_block_pos: bound.frame.raycast_hit.as_ref().map(|hit| {
+          format!(
+            "{},{},{}",
+            hit.block_pos.x, hit.block_pos.y, hit.block_pos.z
+          )
+        }),
+        raycast_hit_face: bound
+          .frame
+          .raycast_hit
+          .as_ref()
+          .map(|hit| format!("{:?}", hit.face)),
+        refusal_reason: refusal_reason.clone(),
+        overlay_ref: overlay_artifact_id
+          .as_ref()
+          .map(|artifact_id| format!("artifact://{artifact_id}")),
+        known_limits: vec![
+          "geometry gate is visual-review driven; this artifact does not assert numeric pass/fail"
+            .to_string(),
+          "MC-6 hit-face-center applies only when raycast_hit.block_pos matches target_block"
+            .to_string(),
+        ],
+      };
+      let (staged_calibration_path, calibration_ref) =
+        stage_minecraft_projection_calibration_artifact(context, &calibration)?;
+      artifact_paths.push(staged_calibration_path);
+
+      Ok::<MinecraftCalibrationOutput, String>(MinecraftCalibrationOutput {
+        screenshot_artifact_id,
+        projection_artifact_id,
+        calibration_artifact_id: calibration_ref.artifact_id.as_str().to_string(),
+        overlay_artifact_id,
+        refusal_reason,
+        artifact_paths,
+      })
+    },
+  )
 }
 
 fn parse_block_position(raw: &str) -> Result<auv_game_minecraft::BlockPosition, String> {
@@ -1814,6 +2162,7 @@ mod tests {
       spatial_frame_id: "frame-mc2".to_string(),
       world_tick: 42,
       monotonic_timestamp_ms: 5_000,
+      telemetry_session_id: None,
       viewport: auv_game_minecraft::types::Viewport::new(64, 64),
       view_matrix: [
         1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
@@ -1987,7 +2336,9 @@ mod tests {
     let output = run_minecraft_projection_bridge(
       &runtime,
       telemetry_path,
-      screenshot_path,
+      Some(screenshot_path),
+      None,
+      None,
       "0,0,0",
       Some(0),
       true,
@@ -2036,7 +2387,9 @@ mod tests {
     let output = run_minecraft_projection_bridge(
       &runtime,
       telemetry_path,
-      screenshot_path,
+      Some(screenshot_path),
+      None,
+      None,
       "0,0,0",
       Some(999),
       true,
@@ -2068,6 +2421,82 @@ mod tests {
       Some("CaptureSkewUnreliable")
     );
     assert_eq!(output.value.overlay_artifact_id, None);
+
+    let _ = fs::remove_dir_all(project_root);
+    let _ = fs::remove_dir_all(store_root);
+  }
+
+  #[test]
+  fn minecraft_calibrate_projection_persists_projection_overlay_and_calibration_artifacts() {
+    let project_root = mc2_temp_dir("mc6-calibration-project");
+    let store_root = mc2_temp_dir("mc6-calibration-store");
+    let frame_path = project_root.join("frame.json");
+    let screenshot_path = project_root.join("frame.png");
+    write_mc2_test_telemetry(&frame_path);
+    write_mc2_test_screenshot(&screenshot_path);
+
+    let runtime = build_runtime_with_store_root(project_root.clone(), store_root.clone())
+      .expect("runtime should build");
+    let output = run_minecraft_calibrate_projection(
+      &runtime,
+      frame_path,
+      screenshot_path,
+      "0,0,0",
+      "hit_face_center",
+      true,
+    )
+    .expect("calibration should succeed");
+
+    let run = runtime
+      .recording()
+      .read_run(output.run_id.as_str())
+      .expect("run should persist");
+    assert_eq!(run.artifacts.len(), 5);
+    assert_eq!(run.artifacts[0].role, "minecraft-screenshot");
+    assert_eq!(
+      run.artifacts[1].role,
+      auv_cli::minecraft::MINECRAFT_SPATIAL_FRAME_ARTIFACT_ROLE
+    );
+    assert_eq!(
+      run.artifacts[2].role,
+      auv_cli::contract::MINECRAFT_PROJECTION_ARTIFACT_ROLE
+    );
+    assert_eq!(run.artifacts[3].role, "minecraft-overlay");
+    assert_eq!(
+      run.artifacts[4].role,
+      auv_cli::minecraft::MINECRAFT_PROJECTION_CALIBRATION_ARTIFACT_ROLE
+    );
+    assert_eq!(output.value.overlay_artifact_id.is_some(), true);
+    assert_eq!(output.value.refusal_reason, None);
+
+    let calibration_artifact = run
+      .artifacts
+      .iter()
+      .find(|artifact| {
+        artifact.role == auv_cli::minecraft::MINECRAFT_PROJECTION_CALIBRATION_ARTIFACT_ROLE
+      })
+      .expect("calibration artifact should exist");
+    let calibration_path = runtime
+      .recording()
+      .run_dir(output.run_id.as_str())
+      .expect("run dir should exist")
+      .join(&calibration_artifact.path);
+    let calibration: MinecraftProjectionCalibrationArtifact =
+      serde_json::from_slice(&fs::read(&calibration_path).expect("calibration bytes"))
+        .expect("calibration json");
+    assert_eq!(calibration.frame_id, "frame-mc2");
+    assert_eq!(calibration.target_block, "0,0,0");
+    assert_eq!(calibration.target_semantics, "hit_face_center");
+    assert_eq!(calibration.raycast_hit_block_pos.as_deref(), Some("0,0,0"));
+    assert_eq!(calibration.raycast_hit_face.as_deref(), Some("North"));
+    assert_eq!(calibration.refusal_reason, None);
+    assert!(
+      calibration
+        .overlay_ref
+        .as_deref()
+        .is_some_and(|value| value.starts_with("artifact://"))
+    );
+    assert_eq!(calibration.known_limits.len(), 2);
 
     let _ = fs::remove_dir_all(project_root);
     let _ = fs::remove_dir_all(store_root);

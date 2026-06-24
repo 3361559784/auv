@@ -98,6 +98,7 @@ pub fn frame_to_session_observation(frame: &MinecraftSpatialFrame) -> MinecraftS
       },
       "screen_state": frame.screen_state,
       "capture_skew_ms": frame.mc_capture_skew_ms,
+      "telemetry_session_id": frame.telemetry_session_id,
       "resource_pack_ids": frame.resource_pack_ids,
       "screenshot_artifact_ref": frame.screenshot_artifact_ref
     }),
@@ -158,6 +159,7 @@ mod tests {
       spatial_frame_id: "frame-session-1".to_string(),
       world_tick: 42,
       monotonic_timestamp_ms: 1_000,
+      telemetry_session_id: None,
       viewport: Viewport::new(800, 600),
       view_matrix: [0.0; 16],
       projection_matrix: [0.0; 16],
@@ -186,7 +188,10 @@ mod tests {
 
   #[test]
   fn frame_observation_projects_raycast_and_nearby_blocks() {
-    let observation = frame_to_session_observation(&frame());
+    let mut frame = frame();
+    frame.telemetry_session_id = Some("session-42".to_string());
+
+    let observation = frame_to_session_observation(&frame);
 
     assert_eq!(observation.frame_id, "frame-session-1");
     assert_eq!(observation.nodes.len(), 2);
@@ -206,6 +211,10 @@ mod tests {
         .any(|limit| limit.contains("telemetry truth"))
     );
     assert_eq!(observation.detail["resource_pack_ids"][0], "vanilla");
+    assert_eq!(
+      observation.detail["telemetry_session_id"].as_str(),
+      Some("session-42")
+    );
   }
 
   #[test]

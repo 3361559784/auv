@@ -49,7 +49,7 @@ impl MinecraftProjector {
       );
     }
 
-    let clip = self.project_vec4(target.block_pos.center());
+    let clip = self.project_vec4(target.aim_point());
     let screen_projection = self.projected_screen_point_from_clip(clip, 1.0)?;
     if let ProjectedScreenPoint::Hidden(visibility) = screen_projection {
       return Ok(self.non_visible_point(visibility));
@@ -292,6 +292,7 @@ mod tests {
       spatial_frame_id: "frame-1".to_string(),
       world_tick: 42,
       monotonic_timestamp_ms: 1000,
+      telemetry_session_id: None,
       viewport,
       view_matrix,
       projection_matrix,

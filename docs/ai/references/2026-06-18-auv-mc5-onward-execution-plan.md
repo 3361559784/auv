@@ -31,11 +31,19 @@ here approves widening beyond the slice in hand.
   The `.codex-worktrees/realtime-session-substrate/` worktree remains untracked
   and should not be treated as committed project state.
 - Update after MC-6 preparation: MC-6 has preparation-only resource-pack,
-  sample-builder, and real-source gate substrate, but its K-pack live/offline
-  numerical sweep remains **unrun**. Owner override on 2026-06-18: hold MC-6 in
-  that unlive state and open MC-7 as a separate design-first lane. This is an
-  owner product/architecture selection, not evidence that MC-6 numerically
-  passed or failed.
+  sample-builder, and real-source gate substrate, and it also has one recorded
+  real-source K-pack attempt whose verdict is documented separately in
+  `2026-06-19-minecraft-mc6-texture-sweep-gate-verdict.md`. That attempt did
+  **not** numerically close MC-6 and instead exposed a likely constant
+  projection/convention bug (~119 px offset signature) plus insufficient sweep
+  coverage.
+- Update after owner reopen on 2026-06-23: MC-6 is no longer held at
+  preparation-only/unlive status for this slice. The active next step is to
+  reopen the live chain, but not by blindly collecting more packs: first
+  validate one real frame / overlay against the projection basis and eliminate
+  the constant-offset bug signature; only then continue the live K-pack chain.
+  MC-7 remains a separate offline inspect-artifact lane and does not get
+  technical-forcing credit from the failed MC-6 attempt.
 
 ## Kill gates (carried + extended)
 
@@ -130,8 +138,24 @@ evaluates precomputed texture-sweep samples via
 the pre-set v0 thresholds. Closure runs must add `--require-real-source`, which
 rejects missing source blocks and fixture/smoke/test generators unless the
 sample source cites source run ids plus bundle manifests. The sidecar now
-records `resource_pack_ids` on each telemetry sample and the sweep evaluator
-records both the input sample file and the report as run artifacts.
+records `resource_pack_ids` and `telemetry_session_id` on each telemetry sample
+and the sweep evaluator records both the input sample file and the report as
+run artifacts.
+
+The MC-6 measurement semantics are now intentionally stricter:
+
+- `sample_count` counts unique observations, not repeated bridge/export copies
+  of the same `spatial_frame_id`.
+- `duration_seconds` is computed only from accepted frames inside one
+  `telemetry_session_id` bucket (historical bundles fall back to
+  `source_run_id`), and refusal frames do not extend the duration window.
+- `noise_refusal_exercised` only counts real live refusal reasons such as
+  `menu_loading_screen`, `not_minecraft_window`, projection refusal, or
+  occlusion refusal. Missing screenshot / unreliable telemetry observations do
+  not earn refusal credit.
+- Bridge-only visible targets intentionally emit `pose_error_px = 0.0` instead
+  of a fake center-distance metric. A true pose metric still needs an explicitly
+  approved labeled seam.
 
 Preparation-only substrate now exists for the next live pass:
 `auv-cli minecraft prepare-texture-sweep --sidecar-run-dir <dir> --output-dir <dir>`
@@ -149,10 +173,18 @@ current local evidence inventory, sidecar state, and the "prepare only; do not
 run live chain yet" boundary so the next pass does not rescan the same `.auv`
 and sidecar state.
 
-Current decision: **do not continue the MC-6 live chain unless the owner
-explicitly reopens MC-6**. Keep its status visible as "not live-run / not
-numerically closed". The preparation substrate remains useful for future data
-collection and as a provenance gate, but it no longer blocks starting MC-7.
+Current decision: **MC-6 has been explicitly reopened for live execution by the
+owner as of 2026-06-23**, so the old preparation-only hold no longer blocks the
+next slice. However, do **not** resume the full K-pack chain by default. The
+first live-reopen task is to validate a real frame / overlay against the
+projection basis and remove the constant ~119 px offset signature documented in
+`2026-06-19-minecraft-mc6-texture-sweep-gate-verdict.md`. Only after that
+single-frame projection check passes should the live K-pack sweep continue.
+
+Keep MC-6 status visible as "reopened, not yet numerically closed" until the
+new real-source table is rebuilt from post-fix live evidence. MC-7 remains
+opened as a separate offline inspect-artifact lane, but it does not receive any
+technical-forcing credit from the failed MC-6 attempt.
 
 C1 — recorder: each run → a bundle (`screenshots/`, `spatial_frames/`,
 `actions/`, `verification/`, `overlays/`, `run.json` with versions + commits).
@@ -174,11 +206,15 @@ Compute 2.5D keyframe-cache pose/occlusion error vs the mod's raycast + matrix
 ground-truth across the K packs. This table is the **only** input that decides
 session-floor vs 2.5D vs 3DGS — by number, not argument.
 
-Acceptance gate if MC-6 is reopened: bundle schema recorded + read-side visible;
-the sweep runs across K packs with `--require-real-source` and emits the p95 /
-IoU table; pass/fail is read off the pre-set thresholds. The table must come
-from real sample provenance, not the evaluator's fixture or smoke data. Until
-then, MC-6 remains deliberately held as unlive preparation work.
+Acceptance gate if MC-6 is reopened: treat it as a **dual-gate** closure.
+First, a single-frame calibration artifact/overlay pair must confirm the
+projection basis on canonical evidence. Second, the sweep runs across K packs
+with `--require-real-source` and emits the p95 / IoU table from fresh live
+evidence. The table must come from real sample provenance, not the evaluator's
+fixture or smoke data. It also must not rely on duplicate-frame inflation,
+cross-session duration accumulation, or missing-screenshot refusals being
+counted as exercised noise. Until that fresh rebuilt table passes, MC-6 remains
+reopened but not numerically closed.
 
 ## Slice D — MC-7: offline 3DGS inspect artifact (OWNER-OPENED)
 
@@ -253,7 +289,7 @@ Re-read before editing: `CLAUDE.md`, `AGENTS.md`,
 `2026-06-16-minecraft-live-mc2-mc4-closure-plan.md` (incl. its Post-MC-4
 sequencing), `2026-06-10-stateful-session-daemon-js-repl-v0.md`.
 
-Current order after owner override: keep MC-6 held at preparation-only/unlive;
-start Slice D with the MC-7 design note and only then implement the smallest
-offline inspect artifact slice. Finish, report, stop, let the owner pick the
-next implementation step.
+Current order after owner override: MC-6 is reopened for the dual-gate closure
+path. Clear the canonical single-frame calibration gate first, then run the
+fresh mini-sweep completeness gate. MC-7 remains separate and does not inherit
+technical-forcing credit until MC-6 produces a new passing real-source table.

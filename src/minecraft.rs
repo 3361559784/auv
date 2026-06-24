@@ -24,6 +24,8 @@ pub const MINECRAFT_TEXTURE_SWEEP_ARTIFACT_ROLE: &str = "minecraft-texture-sweep
 pub const MINECRAFT_TEXTURE_SWEEP_PREP_ARTIFACT_ROLE: &str = "minecraft-texture-sweep-prep";
 pub const MINECRAFT_TEXTURE_SWEEP_RUNBOOK_ARTIFACT_ROLE: &str = "minecraft-texture-sweep-runbook";
 pub const MINECRAFT_3DGS_SCENE_PACKET_ARTIFACT_ROLE: &str = "minecraft-3dgs-scene-packet";
+pub const MINECRAFT_3DGS_SCENE_PACKET_INSPECT_ARTIFACT_ROLE: &str =
+  "minecraft-3dgs-scene-packet-inspect";
 pub const MINECRAFT_PROJECTION_CALIBRATION_ARTIFACT_ROLE: &str = "minecraft-projection-calibration";
 
 pub fn run_minecraft_3dgs_scene_packet_export(
@@ -57,6 +59,15 @@ pub fn run_minecraft_3dgs_scene_packet_export(
           &result.manifest_path,
           "minecraft-3dgs-scene-packet-run.json",
           Some("MC-7 3DGS input scene packet manifest; offline inspect artifact only".to_string()),
+        )?;
+        context.stage_artifact_file(
+          MINECRAFT_3DGS_SCENE_PACKET_INSPECT_ARTIFACT_ROLE,
+          &result.inspect_report_path,
+          "minecraft-3dgs-scene-packet-inspect.json",
+          Some(
+            "MC-7 accepted-only scene packet inspect report; offline inspect artifact only"
+              .to_string(),
+          ),
         )?;
         Ok::<_, String>(())
       })?;
@@ -430,6 +441,8 @@ mod tests {
 
     assert_eq!(output.value.manifest.counts.frames, 1);
     assert_eq!(output.value.manifest.counts.screenshots, 1);
+    assert!(output.value.inspect_report_path.is_file());
+    assert_eq!(output.value.inspect_report.counts.camera_records, 1);
     let run = recording
       .read_run(output.run_id.as_str())
       .expect("scene packet run should persist");
@@ -438,6 +451,12 @@ mod tests {
         .artifacts
         .iter()
         .any(|artifact| artifact.role == MINECRAFT_3DGS_SCENE_PACKET_ARTIFACT_ROLE)
+    );
+    assert!(
+      run
+        .artifacts
+        .iter()
+        .any(|artifact| artifact.role == MINECRAFT_3DGS_SCENE_PACKET_INSPECT_ARTIFACT_ROLE)
     );
 
     let _ = fs::remove_dir_all(temp);

@@ -44,9 +44,10 @@ pub use sample_builder::{
   TextureSweepSampleBuildOutput, build_texture_sweep_samples_from_bundles,
 };
 pub use scene_packet::{
-  SCENE_PACKET_SCHEMA_VERSION, ScenePacketCameraRecord, ScenePacketCounts, ScenePacketFramePayload,
-  ScenePacketFrameRecord, ScenePacketInputs, ScenePacketManifest, ScenePacketOutput,
-  export_3dgs_scene_packet,
+  SCENE_PACKET_INSPECT_REPORT_SCHEMA_VERSION, SCENE_PACKET_SCHEMA_VERSION, ScenePacketAnomalies,
+  ScenePacketCameraRecord, ScenePacketCounts, ScenePacketFramePayload, ScenePacketFrameRecord,
+  ScenePacketInputs, ScenePacketInspectCounts, ScenePacketInspectReport, ScenePacketManifest,
+  ScenePacketOutput, ScenePacketResourcePackCoverage, export_3dgs_scene_packet,
 };
 pub use session_observation::{
   MinecraftSessionNode, MinecraftSessionObservation, MinecraftSessionObservationProvider,

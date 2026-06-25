@@ -372,6 +372,51 @@ async fn run() -> Result<(), String> {
       }
       println!("output: {}", output.value.output_dir.display());
     }
+    CliCommand::MinecraftPrepare3dgsTraining {
+      training_package_manifest_path,
+      output_dir,
+      inspect,
+    } => {
+      let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
+      let output = auv_cli::minecraft::run_minecraft_3dgs_training_launch_preparation(
+        &runtime.recording().handle(),
+        PathBuf::from(training_package_manifest_path),
+        PathBuf::from(output_dir),
+      )?;
+      println!("runId: {}", output.run_id);
+      println!("status: completed");
+      println!("trainerBackend: {}", output.value.manifest.trainer_backend);
+      println!(
+        "trainerReadiness: {}",
+        match output.value.inspect_report.trainer_readiness {
+          auv_game_minecraft::TrainingLaunchReadiness::Ready => "ready",
+          auv_game_minecraft::TrainingLaunchReadiness::Blocked => "blocked",
+        }
+      );
+      println!(
+        "readinessBlocker: {}",
+        match output.value.inspect_report.readiness_blocker {
+          Some(auv_game_minecraft::TrainingLaunchReadinessBlocker::CompatibilityViewBlocked) => {
+            "compatibility_view_blocked"
+          }
+          Some(auv_game_minecraft::TrainingLaunchReadinessBlocker::TransformsMissing) => {
+            "transforms_missing"
+          }
+          Some(auv_game_minecraft::TrainingLaunchReadinessBlocker::TrainerCommandUnavailable) => {
+            "trainer_command_unavailable"
+          }
+          None => "none",
+        }
+      );
+      println!("launchCommand: {}", output.value.manifest.launch_command);
+      println!("launchPlan: {}", output.value.manifest_path.display());
+      println!(
+        "inspectReport: {}",
+        output.value.inspect_report_path.display()
+      );
+      println!("runbook: {}", output.value.runbook_path.display());
+      println!("output: {}", output.value.output_dir.display());
+    }
     CliCommand::MinecraftPrepareTextureSweep {
       sidecar_run_dir,
       output_dir,

@@ -5,9 +5,10 @@ use auv_game_minecraft::{
   ScenePacketInputs, ScenePacketOutput, SourceRunSummary, SpatialBundleInputs, SpatialBundleOutput,
   SpatialBundleSourceArtifact, TextureSweepInputs, TextureSweepPreparationInputs,
   TextureSweepPreparationOutput, TextureSweepReport, TextureSweepSampleBuildInputs,
-  TextureSweepSampleBuildOutput, TextureSweepThresholds, TrainingPackageInputs,
-  TrainingPackageOutput, build_texture_sweep_samples_from_bundles, evaluate_texture_sweep,
-  export_3dgs_scene_packet, export_3dgs_training_package, export_spatial_bundle,
+  TextureSweepSampleBuildOutput, TextureSweepThresholds, TrainingLaunchPreparationInputs,
+  TrainingLaunchPreparationOutput, TrainingPackageInputs, TrainingPackageOutput,
+  build_texture_sweep_samples_from_bundles, evaluate_texture_sweep, export_3dgs_scene_packet,
+  export_3dgs_training_package, export_spatial_bundle, prepare_3dgs_training_launch,
   prepare_texture_sweep_resource_packs,
 };
 use auv_tracing_driver::RecordingHandle;
@@ -30,6 +31,12 @@ pub const MINECRAFT_3DGS_SCENE_PACKET_INSPECT_ARTIFACT_ROLE: &str =
 pub const MINECRAFT_3DGS_TRAINING_PACKAGE_ARTIFACT_ROLE: &str = "minecraft-3dgs-training-package";
 pub const MINECRAFT_3DGS_TRAINING_PACKAGE_INSPECT_ARTIFACT_ROLE: &str =
   "minecraft-3dgs-training-package-inspect";
+pub const MINECRAFT_3DGS_TRAINING_LAUNCH_PLAN_ARTIFACT_ROLE: &str =
+  "minecraft-3dgs-training-launch-plan";
+pub const MINECRAFT_3DGS_TRAINING_LAUNCH_INSPECT_ARTIFACT_ROLE: &str =
+  "minecraft-3dgs-training-launch-inspect";
+pub const MINECRAFT_3DGS_TRAINING_LAUNCH_RUNBOOK_ARTIFACT_ROLE: &str =
+  "minecraft-3dgs-training-launch-runbook";
 pub const MINECRAFT_PROJECTION_CALIBRATION_ARTIFACT_ROLE: &str = "minecraft-projection-calibration";
 
 pub fn run_minecraft_3dgs_scene_packet_export(
@@ -166,6 +173,60 @@ pub fn run_minecraft_texture_sweep_preparation(
           &result.runbook_path,
           "mc6-texture-sweep-runbook.md",
           Some("MC-6 texture sweep manual runbook".to_string()),
+        )?;
+        Ok::<_, String>(())
+      })?;
+      Ok::<_, String>(result)
+    },
+  )
+}
+
+pub fn run_minecraft_3dgs_training_launch_preparation(
+  recording: &RecordingHandle,
+  training_package_manifest_path: PathBuf,
+  output_dir: PathBuf,
+) -> AuvResult<RecordedOperationOutput<TrainingLaunchPreparationOutput>> {
+  recording.run_recorded_operation(
+    RunSpec::new(
+      RunType::Execute,
+      "auv.minecraft.prepare_3dgs_training",
+    ),
+    "Minecraft prepare MC-7 D5 training launch inputs",
+    |context| {
+      context.record_event(
+        "minecraft.prepare_3dgs_training.inputs",
+        Some(format!(
+          "training_package_manifest={} output_dir={} trained_3dgs=false trainer_started=false trainer_backend=nerfstudio.splatfacto",
+          training_package_manifest_path.display(),
+          output_dir.display()
+        )),
+      );
+      let result = prepare_3dgs_training_launch(TrainingLaunchPreparationInputs {
+        training_package_manifest_path: training_package_manifest_path.clone(),
+        output_dir: output_dir.clone(),
+      })?;
+      context.in_span("minecraft.prepare_3dgs_training.artifacts", |context| {
+        context.stage_artifact_file(
+          MINECRAFT_3DGS_TRAINING_LAUNCH_PLAN_ARTIFACT_ROLE,
+          &result.manifest_path,
+          "minecraft-3dgs-training-launch-plan.json",
+          Some(
+            "MC-7 D5 training launch preparation plan; offline inspect artifact only".to_string(),
+          ),
+        )?;
+        context.stage_artifact_file(
+          MINECRAFT_3DGS_TRAINING_LAUNCH_INSPECT_ARTIFACT_ROLE,
+          &result.inspect_report_path,
+          "minecraft-3dgs-training-launch-inspect.json",
+          Some(
+            "MC-7 D5 training launch readiness report; offline inspect artifact only".to_string(),
+          ),
+        )?;
+        context.stage_artifact_file(
+          MINECRAFT_3DGS_TRAINING_LAUNCH_RUNBOOK_ARTIFACT_ROLE,
+          &result.runbook_path,
+          "mc7-training-launch-runbook.md",
+          Some("MC-7 D5 training launch manual runbook".to_string()),
         )?;
         Ok::<_, String>(())
       })?;
@@ -562,6 +623,48 @@ mod tests {
   }
 
   #[test]
+  fn three_dgs_training_launch_preparation_records_plan_inspect_and_runbook_artifacts() {
+    let temp = temp_dir("mc7-training-launch");
+    let store = LocalStore::new(temp.join("store")).expect("store");
+    let recording = RunRecordingBackend::new(store, Arc::new(NoopRunRecorder)).handle();
+    let training_manifest_path = write_blocked_training_package_fixture(&temp);
+
+    let output = run_minecraft_3dgs_training_launch_preparation(
+      &recording,
+      training_manifest_path,
+      temp.join("training-launch"),
+    )
+    .expect("training launch prep");
+
+    assert!(output.value.manifest_path.is_file());
+    assert!(output.value.inspect_report_path.is_file());
+    assert!(output.value.runbook_path.is_file());
+    let run = recording
+      .read_run(output.run_id.as_str())
+      .expect("training launch run should persist");
+    assert!(
+      run
+        .artifacts
+        .iter()
+        .any(|artifact| artifact.role == MINECRAFT_3DGS_TRAINING_LAUNCH_PLAN_ARTIFACT_ROLE)
+    );
+    assert!(
+      run
+        .artifacts
+        .iter()
+        .any(|artifact| artifact.role == MINECRAFT_3DGS_TRAINING_LAUNCH_INSPECT_ARTIFACT_ROLE)
+    );
+    assert!(
+      run
+        .artifacts
+        .iter()
+        .any(|artifact| artifact.role == MINECRAFT_3DGS_TRAINING_LAUNCH_RUNBOOK_ARTIFACT_ROLE)
+    );
+
+    let _ = fs::remove_dir_all(temp);
+  }
+
+  #[test]
   fn spatial_bundle_export_reads_source_run_and_records_manifest() {
     let temp = temp_dir("mc6-spatial-bundle");
     let store = LocalStore::new(temp.join("store")).expect("store");
@@ -760,5 +863,113 @@ mod tests {
     );
 
     let _ = fs::remove_dir_all(temp);
+  }
+
+  fn write_blocked_training_package_fixture(root: &Path) -> PathBuf {
+    let training_dir = root.join("training-package");
+    fs::create_dir_all(training_dir.join("frames")).expect("frames dir");
+    fs::create_dir_all(training_dir.join("compat/nerfstudio")).expect("compat dir");
+    fs::write(
+      training_dir.join("known_limits.json"),
+      serde_json::to_vec_pretty(&vec![
+        "canonical package only; no trainer output".to_string(),
+      ])
+      .expect("known limits json"),
+    )
+    .expect("known limits write");
+
+    let manifest = auv_game_minecraft::TrainingPackageManifest {
+      schema_version: 1,
+      generated_at_millis: 1,
+      source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
+      source_bundle_manifest_paths: vec!["/tmp/run-1/run.json".to_string()],
+      source_run_ids: vec!["run-1".to_string()],
+      counts: auv_game_minecraft::TrainingPackageCounts {
+        frames: 1,
+        images: 1,
+        compatibility_exported_frames: 0,
+        compatibility_skipped_frames: 1,
+      },
+      frames: vec![auv_game_minecraft::TrainingPackageFrameRecord {
+        frame_index: 1,
+        spatial_frame_id: "frame-1".to_string(),
+        source_run_id: "run-1".to_string(),
+        source_bundle_manifest_path: "/tmp/run-1/run.json".to_string(),
+        source_scene_packet_frame_json_path: "frames/frame_000001.json".to_string(),
+        canonical_frame_json_path: "frames/frame_000001.json".to_string(),
+        canonical_image_path: Some("images/frame_000001.png".to_string()),
+        screen_state: Some("menu".to_string()),
+        resource_pack_ids: vec!["fabric".to_string(), "file/auv-mc6-rich".to_string()],
+        primary_file_resource_pack_id: Some("file/auv-mc6-rich".to_string()),
+        compatibility_status: auv_game_minecraft::TrainingCompatibilityStatus::Blocked,
+        compatibility_skip_reasons: vec![
+          auv_game_minecraft::TrainingCompatibilitySkipReason::MissingScreenshot,
+        ],
+      }],
+      compatibility_views: vec![auv_game_minecraft::TrainingCompatibilityViewReport {
+        view_name: "nerfstudio".to_string(),
+        status: auv_game_minecraft::TrainingCompatibilityStatus::Blocked,
+        exported_frame_count: 0,
+        skipped_frame_count: 1,
+        transforms_path: None,
+        export_report_path: "compat/nerfstudio/export_report.json".to_string(),
+        exported_frame_indices: Vec::new(),
+        frame_decisions: vec![auv_game_minecraft::TrainingCompatibilityFrameDecision {
+          frame_index: 1,
+          spatial_frame_id: "frame-1".to_string(),
+          source_run_id: "run-1".to_string(),
+          status: auv_game_minecraft::TrainingCompatibilityStatus::Blocked,
+          skip_reasons: vec![
+            auv_game_minecraft::TrainingCompatibilitySkipReason::MissingScreenshot,
+          ],
+        }],
+        skip_reason_counts: vec![auv_game_minecraft::TrainingCompatibilitySkipReasonCount {
+          reason: auv_game_minecraft::TrainingCompatibilitySkipReason::MissingScreenshot,
+          count: 1,
+        }],
+        warnings: vec!["no compatible frames".to_string()],
+        used_legacy_view_translation_fallback_frame_indices: Vec::new(),
+        known_limits: Vec::new(),
+      }],
+      known_limits: vec!["canonical package only; no trainer output".to_string()],
+    };
+    fs::write(
+      training_dir.join("run.json"),
+      serde_json::to_vec_pretty(&manifest).expect("manifest json"),
+    )
+    .expect("manifest write");
+    fs::write(
+      training_dir.join("inspect_report.json"),
+      serde_json::to_vec_pretty(&auv_game_minecraft::TrainingPackageInspectReport {
+        schema_version: 1,
+        generated_at_millis: 1,
+        training_package_manifest_path: training_dir
+          .join("run.json")
+          .to_string_lossy()
+          .into_owned(),
+        scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
+        source_bundle_manifest_paths: vec!["/tmp/run-1/run.json".to_string()],
+        source_run_ids: vec!["run-1".to_string()],
+        counts: manifest.counts.clone(),
+        compatibility_views: manifest.compatibility_views.clone(),
+        warnings: vec!["no compatible frames".to_string()],
+        known_limits: vec!["canonical package only; no trainer output".to_string()],
+      })
+      .expect("inspect json"),
+    )
+    .expect("inspect write");
+    fs::write(
+      training_dir.join("compat/nerfstudio/export_report.json"),
+      serde_json::to_vec_pretty(&serde_json::json!({
+        "view_name": "nerfstudio",
+        "status": "blocked",
+        "exported_frame_count": 0,
+        "skipped_frame_count": 1
+      }))
+      .expect("export report json"),
+    )
+    .expect("export report write");
+
+    training_dir.join("run.json")
   }
 }

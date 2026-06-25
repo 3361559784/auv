@@ -11,6 +11,7 @@ pub mod projection;
 pub mod sample_builder;
 pub mod scene_packet;
 pub mod session_observation;
+pub mod training_launch;
 pub mod training_package;
 pub mod types;
 pub mod verify;
@@ -53,6 +54,12 @@ pub use scene_packet::{
 pub use session_observation::{
   MinecraftSessionNode, MinecraftSessionObservation, MinecraftSessionObservationProvider,
   frame_to_session_observation,
+};
+pub use training_launch::{
+  TRAINING_LAUNCH_INSPECT_REPORT_SCHEMA_VERSION, TRAINING_LAUNCH_PLAN_SCHEMA_VERSION,
+  TrainingLaunchInspectReport, TrainingLaunchPlanManifest, TrainingLaunchPreparationInputs,
+  TrainingLaunchPreparationOutput, TrainingLaunchReadiness, TrainingLaunchReadinessBlocker,
+  prepare_3dgs_training_launch,
 };
 pub use training_package::{
   TRAINING_PACKAGE_INSPECT_REPORT_SCHEMA_VERSION, TRAINING_PACKAGE_SCHEMA_VERSION,

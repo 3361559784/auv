@@ -18,6 +18,12 @@ MC-7 D3 is defined as:
 
 D3 stays an offline artifact lane.
 
+The next downstream consumer is MC-7 D5:
+
+- D5 consumes this package as the first trainer-side launch/readiness surface
+- D5 still does not mean real training has run
+- trainer execution remains a later explicit slice
+
 ## Input boundary
 
 D3 no longer reads MC-6 bundles directly.
@@ -131,6 +137,9 @@ Compatibility-only failures do not invalidate canonical export.
 - no viewer-specific command
 - no rewrite of D2 history
 - no real-run completion claim without a later fresh accepted-only smoke pass
+
+D5 may add a fixed trainer launch-prep contract on top of this package, but D3
+itself still stops at package export plus compatibility truth.
 
 ## Reference-validation reality
 

@@ -15,12 +15,32 @@ use crate::run_read::{
   CandidateActionExecutionLineageStatus, CandidatePromotionLineage,
   CandidatePromotionLineageStatus, DetectorRecognitionLineage,
   MinecraftSpatialBundleManifestLineage, MinecraftTelemetrySampleArtifactLineage,
+  MinecraftTrainingJobInspectReportLineage, MinecraftTrainingJobManifestLineage,
+  MinecraftTrainingLaunchInspectReportLineage, MinecraftTrainingLaunchManifestLineage,
   MinecraftTrainingPackageInspectReportLineage, MinecraftTrainingPackageManifestLineage,
+  MinecraftTrainingResultInspectReportLineage, MinecraftTrainingResultManifestLineage,
   list_minecraft_projection_artifacts, list_minecraft_spatial_bundle_manifests,
-  list_minecraft_telemetry_sample_artifacts, list_minecraft_training_package_inspect_reports,
-  list_minecraft_training_package_manifests,
+  list_minecraft_telemetry_sample_artifacts, list_minecraft_training_job_inspect_reports,
+  list_minecraft_training_job_manifests, list_minecraft_training_launch_inspect_reports,
+  list_minecraft_training_launch_manifests, list_minecraft_training_package_inspect_reports,
+  list_minecraft_training_package_manifests, list_minecraft_training_result_inspect_reports,
+  list_minecraft_training_result_manifests,
 };
 use auv_tracing_driver::store::{CanonicalRun, LocalStore};
+use std::collections::BTreeSet;
+
+fn unique_matching_report<'a, T>(
+  reports: &'a [T],
+  mut matches: impl FnMut(&'a T) -> bool,
+) -> Option<&'a T> {
+  let mut iter = reports.iter().filter(|report| matches(report));
+  let first = iter.next()?;
+  if iter.next().is_some() {
+    None
+  } else {
+    Some(first)
+  }
+}
 
 pub fn read_run(store: &LocalStore, run_id: &str) -> AuvResult<CanonicalRun> {
   crate::run_read::read_run(store, run_id)
@@ -81,6 +101,17 @@ pub fn inspect_run(store: &LocalStore, run_id: &str) -> AuvResult<String> {
     list_minecraft_training_package_manifests(store, run_id)?;
   let minecraft_training_package_inspect_reports =
     list_minecraft_training_package_inspect_reports(store, run_id)?;
+  let minecraft_training_launch_manifests =
+    list_minecraft_training_launch_manifests(store, run_id)?;
+  let minecraft_training_launch_inspect_reports =
+    list_minecraft_training_launch_inspect_reports(store, run_id)?;
+  let minecraft_training_job_manifests = list_minecraft_training_job_manifests(store, run_id)?;
+  let minecraft_training_job_inspect_reports =
+    list_minecraft_training_job_inspect_reports(store, run_id)?;
+  let minecraft_training_result_manifests =
+    list_minecraft_training_result_manifests(store, run_id)?;
+  let minecraft_training_result_inspect_reports =
+    list_minecraft_training_result_inspect_reports(store, run_id)?;
   Ok(render_run_text(
     &canonical,
     &verifications,
@@ -94,6 +125,12 @@ pub fn inspect_run(store: &LocalStore, run_id: &str) -> AuvResult<String> {
     &minecraft_spatial_bundle_manifests,
     &minecraft_training_package_manifests,
     &minecraft_training_package_inspect_reports,
+    &minecraft_training_launch_manifests,
+    &minecraft_training_launch_inspect_reports,
+    &minecraft_training_job_manifests,
+    &minecraft_training_job_inspect_reports,
+    &minecraft_training_result_manifests,
+    &minecraft_training_result_inspect_reports,
   ))
 }
 
@@ -110,6 +147,12 @@ pub fn render_run_text(
   minecraft_spatial_bundle_manifests: &[MinecraftSpatialBundleManifestLineage],
   minecraft_training_package_manifests: &[MinecraftTrainingPackageManifestLineage],
   minecraft_training_package_inspect_reports: &[MinecraftTrainingPackageInspectReportLineage],
+  minecraft_training_launch_manifests: &[MinecraftTrainingLaunchManifestLineage],
+  minecraft_training_launch_inspect_reports: &[MinecraftTrainingLaunchInspectReportLineage],
+  minecraft_training_job_manifests: &[MinecraftTrainingJobManifestLineage],
+  minecraft_training_job_inspect_reports: &[MinecraftTrainingJobInspectReportLineage],
+  minecraft_training_result_manifests: &[MinecraftTrainingResultManifestLineage],
+  minecraft_training_result_inspect_reports: &[MinecraftTrainingResultInspectReportLineage],
 ) -> String {
   let mut output = format!(
     "Run {}\nType: {}\nStatus: {}\nState: {}\n",
@@ -610,6 +653,428 @@ pub fn render_run_text(
     }
   }
 
+  output.push_str("\nMC-7 Training Launches:\n");
+  if minecraft_training_launch_manifests.is_empty()
+    && minecraft_training_launch_inspect_reports.is_empty()
+  {
+    output.push_str("- none\n");
+  } else {
+    let mut rendered_report_artifacts = BTreeSet::new();
+    for manifest_lineage in minecraft_training_launch_manifests {
+      let paired_report = manifest_lineage.manifest.as_ref().and_then(|manifest| {
+        unique_matching_report(minecraft_training_launch_inspect_reports, |lineage| {
+          lineage.report.as_ref().is_some_and(|report| {
+            report.source_training_package_manifest_path
+              == manifest.source_training_package_manifest_path
+              && report.source_scene_packet_manifest_path
+                == manifest.source_scene_packet_manifest_path
+              && report.source_run_ids == manifest.source_run_ids
+              && report.source_bundle_manifest_paths == manifest.source_bundle_manifest_paths
+          })
+        })
+      });
+      if let Some(report_lineage) = paired_report {
+        rendered_report_artifacts.insert(report_lineage.artifact.artifact_id.to_string());
+      }
+      if let Some(manifest) = &manifest_lineage.manifest {
+        output.push_str(&format!(
+          "- manifest_artifact={} role={} path={} schema={} source_training_package={} source_scene_packet={} source_runs={} frames={} images={} trainer_backend={} compatibility_view={} exported={} skipped={} transforms={} launch_command={} paired_report_artifact={} issue={}\n",
+          manifest_lineage.artifact.artifact_id,
+          manifest_lineage.artifact.role.as_deref().unwrap_or("n/a"),
+          manifest_lineage.artifact.path.as_deref().unwrap_or("n/a"),
+          manifest.schema_version,
+          manifest.source_training_package_manifest_path,
+          manifest.source_scene_packet_manifest_path,
+          manifest.source_run_ids.len(),
+          manifest.counts.frames,
+          manifest.counts.images,
+          manifest.trainer_backend,
+          manifest.compatibility_view_name,
+          manifest.counts.compatibility_exported_frames,
+          manifest.counts.compatibility_skipped_frames,
+          manifest.transforms_path.as_deref().map(|_| "present").unwrap_or("none"),
+          manifest.launch_command,
+          paired_report.map(|report| report.artifact.artifact_id.to_string()).unwrap_or_else(|| "n/a".to_string()),
+          manifest_lineage.issue.as_deref().unwrap_or("n/a"),
+        ));
+        if !manifest.known_limits.is_empty() {
+          output.push_str(&format!(
+            "  known_limits={}\n",
+            manifest.known_limits.join(" | ")
+          ));
+        }
+        if let Some(report) = paired_report.and_then(|lineage| lineage.report.as_ref()) {
+          output.push_str(&format!(
+            "  paired_report schema={} compatibility_status={} trainer_readiness={} readiness_blocker={} exported={} skipped={} transforms={} probe_command={} probe_succeeded={} warnings={} issue={}\n",
+            report.schema_version,
+            report.compatibility_status,
+            report.trainer_readiness,
+            report.readiness_blocker.as_deref().unwrap_or("n/a"),
+            report.exported_frame_count,
+            report.skipped_frame_count,
+            if report.transforms_present { "present" } else { "none" },
+            report.probe_command,
+            report.probe_succeeded,
+            report.warnings.len(),
+            paired_report.and_then(|lineage| lineage.issue.as_deref()).unwrap_or("n/a"),
+          ));
+          if !report.warnings.is_empty() {
+            output.push_str(&format!("  warnings={}\n", report.warnings.join(" | ")));
+          }
+          if !report.known_limits.is_empty() {
+            output.push_str(&format!(
+              "  known_limits={}\n",
+              report.known_limits.join(" | ")
+            ));
+          }
+        }
+      } else {
+        output.push_str(&format!(
+          "- manifest_artifact={} role={} path={} schema=n/a source_training_package=n/a source_scene_packet=n/a source_runs=n/a frames=n/a images=n/a trainer_backend=n/a compatibility_view=n/a exported=n/a skipped=n/a transforms=n/a launch_command=n/a paired_report_artifact=n/a issue={}\n",
+          manifest_lineage.artifact.artifact_id,
+          manifest_lineage.artifact.role.as_deref().unwrap_or("n/a"),
+          manifest_lineage.artifact.path.as_deref().unwrap_or("n/a"),
+          manifest_lineage.issue.as_deref().unwrap_or("n/a"),
+        ));
+      }
+    }
+    for report_lineage in minecraft_training_launch_inspect_reports {
+      if rendered_report_artifacts.contains(&report_lineage.artifact.artifact_id.to_string()) {
+        continue;
+      }
+      if let Some(report) = &report_lineage.report {
+        output.push_str(&format!(
+          "- inspect_artifact={} role={} path={} manifest_path={} schema={} source_training_package={} source_scene_packet={} source_runs={} compatibility_status={} trainer_readiness={} readiness_blocker={} exported={} skipped={} transforms={} probe_command={} probe_succeeded={} warnings={} issue={}\n",
+          report_lineage.artifact.artifact_id,
+          report_lineage.artifact.role.as_deref().unwrap_or("n/a"),
+          report_lineage.artifact.path.as_deref().unwrap_or("n/a"),
+          report.training_launch_manifest_path,
+          report.schema_version,
+          report.source_training_package_manifest_path,
+          report.source_scene_packet_manifest_path,
+          report.source_run_ids.len(),
+          report.compatibility_status,
+          report.trainer_readiness,
+          report.readiness_blocker.as_deref().unwrap_or("n/a"),
+          report.exported_frame_count,
+          report.skipped_frame_count,
+          if report.transforms_present { "present" } else { "none" },
+          report.probe_command,
+          report.probe_succeeded,
+          report.warnings.len(),
+          report_lineage.issue.as_deref().unwrap_or("n/a"),
+        ));
+        if !report.warnings.is_empty() {
+          output.push_str(&format!("  warnings={}\n", report.warnings.join(" | ")));
+        }
+        if !report.known_limits.is_empty() {
+          output.push_str(&format!(
+            "  known_limits={}\n",
+            report.known_limits.join(" | ")
+          ));
+        }
+      } else {
+        output.push_str(&format!(
+          "- inspect_artifact={} role={} path={} manifest_path=n/a schema=n/a source_training_package=n/a source_scene_packet=n/a source_runs=n/a compatibility_status=n/a trainer_readiness=n/a readiness_blocker=n/a exported=n/a skipped=n/a transforms=n/a probe_command=n/a probe_succeeded=n/a warnings=n/a issue={}\n",
+          report_lineage.artifact.artifact_id,
+          report_lineage.artifact.role.as_deref().unwrap_or("n/a"),
+          report_lineage.artifact.path.as_deref().unwrap_or("n/a"),
+          report_lineage.issue.as_deref().unwrap_or("n/a"),
+        ));
+      }
+    }
+  }
+
+  output.push_str("\nMC-7 Training Jobs:\n");
+  if minecraft_training_job_manifests.is_empty()
+    && minecraft_training_job_inspect_reports.is_empty()
+  {
+    output.push_str("- none\n");
+  } else {
+    let mut rendered_report_artifacts = BTreeSet::new();
+    for manifest_lineage in minecraft_training_job_manifests {
+      let paired_report = manifest_lineage.manifest.as_ref().and_then(|manifest| {
+        unique_matching_report(minecraft_training_job_inspect_reports, |lineage| {
+          lineage.report.as_ref().is_some_and(|report| {
+            report.source_training_launch_plan_path == manifest.source_training_launch_plan_path
+              && report.source_training_package_manifest_path
+                == manifest.source_training_package_manifest_path
+              && report.source_scene_packet_manifest_path
+                == manifest.source_scene_packet_manifest_path
+              && report.source_run_ids == manifest.source_run_ids
+              && report.job_backend == manifest.job_backend
+              && report.job_submission_endpoint == manifest.job_submission_endpoint
+              && report.job_submission_command == manifest.job_submission_command
+          })
+        })
+      });
+      if let Some(report_lineage) = paired_report {
+        rendered_report_artifacts.insert(report_lineage.artifact.artifact_id.to_string());
+      }
+      if let Some(manifest) = &manifest_lineage.manifest {
+        output.push_str(&format!(
+          "- manifest_artifact={} role={} path={} schema={} source_training_launch_plan={} source_runs={} frames={} images={} trainer_backend={} job_backend={} status={} job_id={} job_url={} readiness_blocker={} job_submission_endpoint={} job_submission_command={} exported={} skipped={} transforms={} paired_report_artifact={} issue={}\n",
+          manifest_lineage.artifact.artifact_id,
+          manifest_lineage.artifact.role.as_deref().unwrap_or("n/a"),
+          manifest_lineage.artifact.path.as_deref().unwrap_or("n/a"),
+          manifest.schema_version,
+          manifest.source_training_launch_plan_path,
+          manifest.source_run_ids.len(),
+          manifest.counts.frames,
+          manifest.counts.images,
+          manifest.trainer_backend,
+          manifest.job_backend,
+          manifest.status,
+          manifest.job_id.as_deref().unwrap_or("n/a"),
+          manifest.job_url.as_deref().unwrap_or("n/a"),
+          manifest.readiness_blocker.as_deref().unwrap_or("n/a"),
+          manifest.job_submission_endpoint,
+          manifest.job_submission_command,
+          manifest.counts.compatibility_exported_frames,
+          manifest.counts.compatibility_skipped_frames,
+          manifest.transforms_path.as_deref().map(|_| "present").unwrap_or("none"),
+          paired_report.map(|report| report.artifact.artifact_id.to_string()).unwrap_or_else(|| "n/a".to_string()),
+          manifest_lineage.issue.as_deref().unwrap_or("n/a"),
+        ));
+        if !manifest.known_limits.is_empty() {
+          output.push_str(&format!(
+            "  known_limits={}\n",
+            manifest.known_limits.join(" | ")
+          ));
+        }
+        if let Some(report) = paired_report.and_then(|lineage| lineage.report.as_ref()) {
+          output.push_str(&format!(
+            "  paired_report schema={} trainer_backend={} job_backend={} status={} job_id={} job_url={} readiness_blocker={} job_submission_endpoint={} job_submission_command={} exported={} skipped={} transforms={} probe_command={} probe_succeeded={} warnings={} issue={}\n",
+            report.schema_version,
+            report.trainer_backend,
+            report.job_backend,
+            report.status,
+            report.job_id.as_deref().unwrap_or("n/a"),
+            report.job_url.as_deref().unwrap_or("n/a"),
+            report.readiness_blocker.as_deref().unwrap_or("n/a"),
+            report.job_submission_endpoint,
+            report.job_submission_command,
+            report.exported_frame_count,
+            report.skipped_frame_count,
+            if report.transforms_present { "present" } else { "none" },
+            report.probe_command,
+            report.probe_succeeded,
+            report.warnings.len(),
+            paired_report.and_then(|lineage| lineage.issue.as_deref()).unwrap_or("n/a"),
+          ));
+          if !report.warnings.is_empty() {
+            output.push_str(&format!("  warnings={}\n", report.warnings.join(" | ")));
+          }
+          if !report.known_limits.is_empty() {
+            output.push_str(&format!(
+              "  known_limits={}\n",
+              report.known_limits.join(" | ")
+            ));
+          }
+        }
+      } else {
+        output.push_str(&format!(
+          "- manifest_artifact={} role={} path={} schema=n/a source_training_launch_plan=n/a source_runs=n/a frames=n/a images=n/a trainer_backend=n/a job_backend=n/a status=n/a job_id=n/a job_url=n/a readiness_blocker=n/a job_submission_endpoint=n/a job_submission_command=n/a exported=n/a skipped=n/a transforms=n/a paired_report_artifact=n/a issue={}\n",
+          manifest_lineage.artifact.artifact_id,
+          manifest_lineage.artifact.role.as_deref().unwrap_or("n/a"),
+          manifest_lineage.artifact.path.as_deref().unwrap_or("n/a"),
+          manifest_lineage.issue.as_deref().unwrap_or("n/a"),
+        ));
+      }
+    }
+    for report_lineage in minecraft_training_job_inspect_reports {
+      if rendered_report_artifacts.contains(&report_lineage.artifact.artifact_id.to_string()) {
+        continue;
+      }
+      if let Some(report) = &report_lineage.report {
+        output.push_str(&format!(
+          "- inspect_artifact={} role={} path={} manifest_path={} schema={} source_training_launch_plan={} source_runs={} trainer_backend={} job_backend={} status={} job_id={} job_url={} readiness_blocker={} job_submission_endpoint={} job_submission_command={} exported={} skipped={} transforms={} probe_command={} probe_succeeded={} warnings={} issue={}\n",
+          report_lineage.artifact.artifact_id,
+          report_lineage.artifact.role.as_deref().unwrap_or("n/a"),
+          report_lineage.artifact.path.as_deref().unwrap_or("n/a"),
+          report.training_launch_manifest_path,
+          report.schema_version,
+          report.source_training_launch_plan_path,
+          report.source_run_ids.len(),
+          report.trainer_backend,
+          report.job_backend,
+          report.status,
+          report.job_id.as_deref().unwrap_or("n/a"),
+          report.job_url.as_deref().unwrap_or("n/a"),
+          report.readiness_blocker.as_deref().unwrap_or("n/a"),
+          report.job_submission_endpoint,
+          report.job_submission_command,
+          report.exported_frame_count,
+          report.skipped_frame_count,
+          if report.transforms_present { "present" } else { "none" },
+          report.probe_command,
+          report.probe_succeeded,
+          report.warnings.len(),
+          report_lineage.issue.as_deref().unwrap_or("n/a"),
+        ));
+        if !report.warnings.is_empty() {
+          output.push_str(&format!("  warnings={}\n", report.warnings.join(" | ")));
+        }
+        if !report.known_limits.is_empty() {
+          output.push_str(&format!(
+            "  known_limits={}\n",
+            report.known_limits.join(" | ")
+          ));
+        }
+      } else {
+        output.push_str(&format!(
+          "- inspect_artifact={} role={} path={} manifest_path=n/a schema=n/a source_training_launch_plan=n/a source_runs=n/a trainer_backend=n/a job_backend=n/a status=n/a job_id=n/a job_url=n/a readiness_blocker=n/a job_submission_endpoint=n/a job_submission_command=n/a exported=n/a skipped=n/a transforms=n/a probe_command=n/a probe_succeeded=n/a warnings=n/a issue={}\n",
+          report_lineage.artifact.artifact_id,
+          report_lineage.artifact.role.as_deref().unwrap_or("n/a"),
+          report_lineage.artifact.path.as_deref().unwrap_or("n/a"),
+          report_lineage.issue.as_deref().unwrap_or("n/a"),
+        ));
+      }
+    }
+  }
+
+  output.push_str("\nMC-7 Training Results:\n");
+  if minecraft_training_result_manifests.is_empty()
+    && minecraft_training_result_inspect_reports.is_empty()
+  {
+    output.push_str("- none\n");
+  } else {
+    let mut rendered_report_artifacts = BTreeSet::new();
+    for manifest_lineage in minecraft_training_result_manifests {
+      let paired_report = manifest_lineage.manifest.as_ref().and_then(|manifest| {
+        minecraft_training_result_inspect_reports
+          .iter()
+          .find(|lineage| {
+            lineage.report.as_ref().is_some_and(|report| {
+              report.source_training_job_manifest_path == manifest.source_training_job_manifest_path
+                && report.source_training_launch_plan_path
+                  == manifest.source_training_launch_plan_path
+                && report.source_scene_packet_manifest_path
+                  == manifest.source_scene_packet_manifest_path
+                && report.source_run_ids == manifest.source_run_ids
+            })
+          })
+      });
+      if let Some(report_lineage) = paired_report {
+        rendered_report_artifacts.insert(report_lineage.artifact.artifact_id.to_string());
+      }
+      if let Some(manifest) = &manifest_lineage.manifest {
+        output.push_str(&format!(
+          "- manifest_artifact={} role={} path={} schema={} source_training_job_manifest={} source_training_launch_plan={} source_runs={} trainer_backend={} job_backend={} source_job_status={} status={} job_id={} job_url={} result_dir={} result_artifacts={} exported={} skipped={} paired_report_artifact={} issue={}\n",
+          manifest_lineage.artifact.artifact_id,
+          manifest_lineage.artifact.role.as_deref().unwrap_or("n/a"),
+          manifest_lineage.artifact.path.as_deref().unwrap_or("n/a"),
+          manifest.schema_version,
+          manifest.source_training_job_manifest_path,
+          manifest.source_training_launch_plan_path,
+          manifest.source_run_ids.len(),
+          manifest.trainer_backend,
+          manifest.job_backend,
+          manifest.source_job_status,
+          manifest.status,
+          manifest.job_id,
+          manifest.job_url.as_deref().unwrap_or("n/a"),
+          manifest.result_dir,
+          manifest.result_artifacts.len(),
+          manifest.exported_frame_count,
+          manifest.skipped_frame_count,
+          paired_report.map(|report| report.artifact.artifact_id.to_string()).unwrap_or_else(|| "n/a".to_string()),
+          manifest_lineage.issue.as_deref().unwrap_or("n/a"),
+        ));
+        if !manifest.known_limits.is_empty() {
+          output.push_str(&format!(
+            "  known_limits={}\n",
+            manifest.known_limits.join(" | ")
+          ));
+        }
+        if let Some(report) = paired_report.and_then(|lineage| lineage.report.as_ref()) {
+          output.push_str(&format!(
+            "  paired_report schema={} trainer_backend={} job_backend={} source_job_status={} status={} status_reason={} job_id={} job_url={} result_dir={} result_dir_exists={} key_result_artifacts_present={} result_artifact_count={} warnings={} issue={}\n",
+            report.schema_version,
+            report.trainer_backend,
+            report.job_backend,
+            report.source_job_status,
+            report.status,
+            report.status_reason.as_deref().unwrap_or("n/a"),
+            report.job_id,
+            report.job_url.as_deref().unwrap_or("n/a"),
+            report.result_dir,
+            report.result_dir_exists,
+            report.key_result_artifacts_present,
+            report.result_artifact_count,
+            report.warnings.len(),
+            paired_report.and_then(|lineage| lineage.issue.as_deref()).unwrap_or("n/a"),
+          ));
+          if !report.warnings.is_empty() {
+            output.push_str(&format!("  warnings={}\n", report.warnings.join(" | ")));
+          }
+          if !report.known_limits.is_empty() {
+            output.push_str(&format!(
+              "  known_limits={}\n",
+              report.known_limits.join(" | ")
+            ));
+          }
+        }
+      } else {
+        output.push_str(&format!(
+          "- manifest_artifact={} role={} path={} schema=n/a source_training_job_manifest=n/a source_training_launch_plan=n/a source_runs=n/a trainer_backend=n/a job_backend=n/a source_job_status=n/a status=n/a job_id=n/a job_url=n/a result_dir=n/a result_artifacts=n/a exported=n/a skipped=n/a paired_report_artifact=n/a issue={}\n",
+          manifest_lineage.artifact.artifact_id,
+          manifest_lineage.artifact.role.as_deref().unwrap_or("n/a"),
+          manifest_lineage.artifact.path.as_deref().unwrap_or("n/a"),
+          manifest_lineage.issue.as_deref().unwrap_or("n/a"),
+        ));
+      }
+    }
+    for report_lineage in minecraft_training_result_inspect_reports {
+      if rendered_report_artifacts.contains(&report_lineage.artifact.artifact_id.to_string()) {
+        continue;
+      }
+      if let Some(report) = &report_lineage.report {
+        output.push_str(&format!(
+          "- inspect_artifact={} role={} path={} manifest_path={} schema={} source_training_job_manifest={} source_training_launch_plan={} source_runs={} trainer_backend={} job_backend={} source_job_status={} status={} status_reason={} job_id={} job_url={} result_dir={} result_dir_exists={} key_result_artifacts_present={} result_artifact_count={} warnings={} issue={}\n",
+          report_lineage.artifact.artifact_id,
+          report_lineage.artifact.role.as_deref().unwrap_or("n/a"),
+          report_lineage.artifact.path.as_deref().unwrap_or("n/a"),
+          report.training_result_manifest_path,
+          report.schema_version,
+          report.source_training_job_manifest_path,
+          report.source_training_launch_plan_path,
+          report.source_run_ids.len(),
+          report.trainer_backend,
+          report.job_backend,
+          report.source_job_status,
+          report.status,
+          report.status_reason.as_deref().unwrap_or("n/a"),
+          report.job_id,
+          report.job_url.as_deref().unwrap_or("n/a"),
+          report.result_dir,
+          report.result_dir_exists,
+          report.key_result_artifacts_present,
+          report.result_artifact_count,
+          report.warnings.len(),
+          report_lineage.issue.as_deref().unwrap_or("n/a"),
+        ));
+        if !report.warnings.is_empty() {
+          output.push_str(&format!("  warnings={}\n", report.warnings.join(" | ")));
+        }
+        if !report.known_limits.is_empty() {
+          output.push_str(&format!(
+            "  known_limits={}\n",
+            report.known_limits.join(" | ")
+          ));
+        }
+      } else {
+        output.push_str(&format!(
+          "- inspect_artifact={} role={} path={} manifest_path=n/a schema=n/a source_training_job_manifest=n/a source_training_launch_plan=n/a source_runs=n/a trainer_backend=n/a job_backend=n/a source_job_status=n/a status=n/a status_reason=n/a job_id=n/a job_url=n/a result_dir=n/a result_dir_exists=n/a key_result_artifacts_present=n/a result_artifact_count=n/a warnings=n/a issue={}\n",
+          report_lineage.artifact.artifact_id,
+          report_lineage.artifact.role.as_deref().unwrap_or("n/a"),
+          report_lineage.artifact.path.as_deref().unwrap_or("n/a"),
+          report_lineage.issue.as_deref().unwrap_or("n/a"),
+        ));
+      }
+    }
+  }
+
   output.push_str("\nCandidate Action Execution Lineage:\n");
   if candidate_action_execution_lineage.is_empty() {
     output.push_str("- none\n");
@@ -862,9 +1327,12 @@ mod tests {
     CandidateActionExecutionLineageStatus, CandidatePromotionLineage,
     CandidatePromotionLineageStatus, DetectorRecognitionArtifactRefLineage,
     DetectorRecognitionLineage, DetectorRecognitionLineageStatus,
-    MinecraftTelemetrySampleArtifactLineage, MinecraftTrainingPackageInspectReportLineage,
+    MinecraftTelemetrySampleArtifactLineage, MinecraftTrainingJobInspectReportLineage,
+    MinecraftTrainingJobManifestLineage, MinecraftTrainingLaunchInspectReportLineage,
+    MinecraftTrainingLaunchManifestLineage, MinecraftTrainingPackageInspectReportLineage,
     MinecraftTrainingPackageInspectReportSummary, MinecraftTrainingPackageManifestLineage,
-    MinecraftTrainingPackageManifestSummary,
+    MinecraftTrainingPackageManifestSummary, MinecraftTrainingResultInspectReportLineage,
+    MinecraftTrainingResultManifestLineage,
   };
   use auv_game_minecraft::{
     TrainingCompatibilityStatus, TrainingCompatibilityViewReport, TrainingPackageCounts,
@@ -1376,6 +1844,242 @@ mod tests {
         issue: None,
       }];
 
+    let minecraft_training_launch_manifests = vec![MinecraftTrainingLaunchManifestLineage {
+      artifact: ArtifactRefLineage {
+        run_id: run.run.run_id.clone(),
+        artifact_id: ArtifactId::new("artifact_mc7_launch"),
+        span_id: SpanId::new("span_mc7_launch"),
+        captured_event_id: None,
+        role: Some("minecraft-3dgs-training-launch-plan".to_string()),
+        path: Some("artifacts/minecraft-3dgs-training-launch-plan.json".to_string()),
+        summary: Some("training launch manifest".to_string()),
+        resolved: true,
+      },
+      manifest: Some(crate::run_read::MinecraftTrainingLaunchManifestSummary {
+        schema_version: 1,
+        source_training_package_manifest_path: "/tmp/package/run.json".to_string(),
+        source_training_package_inspect_report_path: "/tmp/package/inspect_report.json".to_string(),
+        source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
+        source_bundle_manifest_paths: vec!["/tmp/bundle-a/run.json".to_string(), "/tmp/bundle-b/run.json".to_string()],
+        source_run_ids: vec!["run_a".to_string(), "run_b".to_string()],
+        counts: TrainingPackageCounts { frames: 6, images: 6, compatibility_exported_frames: 4, compatibility_skipped_frames: 2 },
+        compatibility_view_name: "nerfstudio".to_string(),
+        trainer_backend: "nerfstudio.splatfacto".to_string(),
+        training_data_dir: "/tmp/package/compat/nerfstudio".to_string(),
+        transforms_path: Some("compat/nerfstudio/transforms.json".to_string()),
+        export_report_path: "compat/nerfstudio/export_report.json".to_string(),
+        suggested_output_dir: "/tmp/launch/trainer-output/nerfstudio-splatfacto".to_string(),
+        launch_command: "ns-train splatfacto --data /tmp/package/compat/nerfstudio --output-dir /tmp/launch/trainer-output/nerfstudio-splatfacto".to_string(),
+        known_limits: vec!["launch prep only".to_string()],
+      }),
+      issue: None,
+    }];
+    let minecraft_training_launch_inspect_reports =
+      vec![MinecraftTrainingLaunchInspectReportLineage {
+        artifact: ArtifactRefLineage {
+          run_id: run.run.run_id.clone(),
+          artifact_id: ArtifactId::new("artifact_mc7_launch_inspect"),
+          span_id: SpanId::new("span_mc7_launch"),
+          captured_event_id: None,
+          role: Some("minecraft-3dgs-training-launch-inspect".to_string()),
+          path: Some("artifacts/minecraft-3dgs-training-launch-inspect.json".to_string()),
+          summary: Some("training launch inspect".to_string()),
+          resolved: true,
+        },
+        report: Some(
+          crate::run_read::MinecraftTrainingLaunchInspectReportSummary {
+            schema_version: 1,
+            training_launch_manifest_path: "/tmp/launch/minecraft-3dgs-training-launch-plan.json"
+              .to_string(),
+            source_training_package_manifest_path: "/tmp/package/run.json".to_string(),
+            source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
+            source_bundle_manifest_paths: vec![
+              "/tmp/bundle-a/run.json".to_string(),
+              "/tmp/bundle-b/run.json".to_string(),
+            ],
+            source_run_ids: vec!["run_a".to_string(), "run_b".to_string()],
+            compatibility_status: "Partial".to_string(),
+            trainer_readiness: "Blocked".to_string(),
+            readiness_blocker: Some("TrainerCommandUnavailable".to_string()),
+            probe_command: "ns-train --help".to_string(),
+            probe_succeeded: false,
+            exported_frame_count: 4,
+            skipped_frame_count: 2,
+            transforms_present: true,
+            warnings: vec!["ns-train unavailable".to_string()],
+            known_limits: vec!["synthetic only".to_string()],
+          },
+        ),
+        issue: None,
+      }];
+    let minecraft_training_job_manifests = vec![MinecraftTrainingJobManifestLineage {
+      artifact: ArtifactRefLineage {
+        run_id: run.run.run_id.clone(),
+        artifact_id: ArtifactId::new("artifact_mc7_job"),
+        span_id: SpanId::new("span_mc7_job"),
+        captured_event_id: None,
+        role: Some("minecraft-3dgs-training-job".to_string()),
+        path: Some("artifacts/minecraft-3dgs-training-job.json".to_string()),
+        summary: Some("training job manifest".to_string()),
+        resolved: true,
+      },
+      manifest: Some(crate::run_read::MinecraftTrainingJobManifestSummary {
+        schema_version: 1,
+        source_training_launch_plan_path: "/tmp/launch/minecraft-3dgs-training-launch-plan.json".to_string(),
+        source_training_package_manifest_path: "/tmp/package/run.json".to_string(),
+        source_training_package_inspect_report_path: "/tmp/package/inspect_report.json".to_string(),
+        source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
+        source_bundle_manifest_paths: vec!["/tmp/bundle-a/run.json".to_string(), "/tmp/bundle-b/run.json".to_string()],
+        source_run_ids: vec!["run_a".to_string(), "run_b".to_string()],
+        counts: TrainingPackageCounts { frames: 6, images: 6, compatibility_exported_frames: 4, compatibility_skipped_frames: 2 },
+        compatibility_view_name: "nerfstudio".to_string(),
+        trainer_backend: "nerfstudio.splatfacto".to_string(),
+        job_backend: "remote".to_string(),
+        job_submission_endpoint: "https://jobs.example/api".to_string(),
+        job_submission_command: "submit-training-job".to_string(),
+        training_data_dir: "/tmp/package/compat/nerfstudio".to_string(),
+        transforms_path: Some("compat/nerfstudio/transforms.json".to_string()),
+        export_report_path: "compat/nerfstudio/export_report.json".to_string(),
+        suggested_output_dir: "/tmp/job/trainer-output/nerfstudio-splatfacto".to_string(),
+        launch_command: "ns-train splatfacto --data /tmp/package/compat/nerfstudio --output-dir /tmp/job/trainer-output/nerfstudio-splatfacto".to_string(),
+        status: "submitted".to_string(),
+        job_id: Some("job-123".to_string()),
+        job_url: Some("https://jobs.example/job-123".to_string()),
+        readiness_blocker: None,
+        known_limits: vec!["remote submission only".to_string()],
+      }),
+      issue: None,
+    }];
+    let minecraft_training_job_inspect_reports = vec![MinecraftTrainingJobInspectReportLineage {
+      artifact: ArtifactRefLineage {
+        run_id: run.run.run_id.clone(),
+        artifact_id: ArtifactId::new("artifact_mc7_job_inspect"),
+        span_id: SpanId::new("span_mc7_job"),
+        captured_event_id: None,
+        role: Some("minecraft-3dgs-training-job-inspect".to_string()),
+        path: Some("artifacts/minecraft-3dgs-training-job-inspect.json".to_string()),
+        summary: Some("training job inspect".to_string()),
+        resolved: true,
+      },
+      report: Some(crate::run_read::MinecraftTrainingJobInspectReportSummary {
+        schema_version: 1,
+        training_launch_manifest_path: "/tmp/job/minecraft-3dgs-training-job.json".to_string(),
+        source_training_launch_plan_path: "/tmp/launch/minecraft-3dgs-training-launch-plan.json"
+          .to_string(),
+        source_training_package_manifest_path: "/tmp/package/run.json".to_string(),
+        source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
+        source_bundle_manifest_paths: vec![
+          "/tmp/bundle-a/run.json".to_string(),
+          "/tmp/bundle-b/run.json".to_string(),
+        ],
+        source_run_ids: vec!["run_a".to_string(), "run_b".to_string()],
+        job_backend: "remote".to_string(),
+        trainer_backend: "nerfstudio.splatfacto".to_string(),
+        job_submission_endpoint: "https://jobs.example/api".to_string(),
+        job_submission_command: "submit-training-job".to_string(),
+        status: "submitted".to_string(),
+        job_id: Some("job-123".to_string()),
+        job_url: Some("https://jobs.example/job-123".to_string()),
+        readiness_blocker: None,
+        probe_command: "submit-training-job --help".to_string(),
+        probe_succeeded: true,
+        exported_frame_count: 4,
+        skipped_frame_count: 2,
+        transforms_present: true,
+        warnings: vec!["manual remote audit required".to_string()],
+        known_limits: vec!["job execution not consumed here".to_string()],
+      }),
+      issue: None,
+    }];
+    let minecraft_training_result_manifests = vec![MinecraftTrainingResultManifestLineage {
+      artifact: ArtifactRefLineage {
+        run_id: run.run.run_id.clone(),
+        artifact_id: ArtifactId::new("artifact_mc7_result"),
+        span_id: SpanId::new("span_mc7_result"),
+        captured_event_id: None,
+        role: Some("minecraft-3dgs-training-result".to_string()),
+        path: Some("artifacts/minecraft-3dgs-training-result.json".to_string()),
+        summary: Some("training result manifest".to_string()),
+        resolved: true,
+      },
+      manifest: Some(crate::run_read::MinecraftTrainingResultManifestSummary {
+        schema_version: 1,
+        source_training_job_manifest_path: "/tmp/job/minecraft-3dgs-training-job.json".to_string(),
+        source_training_launch_plan_path: "/tmp/launch/minecraft-3dgs-training-launch-plan.json"
+          .to_string(),
+        source_training_package_manifest_path: "/tmp/package/run.json".to_string(),
+        source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
+        source_bundle_manifest_paths: vec![
+          "/tmp/bundle-a/run.json".to_string(),
+          "/tmp/bundle-b/run.json".to_string(),
+        ],
+        source_run_ids: vec!["run_a".to_string(), "run_b".to_string()],
+        trainer_backend: "nerfstudio.splatfacto".to_string(),
+        job_backend: "remote".to_string(),
+        job_submission_endpoint: "https://jobs.example/api".to_string(),
+        source_job_status: "submitted".to_string(),
+        status: "succeeded".to_string(),
+        job_id: "job-123".to_string(),
+        job_url: Some("https://jobs.example/job-123".to_string()),
+        result_dir: "/tmp/job/trainer-output/nerfstudio-splatfacto".to_string(),
+        result_artifacts: vec![crate::run_read::MinecraftTrainingResultArtifactSummary {
+          relative_path: "config.yml".to_string(),
+          absolute_path: "/tmp/job/trainer-output/nerfstudio-splatfacto/config.yml".to_string(),
+          readable: true,
+          byte_size: Some(128),
+        }],
+        exported_frame_count: 4,
+        skipped_frame_count: 2,
+        known_limits: vec!["quality not graded".to_string()],
+      }),
+      issue: None,
+    }];
+    let minecraft_training_result_inspect_reports =
+      vec![MinecraftTrainingResultInspectReportLineage {
+        artifact: ArtifactRefLineage {
+          run_id: run.run.run_id.clone(),
+          artifact_id: ArtifactId::new("artifact_mc7_result_inspect"),
+          span_id: SpanId::new("span_mc7_result"),
+          captured_event_id: None,
+          role: Some("minecraft-3dgs-training-result-inspect".to_string()),
+          path: Some("artifacts/minecraft-3dgs-training-result-inspect.json".to_string()),
+          summary: Some("training result inspect".to_string()),
+          resolved: true,
+        },
+        report: Some(
+          crate::run_read::MinecraftTrainingResultInspectReportSummary {
+            schema_version: 1,
+            training_result_manifest_path: "/tmp/result/minecraft-3dgs-training-result.json"
+              .to_string(),
+            source_training_job_manifest_path: "/tmp/job/minecraft-3dgs-training-job.json"
+              .to_string(),
+            source_training_launch_plan_path:
+              "/tmp/launch/minecraft-3dgs-training-launch-plan.json".to_string(),
+            source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
+            source_bundle_manifest_paths: vec![
+              "/tmp/bundle-a/run.json".to_string(),
+              "/tmp/bundle-b/run.json".to_string(),
+            ],
+            source_run_ids: vec!["run_a".to_string(), "run_b".to_string()],
+            trainer_backend: "nerfstudio.splatfacto".to_string(),
+            job_backend: "remote".to_string(),
+            job_submission_endpoint: "https://jobs.example/api".to_string(),
+            source_job_status: "submitted".to_string(),
+            status: "succeeded".to_string(),
+            status_reason: None,
+            job_id: "job-123".to_string(),
+            job_url: Some("https://jobs.example/job-123".to_string()),
+            result_dir: "/tmp/job/trainer-output/nerfstudio-splatfacto".to_string(),
+            result_dir_exists: true,
+            key_result_artifacts_present: true,
+            result_artifact_count: 1,
+            warnings: vec!["manual quality review pending".to_string()],
+            known_limits: vec!["quality not graded".to_string()],
+          },
+        ),
+        issue: None,
+      }];
+
     let output = render_run_text(
       &run,
       &verifications,
@@ -1389,6 +2093,12 @@ mod tests {
       &[],
       &minecraft_training_package_manifests,
       &minecraft_training_package_inspect_reports,
+      &minecraft_training_launch_manifests,
+      &minecraft_training_launch_inspect_reports,
+      &minecraft_training_job_manifests,
+      &minecraft_training_job_inspect_reports,
+      &minecraft_training_result_manifests,
+      &minecraft_training_result_inspect_reports,
     );
 
     assert!(output.contains("Run run_inspect_test"));
@@ -1451,6 +2161,27 @@ mod tests {
     assert!(output.contains("transforms=present"));
     assert!(output.contains("paired_report_artifact=artifact_mc7_package_inspect"));
     assert!(output.contains("known_limits=canonical package only; no trained splat is present"));
+    assert!(output.contains("MC-7 Training Launches:"));
+    assert!(output.contains("manifest_artifact=artifact_mc7_launch"));
+    assert!(output.contains("paired_report_artifact=artifact_mc7_launch_inspect"));
+    assert!(output.contains("trainer_readiness=Blocked"));
+    assert!(output.contains("readiness_blocker=TrainerCommandUnavailable"));
+    assert!(output.contains("launch_command=ns-train splatfacto --data /tmp/package/compat/nerfstudio --output-dir /tmp/launch/trainer-output/nerfstudio-splatfacto"));
+    assert!(output.contains("MC-7 Training Jobs:"));
+    assert!(output.contains("manifest_artifact=artifact_mc7_job"));
+    assert!(output.contains("paired_report_artifact=artifact_mc7_job_inspect"));
+    assert!(output.contains("job_backend=remote"));
+    assert!(output.contains("status=submitted"));
+    assert!(output.contains("job_id=job-123"));
+    assert!(output.contains("job_submission_endpoint=https://jobs.example/api"));
+    assert!(output.contains("MC-7 Training Results:"));
+    assert!(output.contains("manifest_artifact=artifact_mc7_result"));
+    assert!(output.contains("paired_report_artifact=artifact_mc7_result_inspect"));
+    assert!(output.contains("source_job_status=submitted"));
+    assert!(output.contains("status_reason=n/a"));
+    assert!(output.contains("result_dir_exists=true"));
+    assert!(output.contains("key_result_artifacts_present=true"));
+    assert!(output.contains("result_artifact_count=1"));
     assert!(output.contains("Candidate Action Execution Lineage:"));
     assert!(output.contains("artifact=artifact_candidate_action_execution"));
     assert!(output.contains("execution_id=execution_end_turn"));
@@ -1464,5 +2195,227 @@ mod tests {
     assert!(output.contains("consent=consent_execute_end_turn"));
     assert!(output.contains("consent_provenance=human_gesture"));
     assert!(output.contains("consent_grade=human_approved"));
+  }
+
+  #[test]
+  fn render_run_text_renders_training_orphan_and_issue_entries() {
+    let run_id = RunId::new("run_inspect_orphan_test");
+    let root_span_id = SpanId::new("span_orphan_root");
+    let run = CanonicalRun {
+      run: RunRecordV1Alpha1 {
+        api_version: RUN_API_VERSION.to_string(),
+        run_id: run_id.clone(),
+        trace_id: TraceId::new("trace_orphan_test"),
+        run_type: RunType::Command,
+        state: TraceState::Ended,
+        status_code: TraceStatusCode::Ok,
+        started_at_millis: 1,
+        finished_at_millis: Some(2),
+        root_span_id: root_span_id,
+        attributes: BTreeMap::new(),
+        summary: Some("orphan inspect summary".to_string()),
+        failure: None,
+      },
+      spans: vec![],
+      events: vec![],
+      artifacts: vec![],
+    };
+
+    let output = render_run_text(
+      &run,
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[MinecraftTrainingJobInspectReportLineage {
+        artifact: ArtifactRefLineage {
+          run_id: run.run.run_id.clone(),
+          artifact_id: ArtifactId::new("artifact_mc7_job_orphan"),
+          span_id: SpanId::new("span_mc7_job_orphan"),
+          captured_event_id: None,
+          role: Some("minecraft-3dgs-training-job-inspect".to_string()),
+          path: Some("artifacts/minecraft-3dgs-training-job-inspect-orphan.json".to_string()),
+          summary: Some("training job orphan inspect".to_string()),
+          resolved: true,
+        },
+        report: None,
+        issue: Some("json parse error: expected value".to_string()),
+      }],
+      &[],
+      &[],
+    );
+
+    assert!(output.contains("MC-7 Training Jobs:"));
+    assert!(output.contains("inspect_artifact=artifact_mc7_job_orphan"));
+    assert!(output.contains("path=artifacts/minecraft-3dgs-training-job-inspect-orphan.json"));
+    assert!(output.contains("issue=json parse error: expected value"));
+  }
+
+  #[test]
+  fn render_run_text_leaves_duplicate_training_launch_reports_unpaired() {
+    let run_id = RunId::new("run_inspect_duplicate_launch_reports");
+    let root_span_id = SpanId::new("span_duplicate_launch_root");
+    let run = CanonicalRun {
+      run: RunRecordV1Alpha1 {
+        api_version: RUN_API_VERSION.to_string(),
+        run_id: run_id.clone(),
+        trace_id: TraceId::new("trace_duplicate_launch_test"),
+        run_type: RunType::Command,
+        state: TraceState::Ended,
+        status_code: TraceStatusCode::Ok,
+        started_at_millis: 1,
+        finished_at_millis: Some(2),
+        root_span_id: root_span_id.clone(),
+        attributes: BTreeMap::new(),
+        summary: Some("duplicate launch reports".to_string()),
+        failure: None,
+      },
+      spans: vec![],
+      events: vec![],
+      artifacts: vec![],
+    };
+
+    let launch_manifest = MinecraftTrainingLaunchManifestLineage {
+      artifact: ArtifactRefLineage {
+        run_id: run.run.run_id.clone(),
+        artifact_id: ArtifactId::new("artifact_mc7_launch_manifest"),
+        span_id: root_span_id.clone(),
+        captured_event_id: None,
+        role: Some("minecraft-3dgs-training-launch-plan".to_string()),
+        path: Some("artifacts/minecraft-3dgs-training-launch-plan.json".to_string()),
+        summary: Some("training launch manifest".to_string()),
+        resolved: true,
+      },
+      manifest: Some(crate::run_read::MinecraftTrainingLaunchManifestSummary {
+        schema_version: 1,
+        source_training_package_manifest_path: "/tmp/package/run.json".to_string(),
+        source_training_package_inspect_report_path: "/tmp/package/inspect_report.json".to_string(),
+        source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
+        source_bundle_manifest_paths: vec!["/tmp/bundle-a/run.json".to_string()],
+        source_run_ids: vec!["run_a".to_string()],
+        counts: TrainingPackageCounts {
+          frames: 2,
+          images: 2,
+          compatibility_exported_frames: 2,
+          compatibility_skipped_frames: 0,
+        },
+        compatibility_view_name: "nerfstudio".to_string(),
+        trainer_backend: "nerfstudio.splatfacto".to_string(),
+        training_data_dir: "/tmp/package/compat/nerfstudio".to_string(),
+        transforms_path: Some("compat/nerfstudio/transforms.json".to_string()),
+        export_report_path: "compat/nerfstudio/export_report.json".to_string(),
+        suggested_output_dir: "/tmp/launch/out".to_string(),
+        launch_command: "ns-train splatfacto".to_string(),
+        known_limits: vec![],
+      }),
+      issue: None,
+    };
+
+    let duplicate_reports = vec![
+      MinecraftTrainingLaunchInspectReportLineage {
+        artifact: ArtifactRefLineage {
+          run_id: run.run.run_id.clone(),
+          artifact_id: ArtifactId::new("artifact_mc7_launch_report_a"),
+          span_id: root_span_id.clone(),
+          captured_event_id: None,
+          role: Some("minecraft-3dgs-training-launch-inspect".to_string()),
+          path: Some("artifacts/minecraft-3dgs-training-launch-inspect-a.json".to_string()),
+          summary: Some("training launch inspect a".to_string()),
+          resolved: true,
+        },
+        report: Some(
+          crate::run_read::MinecraftTrainingLaunchInspectReportSummary {
+            schema_version: 1,
+            training_launch_manifest_path: "/tmp/launch/minecraft-3dgs-training-launch-plan.json"
+              .to_string(),
+            source_training_package_manifest_path: "/tmp/package/run.json".to_string(),
+            source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
+            source_bundle_manifest_paths: vec!["/tmp/bundle-a/run.json".to_string()],
+            source_run_ids: vec!["run_a".to_string()],
+            compatibility_status: "Ready".to_string(),
+            trainer_readiness: "Ready".to_string(),
+            readiness_blocker: None,
+            probe_command: "ns-train --help".to_string(),
+            probe_succeeded: true,
+            exported_frame_count: 2,
+            skipped_frame_count: 0,
+            transforms_present: true,
+            warnings: vec![],
+            known_limits: vec![],
+          },
+        ),
+        issue: None,
+      },
+      MinecraftTrainingLaunchInspectReportLineage {
+        artifact: ArtifactRefLineage {
+          run_id: run.run.run_id.clone(),
+          artifact_id: ArtifactId::new("artifact_mc7_launch_report_b"),
+          span_id: root_span_id,
+          captured_event_id: None,
+          role: Some("minecraft-3dgs-training-launch-inspect".to_string()),
+          path: Some("artifacts/minecraft-3dgs-training-launch-inspect-b.json".to_string()),
+          summary: Some("training launch inspect b".to_string()),
+          resolved: true,
+        },
+        report: Some(
+          crate::run_read::MinecraftTrainingLaunchInspectReportSummary {
+            schema_version: 1,
+            training_launch_manifest_path: "/tmp/launch/minecraft-3dgs-training-launch-plan.json"
+              .to_string(),
+            source_training_package_manifest_path: "/tmp/package/run.json".to_string(),
+            source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
+            source_bundle_manifest_paths: vec!["/tmp/bundle-a/run.json".to_string()],
+            source_run_ids: vec!["run_a".to_string()],
+            compatibility_status: "Blocked".to_string(),
+            trainer_readiness: "Blocked".to_string(),
+            readiness_blocker: Some("TrainerCommandUnavailable".to_string()),
+            probe_command: "ns-train --help".to_string(),
+            probe_succeeded: false,
+            exported_frame_count: 1,
+            skipped_frame_count: 1,
+            transforms_present: true,
+            warnings: vec!["duplicate report".to_string()],
+            known_limits: vec![],
+          },
+        ),
+        issue: None,
+      },
+    ];
+
+    let output = render_run_text(
+      &run,
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[launch_manifest],
+      &duplicate_reports,
+      &[],
+      &[],
+      &[],
+      &[],
+    );
+
+    assert!(output.contains("manifest_artifact=artifact_mc7_launch_manifest"));
+    assert!(output.contains("paired_report_artifact=n/a"));
+    assert!(output.contains("inspect_artifact=artifact_mc7_launch_report_a"));
+    assert!(output.contains("inspect_artifact=artifact_mc7_launch_report_b"));
   }
 }

@@ -1274,6 +1274,30 @@
     return !!artifact && artifact.role === "minecraft-3dgs-training-package-inspect";
   }
 
+  function isMinecraftTrainingLaunchArtifact(artifact) {
+    return !!artifact && artifact.role === "minecraft-3dgs-training-launch-plan";
+  }
+
+  function isMinecraftTrainingLaunchInspectArtifact(artifact) {
+    return !!artifact && artifact.role === "minecraft-3dgs-training-launch-inspect";
+  }
+
+  function isMinecraftTrainingJobArtifact(artifact) {
+    return !!artifact && artifact.role === "minecraft-3dgs-training-job";
+  }
+
+  function isMinecraftTrainingJobInspectArtifact(artifact) {
+    return !!artifact && artifact.role === "minecraft-3dgs-training-job-inspect";
+  }
+
+  function isMinecraftTrainingResultArtifact(artifact) {
+    return !!artifact && artifact.role === "minecraft-3dgs-training-result";
+  }
+
+  function isMinecraftTrainingResultInspectArtifact(artifact) {
+    return !!artifact && artifact.role === "minecraft-3dgs-training-result-inspect";
+  }
+
   function artifactStem(artifact) {
     const basename = pathBasename(artifact && artifact.path);
     const idx = basename.lastIndexOf(".");
@@ -1558,6 +1582,128 @@
     return view && view.transforms_path ? "present" : "none";
   }
 
+  function countArray(value) {
+    return Array.isArray(value) ? value.length : 0;
+  }
+
+  function transformsPresenceFromPath(path) {
+    return path ? "present" : "none";
+  }
+
+  function renderTrainerLineageSummaryCard(artifact, parsed) {
+    if (isMinecraftTrainingLaunchArtifact(artifact)) {
+      return renderKeyValueSummary([
+        ["kind", "training launch plan"],
+        ["schema", parsed.schema_version],
+        ["source_training_package", parsed.source_training_package_manifest_path],
+        ["scene_packet", parsed.source_scene_packet_manifest_path],
+        ["source_runs", countArray(parsed.source_run_ids)],
+        ["frames", parsed.counts && parsed.counts.frames],
+        ["images", parsed.counts && parsed.counts.images],
+        ["trainer_backend", parsed.trainer_backend],
+        ["training_data_dir", parsed.training_data_dir],
+        ["transforms", transformsPresenceFromPath(parsed.transforms_path)],
+        ["launch_command", parsed.launch_command],
+        ["known_limits", countArray(parsed.known_limits)],
+      ]);
+    }
+    if (isMinecraftTrainingLaunchInspectArtifact(artifact)) {
+      return renderKeyValueSummary([
+        ["kind", "training launch inspect report"],
+        ["schema", parsed.schema_version],
+        ["manifest_path", parsed.training_launch_manifest_path],
+        ["scene_packet", parsed.source_scene_packet_manifest_path],
+        ["source_runs", countArray(parsed.source_run_ids)],
+        ["compatibility_status", parsed.compatibility_status],
+        ["trainer_readiness", parsed.trainer_readiness],
+        ["readiness_blocker", parsed.readiness_blocker],
+        ["probe_succeeded", parsed.probe_succeeded],
+        ["exported", parsed.exported_frame_count],
+        ["skipped", parsed.skipped_frame_count],
+        ["transforms", parsed.transforms_present ? "present" : "none"],
+        ["warnings", countArray(parsed.warnings)],
+        ["known_limits", countArray(parsed.known_limits)],
+      ]);
+    }
+    if (isMinecraftTrainingJobArtifact(artifact)) {
+      return renderKeyValueSummary([
+        ["kind", "training job manifest"],
+        ["schema", parsed.schema_version],
+        ["source_training_launch_plan", parsed.source_training_launch_plan_path],
+        ["source_runs", countArray(parsed.source_run_ids)],
+        ["trainer_backend", parsed.trainer_backend],
+        ["job_backend", parsed.job_backend],
+        ["status", parsed.status],
+        ["job_id", parsed.job_id],
+        ["job_submission_endpoint", parsed.job_submission_endpoint],
+        ["exported", parsed.counts && parsed.counts.compatibility_exported_frames],
+        ["skipped", parsed.counts && parsed.counts.compatibility_skipped_frames],
+        ["transforms", transformsPresenceFromPath(parsed.transforms_path)],
+        ["known_limits", countArray(parsed.known_limits)],
+      ]);
+    }
+    if (isMinecraftTrainingJobInspectArtifact(artifact)) {
+      return renderKeyValueSummary([
+        ["kind", "training job inspect report"],
+        ["schema", parsed.schema_version],
+        ["source_training_launch_plan", parsed.source_training_launch_plan_path],
+        ["source_runs", countArray(parsed.source_run_ids)],
+        ["trainer_backend", parsed.trainer_backend],
+        ["job_backend", parsed.job_backend],
+        ["status", parsed.status],
+        ["job_id", parsed.job_id],
+        ["readiness_blocker", parsed.readiness_blocker],
+        ["job_submission_endpoint", parsed.job_submission_endpoint],
+        ["job_submission_command", parsed.job_submission_command],
+        ["probe_succeeded", parsed.probe_succeeded],
+        ["exported", parsed.exported_frame_count],
+        ["skipped", parsed.skipped_frame_count],
+        ["transforms", parsed.transforms_present ? "present" : "none"],
+        ["warnings", countArray(parsed.warnings)],
+        ["known_limits", countArray(parsed.known_limits)],
+      ]);
+    }
+    if (isMinecraftTrainingResultArtifact(artifact)) {
+      return renderKeyValueSummary([
+        ["kind", "training result manifest"],
+        ["schema", parsed.schema_version],
+        ["source_training_job_manifest", parsed.source_training_job_manifest_path],
+        ["source_runs", countArray(parsed.source_run_ids)],
+        ["trainer_backend", parsed.trainer_backend],
+        ["job_backend", parsed.job_backend],
+        ["source_job_status", parsed.source_job_status],
+        ["status", parsed.status],
+        ["job_id", parsed.job_id],
+        ["result_dir", parsed.result_dir],
+        ["result_artifacts", countArray(parsed.result_artifacts)],
+        ["exported", parsed.exported_frame_count],
+        ["skipped", parsed.skipped_frame_count],
+        ["known_limits", countArray(parsed.known_limits)],
+      ]);
+    }
+    if (isMinecraftTrainingResultInspectArtifact(artifact)) {
+      return renderKeyValueSummary([
+        ["kind", "training result inspect report"],
+        ["schema", parsed.schema_version],
+        ["source_training_job_manifest", parsed.source_training_job_manifest_path],
+        ["source_runs", countArray(parsed.source_run_ids)],
+        ["trainer_backend", parsed.trainer_backend],
+        ["job_backend", parsed.job_backend],
+        ["source_job_status", parsed.source_job_status],
+        ["status", parsed.status],
+        ["status_reason", parsed.status_reason],
+        ["job_id", parsed.job_id],
+        ["result_dir", parsed.result_dir],
+        ["result_dir_exists", parsed.result_dir_exists],
+        ["key_result_artifacts_present", parsed.key_result_artifacts_present],
+        ["result_artifact_count", parsed.result_artifact_count],
+        ["warnings", countArray(parsed.warnings)],
+        ["known_limits", countArray(parsed.known_limits)],
+      ]);
+    }
+    return null;
+  }
+
   function renderTrainingPackageSummaryCard(artifact, parsed) {
     const view = trainingCompatibilityViewSummary(parsed);
     if (isMinecraftTrainingPackageArtifact(artifact)) {
@@ -1803,8 +1949,15 @@
           if (parsed && (
             isMinecraftTrainingPackageArtifact(artifact)
             || isMinecraftTrainingPackageInspectArtifact(artifact)
+            || isMinecraftTrainingLaunchArtifact(artifact)
+            || isMinecraftTrainingLaunchInspectArtifact(artifact)
+            || isMinecraftTrainingJobArtifact(artifact)
+            || isMinecraftTrainingJobInspectArtifact(artifact)
+            || isMinecraftTrainingResultArtifact(artifact)
+            || isMinecraftTrainingResultInspectArtifact(artifact)
           )) {
-            const summaryCard = renderTrainingPackageSummaryCard(artifact, parsed);
+            const summaryCard = renderTrainingPackageSummaryCard(artifact, parsed)
+              || renderTrainerLineageSummaryCard(artifact, parsed);
             if (summaryCard) {
               preview.insertBefore(summaryCard, surface);
             }

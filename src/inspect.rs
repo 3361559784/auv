@@ -536,15 +536,13 @@ pub fn render_run_text(
     let mut rendered_report_artifacts = std::collections::BTreeSet::new();
     for manifest_lineage in minecraft_training_package_manifests {
       let paired_report = manifest_lineage.manifest.as_ref().and_then(|manifest| {
-        minecraft_training_package_inspect_reports
-          .iter()
-          .find(|lineage| {
-            lineage.report.as_ref().is_some_and(|report| {
-              report.scene_packet_manifest_path == manifest.source_scene_packet_manifest_path
-                && report.source_run_ids == manifest.source_run_ids
-                && report.source_bundle_manifest_paths == manifest.source_bundle_manifest_paths
-            })
+        unique_matching_report(minecraft_training_package_inspect_reports, |lineage| {
+          lineage.report.as_ref().is_some_and(|report| {
+            report.scene_packet_manifest_path == manifest.source_scene_packet_manifest_path
+              && report.source_run_ids == manifest.source_run_ids
+              && report.source_bundle_manifest_paths == manifest.source_bundle_manifest_paths
           })
+        })
       });
       if let Some(report_lineage) = paired_report {
         rendered_report_artifacts.insert(report_lineage.artifact.artifact_id.to_string());
@@ -942,18 +940,16 @@ pub fn render_run_text(
     let mut rendered_report_artifacts = BTreeSet::new();
     for manifest_lineage in minecraft_training_result_manifests {
       let paired_report = manifest_lineage.manifest.as_ref().and_then(|manifest| {
-        minecraft_training_result_inspect_reports
-          .iter()
-          .find(|lineage| {
-            lineage.report.as_ref().is_some_and(|report| {
-              report.source_training_job_manifest_path == manifest.source_training_job_manifest_path
-                && report.source_training_launch_plan_path
-                  == manifest.source_training_launch_plan_path
-                && report.source_scene_packet_manifest_path
-                  == manifest.source_scene_packet_manifest_path
-                && report.source_run_ids == manifest.source_run_ids
-            })
+        unique_matching_report(minecraft_training_result_inspect_reports, |lineage| {
+          lineage.report.as_ref().is_some_and(|report| {
+            report.source_training_job_manifest_path == manifest.source_training_job_manifest_path
+              && report.source_training_launch_plan_path
+                == manifest.source_training_launch_plan_path
+              && report.source_scene_packet_manifest_path
+                == manifest.source_scene_packet_manifest_path
+              && report.source_run_ids == manifest.source_run_ids
           })
+        })
       });
       if let Some(report_lineage) = paired_report {
         rendered_report_artifacts.insert(report_lineage.artifact.artifact_id.to_string());
@@ -2417,5 +2413,536 @@ mod tests {
     assert!(output.contains("paired_report_artifact=n/a"));
     assert!(output.contains("inspect_artifact=artifact_mc7_launch_report_a"));
     assert!(output.contains("inspect_artifact=artifact_mc7_launch_report_b"));
+  }
+
+  #[test]
+  fn render_run_text_leaves_duplicate_training_job_reports_unpaired() {
+    let run_id = RunId::new("run_inspect_duplicate_job_reports");
+    let root_span_id = SpanId::new("span_duplicate_job_root");
+    let run = CanonicalRun {
+      run: RunRecordV1Alpha1 {
+        api_version: RUN_API_VERSION.to_string(),
+        run_id: run_id.clone(),
+        trace_id: TraceId::new("trace_duplicate_job_test"),
+        run_type: RunType::Command,
+        state: TraceState::Ended,
+        status_code: TraceStatusCode::Ok,
+        started_at_millis: 1,
+        finished_at_millis: Some(2),
+        root_span_id: root_span_id.clone(),
+        attributes: BTreeMap::new(),
+        summary: Some("duplicate job reports".to_string()),
+        failure: None,
+      },
+      spans: vec![],
+      events: vec![],
+      artifacts: vec![],
+    };
+
+    let job_manifest = MinecraftTrainingJobManifestLineage {
+      artifact: ArtifactRefLineage {
+        run_id: run.run.run_id.clone(),
+        artifact_id: ArtifactId::new("artifact_mc7_job_manifest_dup"),
+        span_id: root_span_id.clone(),
+        captured_event_id: None,
+        role: Some("minecraft-3dgs-training-job".to_string()),
+        path: Some("artifacts/minecraft-3dgs-training-job.json".to_string()),
+        summary: Some("training job manifest".to_string()),
+        resolved: true,
+      },
+      manifest: Some(crate::run_read::MinecraftTrainingJobManifestSummary {
+        schema_version: 1,
+        source_training_launch_plan_path: "/tmp/launch/minecraft-3dgs-training-launch-plan.json"
+          .to_string(),
+        source_training_package_manifest_path: "/tmp/package/run.json".to_string(),
+        source_training_package_inspect_report_path: "/tmp/package/inspect_report.json".to_string(),
+        source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
+        source_bundle_manifest_paths: vec!["/tmp/bundle-a/run.json".to_string()],
+        source_run_ids: vec!["run_a".to_string()],
+        counts: TrainingPackageCounts {
+          frames: 2,
+          images: 2,
+          compatibility_exported_frames: 2,
+          compatibility_skipped_frames: 0,
+        },
+        compatibility_view_name: "nerfstudio".to_string(),
+        trainer_backend: "nerfstudio.splatfacto".to_string(),
+        job_backend: "remote".to_string(),
+        job_submission_endpoint: "https://jobs.example/api".to_string(),
+        job_submission_command: "submit-training-job".to_string(),
+        training_data_dir: "/tmp/package/compat/nerfstudio".to_string(),
+        transforms_path: Some("compat/nerfstudio/transforms.json".to_string()),
+        export_report_path: "compat/nerfstudio/export_report.json".to_string(),
+        suggested_output_dir: "/tmp/job/out".to_string(),
+        launch_command: "ns-train splatfacto".to_string(),
+        status: "submitted".to_string(),
+        job_id: Some("job-123".to_string()),
+        job_url: Some("https://jobs.example/job-123".to_string()),
+        readiness_blocker: None,
+        known_limits: vec![],
+      }),
+      issue: None,
+    };
+
+    let duplicate_reports = vec![
+      MinecraftTrainingJobInspectReportLineage {
+        artifact: ArtifactRefLineage {
+          run_id: run.run.run_id.clone(),
+          artifact_id: ArtifactId::new("artifact_mc7_job_report_a"),
+          span_id: root_span_id.clone(),
+          captured_event_id: None,
+          role: Some("minecraft-3dgs-training-job-inspect".to_string()),
+          path: Some("artifacts/minecraft-3dgs-training-job-inspect-a.json".to_string()),
+          summary: Some("training job inspect a".to_string()),
+          resolved: true,
+        },
+        report: Some(crate::run_read::MinecraftTrainingJobInspectReportSummary {
+          schema_version: 1,
+          training_launch_manifest_path: "/tmp/job/minecraft-3dgs-training-job.json".to_string(),
+          source_training_launch_plan_path: "/tmp/launch/minecraft-3dgs-training-launch-plan.json"
+            .to_string(),
+          source_training_package_manifest_path: "/tmp/package/run.json".to_string(),
+          source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
+          source_bundle_manifest_paths: vec!["/tmp/bundle-a/run.json".to_string()],
+          source_run_ids: vec!["run_a".to_string()],
+          job_backend: "remote".to_string(),
+          trainer_backend: "nerfstudio.splatfacto".to_string(),
+          job_submission_endpoint: "https://jobs.example/api".to_string(),
+          job_submission_command: "submit-training-job".to_string(),
+          status: "submitted".to_string(),
+          job_id: Some("job-123".to_string()),
+          job_url: Some("https://jobs.example/job-123".to_string()),
+          readiness_blocker: None,
+          probe_command: "submit-training-job --help".to_string(),
+          probe_succeeded: true,
+          exported_frame_count: 2,
+          skipped_frame_count: 0,
+          transforms_present: true,
+          warnings: vec![],
+          known_limits: vec![],
+        }),
+        issue: None,
+      },
+      MinecraftTrainingJobInspectReportLineage {
+        artifact: ArtifactRefLineage {
+          run_id: run.run.run_id.clone(),
+          artifact_id: ArtifactId::new("artifact_mc7_job_report_b"),
+          span_id: root_span_id,
+          captured_event_id: None,
+          role: Some("minecraft-3dgs-training-job-inspect".to_string()),
+          path: Some("artifacts/minecraft-3dgs-training-job-inspect-b.json".to_string()),
+          summary: Some("training job inspect b".to_string()),
+          resolved: true,
+        },
+        report: Some(crate::run_read::MinecraftTrainingJobInspectReportSummary {
+          schema_version: 1,
+          training_launch_manifest_path: "/tmp/job/minecraft-3dgs-training-job.json".to_string(),
+          source_training_launch_plan_path: "/tmp/launch/minecraft-3dgs-training-launch-plan.json"
+            .to_string(),
+          source_training_package_manifest_path: "/tmp/package/run.json".to_string(),
+          source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
+          source_bundle_manifest_paths: vec!["/tmp/bundle-a/run.json".to_string()],
+          source_run_ids: vec!["run_a".to_string()],
+          job_backend: "remote".to_string(),
+          trainer_backend: "nerfstudio.splatfacto".to_string(),
+          job_submission_endpoint: "https://jobs.example/api".to_string(),
+          job_submission_command: "submit-training-job".to_string(),
+          status: "blocked".to_string(),
+          job_id: None,
+          job_url: None,
+          readiness_blocker: Some("MissingAuthentication".to_string()),
+          probe_command: "submit-training-job --help".to_string(),
+          probe_succeeded: false,
+          exported_frame_count: 1,
+          skipped_frame_count: 1,
+          transforms_present: true,
+          warnings: vec!["duplicate report".to_string()],
+          known_limits: vec![],
+        }),
+        issue: None,
+      },
+    ];
+
+    let output = render_run_text(
+      &run,
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[job_manifest],
+      &duplicate_reports,
+      &[],
+      &[],
+    );
+
+    assert!(output.contains("manifest_artifact=artifact_mc7_job_manifest_dup"));
+    assert!(output.contains("paired_report_artifact=n/a"));
+    assert!(output.contains("inspect_artifact=artifact_mc7_job_report_a"));
+    assert!(output.contains("inspect_artifact=artifact_mc7_job_report_b"));
+  }
+
+  #[test]
+  fn render_run_text_leaves_duplicate_training_package_reports_unpaired() {
+    let run_id = RunId::new("run_inspect_duplicate_package_reports");
+    let root_span_id = SpanId::new("span_duplicate_package_root");
+    let run = CanonicalRun {
+      run: RunRecordV1Alpha1 {
+        api_version: RUN_API_VERSION.to_string(),
+        run_id: run_id.clone(),
+        trace_id: TraceId::new("trace_duplicate_package_test"),
+        run_type: RunType::Command,
+        state: TraceState::Ended,
+        status_code: TraceStatusCode::Ok,
+        started_at_millis: 1,
+        finished_at_millis: Some(2),
+        root_span_id: root_span_id.clone(),
+        attributes: BTreeMap::new(),
+        summary: Some("duplicate package reports".to_string()),
+        failure: None,
+      },
+      spans: vec![],
+      events: vec![],
+      artifacts: vec![],
+    };
+
+    let package_manifest = MinecraftTrainingPackageManifestLineage {
+      artifact: ArtifactRefLineage {
+        run_id: run.run.run_id.clone(),
+        artifact_id: ArtifactId::new("artifact_mc7_package_manifest_dup"),
+        span_id: root_span_id.clone(),
+        captured_event_id: None,
+        role: Some("minecraft-3dgs-training-package".to_string()),
+        path: Some("artifacts/minecraft-3dgs-training-package.json".to_string()),
+        summary: Some("training package manifest".to_string()),
+        resolved: true,
+      },
+      manifest: Some(MinecraftTrainingPackageManifestSummary {
+        schema_version: 1,
+        source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
+        source_bundle_manifest_paths: vec!["/tmp/bundle-a/run.json".to_string()],
+        source_run_ids: vec!["run_a".to_string()],
+        counts: TrainingPackageCounts {
+          frames: 2,
+          images: 2,
+          compatibility_exported_frames: 2,
+          compatibility_skipped_frames: 0,
+        },
+        compatibility_views: vec![TrainingCompatibilityViewReport {
+          view_name: "nerfstudio".to_string(),
+          status: TrainingCompatibilityStatus::Ready,
+          exported_frame_count: 2,
+          skipped_frame_count: 0,
+          transforms_path: Some("compat/nerfstudio/transforms.json".to_string()),
+          export_report_path: "compat/nerfstudio/export_report.json".to_string(),
+          exported_frame_indices: vec![1, 2],
+          frame_decisions: Vec::new(),
+          skip_reason_counts: Vec::new(),
+          warnings: Vec::new(),
+          used_legacy_view_translation_fallback_frame_indices: Vec::new(),
+          known_limits: vec![],
+        }],
+        known_limits: vec![],
+      }),
+      issue: None,
+    };
+
+    let duplicate_reports = vec![
+      MinecraftTrainingPackageInspectReportLineage {
+        artifact: ArtifactRefLineage {
+          run_id: run.run.run_id.clone(),
+          artifact_id: ArtifactId::new("artifact_mc7_package_report_a"),
+          span_id: root_span_id.clone(),
+          captured_event_id: None,
+          role: Some("minecraft-3dgs-training-package-inspect".to_string()),
+          path: Some("artifacts/minecraft-3dgs-training-package-inspect-a.json".to_string()),
+          summary: Some("training package inspect a".to_string()),
+          resolved: true,
+        },
+        report: Some(MinecraftTrainingPackageInspectReportSummary {
+          schema_version: 1,
+          training_package_manifest_path: "/tmp/package/run.json".to_string(),
+          scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
+          source_bundle_manifest_paths: vec!["/tmp/bundle-a/run.json".to_string()],
+          source_run_ids: vec!["run_a".to_string()],
+          counts: TrainingPackageCounts {
+            frames: 2,
+            images: 2,
+            compatibility_exported_frames: 2,
+            compatibility_skipped_frames: 0,
+          },
+          compatibility_views: vec![TrainingCompatibilityViewReport {
+            view_name: "nerfstudio".to_string(),
+            status: TrainingCompatibilityStatus::Ready,
+            exported_frame_count: 2,
+            skipped_frame_count: 0,
+            transforms_path: Some("compat/nerfstudio/transforms.json".to_string()),
+            export_report_path: "compat/nerfstudio/export_report.json".to_string(),
+            exported_frame_indices: vec![1, 2],
+            frame_decisions: Vec::new(),
+            skip_reason_counts: Vec::new(),
+            warnings: Vec::new(),
+            used_legacy_view_translation_fallback_frame_indices: Vec::new(),
+            known_limits: vec![],
+          }],
+          warnings: vec![],
+          known_limits: vec![],
+        }),
+        issue: None,
+      },
+      MinecraftTrainingPackageInspectReportLineage {
+        artifact: ArtifactRefLineage {
+          run_id: run.run.run_id.clone(),
+          artifact_id: ArtifactId::new("artifact_mc7_package_report_b"),
+          span_id: root_span_id,
+          captured_event_id: None,
+          role: Some("minecraft-3dgs-training-package-inspect".to_string()),
+          path: Some("artifacts/minecraft-3dgs-training-package-inspect-b.json".to_string()),
+          summary: Some("training package inspect b".to_string()),
+          resolved: true,
+        },
+        report: Some(MinecraftTrainingPackageInspectReportSummary {
+          schema_version: 1,
+          training_package_manifest_path: "/tmp/package/run.json".to_string(),
+          scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
+          source_bundle_manifest_paths: vec!["/tmp/bundle-a/run.json".to_string()],
+          source_run_ids: vec!["run_a".to_string()],
+          counts: TrainingPackageCounts {
+            frames: 2,
+            images: 2,
+            compatibility_exported_frames: 1,
+            compatibility_skipped_frames: 1,
+          },
+          compatibility_views: vec![TrainingCompatibilityViewReport {
+            view_name: "nerfstudio".to_string(),
+            status: TrainingCompatibilityStatus::Partial,
+            exported_frame_count: 1,
+            skipped_frame_count: 1,
+            transforms_path: Some("compat/nerfstudio/transforms.json".to_string()),
+            export_report_path: "compat/nerfstudio/export_report.json".to_string(),
+            exported_frame_indices: vec![1],
+            frame_decisions: Vec::new(),
+            skip_reason_counts: Vec::new(),
+            warnings: vec!["duplicate report".to_string()],
+            used_legacy_view_translation_fallback_frame_indices: Vec::new(),
+            known_limits: vec![],
+          }],
+          warnings: vec!["duplicate report".to_string()],
+          known_limits: vec![],
+        }),
+        issue: None,
+      },
+    ];
+
+    let output = render_run_text(
+      &run,
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[package_manifest],
+      &duplicate_reports,
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+    );
+
+    assert!(output.contains("manifest_artifact=artifact_mc7_package_manifest_dup"));
+    assert!(output.contains("paired_report_artifact=n/a"));
+    assert!(output.contains("inspect_artifact=artifact_mc7_package_report_a"));
+    assert!(output.contains("inspect_artifact=artifact_mc7_package_report_b"));
+  }
+
+  #[test]
+  fn render_run_text_leaves_duplicate_training_result_reports_unpaired() {
+    let run_id = RunId::new("run_inspect_duplicate_result_reports");
+    let root_span_id = SpanId::new("span_duplicate_result_root");
+    let run = CanonicalRun {
+      run: RunRecordV1Alpha1 {
+        api_version: RUN_API_VERSION.to_string(),
+        run_id: run_id.clone(),
+        trace_id: TraceId::new("trace_duplicate_result_test"),
+        run_type: RunType::Command,
+        state: TraceState::Ended,
+        status_code: TraceStatusCode::Ok,
+        started_at_millis: 1,
+        finished_at_millis: Some(2),
+        root_span_id: root_span_id.clone(),
+        attributes: BTreeMap::new(),
+        summary: Some("duplicate result reports".to_string()),
+        failure: None,
+      },
+      spans: vec![],
+      events: vec![],
+      artifacts: vec![],
+    };
+
+    let result_manifest = MinecraftTrainingResultManifestLineage {
+      artifact: ArtifactRefLineage {
+        run_id: run.run.run_id.clone(),
+        artifact_id: ArtifactId::new("artifact_mc7_result_manifest_dup"),
+        span_id: root_span_id.clone(),
+        captured_event_id: None,
+        role: Some("minecraft-3dgs-training-result".to_string()),
+        path: Some("artifacts/minecraft-3dgs-training-result.json".to_string()),
+        summary: Some("training result manifest".to_string()),
+        resolved: true,
+      },
+      manifest: Some(crate::run_read::MinecraftTrainingResultManifestSummary {
+        schema_version: 1,
+        source_training_job_manifest_path: "/tmp/job/minecraft-3dgs-training-job.json".to_string(),
+        source_training_launch_plan_path: "/tmp/launch/minecraft-3dgs-training-launch-plan.json"
+          .to_string(),
+        source_training_package_manifest_path: "/tmp/package/run.json".to_string(),
+        source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
+        source_bundle_manifest_paths: vec!["/tmp/bundle-a/run.json".to_string()],
+        source_run_ids: vec!["run_a".to_string()],
+        trainer_backend: "nerfstudio.splatfacto".to_string(),
+        job_backend: "remote".to_string(),
+        job_submission_endpoint: "https://jobs.example/api".to_string(),
+        source_job_status: "submitted".to_string(),
+        status: "succeeded".to_string(),
+        job_id: "job-123".to_string(),
+        job_url: Some("https://jobs.example/job-123".to_string()),
+        result_dir: "/tmp/job/trainer-output/nerfstudio-splatfacto".to_string(),
+        result_artifacts: vec![crate::run_read::MinecraftTrainingResultArtifactSummary {
+          relative_path: "config.yml".to_string(),
+          absolute_path: "/tmp/job/trainer-output/nerfstudio-splatfacto/config.yml".to_string(),
+          readable: true,
+          byte_size: Some(128),
+        }],
+        exported_frame_count: 2,
+        skipped_frame_count: 0,
+        known_limits: vec![],
+      }),
+      issue: None,
+    };
+
+    let duplicate_reports = vec![
+      MinecraftTrainingResultInspectReportLineage {
+        artifact: ArtifactRefLineage {
+          run_id: run.run.run_id.clone(),
+          artifact_id: ArtifactId::new("artifact_mc7_result_report_a"),
+          span_id: root_span_id.clone(),
+          captured_event_id: None,
+          role: Some("minecraft-3dgs-training-result-inspect".to_string()),
+          path: Some("artifacts/minecraft-3dgs-training-result-inspect-a.json".to_string()),
+          summary: Some("training result inspect a".to_string()),
+          resolved: true,
+        },
+        report: Some(
+          crate::run_read::MinecraftTrainingResultInspectReportSummary {
+            schema_version: 1,
+            training_result_manifest_path: "/tmp/result/minecraft-3dgs-training-result.json"
+              .to_string(),
+            source_training_job_manifest_path: "/tmp/job/minecraft-3dgs-training-job.json"
+              .to_string(),
+            source_training_launch_plan_path:
+              "/tmp/launch/minecraft-3dgs-training-launch-plan.json".to_string(),
+            source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
+            source_bundle_manifest_paths: vec!["/tmp/bundle-a/run.json".to_string()],
+            source_run_ids: vec!["run_a".to_string()],
+            trainer_backend: "nerfstudio.splatfacto".to_string(),
+            job_backend: "remote".to_string(),
+            job_submission_endpoint: "https://jobs.example/api".to_string(),
+            source_job_status: "submitted".to_string(),
+            status: "succeeded".to_string(),
+            status_reason: None,
+            job_id: "job-123".to_string(),
+            job_url: Some("https://jobs.example/job-123".to_string()),
+            result_dir: "/tmp/job/trainer-output/nerfstudio-splatfacto".to_string(),
+            result_dir_exists: true,
+            key_result_artifacts_present: true,
+            result_artifact_count: 1,
+            warnings: vec![],
+            known_limits: vec![],
+          },
+        ),
+        issue: None,
+      },
+      MinecraftTrainingResultInspectReportLineage {
+        artifact: ArtifactRefLineage {
+          run_id: run.run.run_id.clone(),
+          artifact_id: ArtifactId::new("artifact_mc7_result_report_b"),
+          span_id: root_span_id,
+          captured_event_id: None,
+          role: Some("minecraft-3dgs-training-result-inspect".to_string()),
+          path: Some("artifacts/minecraft-3dgs-training-result-inspect-b.json".to_string()),
+          summary: Some("training result inspect b".to_string()),
+          resolved: true,
+        },
+        report: Some(
+          crate::run_read::MinecraftTrainingResultInspectReportSummary {
+            schema_version: 1,
+            training_result_manifest_path: "/tmp/result/minecraft-3dgs-training-result.json"
+              .to_string(),
+            source_training_job_manifest_path: "/tmp/job/minecraft-3dgs-training-job.json"
+              .to_string(),
+            source_training_launch_plan_path:
+              "/tmp/launch/minecraft-3dgs-training-launch-plan.json".to_string(),
+            source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
+            source_bundle_manifest_paths: vec!["/tmp/bundle-a/run.json".to_string()],
+            source_run_ids: vec!["run_a".to_string()],
+            trainer_backend: "nerfstudio.splatfacto".to_string(),
+            job_backend: "remote".to_string(),
+            job_submission_endpoint: "https://jobs.example/api".to_string(),
+            source_job_status: "submitted".to_string(),
+            status: "failed".to_string(),
+            status_reason: Some("ResultArtifactsMissing".to_string()),
+            job_id: "job-123".to_string(),
+            job_url: Some("https://jobs.example/job-123".to_string()),
+            result_dir: "/tmp/job/trainer-output/nerfstudio-splatfacto".to_string(),
+            result_dir_exists: true,
+            key_result_artifacts_present: false,
+            result_artifact_count: 0,
+            warnings: vec!["duplicate report".to_string()],
+            known_limits: vec![],
+          },
+        ),
+        issue: None,
+      },
+    ];
+
+    let output = render_run_text(
+      &run,
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[result_manifest],
+      &duplicate_reports,
+    );
+
+    assert!(output.contains("manifest_artifact=artifact_mc7_result_manifest_dup"));
+    assert!(output.contains("paired_report_artifact=n/a"));
+    assert!(output.contains("inspect_artifact=artifact_mc7_result_report_a"));
+    assert!(output.contains("inspect_artifact=artifact_mc7_result_report_b"));
   }
 }

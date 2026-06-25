@@ -2,8 +2,9 @@
 
 Date: 2026-06-24
 
-Status: implemented code slice; real reference validation currently blocked on
-restoring local `.auv`.
+Status: implemented code slice; synthetic validation closed. Historical
+accepted-only lineage is no longer restorable, so any future real reference
+validation requires a fresh accepted-only capture lineage.
 
 ## Scope
 
@@ -89,20 +90,22 @@ only. The implementation adds coverage for:
 - non-ingame anomaly continuation
 - resolved screenshot artifact with missing file hard error
 
-Real reference validation is currently **blocked** because the local `.auv`
-lineage needed for the six accepted runs is not present in the cleaned working
-tree.
+Real reference validation is currently **not runnable on the historical six
+accepted runs** because that accepted-only lineage is no longer recoverable
+from the cleaned local state.
 
 ## Real reference validation checklist
 
-Once `.auv` is restored, the real D2 reference pass should record:
+If a future fresh accepted-only capture is collected, the real D2 reference
+pass should record:
 
-1. whether `.auv` restoration succeeded
+1. the new accepted-only capture lineage used for the reference pass
 2. the six accepted input bundle manifests actually used
 3. the scene-packet output directory
 4. the raw `inspect_report.json` readings
 5. whether that output is sufficient to justify the next training/backend
    discussion
 
-If `.auv` cannot be restored, keep this note in blocked state. Do not invent
-expected real counts.
+Do not invent expected real counts from fixtures or stale notes. If no fresh
+accepted-only lineage exists, this note remains code-closed but real-source
+unvalidated.

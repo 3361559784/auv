@@ -2,8 +2,9 @@
 
 Date: 2026-06-25
 
-Status: implemented code slice; real accepted-run reference validation remains a
-separate follow-up after local `.auv` restoration.
+Status: implemented code slice; synthetic validation closed. Historical
+accepted-only lineage is no longer restorable, so any future real accepted-run
+reference validation requires a fresh accepted-only capture lineage.
 
 ## Scope
 
@@ -129,4 +130,14 @@ Compatibility-only failures do not invalidate canonical export.
 - no remote GPU job
 - no viewer-specific command
 - no rewrite of D2 history
-- no real-run completion claim without the later accepted-run smoke pass
+- no real-run completion claim without a later fresh accepted-only smoke pass
+
+## Reference-validation reality
+
+The earlier plan to reuse the old local accepted lineage is no longer valid.
+
+- the historical accepted-only `.auv` lineage is not recoverable from current
+  local state
+- D3 therefore remains code-closed and synthetic-validated
+- if future work wants a real-source reference package, it must first fresh
+  capture a new accepted-only lineage and rerun D2 -> D3 on that lineage

@@ -15,8 +15,10 @@ use crate::run_read::{
   CandidateActionExecutionLineageStatus, CandidatePromotionLineage,
   CandidatePromotionLineageStatus, DetectorRecognitionLineage,
   MinecraftSpatialBundleManifestLineage, MinecraftTelemetrySampleArtifactLineage,
+  MinecraftTrainingPackageInspectReportLineage, MinecraftTrainingPackageManifestLineage,
   list_minecraft_projection_artifacts, list_minecraft_spatial_bundle_manifests,
-  list_minecraft_telemetry_sample_artifacts,
+  list_minecraft_telemetry_sample_artifacts, list_minecraft_training_package_inspect_reports,
+  list_minecraft_training_package_manifests,
 };
 use auv_tracing_driver::store::{CanonicalRun, LocalStore};
 
@@ -75,6 +77,10 @@ pub fn inspect_run(store: &LocalStore, run_id: &str) -> AuvResult<String> {
   let minecraft_telemetry_sample_artifacts =
     list_minecraft_telemetry_sample_artifacts(store, run_id)?;
   let minecraft_spatial_bundle_manifests = list_minecraft_spatial_bundle_manifests(store, run_id)?;
+  let minecraft_training_package_manifests =
+    list_minecraft_training_package_manifests(store, run_id)?;
+  let minecraft_training_package_inspect_reports =
+    list_minecraft_training_package_inspect_reports(store, run_id)?;
   Ok(render_run_text(
     &canonical,
     &verifications,
@@ -86,6 +92,8 @@ pub fn inspect_run(store: &LocalStore, run_id: &str) -> AuvResult<String> {
     &minecraft_projection_artifacts,
     &minecraft_telemetry_sample_artifacts,
     &minecraft_spatial_bundle_manifests,
+    &minecraft_training_package_manifests,
+    &minecraft_training_package_inspect_reports,
   ))
 }
 
@@ -100,6 +108,8 @@ pub fn render_run_text(
   minecraft_projection_artifacts: &[auv_game_minecraft::artifact::MinecraftProjectionArtifact],
   minecraft_telemetry_sample_artifacts: &[MinecraftTelemetrySampleArtifactLineage],
   minecraft_spatial_bundle_manifests: &[MinecraftSpatialBundleManifestLineage],
+  minecraft_training_package_manifests: &[MinecraftTrainingPackageManifestLineage],
+  minecraft_training_package_inspect_reports: &[MinecraftTrainingPackageInspectReportLineage],
 ) -> String {
   let mut output = format!(
     "Run {}\nType: {}\nStatus: {}\nState: {}\n",
@@ -474,6 +484,132 @@ pub fn render_run_text(
     }
   }
 
+  output.push_str("\nMC-7 Training Packages:\n");
+  if minecraft_training_package_manifests.is_empty()
+    && minecraft_training_package_inspect_reports.is_empty()
+  {
+    output.push_str("- none\n");
+  } else {
+    let mut rendered_report_artifacts = std::collections::BTreeSet::new();
+    for manifest_lineage in minecraft_training_package_manifests {
+      let paired_report = manifest_lineage.manifest.as_ref().and_then(|manifest| {
+        minecraft_training_package_inspect_reports
+          .iter()
+          .find(|lineage| {
+            lineage.report.as_ref().is_some_and(|report| {
+              report.scene_packet_manifest_path == manifest.source_scene_packet_manifest_path
+                && report.source_run_ids == manifest.source_run_ids
+                && report.source_bundle_manifest_paths == manifest.source_bundle_manifest_paths
+            })
+          })
+      });
+      if let Some(report_lineage) = paired_report {
+        rendered_report_artifacts.insert(report_lineage.artifact.artifact_id.to_string());
+      }
+      if let Some(manifest) = &manifest_lineage.manifest {
+        let primary_view = manifest.compatibility_views.first();
+        output.push_str(&format!(
+          "- manifest_artifact={} role={} path={} schema={} source_scene_packet={} source_runs={} frames={} images={} compatibility_view={} compatibility_status={} exported={} skipped={} transforms={} paired_report_artifact={} issue={}\n",
+          manifest_lineage.artifact.artifact_id,
+          manifest_lineage.artifact.role.as_deref().unwrap_or("n/a"),
+          manifest_lineage.artifact.path.as_deref().unwrap_or("n/a"),
+          manifest.schema_version,
+          manifest.source_scene_packet_manifest_path,
+          manifest.source_run_ids.len(),
+          manifest.counts.frames,
+          manifest.counts.images,
+          primary_view.map(|view| view.view_name.as_str()).unwrap_or("n/a"),
+          primary_view
+            .map(|view| render_training_compatibility_status(&view.status))
+            .unwrap_or("n/a"),
+          primary_view
+            .map(|view| view.exported_frame_count.to_string())
+            .unwrap_or_else(|| "n/a".to_string()),
+          primary_view
+            .map(|view| view.skipped_frame_count.to_string())
+            .unwrap_or_else(|| "n/a".to_string()),
+          primary_view
+            .and_then(|view| view.transforms_path.as_deref())
+            .map(|_| "present")
+            .unwrap_or("none"),
+          paired_report
+            .map(|report| report.artifact.artifact_id.to_string())
+            .unwrap_or_else(|| "n/a".to_string()),
+          manifest_lineage.issue.as_deref().unwrap_or("n/a"),
+        ));
+        if !manifest.known_limits.is_empty() {
+          output.push_str(&format!(
+            "  known_limits={}\n",
+            manifest.known_limits.join(" | ")
+          ));
+        }
+      } else {
+        output.push_str(&format!(
+          "- manifest_artifact={} role={} path={} schema=n/a source_scene_packet=n/a source_runs=n/a frames=n/a images=n/a compatibility_view=n/a compatibility_status=n/a exported=n/a skipped=n/a transforms=n/a paired_report_artifact=n/a issue={}\n",
+          manifest_lineage.artifact.artifact_id,
+          manifest_lineage.artifact.role.as_deref().unwrap_or("n/a"),
+          manifest_lineage.artifact.path.as_deref().unwrap_or("n/a"),
+          manifest_lineage.issue.as_deref().unwrap_or("n/a"),
+        ));
+      }
+    }
+
+    for report_lineage in minecraft_training_package_inspect_reports {
+      if rendered_report_artifacts.contains(&report_lineage.artifact.artifact_id.to_string()) {
+        continue;
+      }
+
+      if let Some(report) = &report_lineage.report {
+        let primary_view = report.compatibility_views.first();
+        output.push_str(&format!(
+          "- inspect_artifact={} role={} path={} manifest_path={} schema={} scene_packet={} source_runs={} frames={} images={} compatibility_view={} compatibility_status={} exported={} skipped={} transforms={} warnings={} issue={}\n",
+          report_lineage.artifact.artifact_id,
+          report_lineage.artifact.role.as_deref().unwrap_or("n/a"),
+          report_lineage.artifact.path.as_deref().unwrap_or("n/a"),
+          report.training_package_manifest_path,
+          report.schema_version,
+          report.scene_packet_manifest_path,
+          report.source_run_ids.len(),
+          report.counts.frames,
+          report.counts.images,
+          primary_view.map(|view| view.view_name.as_str()).unwrap_or("n/a"),
+          primary_view
+            .map(|view| render_training_compatibility_status(&view.status))
+            .unwrap_or("n/a"),
+          primary_view
+            .map(|view| view.exported_frame_count.to_string())
+            .unwrap_or_else(|| "n/a".to_string()),
+          primary_view
+            .map(|view| view.skipped_frame_count.to_string())
+            .unwrap_or_else(|| "n/a".to_string()),
+          primary_view
+            .and_then(|view| view.transforms_path.as_deref())
+            .map(|_| "present")
+            .unwrap_or("none"),
+          report.warnings.len(),
+          report_lineage.issue.as_deref().unwrap_or("n/a"),
+        ));
+        if !report.warnings.is_empty() {
+          output.push_str(&format!("  warnings={}\n", report.warnings.join(" | ")));
+        }
+        if !report.known_limits.is_empty() {
+          output.push_str(&format!(
+            "  inspect_known_limits={}\n",
+            report.known_limits.join(" | ")
+          ));
+        }
+      } else {
+        output.push_str(&format!(
+          "- inspect_artifact={} role={} path={} manifest_path=n/a schema=n/a scene_packet=n/a source_runs=n/a frames=n/a images=n/a compatibility_view=n/a compatibility_status=n/a exported=n/a skipped=n/a transforms=n/a warnings=n/a issue={}\n",
+          report_lineage.artifact.artifact_id,
+          report_lineage.artifact.role.as_deref().unwrap_or("n/a"),
+          report_lineage.artifact.path.as_deref().unwrap_or("n/a"),
+          report_lineage.issue.as_deref().unwrap_or("n/a"),
+        ));
+      }
+    }
+  }
+
   output.push_str("\nCandidate Action Execution Lineage:\n");
   if candidate_action_execution_lineage.is_empty() {
     output.push_str("- none\n");
@@ -656,6 +792,16 @@ fn render_minecraft_projected_point(
   }
 }
 
+fn render_training_compatibility_status(
+  status: &auv_game_minecraft::TrainingCompatibilityStatus,
+) -> &'static str {
+  match status {
+    auv_game_minecraft::TrainingCompatibilityStatus::Ready => "ready",
+    auv_game_minecraft::TrainingCompatibilityStatus::Partial => "partial",
+    auv_game_minecraft::TrainingCompatibilityStatus::Blocked => "blocked",
+  }
+}
+
 fn render_failure_layer(layer: Option<FailureLayer>) -> &'static str {
   match layer {
     Some(FailureLayer::GroundingFailed) => "grounding_failed",
@@ -716,7 +862,12 @@ mod tests {
     CandidateActionExecutionLineageStatus, CandidatePromotionLineage,
     CandidatePromotionLineageStatus, DetectorRecognitionArtifactRefLineage,
     DetectorRecognitionLineage, DetectorRecognitionLineageStatus,
-    MinecraftTelemetrySampleArtifactLineage,
+    MinecraftTelemetrySampleArtifactLineage, MinecraftTrainingPackageInspectReportLineage,
+    MinecraftTrainingPackageInspectReportSummary, MinecraftTrainingPackageManifestLineage,
+    MinecraftTrainingPackageManifestSummary,
+  };
+  use auv_game_minecraft::{
+    TrainingCompatibilityStatus, TrainingCompatibilityViewReport, TrainingPackageCounts,
   };
   use auv_tracing_driver::store::CanonicalRun;
   use auv_tracing_driver::trace::{
@@ -1135,6 +1286,95 @@ mod tests {
       byte_size: Some(16),
       issue: None,
     }];
+    let minecraft_training_package_manifests = vec![MinecraftTrainingPackageManifestLineage {
+      artifact: ArtifactRefLineage {
+        run_id: run.run.run_id.clone(),
+        artifact_id: ArtifactId::new("artifact_mc7_package"),
+        span_id: SpanId::new("span_mc7_package"),
+        captured_event_id: None,
+        role: Some("minecraft-3dgs-training-package".to_string()),
+        path: Some("artifacts/minecraft-3dgs-training-package-run.json".to_string()),
+        summary: Some("training package manifest".to_string()),
+        resolved: true,
+      },
+      manifest: Some(MinecraftTrainingPackageManifestSummary {
+        schema_version: 1,
+        source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
+        source_bundle_manifest_paths: vec![
+          "/tmp/bundle-a/run.json".to_string(),
+          "/tmp/bundle-b/run.json".to_string(),
+        ],
+        source_run_ids: vec!["run_a".to_string(), "run_b".to_string()],
+        counts: TrainingPackageCounts {
+          frames: 6,
+          images: 6,
+          compatibility_exported_frames: 4,
+          compatibility_skipped_frames: 2,
+        },
+        compatibility_views: vec![TrainingCompatibilityViewReport {
+          view_name: "nerfstudio".to_string(),
+          status: TrainingCompatibilityStatus::Partial,
+          exported_frame_count: 4,
+          skipped_frame_count: 2,
+          transforms_path: Some("compat/nerfstudio/transforms.json".to_string()),
+          export_report_path: "compat/nerfstudio/export_report.json".to_string(),
+          exported_frame_indices: vec![1, 2, 3, 4],
+          frame_decisions: Vec::new(),
+          skip_reason_counts: Vec::new(),
+          warnings: vec!["frame 5 skipped".to_string()],
+          used_legacy_view_translation_fallback_frame_indices: vec![2],
+          known_limits: vec!["legacy translation fallback used".to_string()],
+        }],
+        known_limits: vec!["canonical package only; no trained splat is present".to_string()],
+      }),
+      issue: None,
+    }];
+    let minecraft_training_package_inspect_reports =
+      vec![MinecraftTrainingPackageInspectReportLineage {
+        artifact: ArtifactRefLineage {
+          run_id: run.run.run_id.clone(),
+          artifact_id: ArtifactId::new("artifact_mc7_package_inspect"),
+          span_id: SpanId::new("span_mc7_package"),
+          captured_event_id: None,
+          role: Some("minecraft-3dgs-training-package-inspect".to_string()),
+          path: Some("artifacts/minecraft-3dgs-training-package-inspect.json".to_string()),
+          summary: Some("training package inspect report".to_string()),
+          resolved: true,
+        },
+        report: Some(MinecraftTrainingPackageInspectReportSummary {
+          schema_version: 1,
+          training_package_manifest_path: "/tmp/package/run.json".to_string(),
+          scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
+          source_bundle_manifest_paths: vec![
+            "/tmp/bundle-a/run.json".to_string(),
+            "/tmp/bundle-b/run.json".to_string(),
+          ],
+          source_run_ids: vec!["run_a".to_string(), "run_b".to_string()],
+          counts: TrainingPackageCounts {
+            frames: 6,
+            images: 6,
+            compatibility_exported_frames: 4,
+            compatibility_skipped_frames: 2,
+          },
+          compatibility_views: vec![TrainingCompatibilityViewReport {
+            view_name: "nerfstudio".to_string(),
+            status: TrainingCompatibilityStatus::Partial,
+            exported_frame_count: 4,
+            skipped_frame_count: 2,
+            transforms_path: Some("compat/nerfstudio/transforms.json".to_string()),
+            export_report_path: "compat/nerfstudio/export_report.json".to_string(),
+            exported_frame_indices: vec![1, 2, 3, 4],
+            frame_decisions: Vec::new(),
+            skip_reason_counts: Vec::new(),
+            warnings: vec!["frame 5 skipped".to_string()],
+            used_legacy_view_translation_fallback_frame_indices: vec![2],
+            known_limits: vec!["legacy translation fallback used".to_string()],
+          }],
+          warnings: vec!["frame 6 missing screenshot".to_string()],
+          known_limits: vec!["synthetic validation only".to_string()],
+        }),
+        issue: None,
+      }];
 
     let output = render_run_text(
       &run,
@@ -1147,6 +1387,8 @@ mod tests {
       &minecraft_projection_artifacts,
       &minecraft_telemetry_sample_artifacts,
       &[],
+      &minecraft_training_package_manifests,
+      &minecraft_training_package_inspect_reports,
     );
 
     assert!(output.contains("Run run_inspect_test"));
@@ -1201,6 +1443,14 @@ mod tests {
       "projected_point=screen=320,240 visibility=visible radius_px=12 confidence=1 basis=frame-1"
     ));
     assert!(output.contains("MC-6 Spatial Bundles:"));
+    assert!(output.contains("MC-7 Training Packages:"));
+    assert!(output.contains("manifest_artifact=artifact_mc7_package"));
+    assert!(output.contains("compatibility_status=partial"));
+    assert!(output.contains("exported=4"));
+    assert!(output.contains("skipped=2"));
+    assert!(output.contains("transforms=present"));
+    assert!(output.contains("paired_report_artifact=artifact_mc7_package_inspect"));
+    assert!(output.contains("known_limits=canonical package only; no trained splat is present"));
     assert!(output.contains("Candidate Action Execution Lineage:"));
     assert!(output.contains("artifact=artifact_candidate_action_execution"));
     assert!(output.contains("execution_id=execution_end_turn"));

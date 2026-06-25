@@ -28,6 +28,10 @@ use crate::scroll_scan::ScrollScanArtifact;
 use crate::stability::{StabilityAssessment, StabilityRejection};
 use auv_game_minecraft::artifact::MinecraftProjectionArtifact;
 use auv_game_minecraft::dataset::{SourceRunSummary, SpatialBundleCounts};
+use auv_game_minecraft::{
+  TrainingCompatibilityViewReport, TrainingPackageCounts, TrainingPackageInspectReport,
+  TrainingPackageManifest,
+};
 use auv_tracing_driver::store::{CanonicalRun, LocalStore};
 use auv_tracing_driver::trace::ArtifactRecordV1Alpha1;
 
@@ -44,11 +48,49 @@ pub struct MinecraftSpatialBundleManifestLineage {
   pub issue: Option<String>,
 }
 
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+pub struct MinecraftTrainingPackageManifestLineage {
+  pub artifact: ArtifactRefLineage,
+  pub manifest: Option<MinecraftTrainingPackageManifestSummary>,
+  pub issue: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+pub struct MinecraftTrainingPackageInspectReportLineage {
+  pub artifact: ArtifactRefLineage,
+  pub report: Option<MinecraftTrainingPackageInspectReportSummary>,
+  pub issue: Option<String>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct MinecraftSpatialBundleManifestSummary {
   pub schema_version: u32,
   pub source_run: SourceRunSummary,
   pub counts: SpatialBundleCounts,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct MinecraftTrainingPackageManifestSummary {
+  pub schema_version: u32,
+  pub source_scene_packet_manifest_path: String,
+  pub source_bundle_manifest_paths: Vec<String>,
+  pub source_run_ids: Vec<String>,
+  pub counts: TrainingPackageCounts,
+  pub compatibility_views: Vec<TrainingCompatibilityViewReport>,
+  pub known_limits: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct MinecraftTrainingPackageInspectReportSummary {
+  pub schema_version: u32,
+  pub training_package_manifest_path: String,
+  pub scene_packet_manifest_path: String,
+  pub source_bundle_manifest_paths: Vec<String>,
+  pub source_run_ids: Vec<String>,
+  pub counts: TrainingPackageCounts,
+  pub compatibility_views: Vec<TrainingCompatibilityViewReport>,
+  pub warnings: Vec<String>,
+  pub known_limits: Vec<String>,
 }
 
 pub fn read_run(store: &LocalStore, run_id: &str) -> AuvResult<CanonicalRun> {
@@ -372,6 +414,22 @@ pub(crate) fn list_minecraft_spatial_bundle_manifests(
   extract_minecraft_spatial_bundle_manifests(store, &run)
 }
 
+pub(crate) fn list_minecraft_training_package_manifests(
+  store: &LocalStore,
+  run_id: &str,
+) -> AuvResult<Vec<MinecraftTrainingPackageManifestLineage>> {
+  let run = store.read_run(run_id)?;
+  extract_minecraft_training_package_manifests(store, &run)
+}
+
+pub(crate) fn list_minecraft_training_package_inspect_reports(
+  store: &LocalStore,
+  run_id: &str,
+) -> AuvResult<Vec<MinecraftTrainingPackageInspectReportLineage>> {
+  let run = store.read_run(run_id)?;
+  extract_minecraft_training_package_inspect_reports(store, &run)
+}
+
 pub(crate) fn extract_minecraft_spatial_bundle_manifests(
   store: &LocalStore,
   run: &CanonicalRun,
@@ -416,6 +474,100 @@ pub(crate) fn extract_minecraft_spatial_bundle_manifests(
     }
   }
   Ok(manifests)
+}
+
+pub(crate) fn extract_minecraft_training_package_manifests(
+  store: &LocalStore,
+  run: &CanonicalRun,
+) -> AuvResult<Vec<MinecraftTrainingPackageManifestLineage>> {
+  let mut manifests = Vec::new();
+  for artifact in &run.artifacts {
+    if artifact.role != crate::minecraft::MINECRAFT_3DGS_TRAINING_PACKAGE_ARTIFACT_ROLE {
+      continue;
+    }
+
+    let artifact_ref = artifact_record_lineage(run.run.run_id.clone(), artifact);
+    if !is_json_mime(&artifact.mime_type) {
+      manifests.push(MinecraftTrainingPackageManifestLineage {
+        artifact: artifact_ref,
+        manifest: None,
+        issue: Some(format!(
+          "minecraft training package artifact mime_type {} is not JSON",
+          artifact.mime_type
+        )),
+      });
+      continue;
+    }
+
+    let parsed = read_artifact_json::<TrainingPackageManifest>(
+      store,
+      run.run.run_id.as_str(),
+      artifact,
+      crate::minecraft::MINECRAFT_3DGS_TRAINING_PACKAGE_ARTIFACT_ROLE,
+    )
+    .map(MinecraftTrainingPackageManifestSummary::from);
+
+    match parsed {
+      Ok(manifest) => manifests.push(MinecraftTrainingPackageManifestLineage {
+        artifact: artifact_ref,
+        manifest: Some(manifest),
+        issue: None,
+      }),
+      Err(error) => manifests.push(MinecraftTrainingPackageManifestLineage {
+        artifact: artifact_ref,
+        manifest: None,
+        issue: Some(error),
+      }),
+    }
+  }
+  Ok(manifests)
+}
+
+pub(crate) fn extract_minecraft_training_package_inspect_reports(
+  store: &LocalStore,
+  run: &CanonicalRun,
+) -> AuvResult<Vec<MinecraftTrainingPackageInspectReportLineage>> {
+  let mut reports = Vec::new();
+  for artifact in &run.artifacts {
+    if artifact.role != crate::minecraft::MINECRAFT_3DGS_TRAINING_PACKAGE_INSPECT_ARTIFACT_ROLE {
+      continue;
+    }
+
+    let artifact_ref = artifact_record_lineage(run.run.run_id.clone(), artifact);
+    if !is_json_mime(&artifact.mime_type) {
+      reports.push(MinecraftTrainingPackageInspectReportLineage {
+        artifact: artifact_ref,
+        report: None,
+        issue: Some(format!(
+          "minecraft training package inspect artifact mime_type {} is not JSON",
+          artifact.mime_type
+        )),
+      });
+      continue;
+    }
+
+    let parsed = read_artifact_json::<TrainingPackageInspectReport>(
+      store,
+      run.run.run_id.as_str(),
+      artifact,
+      crate::minecraft::MINECRAFT_3DGS_TRAINING_PACKAGE_INSPECT_ARTIFACT_ROLE,
+    )
+    .map(MinecraftTrainingPackageInspectReportSummary::from);
+
+    match parsed {
+      Ok(report) => reports.push(MinecraftTrainingPackageInspectReportLineage {
+        artifact: artifact_ref,
+        report: Some(report),
+        issue: None,
+      }),
+      Err(error) => reports.push(MinecraftTrainingPackageInspectReportLineage {
+        artifact: artifact_ref,
+        report: None,
+        issue: Some(error),
+      }),
+    }
+  }
+  Ok(reports)
 }
 
 pub(crate) fn extract_minecraft_telemetry_sample_artifacts(
@@ -1444,6 +1596,36 @@ fn read_telemetry_artifact_summary(
   Ok((artifact_path, line_count, metadata.len()))
 }
 
+impl From<TrainingPackageManifest> for MinecraftTrainingPackageManifestSummary {
+  fn from(value: TrainingPackageManifest) -> Self {
+    Self {
+      schema_version: value.schema_version,
+      source_scene_packet_manifest_path: value.source_scene_packet_manifest_path,
+      source_bundle_manifest_paths: value.source_bundle_manifest_paths,
+      source_run_ids: value.source_run_ids,
+      counts: value.counts,
+      compatibility_views: value.compatibility_views,
+      known_limits: value.known_limits,
+    }
+  }
+}
+
+impl From<TrainingPackageInspectReport> for MinecraftTrainingPackageInspectReportSummary {
+  fn from(value: TrainingPackageInspectReport) -> Self {
+    Self {
+      schema_version: value.schema_version,
+      training_package_manifest_path: value.training_package_manifest_path,
+      scene_packet_manifest_path: value.scene_packet_manifest_path,
+      source_bundle_manifest_paths: value.source_bundle_manifest_paths,
+      source_run_ids: value.source_run_ids,
+      counts: value.counts,
+      compatibility_views: value.compatibility_views,
+      warnings: value.warnings,
+      known_limits: value.known_limits,
+    }
+  }
+}
+
 #[cfg(test)]
 mod tests {
   use std::collections::BTreeMap;
@@ -1462,9 +1644,12 @@ mod tests {
     DetectorRecognitionLineageStatus, MinecraftSpatialBundleManifestSummary,
     extract_candidate_action_decision_lineage, extract_candidate_action_execution_lineage,
     extract_candidate_promotion_lineage, extract_detector_recognition_lineage,
-    extract_observation_snapshots, extract_verifications, list_candidate_action_decision_lineage,
+    extract_minecraft_training_package_inspect_reports,
+    extract_minecraft_training_package_manifests, extract_observation_snapshots,
+    extract_verifications, list_candidate_action_decision_lineage,
     list_candidate_action_execution_lineage, list_candidate_promotion_lineage,
     list_detector_recognition_lineage, list_minecraft_spatial_bundle_manifests,
+    list_minecraft_training_package_inspect_reports, list_minecraft_training_package_manifests,
     list_observation_snapshots, list_verifications,
   };
   use crate::action_resolver_decision::{ActionResolverDecision, ActionResolverDecisionInput};
@@ -1492,6 +1677,10 @@ mod tests {
   };
   use crate::stability::{StabilityAssessment, StabilityPolicy, StabilityRejection};
   use auv_game_minecraft::dataset::{SourceRunSummary, SpatialBundleCounts};
+  use auv_game_minecraft::{
+    TrainingCompatibilityStatus, TrainingCompatibilityViewReport, TrainingPackageCounts,
+    TrainingPackageInspectReport, TrainingPackageManifest,
+  };
   use auv_tracing_driver::ArtifactFileSource;
   use auv_tracing_driver::store::{CanonicalRun, LocalStore};
   use auv_tracing_driver::trace::{
@@ -1906,6 +2095,269 @@ mod tests {
     let manifest = listed[0].manifest.as_ref().expect("summary should parse");
     assert_eq!(manifest.source_run.source_run_id, "source_run_1");
     assert_eq!(manifest.counts.spatial_frames, 3);
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn minecraft_training_package_manifest_lineage_reads_summary() {
+    let root = temp_dir("run-read-minecraft-training-package-manifest");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let run = dummy_run("run_read_minecraft_training_package_manifest");
+    let span = dummy_span(&run.root_span_id);
+
+    let manifest = TrainingPackageManifest {
+      schema_version: 1,
+      generated_at_millis: 1,
+      source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
+      source_bundle_manifest_paths: vec![
+        "/tmp/bundle-a/run.json".to_string(),
+        "/tmp/bundle-b/run.json".to_string(),
+      ],
+      source_run_ids: vec!["run_a".to_string(), "run_b".to_string()],
+      counts: TrainingPackageCounts {
+        frames: 6,
+        images: 6,
+        compatibility_exported_frames: 4,
+        compatibility_skipped_frames: 2,
+      },
+      frames: Vec::new(),
+      compatibility_views: vec![TrainingCompatibilityViewReport {
+        view_name: "nerfstudio".to_string(),
+        status: TrainingCompatibilityStatus::Partial,
+        exported_frame_count: 4,
+        skipped_frame_count: 2,
+        transforms_path: Some("compat/nerfstudio/transforms.json".to_string()),
+        export_report_path: "compat/nerfstudio/export_report.json".to_string(),
+        exported_frame_indices: vec![1, 2, 3, 4],
+        frame_decisions: Vec::new(),
+        skip_reason_counts: Vec::new(),
+        warnings: vec!["missing screenshot on frame 6".to_string()],
+        used_legacy_view_translation_fallback_frame_indices: vec![2],
+        known_limits: vec!["legacy translation fallback used".to_string()],
+      }],
+      known_limits: vec!["canonical package only; no trainer output".to_string()],
+    };
+
+    let artifacts = vec![stage_json_artifact(
+      &store,
+      &root,
+      &run.run_id,
+      &span.span_id,
+      0,
+      crate::minecraft::MINECRAFT_3DGS_TRAINING_PACKAGE_ARTIFACT_ROLE,
+      "minecraft-3dgs-training-package-run.json",
+      &manifest,
+    )];
+
+    store
+      .write_run_snapshot(&CanonicalRun {
+        run,
+        spans: vec![span],
+        events: Vec::new(),
+        artifacts,
+      })
+      .expect("run snapshot should persist");
+
+    let extracted = extract_minecraft_training_package_manifests(
+      &store,
+      &store
+        .read_run("run_read_minecraft_training_package_manifest")
+        .expect("run should read back"),
+    )
+    .expect("training package manifests should extract");
+    assert_eq!(extracted.len(), 1);
+    let summary = extracted[0]
+      .manifest
+      .as_ref()
+      .expect("summary should parse");
+    assert_eq!(
+      summary.source_scene_packet_manifest_path,
+      "/tmp/scene-packet/run.json"
+    );
+    assert_eq!(summary.counts.frames, 6);
+    assert_eq!(summary.compatibility_views[0].view_name, "nerfstudio");
+
+    let listed = list_minecraft_training_package_manifests(
+      &store,
+      "run_read_minecraft_training_package_manifest",
+    )
+    .expect("training package manifests should list");
+    assert_eq!(listed, extracted);
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn minecraft_training_package_inspect_report_lineage_reads_summary() {
+    let root = temp_dir("run-read-minecraft-training-package-inspect");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let run = dummy_run("run_read_minecraft_training_package_inspect");
+    let span = dummy_span(&run.root_span_id);
+
+    let report = TrainingPackageInspectReport {
+      schema_version: 1,
+      generated_at_millis: 1,
+      training_package_manifest_path: "/tmp/package/run.json".to_string(),
+      scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
+      source_bundle_manifest_paths: vec!["/tmp/bundle-a/run.json".to_string()],
+      source_run_ids: vec!["run_a".to_string()],
+      counts: TrainingPackageCounts {
+        frames: 3,
+        images: 2,
+        compatibility_exported_frames: 2,
+        compatibility_skipped_frames: 1,
+      },
+      compatibility_views: vec![TrainingCompatibilityViewReport {
+        view_name: "nerfstudio".to_string(),
+        status: TrainingCompatibilityStatus::Ready,
+        exported_frame_count: 2,
+        skipped_frame_count: 1,
+        transforms_path: Some("compat/nerfstudio/transforms.json".to_string()),
+        export_report_path: "compat/nerfstudio/export_report.json".to_string(),
+        exported_frame_indices: vec![1, 2],
+        frame_decisions: Vec::new(),
+        skip_reason_counts: Vec::new(),
+        warnings: Vec::new(),
+        used_legacy_view_translation_fallback_frame_indices: Vec::new(),
+        known_limits: vec!["manual smoke required".to_string()],
+      }],
+      warnings: vec!["frame 3 skipped: missing_screenshot".to_string()],
+      known_limits: vec!["synthetic validation only".to_string()],
+    };
+
+    let artifacts = vec![stage_json_artifact(
+      &store,
+      &root,
+      &run.run_id,
+      &span.span_id,
+      0,
+      crate::minecraft::MINECRAFT_3DGS_TRAINING_PACKAGE_INSPECT_ARTIFACT_ROLE,
+      "minecraft-3dgs-training-package-inspect.json",
+      &report,
+    )];
+
+    store
+      .write_run_snapshot(&CanonicalRun {
+        run,
+        spans: vec![span],
+        events: Vec::new(),
+        artifacts,
+      })
+      .expect("run snapshot should persist");
+
+    let extracted = extract_minecraft_training_package_inspect_reports(
+      &store,
+      &store
+        .read_run("run_read_minecraft_training_package_inspect")
+        .expect("run should read back"),
+    )
+    .expect("training package inspect reports should extract");
+    assert_eq!(extracted.len(), 1);
+    let summary = extracted[0].report.as_ref().expect("summary should parse");
+    assert_eq!(
+      summary.training_package_manifest_path,
+      "/tmp/package/run.json"
+    );
+    assert_eq!(summary.counts.compatibility_exported_frames, 2);
+    assert_eq!(summary.warnings.len(), 1);
+
+    let listed = list_minecraft_training_package_inspect_reports(
+      &store,
+      "run_read_minecraft_training_package_inspect",
+    )
+    .expect("training package inspect reports should list");
+    assert_eq!(listed, extracted);
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn minecraft_training_package_manifest_lineage_reports_non_json_mime() {
+    let root = temp_dir("run-read-minecraft-training-package-manifest-non-json");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let run = dummy_run("run_read_minecraft_training_package_manifest_non_json");
+    let span = dummy_span(&run.root_span_id);
+
+    let artifacts = vec![stage_text_artifact(
+      &store,
+      &root,
+      &run.run_id,
+      &span.span_id,
+      0,
+      crate::minecraft::MINECRAFT_3DGS_TRAINING_PACKAGE_ARTIFACT_ROLE,
+      "minecraft-3dgs-training-package.txt",
+      "plain text payload",
+    )];
+
+    store
+      .write_run_snapshot(&CanonicalRun {
+        run,
+        spans: vec![span],
+        events: Vec::new(),
+        artifacts,
+      })
+      .expect("run snapshot should persist");
+
+    let extracted = list_minecraft_training_package_manifests(
+      &store,
+      "run_read_minecraft_training_package_manifest_non_json",
+    )
+    .expect("training package manifests should list");
+    assert_eq!(extracted.len(), 1);
+    assert!(extracted[0].manifest.is_none());
+    assert!(
+      extracted[0]
+        .issue
+        .as_deref()
+        .unwrap_or_default()
+        .contains("mime_type")
+    );
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn minecraft_training_package_inspect_report_lineage_reports_parse_failure() {
+    let root = temp_dir("run-read-minecraft-training-package-inspect-malformed");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let run = dummy_run("run_read_minecraft_training_package_inspect_malformed");
+    let span = dummy_span(&run.root_span_id);
+
+    let artifacts = vec![stage_text_artifact(
+      &store,
+      &root,
+      &run.run_id,
+      &span.span_id,
+      0,
+      crate::minecraft::MINECRAFT_3DGS_TRAINING_PACKAGE_INSPECT_ARTIFACT_ROLE,
+      "minecraft-3dgs-training-package-inspect.json",
+      "{ not valid json",
+    )];
+
+    store
+      .write_run_snapshot(&CanonicalRun {
+        run,
+        spans: vec![span],
+        events: Vec::new(),
+        artifacts,
+      })
+      .expect("run snapshot should persist");
+
+    let extracted = list_minecraft_training_package_inspect_reports(
+      &store,
+      "run_read_minecraft_training_package_inspect_malformed",
+    )
+    .expect("training package inspect reports should list");
+    assert_eq!(extracted.len(), 1);
+    assert!(extracted[0].report.is_none());
+    assert!(
+      extracted[0]
+        .issue
+        .as_deref()
+        .unwrap_or_default()
+        .contains("failed to parse minecraft-3dgs-training-package-inspect artifact")
+    );
 
     let _ = fs::remove_dir_all(root);
   }

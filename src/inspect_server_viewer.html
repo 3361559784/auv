@@ -692,6 +692,22 @@
     font-family: var(--font-mono); font-size: 12px;
     padding: 14px;
   }
+  .artifact-preview .json-summary {
+    border: 1px solid var(--shell-line);
+    background: rgba(0, 196, 210, 0.07);
+    border-radius: 4px;
+    padding: 10px 12px;
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 4px 12px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+  }
+  .artifact-preview .json-summary .k { color: var(--fg-3); }
+  .artifact-preview .json-summary .v {
+    color: var(--fg);
+    word-break: break-word;
+  }
 </style>
 </head>
 <body>
@@ -1250,6 +1266,14 @@
     return !!artifact && artifact.role === "click.overlay.annotation";
   }
 
+  function isMinecraftTrainingPackageArtifact(artifact) {
+    return !!artifact && artifact.role === "minecraft-3dgs-training-package";
+  }
+
+  function isMinecraftTrainingPackageInspectArtifact(artifact) {
+    return !!artifact && artifact.role === "minecraft-3dgs-training-package-inspect";
+  }
+
   function artifactStem(artifact) {
     const basename = pathBasename(artifact && artifact.path);
     const idx = basename.lastIndexOf(".");
@@ -1514,6 +1538,66 @@
     }
   }
 
+
+  function renderKeyValueSummary(entries) {
+    const card = el("div", { className: "json-summary" }, []);
+    for (const [k, v] of entries) {
+      if (v == null || v === "") continue;
+      card.appendChild(el("span", { className: "k" }, [String(k)]));
+      card.appendChild(el("span", { className: "v" }, [String(v)]));
+    }
+    return card;
+  }
+
+  function trainingCompatibilityViewSummary(parsed) {
+    const views = Array.isArray(parsed.compatibility_views) ? parsed.compatibility_views : [];
+    return views.length ? views[0] : null;
+  }
+
+  function trainingTransformsPresence(view) {
+    return view && view.transforms_path ? "present" : "none";
+  }
+
+  function renderTrainingPackageSummaryCard(artifact, parsed) {
+    const view = trainingCompatibilityViewSummary(parsed);
+    if (isMinecraftTrainingPackageArtifact(artifact)) {
+      return renderKeyValueSummary([
+        ["kind", "training package manifest"],
+        ["schema", parsed.schema_version],
+        ["source_scene_packet", parsed.source_scene_packet_manifest_path],
+        ["source_runs", Array.isArray(parsed.source_run_ids) ? parsed.source_run_ids.length : 0],
+        ["frames", parsed.counts && parsed.counts.frames],
+        ["images", parsed.counts && parsed.counts.images],
+        ["compatibility_view", view && view.view_name],
+        ["compatibility_status", view && view.status],
+        ["exported", view && view.exported_frame_count],
+        ["skipped", view && view.skipped_frame_count],
+        ["transforms", trainingTransformsPresence(view)],
+        ["warnings", view && Array.isArray(view.warnings) ? view.warnings.length : 0],
+        ["known_limits", Array.isArray(parsed.known_limits) ? parsed.known_limits.length : 0],
+      ]);
+    }
+    if (isMinecraftTrainingPackageInspectArtifact(artifact)) {
+      return renderKeyValueSummary([
+        ["kind", "training package inspect report"],
+        ["schema", parsed.schema_version],
+        ["manifest_path", parsed.training_package_manifest_path],
+        ["scene_packet", parsed.scene_packet_manifest_path],
+        ["source_runs", Array.isArray(parsed.source_run_ids) ? parsed.source_run_ids.length : 0],
+        ["frames", parsed.counts && parsed.counts.frames],
+        ["images", parsed.counts && parsed.counts.images],
+        ["compatibility_view", view && view.view_name],
+        ["compatibility_status", view && view.status],
+        ["exported", view && view.exported_frame_count],
+        ["skipped", view && view.skipped_frame_count],
+        ["transforms", trainingTransformsPresence(view)],
+        ["warnings", Array.isArray(parsed.warnings) ? parsed.warnings.length : 0],
+        ["known_limits", Array.isArray(parsed.known_limits) ? parsed.known_limits.length : 0],
+      ]);
+    }
+    return null;
+  }
+
   function renderSurfaceNodeRow(node, artifactKey, nodes, detailNode, buttonMap) {
     const button = el("button", { className: "surface-node-button" }, [
       el("div", { className: "surface-node-title" }, [surfaceNodeLabel(node)]),
@@ -1535,19 +1619,19 @@
 
   function renderSurfaceNodesPanel(artifact, nodes) {
     const panel = el("div", { className: "surface-nodes" }, []);
-    const artifactKey = artifactKeyFn(artifact);
+    const artifactKeyValue = artifactKey(artifact);
     const previewNodes = nodes.slice(0, 4);
     const remaining = nodes.length - previewNodes.length;
     const nodeMap = {};
     let selectedNode = null;
-    if (state.activeSurfaceNodeArtifactKey === artifactKey && state.activeSurfaceNodeKey) {
+    if (state.activeSurfaceNodeArtifactKey === artifactKeyValue && state.activeSurfaceNodeKey) {
       selectedNode = nodes.find(function (node) {
         return surfaceNodeKey(node) === state.activeSurfaceNodeKey;
       }) || null;
     }
     if (!selectedNode) {
       selectedNode = nodes[0] || null;
-      state.activeSurfaceNodeArtifactKey = artifactKey;
+      state.activeSurfaceNodeArtifactKey = artifactKeyValue;
       state.activeSurfaceNodeKey = selectedNode ? surfaceNodeKey(selectedNode) : null;
     }
     panel.appendChild(el("div", { className: "surface-nodes-head" }, [
@@ -1561,7 +1645,7 @@
     panel.appendChild(detailNode);
     const list = el("div", { className: "surface-node-list" }, []);
     for (const node of previewNodes) {
-      const button = renderSurfaceNodeRow(node, artifactKey, nodes, detailNode, nodeMap);
+      const button = renderSurfaceNodeRow(node, artifactKeyValue, nodes, detailNode, nodeMap);
       if (surfaceNodeKey(node) === state.activeSurfaceNodeKey) {
         button.classList.add("active");
       }
@@ -1714,6 +1798,15 @@
             const nodes = parsed.nodes.filter(isSurfaceNodeLike);
             if (nodes.length) {
               preview.insertBefore(renderSurfaceNodesPanel(artifact, nodes), surface);
+            }
+          }
+          if (parsed && (
+            isMinecraftTrainingPackageArtifact(artifact)
+            || isMinecraftTrainingPackageInspectArtifact(artifact)
+          )) {
+            const summaryCard = renderTrainingPackageSummaryCard(artifact, parsed);
+            if (summaryCard) {
+              preview.insertBefore(summaryCard, surface);
             }
           }
           surface.appendChild(el("pre", null, [text]));

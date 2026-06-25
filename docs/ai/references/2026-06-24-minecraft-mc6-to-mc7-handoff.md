@@ -23,6 +23,13 @@ Read boundary:
 - current accepted MC-7 D2 truth lives in
   `docs/ai/references/2026-06-24-minecraft-mc7-d2-accepted-only-scene-packet-inspect-reference.md`
 
+Current recovery constraint:
+
+- the historical accepted-only lineage referenced by older MC-7 notes is no
+  longer recoverable from local `.auv`
+- future real-source MC-7 validation must use a fresh accepted-only capture
+  lineage rather than trying to resurrect the old one
+
 Current repo truth at commit time:
 
 - `68c2605 feat(minecraft): close mc6 dual-gate sweep` was the handoff draft

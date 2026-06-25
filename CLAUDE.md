@@ -6,13 +6,12 @@ phase.
 
 ## Current Mode
 
-AUV is now exploring its next-generation spatial substrate: 3D grounding,
-offline 3DGS inspect artifacts, and view-dependent verification evidence for
-future 3D surfaces that do not expose truth directly. The former SkillBundle
-surface remains retired; do not reintroduce bundle execution, export, or
-verification as compatibility. Do not treat one archived macOS AX proof as the
-product center, and do not spend active roadmap budget polishing the archived
-vertical.
+AUV is now actively in the Minecraft spatial-substrate lane: MC-6 measurement
+closure and MC-7 offline 3DGS data/export/consumer slices. The former
+SkillBundle surface remains retired; do not reintroduce bundle execution,
+export, or verification as compatibility. Do not treat one archived macOS AX
+proof as the product center, and do not spend active roadmap budget polishing
+the archived vertical.
 
 Current validation boundary:
 
@@ -21,7 +20,8 @@ Current validation boundary:
   recoverable reference, not the current roadmap center.
 - New work may extend AUV through the approved spatial-substrate lane described
   in `docs/ai/references/2026-06-18-auv-mc5-onward-execution-plan.md`,
-  especially the owner-opened MC-7 offline 3DGS inspect-artifact path.
+  especially the owner-opened MC-7 offline 3DGS path and its downstream
+  consumers.
 - Core-lane stabilization work may continue in parallel, but this document now
   treats it as a separate convergence lane rather than the active exploration
   center.
@@ -34,6 +34,20 @@ Convergence evidence:
   `docs/ai/references/2026-06-18-auv-mc5-onward-execution-plan.md`.
 - The owner-opened 3DGS design note lives in
   `docs/ai/references/2026-06-18-minecraft-mc7-offline-3dgs-inspect-artifact-design.md`.
+- The current MC-7 downstream chain now reaches:
+  `scene packet -> training package -> training launch prep -> remote job envelope -> remote result collection`.
+
+Current MC-7 closure boundary:
+
+- D2: accepted-only scene-packet inspect output.
+- D3: training-package export plus Nerfstudio compatibility view.
+- D4: read-side inspect consumer for training-package artifacts.
+- D5: training-launch preparation and readiness consumer.
+- D6: remote training job envelope and blocked-evidence closure.
+- D7: remote training result collection and evidence closure.
+- Do not claim trainer quality, splat usefulness, or real-source restored
+  validation from D5-D7. Those slices only prove the data and job/result
+  surfaces close honestly.
 
 Current seam to preserve:
 
@@ -77,6 +91,16 @@ If the task does not fit one label, ask for a smaller slice.
   current slice and have narrow tests.
 - Cross-layer changes need an explicit dependency direction, for example:
   `contract -> driver artifact -> read-side inspector test`.
+
+## Rust Working Bias
+
+- When RustRover MCP is available, use it as the primary structured layer for
+  Rust code work: symbol lookup, definition inspection, call analysis,
+  diagnostics, and IDE-backed validation.
+- Use plain text search mainly for non-structural materials: docs, logs,
+  fixtures, JSON artifacts, comments, and literal strings.
+- For Rust changes, do not grep first unless semantic lookup failed or the
+  target is a literal-text CLI/document surface.
 
 ## Approval Boundary
 

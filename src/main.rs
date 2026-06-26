@@ -572,6 +572,60 @@ async fn run() -> Result<(), String> {
       println!("runbook: {}", output.value.runbook_path.display());
       println!("output: {}", output.value.output_dir.display());
     }
+    CliCommand::MinecraftFetch3dgsTrainingResultArtifacts {
+      training_result_manifest_path,
+      output_dir,
+      inspect,
+    } => {
+      let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
+      let output = auv_cli::minecraft::run_minecraft_3dgs_training_result_artifact_fetch(
+        &runtime.recording().handle(),
+        PathBuf::from(training_result_manifest_path),
+        PathBuf::from(output_dir),
+      )?;
+      println!("runId: {}", output.run_id);
+      println!(
+        "fetchStatus: {}",
+        output.value.inspect_report.fetch_status.as_str()
+      );
+      println!("trainerBackend: {}", output.value.manifest.trainer_backend);
+      println!("jobBackend: {}", output.value.manifest.job_backend);
+      println!(
+        "sourceResultStatus: {}",
+        output.value.manifest.source_result_status.as_str()
+      );
+      println!(
+        "fetchReason: {}",
+        output
+          .value
+          .inspect_report
+          .fetch_reason
+          .map(|reason| reason.as_str())
+          .unwrap_or("none")
+      );
+      println!(
+        "sourceResultDir: {}",
+        output.value.manifest.source_result_dir
+      );
+      println!(
+        "normalizedResultDir: {}",
+        output.value.manifest.normalized_result_dir
+      );
+      println!(
+        "normalizedArtifactCount: {}",
+        output.value.inspect_report.normalized_artifact_count
+      );
+      println!(
+        "requiredArtifactsPresent: {}",
+        output.value.inspect_report.required_artifacts_present
+      );
+      println!("manifest: {}", output.value.manifest_path.display());
+      println!(
+        "inspectReport: {}",
+        output.value.inspect_report_path.display()
+      );
+      println!("output: {}", output.value.output_dir.display());
+    }
     CliCommand::MinecraftPrepareTextureSweep {
       sidecar_run_dir,
       output_dir,

@@ -7,13 +7,15 @@ use auv_game_minecraft::{
   TextureSweepPreparationOutput, TextureSweepReport, TextureSweepSampleBuildInputs,
   TextureSweepSampleBuildOutput, TextureSweepThresholds, TrainingLaunchJobInputs,
   TrainingLaunchPreparationInputs, TrainingLaunchPreparationOutput, TrainingPackageInputs,
-  TrainingPackageOutput, TrainingResultInputs, TrainingResultOutput,
-  build_texture_sweep_samples_from_bundles, collect_3dgs_training_job_result,
-  collect_3dgs_training_job_result_with_environment, evaluate_texture_sweep,
-  export_3dgs_scene_packet, export_3dgs_training_package, export_spatial_bundle,
-  launch_3dgs_training_job, launch_3dgs_training_job_with_environment,
-  prepare_3dgs_training_launch, prepare_texture_sweep_resource_packs,
+  TrainingPackageOutput, TrainingResultArtifactFetchInputs, TrainingResultArtifactFetchOutput,
+  TrainingResultInputs, TrainingResultOutput, build_texture_sweep_samples_from_bundles,
+  collect_3dgs_training_job_result, collect_3dgs_training_job_result_with_environment,
+  evaluate_texture_sweep, export_3dgs_scene_packet, export_3dgs_training_package,
+  export_spatial_bundle, fetch_3dgs_training_result_artifacts, launch_3dgs_training_job,
+  launch_3dgs_training_job_with_environment, prepare_3dgs_training_launch,
+  prepare_texture_sweep_resource_packs,
 };
+
 use auv_tracing_driver::RecordingHandle;
 use auv_tracing_driver::recorded_operation::RecordedOperationOutput;
 use auv_tracing_driver::run_builder::RunSpec;
@@ -50,6 +52,10 @@ pub const MINECRAFT_3DGS_TRAINING_RESULT_INSPECT_ARTIFACT_ROLE: &str =
   "minecraft-3dgs-training-result-inspect";
 pub const MINECRAFT_3DGS_TRAINING_RESULT_RUNBOOK_ARTIFACT_ROLE: &str =
   "minecraft-3dgs-training-result-runbook";
+pub const MINECRAFT_3DGS_TRAINING_RESULT_ARTIFACT_MANIFEST_ROLE: &str =
+  "minecraft-3dgs-training-result-artifact-manifest";
+pub const MINECRAFT_3DGS_TRAINING_RESULT_ARTIFACT_INSPECT_ROLE: &str =
+  "minecraft-3dgs-training-result-artifact-inspect";
 pub const MINECRAFT_PROJECTION_CALIBRATION_ARTIFACT_ROLE: &str = "minecraft-projection-calibration";
 
 pub fn run_minecraft_3dgs_scene_packet_export(
@@ -404,6 +410,53 @@ pub fn run_minecraft_3dgs_training_result_collection_with_environment(
         )?;
         Ok::<_, String>(())
       })?;
+      Ok::<_, String>(result)
+    },
+  )
+}
+
+pub fn run_minecraft_3dgs_training_result_artifact_fetch(
+  recording: &RecordingHandle,
+  training_result_manifest_path: PathBuf,
+  output_dir: PathBuf,
+) -> AuvResult<RecordedOperationOutput<TrainingResultArtifactFetchOutput>> {
+  recording.run_recorded_operation(
+    RunSpec::new(
+      RunType::Execute,
+      "auv.minecraft.fetch_3dgs_training_result_artifacts",
+    ),
+    "Minecraft fetch MC-7 D11 normalized training result artifacts",
+    |context| {
+      context.record_event(
+        "minecraft.fetch_3dgs_training_result_artifacts.inputs",
+        Some(format!(
+          "training_result_manifest={} output_dir={} trained_3dgs=false normalized_result_artifacts=true",
+          training_result_manifest_path.display(),
+          output_dir.display()
+        )),
+      );
+      let result = fetch_3dgs_training_result_artifacts(TrainingResultArtifactFetchInputs {
+        training_result_manifest_path: training_result_manifest_path.clone(),
+        output_dir: output_dir.clone(),
+      })?;
+      context.in_span(
+        "minecraft.fetch_3dgs_training_result_artifacts.artifacts",
+        |context| {
+          context.stage_artifact_file(
+            MINECRAFT_3DGS_TRAINING_RESULT_ARTIFACT_MANIFEST_ROLE,
+            &result.manifest_path,
+            "minecraft-3dgs-training-result-artifact-manifest.json",
+            Some("MC-7 D11 normalized training result artifact manifest".to_string()),
+          )?;
+          context.stage_artifact_file(
+            MINECRAFT_3DGS_TRAINING_RESULT_ARTIFACT_INSPECT_ROLE,
+            &result.inspect_report_path,
+            "minecraft-3dgs-training-result-artifact-inspect.json",
+            Some("MC-7 D11 normalized training result artifact inspect report".to_string()),
+          )?;
+          Ok::<_, String>(())
+        },
+      )?;
       Ok::<_, String>(result)
     },
   )

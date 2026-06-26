@@ -31,8 +31,8 @@ use auv_game_minecraft::dataset::{SourceRunSummary, SpatialBundleCounts};
 use auv_game_minecraft::{
   TrainingCompatibilityViewReport, TrainingLaunchInspectReport, TrainingLaunchJobInspectReport,
   TrainingLaunchJobManifest, TrainingLaunchPlanManifest, TrainingPackageCounts,
-  TrainingPackageInspectReport, TrainingPackageManifest, TrainingResultInspectReport,
-  TrainingResultManifest,
+  TrainingPackageInspectReport, TrainingPackageManifest, TrainingResultArtifactFetchInspectReport,
+  TrainingResultArtifactFetchManifest, TrainingResultInspectReport, TrainingResultManifest,
 };
 use auv_tracing_driver::store::{CanonicalRun, LocalStore};
 use auv_tracing_driver::trace::ArtifactRecordV1Alpha1;
@@ -96,6 +96,20 @@ pub struct MinecraftTrainingResultManifestLineage {
 pub struct MinecraftTrainingResultInspectReportLineage {
   pub artifact: ArtifactRefLineage,
   pub report: Option<MinecraftTrainingResultInspectReportSummary>,
+  pub issue: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+pub struct MinecraftTrainingResultArtifactFetchManifestLineage {
+  pub artifact: ArtifactRefLineage,
+  pub manifest: Option<MinecraftTrainingResultArtifactFetchManifestSummary>,
+  pub issue: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+pub struct MinecraftTrainingResultArtifactFetchInspectReportLineage {
+  pub artifact: ArtifactRefLineage,
+  pub report: Option<MinecraftTrainingResultArtifactFetchInspectReportSummary>,
   pub issue: Option<String>,
 }
 
@@ -265,6 +279,62 @@ pub struct MinecraftTrainingResultInspectReportSummary {
   pub result_artifact_count: usize,
   pub warnings: Vec<String>,
   pub known_limits: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct MinecraftTrainingResultArtifactFetchManifestSummary {
+  pub schema_version: u32,
+  pub source_training_result_manifest_path: String,
+  pub source_training_job_manifest_path: String,
+  pub source_training_launch_plan_path: String,
+  pub source_training_package_manifest_path: String,
+  pub source_scene_packet_manifest_path: String,
+  pub source_bundle_manifest_paths: Vec<String>,
+  pub source_run_ids: Vec<String>,
+  pub trainer_backend: String,
+  pub job_backend: String,
+  pub source_job_status: String,
+  pub source_result_status: String,
+  pub source_result_status_reason: Option<String>,
+  pub source_result_dir: String,
+  pub normalized_result_dir: String,
+  pub normalized_artifacts: Vec<MinecraftTrainingResultNormalizedArtifactSummary>,
+  pub known_limits: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct MinecraftTrainingResultArtifactFetchInspectReportSummary {
+  pub schema_version: u32,
+  pub training_result_artifact_fetch_manifest_path: String,
+  pub source_training_result_manifest_path: String,
+  pub source_training_job_manifest_path: String,
+  pub source_training_launch_plan_path: String,
+  pub source_scene_packet_manifest_path: String,
+  pub source_bundle_manifest_paths: Vec<String>,
+  pub source_run_ids: Vec<String>,
+  pub trainer_backend: String,
+  pub job_backend: String,
+  pub source_job_status: String,
+  pub source_result_status: String,
+  pub source_result_status_reason: Option<String>,
+  pub fetch_status: String,
+  pub fetch_reason: Option<String>,
+  pub source_result_dir: String,
+  pub normalized_result_dir: String,
+  pub source_result_dir_exists: bool,
+  pub required_artifacts_present: bool,
+  pub normalized_artifact_count: usize,
+  pub warnings: Vec<String>,
+  pub known_limits: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct MinecraftTrainingResultNormalizedArtifactSummary {
+  pub kind: String,
+  pub relative_path: String,
+  pub absolute_path: String,
+  pub readable: bool,
+  pub byte_size: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -667,6 +737,22 @@ pub(crate) fn list_minecraft_training_result_inspect_reports(
   extract_minecraft_training_result_inspect_reports(store, &run)
 }
 
+pub(crate) fn list_minecraft_training_result_artifact_fetch_manifests(
+  store: &LocalStore,
+  run_id: &str,
+) -> AuvResult<Vec<MinecraftTrainingResultArtifactFetchManifestLineage>> {
+  let run = store.read_run(run_id)?;
+  extract_minecraft_training_result_artifact_fetch_manifests(store, &run)
+}
+
+pub(crate) fn list_minecraft_training_result_artifact_fetch_inspect_reports(
+  store: &LocalStore,
+  run_id: &str,
+) -> AuvResult<Vec<MinecraftTrainingResultArtifactFetchInspectReportLineage>> {
+  let run = store.read_run(run_id)?;
+  extract_minecraft_training_result_artifact_fetch_inspect_reports(store, &run)
+}
+
 pub(crate) fn list_minecraft_training_package_manifests(
   store: &LocalStore,
   run_id: &str,
@@ -984,6 +1070,94 @@ pub(crate) fn extract_minecraft_training_result_inspect_reports(
         issue: None,
       }),
       Err(error) => reports.push(MinecraftTrainingResultInspectReportLineage {
+        artifact: artifact_ref,
+        report: None,
+        issue: Some(error),
+      }),
+    }
+  }
+  Ok(reports)
+}
+
+pub(crate) fn extract_minecraft_training_result_artifact_fetch_manifests(
+  store: &LocalStore,
+  run: &CanonicalRun,
+) -> AuvResult<Vec<MinecraftTrainingResultArtifactFetchManifestLineage>> {
+  let mut manifests = Vec::new();
+  for artifact in &run.artifacts {
+    if artifact.role != crate::minecraft::MINECRAFT_3DGS_TRAINING_RESULT_ARTIFACT_MANIFEST_ROLE {
+      continue;
+    }
+    let artifact_ref = artifact_record_lineage(run.run.run_id.clone(), artifact);
+    if !is_json_mime(&artifact.mime_type) {
+      manifests.push(MinecraftTrainingResultArtifactFetchManifestLineage {
+        artifact: artifact_ref,
+        manifest: None,
+        issue: Some(format!(
+          "minecraft training result artifact fetch manifest mime_type {} is not JSON",
+          artifact.mime_type
+        )),
+      });
+      continue;
+    }
+    let parsed = read_artifact_json::<TrainingResultArtifactFetchManifest>(
+      store,
+      run.run.run_id.as_str(),
+      artifact,
+      crate::minecraft::MINECRAFT_3DGS_TRAINING_RESULT_ARTIFACT_MANIFEST_ROLE,
+    )
+    .map(MinecraftTrainingResultArtifactFetchManifestSummary::from);
+    match parsed {
+      Ok(manifest) => manifests.push(MinecraftTrainingResultArtifactFetchManifestLineage {
+        artifact: artifact_ref,
+        manifest: Some(manifest),
+        issue: None,
+      }),
+      Err(error) => manifests.push(MinecraftTrainingResultArtifactFetchManifestLineage {
+        artifact: artifact_ref,
+        manifest: None,
+        issue: Some(error),
+      }),
+    }
+  }
+  Ok(manifests)
+}
+
+pub(crate) fn extract_minecraft_training_result_artifact_fetch_inspect_reports(
+  store: &LocalStore,
+  run: &CanonicalRun,
+) -> AuvResult<Vec<MinecraftTrainingResultArtifactFetchInspectReportLineage>> {
+  let mut reports = Vec::new();
+  for artifact in &run.artifacts {
+    if artifact.role != crate::minecraft::MINECRAFT_3DGS_TRAINING_RESULT_ARTIFACT_INSPECT_ROLE {
+      continue;
+    }
+    let artifact_ref = artifact_record_lineage(run.run.run_id.clone(), artifact);
+    if !is_json_mime(&artifact.mime_type) {
+      reports.push(MinecraftTrainingResultArtifactFetchInspectReportLineage {
+        artifact: artifact_ref,
+        report: None,
+        issue: Some(format!(
+          "minecraft training result artifact fetch inspect mime_type {} is not JSON",
+          artifact.mime_type
+        )),
+      });
+      continue;
+    }
+    let parsed = read_artifact_json::<TrainingResultArtifactFetchInspectReport>(
+      store,
+      run.run.run_id.as_str(),
+      artifact,
+      crate::minecraft::MINECRAFT_3DGS_TRAINING_RESULT_ARTIFACT_INSPECT_ROLE,
+    )
+    .map(MinecraftTrainingResultArtifactFetchInspectReportSummary::from);
+    match parsed {
+      Ok(report) => reports.push(MinecraftTrainingResultArtifactFetchInspectReportLineage {
+        artifact: artifact_ref,
+        report: Some(report),
+        issue: None,
+      }),
+      Err(error) => reports.push(MinecraftTrainingResultArtifactFetchInspectReportLineage {
         artifact: artifact_ref,
         report: None,
         issue: Some(error),
@@ -2301,6 +2475,82 @@ impl From<TrainingResultInspectReport> for MinecraftTrainingResultInspectReportS
       result_artifact_count: value.result_artifact_count,
       warnings: value.warnings,
       known_limits: value.known_limits,
+    }
+  }
+}
+
+impl From<TrainingResultArtifactFetchManifest>
+  for MinecraftTrainingResultArtifactFetchManifestSummary
+{
+  fn from(value: TrainingResultArtifactFetchManifest) -> Self {
+    Self {
+      schema_version: value.schema_version,
+      source_training_result_manifest_path: value.source_training_result_manifest_path,
+      source_training_job_manifest_path: value.source_training_job_manifest_path,
+      source_training_launch_plan_path: value.source_training_launch_plan_path,
+      source_training_package_manifest_path: value.source_training_package_manifest_path,
+      source_scene_packet_manifest_path: value.source_scene_packet_manifest_path,
+      source_bundle_manifest_paths: value.source_bundle_manifest_paths,
+      source_run_ids: value.source_run_ids,
+      trainer_backend: value.trainer_backend,
+      job_backend: value.job_backend,
+      source_job_status: value.source_job_status.as_str().to_string(),
+      source_result_status: value.source_result_status.as_str().to_string(),
+      source_result_status_reason: value.source_result_status_reason,
+      source_result_dir: value.source_result_dir,
+      normalized_result_dir: value.normalized_result_dir,
+      normalized_artifacts: value
+        .normalized_artifacts
+        .into_iter()
+        .map(MinecraftTrainingResultNormalizedArtifactSummary::from)
+        .collect(),
+      known_limits: value.known_limits,
+    }
+  }
+}
+
+impl From<TrainingResultArtifactFetchInspectReport>
+  for MinecraftTrainingResultArtifactFetchInspectReportSummary
+{
+  fn from(value: TrainingResultArtifactFetchInspectReport) -> Self {
+    Self {
+      schema_version: value.schema_version,
+      training_result_artifact_fetch_manifest_path: value
+        .training_result_artifact_fetch_manifest_path,
+      source_training_result_manifest_path: value.source_training_result_manifest_path,
+      source_training_job_manifest_path: value.source_training_job_manifest_path,
+      source_training_launch_plan_path: value.source_training_launch_plan_path,
+      source_scene_packet_manifest_path: value.source_scene_packet_manifest_path,
+      source_bundle_manifest_paths: value.source_bundle_manifest_paths,
+      source_run_ids: value.source_run_ids,
+      trainer_backend: value.trainer_backend,
+      job_backend: value.job_backend,
+      source_job_status: value.source_job_status.as_str().to_string(),
+      source_result_status: value.source_result_status.as_str().to_string(),
+      source_result_status_reason: value.source_result_status_reason,
+      fetch_status: value.fetch_status.as_str().to_string(),
+      fetch_reason: value.fetch_reason.map(|reason| reason.as_str().to_string()),
+      source_result_dir: value.source_result_dir,
+      normalized_result_dir: value.normalized_result_dir,
+      source_result_dir_exists: value.source_result_dir_exists,
+      required_artifacts_present: value.required_artifacts_present,
+      normalized_artifact_count: value.normalized_artifact_count,
+      warnings: value.warnings,
+      known_limits: value.known_limits,
+    }
+  }
+}
+
+impl From<auv_game_minecraft::TrainingResultNormalizedArtifactRecord>
+  for MinecraftTrainingResultNormalizedArtifactSummary
+{
+  fn from(value: auv_game_minecraft::TrainingResultNormalizedArtifactRecord) -> Self {
+    Self {
+      kind: value.kind.as_str().to_string(),
+      relative_path: value.relative_path,
+      absolute_path: value.absolute_path,
+      readable: value.readable,
+      byte_size: value.byte_size,
     }
   }
 }

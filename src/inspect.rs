@@ -18,13 +18,16 @@ use crate::run_read::{
   MinecraftTrainingJobInspectReportLineage, MinecraftTrainingJobManifestLineage,
   MinecraftTrainingLaunchInspectReportLineage, MinecraftTrainingLaunchManifestLineage,
   MinecraftTrainingPackageInspectReportLineage, MinecraftTrainingPackageManifestLineage,
-  MinecraftTrainingResultInspectReportLineage, MinecraftTrainingResultManifestLineage,
-  list_minecraft_projection_artifacts, list_minecraft_spatial_bundle_manifests,
-  list_minecraft_telemetry_sample_artifacts, list_minecraft_training_job_inspect_reports,
-  list_minecraft_training_job_manifests, list_minecraft_training_launch_inspect_reports,
-  list_minecraft_training_launch_manifests, list_minecraft_training_package_inspect_reports,
-  list_minecraft_training_package_manifests, list_minecraft_training_result_inspect_reports,
-  list_minecraft_training_result_manifests,
+  MinecraftTrainingResultArtifactFetchInspectReportLineage,
+  MinecraftTrainingResultArtifactFetchManifestLineage, MinecraftTrainingResultInspectReportLineage,
+  MinecraftTrainingResultManifestLineage, list_minecraft_projection_artifacts,
+  list_minecraft_spatial_bundle_manifests, list_minecraft_telemetry_sample_artifacts,
+  list_minecraft_training_job_inspect_reports, list_minecraft_training_job_manifests,
+  list_minecraft_training_launch_inspect_reports, list_minecraft_training_launch_manifests,
+  list_minecraft_training_package_inspect_reports, list_minecraft_training_package_manifests,
+  list_minecraft_training_result_artifact_fetch_inspect_reports,
+  list_minecraft_training_result_artifact_fetch_manifests,
+  list_minecraft_training_result_inspect_reports, list_minecraft_training_result_manifests,
 };
 use auv_tracing_driver::store::{CanonicalRun, LocalStore};
 use std::collections::BTreeSet;
@@ -112,6 +115,10 @@ pub fn inspect_run(store: &LocalStore, run_id: &str) -> AuvResult<String> {
     list_minecraft_training_result_manifests(store, run_id)?;
   let minecraft_training_result_inspect_reports =
     list_minecraft_training_result_inspect_reports(store, run_id)?;
+  let minecraft_training_result_artifact_fetch_manifests =
+    list_minecraft_training_result_artifact_fetch_manifests(store, run_id)?;
+  let minecraft_training_result_artifact_fetch_inspect_reports =
+    list_minecraft_training_result_artifact_fetch_inspect_reports(store, run_id)?;
   Ok(render_run_text(
     &canonical,
     &verifications,
@@ -131,6 +138,8 @@ pub fn inspect_run(store: &LocalStore, run_id: &str) -> AuvResult<String> {
     &minecraft_training_job_inspect_reports,
     &minecraft_training_result_manifests,
     &minecraft_training_result_inspect_reports,
+    &minecraft_training_result_artifact_fetch_manifests,
+    &minecraft_training_result_artifact_fetch_inspect_reports,
   ))
 }
 
@@ -153,6 +162,8 @@ pub fn render_run_text(
   minecraft_training_job_inspect_reports: &[MinecraftTrainingJobInspectReportLineage],
   minecraft_training_result_manifests: &[MinecraftTrainingResultManifestLineage],
   minecraft_training_result_inspect_reports: &[MinecraftTrainingResultInspectReportLineage],
+  minecraft_training_result_artifact_fetch_manifests: &[MinecraftTrainingResultArtifactFetchManifestLineage],
+  minecraft_training_result_artifact_fetch_inspect_reports: &[MinecraftTrainingResultArtifactFetchInspectReportLineage],
 ) -> String {
   let mut output = format!(
     "Run {}\nType: {}\nStatus: {}\nState: {}\n",
@@ -1062,6 +1073,153 @@ pub fn render_run_text(
       } else {
         output.push_str(&format!(
           "- inspect_artifact={} role={} path={} manifest_path=n/a schema=n/a source_training_job_manifest=n/a source_training_launch_plan=n/a source_runs=n/a trainer_backend=n/a job_backend=n/a source_job_status=n/a status=n/a status_reason=n/a job_id=n/a job_url=n/a result_dir=n/a result_dir_exists=n/a key_result_artifacts_present=n/a result_artifact_count=n/a warnings=n/a issue={}\n",
+          report_lineage.artifact.artifact_id,
+          report_lineage.artifact.role.as_deref().unwrap_or("n/a"),
+          report_lineage.artifact.path.as_deref().unwrap_or("n/a"),
+          report_lineage.issue.as_deref().unwrap_or("n/a"),
+        ));
+      }
+    }
+  }
+
+  output.push_str("\nMC-7 Training Result Artifacts:\n");
+  if minecraft_training_result_artifact_fetch_manifests.is_empty()
+    && minecraft_training_result_artifact_fetch_inspect_reports.is_empty()
+  {
+    output.push_str("- none\n");
+  } else {
+    let mut rendered_report_artifacts = BTreeSet::new();
+    for manifest_lineage in minecraft_training_result_artifact_fetch_manifests {
+      let paired_report = manifest_lineage.manifest.as_ref().and_then(|manifest| {
+        unique_matching_report(
+          minecraft_training_result_artifact_fetch_inspect_reports,
+          |lineage| {
+            lineage.report.as_ref().is_some_and(|report| {
+              report.source_training_result_manifest_path
+                == manifest.source_training_result_manifest_path
+                && report.source_training_job_manifest_path
+                  == manifest.source_training_job_manifest_path
+                && report.source_run_ids == manifest.source_run_ids
+            })
+          },
+        )
+      });
+      if let Some(report_lineage) = paired_report {
+        rendered_report_artifacts.insert(report_lineage.artifact.artifact_id.to_string());
+      }
+      if let Some(manifest) = &manifest_lineage.manifest {
+        output.push_str(&format!(
+          "- manifest_artifact={} role={} path={} schema={} source_training_result_manifest={} source_training_job_manifest={} source_runs={} trainer_backend={} job_backend={} source_job_status={} source_result_status={} source_result_status_reason={} source_result_dir={} normalized_result_dir={} normalized_artifacts={} paired_report_artifact={} issue={}\n",
+          manifest_lineage.artifact.artifact_id,
+          manifest_lineage.artifact.role.as_deref().unwrap_or("n/a"),
+          manifest_lineage.artifact.path.as_deref().unwrap_or("n/a"),
+          manifest.schema_version,
+          manifest.source_training_result_manifest_path,
+          manifest.source_training_job_manifest_path,
+          manifest.source_run_ids.len(),
+          manifest.trainer_backend,
+          manifest.job_backend,
+          manifest.source_job_status,
+          manifest.source_result_status,
+          manifest
+            .source_result_status_reason
+            .as_deref()
+            .unwrap_or("n/a"),
+          manifest.source_result_dir,
+          manifest.normalized_result_dir,
+          manifest.normalized_artifacts.len(),
+          paired_report
+            .map(|report| report.artifact.artifact_id.to_string())
+            .unwrap_or_else(|| "n/a".to_string()),
+          manifest_lineage.issue.as_deref().unwrap_or("n/a"),
+        ));
+        if !manifest.known_limits.is_empty() {
+          output.push_str(&format!(
+            "  known_limits={}\n",
+            manifest.known_limits.join(" | ")
+          ));
+        }
+        if let Some(report) = paired_report.and_then(|lineage| lineage.report.as_ref()) {
+          output.push_str(&format!(
+            "  paired_report schema={} trainer_backend={} job_backend={} source_job_status={} source_result_status={} fetch_status={} fetch_reason={} source_result_dir={} normalized_result_dir={} source_result_dir_exists={} required_artifacts_present={} normalized_artifact_count={} warnings={} issue={}\n",
+            report.schema_version,
+            report.trainer_backend,
+            report.job_backend,
+            report.source_job_status,
+            report.source_result_status,
+            report.fetch_status,
+            report.fetch_reason.as_deref().unwrap_or("n/a"),
+            report.source_result_dir,
+            report.normalized_result_dir,
+            report.source_result_dir_exists,
+            report.required_artifacts_present,
+            report.normalized_artifact_count,
+            report.warnings.len(),
+            paired_report
+              .and_then(|lineage| lineage.issue.as_deref())
+              .unwrap_or("n/a"),
+          ));
+          if !report.warnings.is_empty() {
+            output.push_str(&format!("  warnings={}\n", report.warnings.join(" | ")));
+          }
+          if !report.known_limits.is_empty() {
+            output.push_str(&format!(
+              "  known_limits={}\n",
+              report.known_limits.join(" | ")
+            ));
+          }
+        }
+      } else {
+        output.push_str(&format!(
+          "- manifest_artifact={} role={} path={} schema=n/a source_training_result_manifest=n/a source_training_job_manifest=n/a source_runs=n/a trainer_backend=n/a job_backend=n/a source_job_status=n/a source_result_status=n/a source_result_status_reason=n/a source_result_dir=n/a normalized_result_dir=n/a normalized_artifacts=n/a paired_report_artifact=n/a issue={}\n",
+          manifest_lineage.artifact.artifact_id,
+          manifest_lineage.artifact.role.as_deref().unwrap_or("n/a"),
+          manifest_lineage.artifact.path.as_deref().unwrap_or("n/a"),
+          manifest_lineage.issue.as_deref().unwrap_or("n/a"),
+        ));
+      }
+    }
+    for report_lineage in minecraft_training_result_artifact_fetch_inspect_reports {
+      if rendered_report_artifacts.contains(&report_lineage.artifact.artifact_id.to_string()) {
+        continue;
+      }
+      if let Some(report) = &report_lineage.report {
+        output.push_str(&format!(
+          "- inspect_artifact={} role={} path={} manifest_path={} schema={} source_training_result_manifest={} source_training_job_manifest={} source_runs={} trainer_backend={} job_backend={} source_job_status={} source_result_status={} fetch_status={} fetch_reason={} source_result_dir={} normalized_result_dir={} source_result_dir_exists={} required_artifacts_present={} normalized_artifact_count={} warnings={} issue={}\n",
+          report_lineage.artifact.artifact_id,
+          report_lineage.artifact.role.as_deref().unwrap_or("n/a"),
+          report_lineage.artifact.path.as_deref().unwrap_or("n/a"),
+          report.training_result_artifact_fetch_manifest_path,
+          report.schema_version,
+          report.source_training_result_manifest_path,
+          report.source_training_job_manifest_path,
+          report.source_run_ids.len(),
+          report.trainer_backend,
+          report.job_backend,
+          report.source_job_status,
+          report.source_result_status,
+          report.fetch_status,
+          report.fetch_reason.as_deref().unwrap_or("n/a"),
+          report.source_result_dir,
+          report.normalized_result_dir,
+          report.source_result_dir_exists,
+          report.required_artifacts_present,
+          report.normalized_artifact_count,
+          report.warnings.len(),
+          report_lineage.issue.as_deref().unwrap_or("n/a"),
+        ));
+        if !report.warnings.is_empty() {
+          output.push_str(&format!("  warnings={}\n", report.warnings.join(" | ")));
+        }
+        if !report.known_limits.is_empty() {
+          output.push_str(&format!(
+            "  known_limits={}\n",
+            report.known_limits.join(" | ")
+          ));
+        }
+      } else {
+        output.push_str(&format!(
+          "- inspect_artifact={} role={} path={} manifest_path=n/a schema=n/a source_training_result_manifest=n/a source_training_job_manifest=n/a source_runs=n/a trainer_backend=n/a job_backend=n/a source_job_status=n/a source_result_status=n/a fetch_status=n/a fetch_reason=n/a source_result_dir=n/a normalized_result_dir=n/a source_result_dir_exists=n/a required_artifacts_present=n/a normalized_artifact_count=n/a warnings=n/a issue={}\n",
           report_lineage.artifact.artifact_id,
           report_lineage.artifact.role.as_deref().unwrap_or("n/a"),
           report_lineage.artifact.path.as_deref().unwrap_or("n/a"),
@@ -2095,6 +2253,8 @@ mod tests {
       &minecraft_training_job_inspect_reports,
       &minecraft_training_result_manifests,
       &minecraft_training_result_inspect_reports,
+      &[],
+      &[],
     );
 
     assert!(output.contains("Run run_inspect_test"));
@@ -2247,6 +2407,8 @@ mod tests {
         report: None,
         issue: Some("json parse error: expected value".to_string()),
       }],
+      &[],
+      &[],
       &[],
       &[],
     );
@@ -2403,6 +2565,8 @@ mod tests {
       &[],
       &[launch_manifest],
       &duplicate_reports,
+      &[],
+      &[],
       &[],
       &[],
       &[],
@@ -2582,6 +2746,8 @@ mod tests {
       &duplicate_reports,
       &[],
       &[],
+      &[],
+      &[],
     );
 
     assert!(output.contains("manifest_artifact=artifact_mc7_job_manifest_dup"));
@@ -2755,6 +2921,8 @@ mod tests {
       &[],
       &[package_manifest],
       &duplicate_reports,
+      &[],
+      &[],
       &[],
       &[],
       &[],
@@ -2938,6 +3106,8 @@ mod tests {
       &[],
       &[result_manifest],
       &duplicate_reports,
+      &[],
+      &[],
     );
 
     assert!(output.contains("manifest_artifact=artifact_mc7_result_manifest_dup"));

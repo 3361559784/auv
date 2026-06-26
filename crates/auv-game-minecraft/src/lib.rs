@@ -15,6 +15,7 @@ pub mod training_job;
 pub mod training_launch;
 pub mod training_package;
 pub mod training_result;
+pub mod training_result_artifact;
 pub mod types;
 pub mod verify;
 
@@ -84,6 +85,14 @@ pub use training_result::{
   TrainingResultInspectReport, TrainingResultManifest, TrainingResultOutput, TrainingResultReason,
   TrainingResultRequest, TrainingResultStatus, collect_3dgs_training_job_result,
   collect_3dgs_training_job_result_with_environment,
+};
+pub use training_result_artifact::{
+  TRAINING_RESULT_ARTIFACT_FETCH_INSPECT_REPORT_SCHEMA_VERSION,
+  TRAINING_RESULT_ARTIFACT_FETCH_MANIFEST_SCHEMA_VERSION, TrainingResultArtifactFetchInputs,
+  TrainingResultArtifactFetchInspectReport, TrainingResultArtifactFetchManifest,
+  TrainingResultArtifactFetchOutput, TrainingResultArtifactFetchReason,
+  TrainingResultArtifactFetchStatus, TrainingResultNormalizedArtifactKind,
+  TrainingResultNormalizedArtifactRecord, fetch_3dgs_training_result_artifacts,
 };
 pub use types::{
   BlockFace, BlockPosition, InventorySummaryEntry, MinecraftBlockTarget, MinecraftProjectedPoint,

@@ -168,6 +168,11 @@ pub enum CliCommand {
     training_job_token: Option<String>,
     inspect: InspectClientOptions,
   },
+  MinecraftFetch3dgsTrainingResultArtifacts {
+    training_result_manifest_path: String,
+    output_dir: String,
+    inspect: InspectClientOptions,
+  },
   MinecraftPrepareTextureSweep {
     sidecar_run_dir: String,
     output_dir: String,
@@ -312,6 +317,7 @@ USAGE
   auv-cli minecraft prepare-3dgs-training --training-package-manifest <training-package/run.json> --output-dir <dir> [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
   auv-cli minecraft launch-3dgs-training-job --training-launch-plan <training-launch-plan.json> --output-dir <dir> [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
   auv-cli minecraft collect-3dgs-training-job-result --training-job-manifest <training-job.json> --output-dir <dir> [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
+  auv-cli minecraft fetch-3dgs-training-result-artifacts --training-result-manifest <training-result.json> --output-dir <dir> [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
   auv-cli minecraft prepare-texture-sweep --sidecar-run-dir <dir> --output-dir <dir> [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
   auv-cli minecraft build-texture-sweep-samples --bundle-manifest <bundle/run.json>... --output <samples.json> [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
   auv-cli minecraft eval-texture-sweep --samples <samples.json> --output-dir <dir> [--require-real-source] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
@@ -1095,7 +1101,7 @@ fn parse_invoke(arguments: &[String]) -> AuvResult<CliCommand> {
 fn parse_minecraft(arguments: &[String]) -> AuvResult<CliCommand> {
   if arguments.len() < 2 {
     return Err(
-      "usage: auv-cli minecraft <bridge|calibrate-projection|live-click|export-spatial-bundle|export-3dgs-scene-packet|export-3dgs-training-package|prepare-3dgs-training|launch-3dgs-training-job|collect-3dgs-training-job-result|prepare-texture-sweep|build-texture-sweep-samples|eval-texture-sweep> ..."
+      "usage: auv-cli minecraft <bridge|calibrate-projection|live-click|export-spatial-bundle|export-3dgs-scene-packet|export-3dgs-training-package|prepare-3dgs-training|launch-3dgs-training-job|collect-3dgs-training-job-result|fetch-3dgs-training-result-artifacts|prepare-texture-sweep|build-texture-sweep-samples|eval-texture-sweep> ..."
         .to_string(),
     );
   }
@@ -1112,11 +1118,14 @@ fn parse_minecraft(arguments: &[String]) -> AuvResult<CliCommand> {
     "collect-3dgs-training-job-result" => {
       parse_minecraft_collect_3dgs_training_job_result(arguments)
     }
+    "fetch-3dgs-training-result-artifacts" => {
+      parse_minecraft_fetch_3dgs_training_result_artifacts(arguments)
+    }
     "prepare-texture-sweep" => parse_minecraft_prepare_texture_sweep(arguments),
     "build-texture-sweep-samples" => parse_minecraft_build_texture_sweep_samples(arguments),
     "eval-texture-sweep" => parse_minecraft_eval_texture_sweep(arguments),
     other => Err(format!(
-      "unknown minecraft subcommand {other}; expected bridge, calibrate-projection, live-click, export-spatial-bundle, export-3dgs-scene-packet, export-3dgs-training-package, prepare-3dgs-training, launch-3dgs-training-job, collect-3dgs-training-job-result, prepare-texture-sweep, build-texture-sweep-samples, or eval-texture-sweep"
+      "unknown minecraft subcommand {other}; expected bridge, calibrate-projection, live-click, export-spatial-bundle, export-3dgs-scene-packet, export-3dgs-training-package, prepare-3dgs-training, launch-3dgs-training-job, collect-3dgs-training-job-result, fetch-3dgs-training-result-artifacts, prepare-texture-sweep, build-texture-sweep-samples, or eval-texture-sweep"
     )),
   }
 }
@@ -1465,6 +1474,52 @@ fn parse_minecraft_collect_3dgs_training_job_result(arguments: &[String]) -> Auv
     output_dir: output_dir.ok_or_else(|| "--output-dir is required".to_string())?,
     training_job_endpoint,
     training_job_token,
+    inspect,
+  })
+}
+
+fn parse_minecraft_fetch_3dgs_training_result_artifacts(
+  arguments: &[String],
+) -> AuvResult<CliCommand> {
+  let mut training_result_manifest_path = None;
+  let mut output_dir = None;
+  let mut inspect = InspectClientOptions::default();
+  let mut index = 2;
+  while index < arguments.len() {
+    if let Some(consumed) = parse_inspect_client_option(
+      arguments[index].as_str(),
+      arguments.get(index + 1),
+      &mut inspect,
+    )? {
+      index += consumed;
+      continue;
+    }
+
+    match arguments[index].as_str() {
+      "--training-result-manifest" => {
+        training_result_manifest_path = Some(required_flag_value(
+          arguments,
+          index,
+          "--training-result-manifest",
+        )?);
+        index += 2;
+      }
+      "--output-dir" => {
+        output_dir = Some(required_flag_value(arguments, index, "--output-dir")?);
+        index += 2;
+      }
+      other => {
+        return Err(format!(
+          "unexpected minecraft fetch-3dgs-training-result-artifacts argument {other}"
+        ));
+      }
+    }
+  }
+
+  Ok(CliCommand::MinecraftFetch3dgsTrainingResultArtifacts {
+    training_result_manifest_path: training_result_manifest_path
+      .ok_or_else(|| "--training-result-manifest is required".to_string())?,
+    output_dir: output_dir.ok_or_else(|| "--output-dir is required".to_string())?,
     inspect,
   })
 }

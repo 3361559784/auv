@@ -8,12 +8,14 @@ use auv_game_minecraft::{
   TextureSweepSampleBuildOutput, TextureSweepThresholds, TrainingLaunchJobInputs,
   TrainingLaunchPreparationInputs, TrainingLaunchPreparationOutput, TrainingPackageInputs,
   TrainingPackageOutput, TrainingResultArtifactFetchInputs, TrainingResultArtifactFetchOutput,
-  TrainingResultInputs, TrainingResultOutput, build_texture_sweep_samples_from_bundles,
+  TrainingResultInputs, TrainingResultOutput, TrainingResultSemanticValidationInputs,
+  TrainingResultSemanticValidationOutput, build_texture_sweep_samples_from_bundles,
   collect_3dgs_training_job_result, collect_3dgs_training_job_result_with_environment,
   evaluate_texture_sweep, export_3dgs_scene_packet, export_3dgs_training_package,
   export_spatial_bundle, fetch_3dgs_training_result_artifacts_with_environment,
   launch_3dgs_training_job, launch_3dgs_training_job_with_environment,
   prepare_3dgs_training_launch, prepare_texture_sweep_resource_packs,
+  validate_3dgs_training_result,
 };
 
 use auv_tracing_driver::RecordingHandle;
@@ -56,6 +58,10 @@ pub const MINECRAFT_3DGS_TRAINING_RESULT_ARTIFACT_MANIFEST_ROLE: &str =
   "minecraft-3dgs-training-result-artifact-manifest";
 pub const MINECRAFT_3DGS_TRAINING_RESULT_ARTIFACT_INSPECT_ROLE: &str =
   "minecraft-3dgs-training-result-artifact-inspect";
+pub const MINECRAFT_3DGS_TRAINING_RESULT_SEMANTIC_ROLE: &str =
+  "minecraft-3dgs-training-result-semantic";
+pub const MINECRAFT_3DGS_TRAINING_RESULT_SEMANTIC_INSPECT_ROLE: &str =
+  "minecraft-3dgs-training-result-semantic-inspect";
 pub const MINECRAFT_PROJECTION_CALIBRATION_ARTIFACT_ROLE: &str = "minecraft-projection-calibration";
 
 pub fn run_minecraft_3dgs_scene_packet_export(
@@ -474,6 +480,53 @@ pub fn run_minecraft_3dgs_training_result_artifact_fetch(
             &result.inspect_report_path,
             "minecraft-3dgs-training-result-artifact-inspect.json",
             Some("MC-9 D4 provider-aware training result artifact inspect report".to_string()),
+          )?;
+          Ok::<_, String>(())
+        },
+      )?;
+      Ok::<_, String>(result)
+    },
+  )
+}
+
+pub fn run_minecraft_3dgs_training_result_semantic_validation(
+  recording: &RecordingHandle,
+  training_result_artifact_manifest_path: PathBuf,
+  output_dir: PathBuf,
+) -> AuvResult<RecordedOperationOutput<TrainingResultSemanticValidationOutput>> {
+  recording.run_recorded_operation(
+    RunSpec::new(
+      RunType::Execute,
+      "auv.minecraft.validate_3dgs_training_result",
+    ),
+    "Minecraft validate MC-10 3DGS training result semantic gate",
+    move |context| {
+      context.record_event(
+        "minecraft.validate_3dgs_training_result.inputs",
+        Some(format!(
+          "training_result_artifact_manifest={} output_dir={} semantic_validated_3dgs_result=true render_preview_generated=false",
+          training_result_artifact_manifest_path.display(),
+          output_dir.display()
+        )),
+      );
+      let result = validate_3dgs_training_result(TrainingResultSemanticValidationInputs {
+        training_result_artifact_manifest_path: training_result_artifact_manifest_path.clone(),
+        output_dir: output_dir.clone(),
+      })?;
+      context.in_span(
+        "minecraft.validate_3dgs_training_result.artifacts",
+        |context| {
+          context.stage_artifact_file(
+            MINECRAFT_3DGS_TRAINING_RESULT_SEMANTIC_ROLE,
+            &result.manifest_path,
+            "minecraft-3dgs-training-result-semantic.json",
+            Some("MC-10 training result semantic manifest".to_string()),
+          )?;
+          context.stage_artifact_file(
+            MINECRAFT_3DGS_TRAINING_RESULT_SEMANTIC_INSPECT_ROLE,
+            &result.inspect_report_path,
+            "minecraft-3dgs-training-result-semantic-inspect.json",
+            Some("MC-10 training result semantic inspect report".to_string()),
           )?;
           Ok::<_, String>(())
         },
@@ -1566,6 +1619,102 @@ mod tests {
     );
 
     assert_run_store_excludes_secret(&store, &run, RUN_STORE_SECRET);
+
+    let _ = fs::remove_dir_all(temp);
+  }
+
+  fn write_d11_artifact_manifest_for_semantic(root: &std::path::Path) -> PathBuf {
+    let normalized_result_dir = root.join("normalized-result");
+    fs::create_dir_all(normalized_result_dir.join("nerfstudio_models")).expect("models dir");
+    fs::write(
+      normalized_result_dir.join("config.yml"),
+      "trainer: nerfstudio.splatfacto\n",
+    )
+    .expect("config");
+    fs::write(
+      normalized_result_dir
+        .join("nerfstudio_models")
+        .join("step-000001.ckpt"),
+      b"checkpoint",
+    )
+    .expect("checkpoint");
+
+    let manifest = auv_game_minecraft::TrainingResultArtifactFetchManifest {
+      schema_version: 1,
+      generated_at_millis: 1,
+      source_training_result_manifest_path: "/tmp/result.json".to_string(),
+      source_training_job_manifest_path: "/tmp/job.json".to_string(),
+      source_training_launch_plan_path: "/tmp/launch-plan.json".to_string(),
+      source_training_package_manifest_path: "/tmp/package.json".to_string(),
+      source_scene_packet_manifest_path: "/tmp/scene.json".to_string(),
+      source_bundle_manifest_paths: vec!["/tmp/bundle.json".to_string()],
+      source_run_ids: vec!["run-1".to_string()],
+      trainer_backend: "nerfstudio.splatfacto".to_string(),
+      job_backend: "remote".to_string(),
+      source_job_status: auv_game_minecraft::TrainingResultStatus::Succeeded,
+      source_result_status: auv_game_minecraft::TrainingResultStatus::Succeeded,
+      source_result_status_reason: None,
+      source_result_dir: root.join("trainer-output").display().to_string(),
+      normalized_result_dir: normalized_result_dir.display().to_string(),
+      normalized_artifacts: Vec::new(),
+      known_limits: vec!["limit-a".to_string()],
+    };
+    let manifest_path = root.join("minecraft-3dgs-training-result-artifact-manifest.json");
+    fs::write(
+      &manifest_path,
+      serde_json::to_vec_pretty(&manifest).expect("d11 manifest json"),
+    )
+    .expect("d11 manifest write");
+    manifest_path
+  }
+
+  #[test]
+  fn training_result_semantic_validation_records_manifest_and_inspect_artifacts() {
+    let temp = temp_dir("mc10-semantic-run-store");
+    let store = LocalStore::new(temp.join("store")).expect("store");
+    let recording = RunRecordingBackend::new(store.clone(), Arc::new(NoopRunRecorder)).handle();
+    let d11_manifest_path = write_d11_artifact_manifest_for_semantic(&temp);
+
+    let output = run_minecraft_3dgs_training_result_semantic_validation(
+      &recording,
+      d11_manifest_path,
+      temp.join("semantic-output"),
+    )
+    .expect("semantic validation should succeed");
+
+    assert_eq!(
+      output.value.inspect_report.semantic_status,
+      auv_game_minecraft::TrainingResultSemanticStatus::Ready
+    );
+    let run = recording
+      .read_run(output.run_id.as_str())
+      .expect("semantic validation run should persist");
+    let input_event = run
+      .events
+      .iter()
+      .find(|event| event.name == "minecraft.validate_3dgs_training_result.inputs")
+      .expect("semantic validation input event should be recorded");
+    assert!(
+      input_event.message.as_deref().is_some_and(|message| {
+        message.contains("semantic_validated_3dgs_result=true")
+          && message.contains("render_preview_generated=false")
+      }),
+      "recorded input event should expose MC-10 semantic-only boundary"
+    );
+    assert!(
+      run
+        .artifacts
+        .iter()
+        .any(|artifact| artifact.role == MINECRAFT_3DGS_TRAINING_RESULT_SEMANTIC_ROLE),
+      "semantic manifest artifact should be staged"
+    );
+    assert!(
+      run
+        .artifacts
+        .iter()
+        .any(|artifact| { artifact.role == MINECRAFT_3DGS_TRAINING_RESULT_SEMANTIC_INSPECT_ROLE }),
+      "semantic inspect artifact should be staged"
+    );
 
     let _ = fs::remove_dir_all(temp);
   }

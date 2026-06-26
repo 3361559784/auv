@@ -690,6 +690,51 @@ async fn run() -> Result<(), String> {
       );
       println!("output: {}", output.value.output_dir.display());
     }
+    CliCommand::MinecraftValidate3dgsTrainingResult {
+      training_result_artifact_manifest_path,
+      output_dir,
+      inspect,
+    } => {
+      let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
+      let output = auv_cli::minecraft::run_minecraft_3dgs_training_result_semantic_validation(
+        &runtime.recording().handle(),
+        PathBuf::from(training_result_artifact_manifest_path),
+        PathBuf::from(output_dir),
+      )?;
+      println!("runId: {}", output.run_id);
+      println!(
+        "status: {}",
+        output.value.inspect_report.semantic_status.as_str()
+      );
+      println!(
+        "reason: {}",
+        output
+          .value
+          .inspect_report
+          .semantic_reason
+          .map(|reason| reason.as_str())
+          .unwrap_or("none")
+      );
+      println!("trainerBackend: {}", output.value.manifest.trainer_backend);
+      println!(
+        "checkpointCount: {}",
+        output.value.inspect_report.checkpoint_count
+      );
+      println!(
+        "configTrainer: {}",
+        output
+          .value
+          .inspect_report
+          .config_trainer
+          .as_deref()
+          .unwrap_or("none")
+      );
+      println!("semanticManifest: {}", output.value.manifest_path.display());
+      println!(
+        "inspectReport: {}",
+        output.value.inspect_report_path.display()
+      );
+    }
     CliCommand::MinecraftPrepareTextureSweep {
       sidecar_run_dir,
       output_dir,

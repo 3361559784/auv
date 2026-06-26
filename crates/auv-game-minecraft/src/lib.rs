@@ -16,6 +16,7 @@ pub mod training_launch;
 pub mod training_package;
 pub mod training_result;
 pub mod training_result_artifact;
+pub mod training_result_semantic;
 pub mod types;
 pub mod verify;
 
@@ -95,6 +96,14 @@ pub use training_result_artifact::{
   TrainingResultNormalizedArtifactKind, TrainingResultNormalizedArtifactRecord,
   fetch_3dgs_training_result_artifacts, fetch_3dgs_training_result_artifacts_with_command,
   fetch_3dgs_training_result_artifacts_with_environment,
+};
+pub use training_result_semantic::{
+  TRAINING_RESULT_SEMANTIC_INSPECT_REPORT_SCHEMA_VERSION,
+  TRAINING_RESULT_SEMANTIC_MANIFEST_SCHEMA_VERSION, TrainingResultSemanticCheckpointRecord,
+  TrainingResultSemanticInspectReport, TrainingResultSemanticManifest,
+  TrainingResultSemanticReason, TrainingResultSemanticStatus,
+  TrainingResultSemanticValidationInputs, TrainingResultSemanticValidationOutput,
+  validate_3dgs_training_result,
 };
 pub use types::{
   BlockFace, BlockPosition, InventorySummaryEntry, MinecraftBlockTarget, MinecraftProjectedPoint,

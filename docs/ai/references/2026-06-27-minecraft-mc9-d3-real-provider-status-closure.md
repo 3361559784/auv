@@ -159,3 +159,14 @@ Operational note:
 - local inspect-server writes to `127.0.0.1:8765` were unavailable during this
   pass, but local run-store records and local artifact outputs were written
   successfully.
+
+## Relationship to MC-9 D5 and closure verdict
+
+This note owns **D7 provider status truth** (MC-9 D3). It does not own the
+first **D4-aware provider fetch live success** pass with explicit
+`--training-job-endpoint` / `--training-job-token` on D6/D7/D11; that gate is
+recorded in
+`docs/ai/references/2026-06-27-minecraft-mc9-d5-real-provider-fetch-live-closure.md`.
+
+The MC-9 overall closure verdict (D1–D5, no further MC-9 slices required) is:
+`docs/ai/references/2026-06-27-minecraft-mc9-closure-gate-verdict.md`.

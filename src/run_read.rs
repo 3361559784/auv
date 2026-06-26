@@ -2290,7 +2290,9 @@ impl From<TrainingResultInspectReport> for MinecraftTrainingResultInspectReportS
       job_submission_endpoint: value.job_submission_endpoint,
       source_job_status: value.source_job_status.as_str().to_string(),
       status: value.status.as_str().to_string(),
-      status_reason: value.status_reason.map(|reason| format!("{reason:?}")),
+      status_reason: value
+        .status_reason
+        .map(|reason| reason.as_str().to_string()),
       job_id: value.job_id,
       job_url: value.job_url,
       result_dir: value.result_dir,
@@ -3633,7 +3635,7 @@ mod tests {
     assert_eq!(summary.status, "failed");
     assert_eq!(
       summary.status_reason.as_deref(),
-      Some("ResultArtifactsMissing")
+      Some("result_artifacts_missing")
     );
     assert!(!summary.key_result_artifacts_present);
 

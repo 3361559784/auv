@@ -2904,7 +2904,7 @@ mod tests {
             job_submission_endpoint: "https://jobs.example/api".to_string(),
             source_job_status: "submitted".to_string(),
             status: "failed".to_string(),
-            status_reason: Some("ResultArtifactsMissing".to_string()),
+            status_reason: Some("result_artifacts_missing".to_string()),
             job_id: "job-123".to_string(),
             job_url: Some("https://jobs.example/job-123".to_string()),
             result_dir: "/tmp/job/trainer-output/nerfstudio-splatfacto".to_string(),

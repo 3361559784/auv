@@ -215,9 +215,10 @@ where
     &inputs.training_job_manifest_path,
     "MC-7 D6 training job manifest",
   )?;
+  let launch_blocked = job_manifest.status == TrainingLaunchJobStatus::Blocked;
   let job_id = match job_manifest.job_id.clone() {
     Some(job_id) => job_id,
-    None if job_manifest.status == TrainingLaunchJobStatus::Blocked => String::new(),
+    None if launch_blocked => String::new(),
     None => {
       return Err(format!(
         "MC-7 D6 training job manifest {} is missing job_id",
@@ -249,7 +250,7 @@ where
       .to_string(),
   );
 
-  let (mut status, mut status_reason) = if job_manifest.status == TrainingLaunchJobStatus::Blocked {
+  let (mut status, mut status_reason) = if launch_blocked {
     (
       TrainingResultStatus::Blocked,
       Some(TrainingResultReason::LaunchBlocked),
@@ -357,9 +358,18 @@ where
     warnings: warnings.iter().cloned().collect(),
     known_limits: known_limits.iter().cloned().collect(),
   };
+  if launch_blocked && inspect_report.job_id.is_empty() {
+    warnings.insert(
+      "launch_blocked leaves job_id empty by design; result evidence still records the blocked terminal branch"
+        .to_string(),
+    );
+  }
   write_json(
     &inspect_report_path,
-    &inspect_report,
+    &TrainingResultInspectReport {
+      warnings: warnings.iter().cloned().collect(),
+      ..inspect_report.clone()
+    },
     "MC-7 D7 training result inspect JSON",
   )?;
 
@@ -386,7 +396,10 @@ where
     inspect_report_path,
     runbook_path,
     manifest,
-    inspect_report,
+    inspect_report: TrainingResultInspectReport {
+      warnings: warnings.iter().cloned().collect(),
+      ..inspect_report
+    },
   })
 }
 
@@ -781,6 +794,13 @@ mod tests {
     assert_eq!(
       output.inspect_report.status_reason,
       Some(TrainingResultReason::LaunchBlocked)
+    );
+    assert!(
+      output
+        .inspect_report
+        .warnings
+        .iter()
+        .any(|warning| warning.contains("job_id empty by design"))
     );
     assert_eq!(output.manifest.job_id, "");
   }

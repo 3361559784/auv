@@ -3,7 +3,8 @@
 Date: 2026-06-27
 
 Status: implemented code slice for D11 provider-aware artifact fetch command
-contract only. Fresh live provider fetch success evidence belongs to D5.
+contract. Fresh live provider fetch success with explicit D4 endpoint/token on
+D11 is recorded in the D5 closure note.
 
 ## Scope
 
@@ -75,3 +76,10 @@ distinguishes fetch/normalize evidence from provider status verdicts.
 
 Reference:
 `docs/ai/references/2026-06-26-minecraft-mc8-closure-gate-verdict.md`
+
+## Live evidence boundary
+
+MC-9 D4 code/contract closure remains authoritative for schema and stdin shape.
+**First fresh live provider fetch success** with explicit CLI endpoint/token on
+D11 is recorded separately in
+`docs/ai/references/2026-06-27-minecraft-mc9-d5-real-provider-fetch-live-closure.md`.

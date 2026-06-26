@@ -140,3 +140,11 @@ This note still does **not** claim:
 Local inspect-server writes to `http://127.0.0.1:8765` were unavailable during
 this pass. That did not block the local run-store evidence or local artifact
 outputs used in this closure note.
+
+## Relationship to MC-9 D5
+
+This D3 live note remains the first closure for **provider-status truth** and
+command-materialized fetch without the D4 explicit endpoint/token CLI surface
+on D11. The first **D4-aware provider fetch live success** pass (explicit
+`--training-job-endpoint` / `--training-job-token` on D6/D7/D11) is recorded in
+`docs/ai/references/2026-06-27-minecraft-mc9-d5-real-provider-fetch-live-closure.md`.

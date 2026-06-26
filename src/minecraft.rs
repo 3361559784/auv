@@ -11,7 +11,7 @@ use auv_game_minecraft::{
   TrainingResultInputs, TrainingResultOutput, build_texture_sweep_samples_from_bundles,
   collect_3dgs_training_job_result, collect_3dgs_training_job_result_with_environment,
   evaluate_texture_sweep, export_3dgs_scene_packet, export_3dgs_training_package,
-  export_spatial_bundle, fetch_3dgs_training_result_artifacts_with_command,
+  export_spatial_bundle, fetch_3dgs_training_result_artifacts_with_environment,
   launch_3dgs_training_job, launch_3dgs_training_job_with_environment,
   prepare_3dgs_training_launch, prepare_texture_sweep_resource_packs,
 };
@@ -425,30 +425,40 @@ pub fn run_minecraft_3dgs_training_result_artifact_fetch(
   recording: &RecordingHandle,
   training_result_manifest_path: PathBuf,
   output_dir: PathBuf,
+  training_job_endpoint: Option<String>,
+  training_job_token: Option<String>,
   artifact_fetch_command: Option<String>,
 ) -> AuvResult<RecordedOperationOutput<TrainingResultArtifactFetchOutput>> {
+  let training_job_endpoint_present = training_job_endpoint.is_some();
+  let training_job_token_present = training_job_token.is_some();
   recording.run_recorded_operation(
     RunSpec::new(
       RunType::Execute,
       "auv.minecraft.fetch_3dgs_training_result_artifacts",
     ),
-    "Minecraft fetch MC-7 D11 normalized training result artifacts",
-    |context| {
+    "Minecraft fetch MC-9 D4 provider-aware training result artifacts",
+    move |context| {
       context.record_event(
         "minecraft.fetch_3dgs_training_result_artifacts.inputs",
         Some(format!(
-          "training_result_manifest={} output_dir={} artifact_fetch_command={} trained_3dgs=false normalized_result_artifacts=true",
+          "training_result_manifest={} output_dir={} training_job_endpoint_present={} training_job_token_present={} artifact_fetch_command={} provider_artifact_fetch=true trained_3dgs=false normalized_result_artifacts=true",
           training_result_manifest_path.display(),
           output_dir.display(),
+          training_job_endpoint_present,
+          training_job_token_present,
           artifact_fetch_command.is_some()
         )),
       );
-      let result = fetch_3dgs_training_result_artifacts_with_command(
+      let result = fetch_3dgs_training_result_artifacts_with_environment(
         TrainingResultArtifactFetchInputs {
           training_result_manifest_path: training_result_manifest_path.clone(),
           output_dir: output_dir.clone(),
         },
-        artifact_fetch_command.clone(),
+        auv_game_minecraft::TrainingResultArtifactFetchEnvironment::with_values(
+          training_job_endpoint,
+          training_job_token,
+          artifact_fetch_command,
+        ),
       )?;
       context.in_span(
         "minecraft.fetch_3dgs_training_result_artifacts.artifacts",
@@ -457,13 +467,13 @@ pub fn run_minecraft_3dgs_training_result_artifact_fetch(
             MINECRAFT_3DGS_TRAINING_RESULT_ARTIFACT_MANIFEST_ROLE,
             &result.manifest_path,
             "minecraft-3dgs-training-result-artifact-manifest.json",
-            Some("MC-7 D11 normalized training result artifact manifest".to_string()),
+            Some("MC-9 D4 provider-aware training result artifact manifest".to_string()),
           )?;
           context.stage_artifact_file(
             MINECRAFT_3DGS_TRAINING_RESULT_ARTIFACT_INSPECT_ROLE,
             &result.inspect_report_path,
             "minecraft-3dgs-training-result-artifact-inspect.json",
-            Some("MC-7 D11 normalized training result artifact inspect report".to_string()),
+            Some("MC-9 D4 provider-aware training result artifact inspect report".to_string()),
           )?;
           Ok::<_, String>(())
         },
@@ -1391,6 +1401,172 @@ mod tests {
       result_output.value.inspect_report.status,
       auv_game_minecraft::TrainingResultStatus::Succeeded
     );
+    let _ = fs::remove_dir_all(temp);
+  }
+
+  fn write_training_result_manifest_for_fetch(root: &std::path::Path) -> PathBuf {
+    let result_dir = root.join("trainer-output/nerfstudio-splatfacto");
+    let manifest = auv_game_minecraft::TrainingResultManifest {
+      schema_version: 1,
+      generated_at_millis: 1,
+      source_training_job_manifest_path: "/tmp/job.json".to_string(),
+      source_training_launch_plan_path: "/tmp/launch-plan.json".to_string(),
+      source_training_package_manifest_path: "/tmp/package.json".to_string(),
+      source_scene_packet_manifest_path: "/tmp/scene.json".to_string(),
+      source_bundle_manifest_paths: vec!["/tmp/bundle.json".to_string()],
+      source_run_ids: vec!["run-1".to_string()],
+      trainer_backend: "nerfstudio.splatfacto".to_string(),
+      job_backend: "remote".to_string(),
+      job_submission_endpoint: "https://jobs.example.test/v1".to_string(),
+      source_job_status: auv_game_minecraft::TrainingLaunchJobStatus::Submitted,
+      status: auv_game_minecraft::TrainingResultStatus::Succeeded,
+      status_message: None,
+      job_id: "job-123".to_string(),
+      job_url: Some("https://jobs.example.test/jobs/job-123".to_string()),
+      result_dir: result_dir.display().to_string(),
+      exported_frame_count: 2,
+      skipped_frame_count: 0,
+      result_artifacts: Vec::new(),
+      known_limits: vec!["limit-a".to_string()],
+    };
+    let manifest_path = root.join("minecraft-3dgs-training-result.json");
+    fs::write(
+      &manifest_path,
+      serde_json::to_vec_pretty(&manifest).expect("result manifest json"),
+    )
+    .expect("result manifest write");
+    manifest_path
+  }
+
+  fn assert_run_store_excludes_secret(
+    store: &LocalStore,
+    run: &auv_tracing_driver::store::CanonicalRun,
+    secret: &str,
+  ) {
+    let serialized_run =
+      serde_json::to_string(run).expect("run snapshot should serialize for leak scan");
+    assert!(
+      !serialized_run.contains(secret),
+      "run snapshot leaked secret in serialized run record"
+    );
+    for event in &run.events {
+      if let Some(message) = &event.message {
+        assert!(
+          !message.contains(secret),
+          "run event `{}` leaked secret in message",
+          event.name
+        );
+      }
+      for (key, value) in &event.attributes {
+        let serialized = value.to_string();
+        assert!(
+          !serialized.contains(secret),
+          "run event `{}` attribute `{}` leaked secret",
+          event.name,
+          key
+        );
+      }
+    }
+    for span in &run.spans {
+      if let Some(summary) = &span.summary {
+        assert!(
+          !summary.contains(secret),
+          "run span `{}` leaked secret in summary",
+          span.name
+        );
+      }
+      for (key, value) in &span.attributes {
+        let serialized = value.to_string();
+        assert!(
+          !serialized.contains(secret),
+          "run span `{}` attribute `{}` leaked secret",
+          span.name,
+          key
+        );
+      }
+    }
+    if let Some(summary) = &run.run.summary {
+      assert!(!summary.contains(secret), "run summary leaked secret");
+    }
+    for (key, value) in &run.run.attributes {
+      let serialized = value.to_string();
+      assert!(
+        !serialized.contains(secret),
+        "run attribute `{}` leaked secret",
+        key
+      );
+    }
+    for artifact in &run.artifacts {
+      if let Some(summary) = &artifact.summary {
+        assert!(
+          !summary.contains(secret),
+          "artifact `{}` summary leaked secret",
+          artifact.role
+        );
+      }
+      let artifact_path = store
+        .run_dir(&run.run.run_id)
+        .expect("run dir")
+        .join(&artifact.path);
+      if artifact_path.is_file() {
+        let content = fs::read_to_string(&artifact_path).unwrap_or_default();
+        assert!(
+          !content.contains(secret),
+          "artifact `{}` body leaked secret",
+          artifact.role
+        );
+      }
+    }
+  }
+
+  #[test]
+  fn training_result_artifact_fetch_does_not_persist_token_in_run_store() {
+    const RUN_STORE_SECRET: &str = "d11-run-store-secret-token";
+    let temp = temp_dir("mc9-d4-fetch-run-store-secret");
+    let store = LocalStore::new(temp.join("store")).expect("store");
+    let recording = RunRecordingBackend::new(store.clone(), Arc::new(NoopRunRecorder)).handle();
+    let result_manifest_path = write_training_result_manifest_for_fetch(&temp);
+    let fetch_command = "python3 -c \"import json, pathlib, sys; req=json.load(sys.stdin); root=pathlib.Path(req['normalized_result_dir']); (root/'nerfstudio_models').mkdir(parents=True, exist_ok=True); (root/'config.yml').write_text('trainer: remote\\n'); json.dump({'message':'fetch ok'}, sys.stdout)\"".to_string();
+
+    let output = run_minecraft_3dgs_training_result_artifact_fetch(
+      &recording,
+      result_manifest_path,
+      temp.join("fetch-output"),
+      Some("https://jobs.example.test/v1".to_string()),
+      Some(RUN_STORE_SECRET.to_string()),
+      Some(fetch_command),
+    )
+    .expect("artifact fetch with explicit token should succeed");
+
+    assert_eq!(
+      output.value.inspect_report.fetch_status,
+      auv_game_minecraft::TrainingResultArtifactFetchStatus::Succeeded
+    );
+    let run = recording
+      .read_run(output.run_id.as_str())
+      .expect("fetch run should persist");
+    let input_event = run
+      .events
+      .iter()
+      .find(|event| event.name == "minecraft.fetch_3dgs_training_result_artifacts.inputs")
+      .expect("fetch input event should be recorded");
+    assert!(
+      input_event
+        .message
+        .as_deref()
+        .is_some_and(|message| message.contains("training_job_token_present=true")),
+      "recorded input event should expose token presence only"
+    );
+    assert!(
+      input_event
+        .message
+        .as_deref()
+        .is_some_and(|message| !message.contains(RUN_STORE_SECRET)),
+      "recorded input event must not include token value"
+    );
+
+    assert_run_store_excludes_secret(&store, &run, RUN_STORE_SECRET);
+
     let _ = fs::remove_dir_all(temp);
   }
 }

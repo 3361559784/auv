@@ -21,21 +21,33 @@ const RESULT_CONFIG_FILE: &str = "config.yml";
 const RESULT_MODELS_DIR: &str = "nerfstudio_models";
 const NORMALIZED_RESULT_ROOT_DIR: &str = "normalized-result";
 const ARTIFACT_FETCH_COMMAND_ENV: &str = "AUV_MINECRAFT_TRAINING_RESULT_ARTIFACT_FETCH_COMMAND";
+const JOB_ENDPOINT_ENV: &str = "AUV_MINECRAFT_TRAINING_JOB_ENDPOINT";
+const JOB_TOKEN_ENV: &str = "AUV_MINECRAFT_TRAINING_JOB_TOKEN";
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TrainingResultArtifactFetchEnvironment {
+  endpoint: Option<String>,
+  token: Option<String>,
   artifact_fetch_command: Option<String>,
 }
 
 impl TrainingResultArtifactFetchEnvironment {
   fn from_process() -> Self {
     Self {
+      endpoint: std::env::var(JOB_ENDPOINT_ENV).ok(),
+      token: std::env::var(JOB_TOKEN_ENV).ok(),
       artifact_fetch_command: std::env::var(ARTIFACT_FETCH_COMMAND_ENV).ok(),
     }
   }
 
-  pub fn with_values(artifact_fetch_command: Option<String>) -> Self {
+  pub fn with_values(
+    endpoint: Option<String>,
+    token: Option<String>,
+    artifact_fetch_command: Option<String>,
+  ) -> Self {
     Self {
+      endpoint,
+      token,
       artifact_fetch_command,
     }
   }
@@ -60,6 +72,9 @@ struct TrainingResultArtifactFetchCommandRequest {
   pub job_backend: String,
   pub source_job_status: TrainingResultStatus,
   pub source_result_status: TrainingResultStatus,
+  pub endpoint: String,
+  pub token_present: bool,
+  pub job_token: Option<String>,
   pub job_id: String,
   pub job_url: Option<String>,
   pub source_result_dir: String,
@@ -222,10 +237,18 @@ pub fn fetch_3dgs_training_result_artifacts_with_environment(
   let mut known_limits = BTreeSet::new();
   known_limits.extend(result_manifest.known_limits.iter().cloned());
   known_limits.insert(
-    "MC-7 D11 fetches and normalizes trainer result artifacts only; it does not grade model quality or claim downstream splat usability"
+    "MC-9 D4 closes provider-aware artifact fetch command evidence only; it does not grade model quality or claim downstream splat usability"
+      .to_string(),
+  );
+  known_limits.insert(
+    "source_result_dir_exists and required_artifacts_present are D7 local observations only; normalized fetch success is separate"
       .to_string(),
   );
 
+  let endpoint = env
+    .endpoint
+    .unwrap_or_else(|| result_manifest.job_submission_endpoint.clone());
+  let token = env.token;
   let source_result_dir = PathBuf::from(&result_manifest.result_dir);
   let source_result_dir_exists = source_result_dir.is_dir();
   let normalized_result_dir = inputs.output_dir.join(NORMALIZED_RESULT_ROOT_DIR);
@@ -298,6 +321,9 @@ pub fn fetch_3dgs_training_result_artifacts_with_environment(
         job_backend: result_manifest.job_backend.clone(),
         source_job_status: map_training_status(result_manifest.source_job_status),
         source_result_status: result_manifest.status,
+        endpoint: endpoint.clone(),
+        token_present: token.is_some(),
+        job_token: token.clone(),
         job_id: result_manifest.job_id.clone(),
         job_url: result_manifest.job_url.clone(),
         source_result_dir: result_manifest.result_dir.clone(),
@@ -311,12 +337,12 @@ pub fn fetch_3dgs_training_result_artifacts_with_environment(
         }
         if !source_result_dir_exists {
           warnings.insert(
-            "source result directory was not locally readable; MC-8 D3 artifact fetch command materialized normalized artifacts"
+            "source local result observation is incomplete; artifact fetch command materialized normalized outputs (fetch/normalize evidence, not provider status verdict)"
               .to_string(),
           );
         } else if !required_artifacts_present {
           warnings.insert(
-            "source result manifest lacked local required artifact rows; MC-8 D3 artifact fetch command materialized normalized artifacts"
+            "source local required-artifact observation is incomplete; artifact fetch command materialized normalized outputs (fetch/normalize evidence, not provider status verdict)"
               .to_string(),
           );
         }
@@ -337,7 +363,7 @@ pub fn fetch_3dgs_training_result_artifacts_with_environment(
     }
   } else if !source_result_dir_exists {
     warnings.insert(
-      "source result directory is missing; D11 cannot fetch normalized artifacts without an MC-8 D3 artifact fetch command".to_string(),
+      "source result directory is missing; D11 cannot fetch normalized artifacts without an artifact fetch command".to_string(),
     );
     (
       TrainingResultArtifactFetchStatus::Failed,
@@ -437,7 +463,7 @@ pub fn fetch_3dgs_training_result_artifacts_with_command(
 ) -> TrainingResultArtifactFetchResult<TrainingResultArtifactFetchOutput> {
   fetch_3dgs_training_result_artifacts_with_environment(
     inputs,
-    TrainingResultArtifactFetchEnvironment::with_values(artifact_fetch_command),
+    TrainingResultArtifactFetchEnvironment::with_values(None, None, artifact_fetch_command),
   )
 }
 
@@ -515,7 +541,7 @@ fn validate_source_result_paths(source_result_dir: &Path) -> TrainingResultArtif
   let config = source_result_dir.join(RESULT_CONFIG_FILE);
   if config.is_symlink() {
     return Err(format!(
-      "MC-8 D3 source config {} must not be a symlink",
+      "MC-9 D4 source config {} must not be a symlink",
       config.display()
     ));
   }
@@ -529,7 +555,7 @@ fn validate_source_result_paths(source_result_dir: &Path) -> TrainingResultArtif
   let models = source_result_dir.join(RESULT_MODELS_DIR);
   if models.is_symlink() {
     return Err(format!(
-      "MC-8 D3 source models directory {} must not be a symlink",
+      "MC-9 D4 source models directory {} must not be a symlink",
       models.display()
     ));
   }
@@ -544,7 +570,7 @@ fn validate_source_result_paths(source_result_dir: &Path) -> TrainingResultArtif
   if status.exists() {
     if status.is_symlink() {
       return Err(format!(
-        "MC-8 D3 source status snapshot {} must not be a symlink",
+        "MC-9 D4 source status snapshot {} must not be a symlink",
         status.display()
       ));
     }
@@ -568,7 +594,7 @@ fn run_artifact_fetch_command(
   if let Some(parent) = normalized_result_dir.parent() {
     fs::create_dir_all(parent).map_err(|error| {
       format!(
-        "failed to create MC-8 D3 artifact fetch output parent {}: {error}",
+        "failed to create MC-9 D4 artifact fetch output parent {}: {error}",
         parent.display()
       )
     })?;
@@ -576,7 +602,7 @@ fn run_artifact_fetch_command(
   if normalized_result_dir.exists() {
     fs::remove_dir_all(normalized_result_dir).map_err(|error| {
       format!(
-        "failed to clear MC-8 D3 normalized result dir before fetch {}: {error}",
+        "failed to clear MC-9 D4 normalized result dir before fetch {}: {error}",
         normalized_result_dir.display()
       )
     })?;
@@ -591,26 +617,26 @@ fn run_artifact_fetch_command(
     .stderr(Stdio::piped());
 
   let mut child = command.spawn().map_err(|error| {
-    format!("failed to run MC-8 D3 artifact fetch command `{command_text}`: {error}")
+    format!("failed to run MC-9 D4 artifact fetch command `{command_text}`: {error}")
   })?;
   {
     let stdin = child
       .stdin
       .as_mut()
-      .ok_or_else(|| "failed to open stdin for MC-8 D3 artifact fetch command".to_string())?;
+      .ok_or_else(|| "failed to open stdin for MC-9 D4 artifact fetch command".to_string())?;
     serde_json::to_writer(&mut *stdin, request)
-      .map_err(|error| format!("failed to write MC-8 D3 artifact fetch request JSON: {error}"))?;
+      .map_err(|error| format!("failed to write MC-9 D4 artifact fetch request JSON: {error}"))?;
     stdin
       .write_all(b"\n")
-      .map_err(|error| format!("failed to finish MC-8 D3 artifact fetch request JSON: {error}"))?;
+      .map_err(|error| format!("failed to finish MC-9 D4 artifact fetch request JSON: {error}"))?;
   }
 
   let output = child.wait_with_output().map_err(|error| {
-    format!("failed to wait for MC-8 D3 artifact fetch command `{command_text}`: {error}")
+    format!("failed to wait for MC-9 D4 artifact fetch command `{command_text}`: {error}")
   })?;
   if !output.status.success() {
     return Err(format!(
-      "MC-8 D3 artifact fetch command `{}` failed with status {}: {}",
+      "MC-9 D4 artifact fetch command `{}` failed with status {}: {}",
       command_text,
       output.status,
       String::from_utf8_lossy(&output.stderr).trim()
@@ -624,7 +650,7 @@ fn run_artifact_fetch_command(
     serde_json::from_str::<TrainingResultArtifactFetchCommandResponse>(&stdout)
       .map_err(|error| {
         format!(
-          "failed to parse MC-8 D3 artifact fetch command output for job {}: {error}",
+          "failed to parse MC-9 D4 artifact fetch command output for job {}: {error}",
           request.job_id
         )
       })?
@@ -640,26 +666,26 @@ fn collect_normalized_artifacts(
   let config = normalized_result_dir.join(RESULT_CONFIG_FILE);
   if config.is_symlink() {
     return Err(format!(
-      "MC-8 D3 normalized config {} must not be a symlink",
+      "MC-9 D4 normalized config {} must not be a symlink",
       config.display()
     ));
   }
   if !config.is_file() {
     return Err(format!(
-      "MC-8 D3 artifact fetch command did not materialize required normalized config {}",
+      "MC-9 D4 artifact fetch command did not materialize required normalized config {}",
       config.display()
     ));
   }
   let models = normalized_result_dir.join(RESULT_MODELS_DIR);
   if models.is_symlink() {
     return Err(format!(
-      "MC-8 D3 normalized models directory {} must not be a symlink",
+      "MC-9 D4 normalized models directory {} must not be a symlink",
       models.display()
     ));
   }
   if !models.is_dir() {
     return Err(format!(
-      "MC-8 D3 artifact fetch command did not materialize required normalized models directory {}",
+      "MC-9 D4 artifact fetch command did not materialize required normalized models directory {}",
       models.display()
     ));
   }
@@ -1293,5 +1319,146 @@ mod tests {
         .any(|warning| warning.contains("source models directory")
           && warning.contains("must not be a symlink"))
     );
+  }
+
+  #[test]
+  fn fetch_command_receives_endpoint_and_job_token_on_stdin() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let manifest_path = write_training_result_manifest_fixture(
+      &temp,
+      TrainingResultStatus::Succeeded,
+      false,
+      false,
+      false,
+      false,
+    );
+    let output_dir = temp.path().join("normalized");
+    let command = "python3 -c \"import json, pathlib, sys; req=json.load(sys.stdin); root=pathlib.Path(req['normalized_result_dir']); (root/'nerfstudio_models').mkdir(parents=True, exist_ok=True); (root/'config.yml').write_text('trainer: remote\\n'); (root/'nerfstudio_models'/'step-000001.ckpt').write_text('checkpoint'); root.parent.joinpath('token-check.txt').write_text(str(req.get('job_token'))); json.dump({'message':'endpoint='+req['endpoint']}, sys.stdout)\"".to_string();
+
+    let output = fetch_3dgs_training_result_artifacts_with_environment(
+      TrainingResultArtifactFetchInputs {
+        training_result_manifest_path: manifest_path,
+        output_dir: output_dir.clone(),
+      },
+      TrainingResultArtifactFetchEnvironment::with_values(
+        Some("https://override.example.test/v1".to_string()),
+        Some("fetch-secret".to_string()),
+        Some(command),
+      ),
+    )
+    .expect("command fetch with endpoint/token should succeed");
+
+    assert_eq!(
+      output.inspect_report.fetch_status,
+      TrainingResultArtifactFetchStatus::Succeeded
+    );
+    assert_eq!(
+      fs::read_to_string(output_dir.join("token-check.txt")).expect("token check file"),
+      "fetch-secret"
+    );
+    assert!(
+      output
+        .inspect_report
+        .warnings
+        .iter()
+        .any(|warning| { warning.contains("endpoint=https://override.example.test/v1") })
+    );
+    for persisted in [&output.manifest_path, &output.inspect_report_path] {
+      let raw = fs::read_to_string(persisted).expect("persisted json");
+      assert!(!raw.contains("fetch-secret"));
+      assert!(!raw.contains("job_token"));
+    }
+  }
+
+  #[test]
+  fn fetch_command_uses_manifest_endpoint_when_env_and_cli_override_missing() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let manifest_path = write_training_result_manifest_fixture(
+      &temp,
+      TrainingResultStatus::Succeeded,
+      false,
+      false,
+      false,
+      false,
+    );
+    let command = "python3 -c \"import json, pathlib, sys; req=json.load(sys.stdin); root=pathlib.Path(req['normalized_result_dir']); (root/'nerfstudio_models').mkdir(parents=True, exist_ok=True); (root/'config.yml').write_text('trainer: remote\\n'); json.dump({'message':'endpoint='+req['endpoint']}, sys.stdout)\"".to_string();
+
+    let output = fetch_3dgs_training_result_artifacts_with_environment(
+      TrainingResultArtifactFetchInputs {
+        training_result_manifest_path: manifest_path,
+        output_dir: temp.path().join("normalized"),
+      },
+      TrainingResultArtifactFetchEnvironment::with_values(None, None, Some(command)),
+    )
+    .expect("command fetch should fall back to manifest endpoint");
+
+    assert!(
+      output
+        .inspect_report
+        .warnings
+        .iter()
+        .any(|warning| warning.contains("endpoint=https://jobs.example.test/v1"))
+    );
+  }
+
+  #[test]
+  fn fetch_command_branch_succeeds_without_downgrading_source_observation() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let manifest_path = write_training_result_manifest_fixture(
+      &temp,
+      TrainingResultStatus::Succeeded,
+      false,
+      false,
+      false,
+      false,
+    );
+    let command = "python3 -c \"import json, pathlib, sys; req=json.load(sys.stdin); root=pathlib.Path(req['normalized_result_dir']); (root/'nerfstudio_models').mkdir(parents=True, exist_ok=True); (root/'config.yml').write_text('trainer: remote\\n'); json.dump({'message':'materialized'}, sys.stdout)\"".to_string();
+
+    let output = fetch_3dgs_training_result_artifacts_with_command(
+      TrainingResultArtifactFetchInputs {
+        training_result_manifest_path: manifest_path,
+        output_dir: temp.path().join("normalized"),
+      },
+      Some(command),
+    )
+    .expect("command branch should succeed");
+
+    assert_eq!(
+      output.inspect_report.fetch_status,
+      TrainingResultArtifactFetchStatus::Succeeded
+    );
+    assert!(!output.inspect_report.source_result_dir_exists);
+    assert!(!output.inspect_report.required_artifacts_present);
+    assert!(output.inspect_report.normalized_artifact_count > 0);
+  }
+
+  #[test]
+  fn fetch_warnings_do_not_contain_stale_mc8_d3_wording() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let manifest_path = write_training_result_manifest_fixture(
+      &temp,
+      TrainingResultStatus::Succeeded,
+      false,
+      true,
+      true,
+      false,
+    );
+    let command = "python3 -c \"import json, pathlib, sys; req=json.load(sys.stdin); root=pathlib.Path(req['normalized_result_dir']); (root/'nerfstudio_models').mkdir(parents=True, exist_ok=True); (root/'config.yml').write_text('trainer: remote\\n'); json.dump({'message':'ok'}, sys.stdout)\"".to_string();
+
+    let output = fetch_3dgs_training_result_artifacts_with_command(
+      TrainingResultArtifactFetchInputs {
+        training_result_manifest_path: manifest_path,
+        output_dir: temp.path().join("normalized"),
+      },
+      Some(command),
+    )
+    .expect("command fetch should succeed");
+
+    for warning in &output.inspect_report.warnings {
+      assert!(!warning.contains("MC-8 D3"));
+    }
+    for limit in &output.inspect_report.known_limits {
+      assert!(!limit.contains("MC-8 D3"));
+    }
   }
 }

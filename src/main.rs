@@ -633,6 +633,8 @@ async fn run() -> Result<(), String> {
     CliCommand::MinecraftFetch3dgsTrainingResultArtifacts {
       training_result_manifest_path,
       output_dir,
+      training_job_endpoint,
+      training_job_token,
       artifact_fetch_command,
       inspect,
     } => {
@@ -641,6 +643,8 @@ async fn run() -> Result<(), String> {
         &runtime.recording().handle(),
         PathBuf::from(training_result_manifest_path),
         PathBuf::from(output_dir),
+        training_job_endpoint,
+        training_job_token,
         artifact_fetch_command,
       )?;
       println!("runId: {}", output.run_id);

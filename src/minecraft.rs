@@ -11,9 +11,9 @@ use auv_game_minecraft::{
   TrainingResultInputs, TrainingResultOutput, build_texture_sweep_samples_from_bundles,
   collect_3dgs_training_job_result, collect_3dgs_training_job_result_with_environment,
   evaluate_texture_sweep, export_3dgs_scene_packet, export_3dgs_training_package,
-  export_spatial_bundle, fetch_3dgs_training_result_artifacts, launch_3dgs_training_job,
-  launch_3dgs_training_job_with_environment, prepare_3dgs_training_launch,
-  prepare_texture_sweep_resource_packs,
+  export_spatial_bundle, fetch_3dgs_training_result_artifacts_with_command,
+  launch_3dgs_training_job, launch_3dgs_training_job_with_environment,
+  prepare_3dgs_training_launch, prepare_texture_sweep_resource_packs,
 };
 
 use auv_tracing_driver::RecordingHandle;
@@ -425,6 +425,7 @@ pub fn run_minecraft_3dgs_training_result_artifact_fetch(
   recording: &RecordingHandle,
   training_result_manifest_path: PathBuf,
   output_dir: PathBuf,
+  artifact_fetch_command: Option<String>,
 ) -> AuvResult<RecordedOperationOutput<TrainingResultArtifactFetchOutput>> {
   recording.run_recorded_operation(
     RunSpec::new(
@@ -436,15 +437,19 @@ pub fn run_minecraft_3dgs_training_result_artifact_fetch(
       context.record_event(
         "minecraft.fetch_3dgs_training_result_artifacts.inputs",
         Some(format!(
-          "training_result_manifest={} output_dir={} trained_3dgs=false normalized_result_artifacts=true",
+          "training_result_manifest={} output_dir={} artifact_fetch_command={} trained_3dgs=false normalized_result_artifacts=true",
           training_result_manifest_path.display(),
-          output_dir.display()
+          output_dir.display(),
+          artifact_fetch_command.is_some()
         )),
       );
-      let result = fetch_3dgs_training_result_artifacts(TrainingResultArtifactFetchInputs {
-        training_result_manifest_path: training_result_manifest_path.clone(),
-        output_dir: output_dir.clone(),
-      })?;
+      let result = fetch_3dgs_training_result_artifacts_with_command(
+        TrainingResultArtifactFetchInputs {
+          training_result_manifest_path: training_result_manifest_path.clone(),
+          output_dir: output_dir.clone(),
+        },
+        artifact_fetch_command.clone(),
+      )?;
       context.in_span(
         "minecraft.fetch_3dgs_training_result_artifacts.artifacts",
         |context| {

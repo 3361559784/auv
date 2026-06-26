@@ -577,6 +577,7 @@ async fn run() -> Result<(), String> {
     CliCommand::MinecraftFetch3dgsTrainingResultArtifacts {
       training_result_manifest_path,
       output_dir,
+      artifact_fetch_command,
       inspect,
     } => {
       let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
@@ -584,6 +585,7 @@ async fn run() -> Result<(), String> {
         &runtime.recording().handle(),
         PathBuf::from(training_result_manifest_path),
         PathBuf::from(output_dir),
+        artifact_fetch_command,
       )?;
       println!("runId: {}", output.run_id);
       println!(

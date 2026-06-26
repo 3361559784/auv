@@ -1,7 +1,9 @@
 use std::collections::BTreeSet;
 use std::fs;
 use std::io::BufReader;
+use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -18,11 +20,56 @@ const STATUS_SNAPSHOT_FILE: &str = "job_status.json";
 const RESULT_CONFIG_FILE: &str = "config.yml";
 const RESULT_MODELS_DIR: &str = "nerfstudio_models";
 const NORMALIZED_RESULT_ROOT_DIR: &str = "normalized-result";
+const ARTIFACT_FETCH_COMMAND_ENV: &str = "AUV_MINECRAFT_TRAINING_RESULT_ARTIFACT_FETCH_COMMAND";
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TrainingResultArtifactFetchEnvironment {
+  artifact_fetch_command: Option<String>,
+}
+
+impl TrainingResultArtifactFetchEnvironment {
+  fn from_process() -> Self {
+    Self {
+      artifact_fetch_command: std::env::var(ARTIFACT_FETCH_COMMAND_ENV).ok(),
+    }
+  }
+
+  pub fn with_values(artifact_fetch_command: Option<String>) -> Self {
+    Self {
+      artifact_fetch_command,
+    }
+  }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TrainingResultArtifactFetchInputs {
   pub training_result_manifest_path: PathBuf,
   pub output_dir: PathBuf,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+struct TrainingResultArtifactFetchCommandRequest {
+  pub source_training_result_manifest_path: String,
+  pub source_training_job_manifest_path: String,
+  pub source_training_launch_plan_path: String,
+  pub source_training_package_manifest_path: String,
+  pub source_scene_packet_manifest_path: String,
+  pub source_bundle_manifest_paths: Vec<String>,
+  pub source_run_ids: Vec<String>,
+  pub trainer_backend: String,
+  pub job_backend: String,
+  pub source_job_status: TrainingResultStatus,
+  pub source_result_status: TrainingResultStatus,
+  pub job_id: String,
+  pub job_url: Option<String>,
+  pub source_result_dir: String,
+  pub normalized_result_dir: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+struct TrainingResultArtifactFetchCommandResponse {
+  #[serde(default)]
+  pub message: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -156,6 +203,16 @@ impl TrainingResultArtifactFetchReason {
 pub fn fetch_3dgs_training_result_artifacts(
   inputs: TrainingResultArtifactFetchInputs,
 ) -> TrainingResultArtifactFetchResult<TrainingResultArtifactFetchOutput> {
+  fetch_3dgs_training_result_artifacts_with_environment(
+    inputs,
+    TrainingResultArtifactFetchEnvironment::from_process(),
+  )
+}
+
+pub fn fetch_3dgs_training_result_artifacts_with_environment(
+  inputs: TrainingResultArtifactFetchInputs,
+  env: TrainingResultArtifactFetchEnvironment,
+) -> TrainingResultArtifactFetchResult<TrainingResultArtifactFetchOutput> {
   let result_manifest = read_json_file::<TrainingResultManifest>(
     &inputs.training_result_manifest_path,
     "MC-7 D7 training result manifest",
@@ -187,6 +244,7 @@ pub fn fetch_3dgs_training_result_artifacts(
     .or_else(|| infer_source_result_reason(&result_manifest));
 
   let required_artifacts_present = has_required_source_artifacts(&result_manifest.result_artifacts);
+  let artifact_fetch_command = env.artifact_fetch_command;
 
   let (fetch_status, fetch_reason, normalized_artifacts) = if result_manifest.status
     != TrainingResultStatus::Succeeded
@@ -200,26 +258,7 @@ pub fn fetch_3dgs_training_result_artifacts(
       Some(TrainingResultArtifactFetchReason::SourceResultBlocked),
       Vec::new(),
     )
-  } else if !source_result_dir_exists {
-    warnings.insert(
-      "source result directory is missing; D11 cannot fetch normalized artifacts".to_string(),
-    );
-    (
-      TrainingResultArtifactFetchStatus::Failed,
-      Some(TrainingResultArtifactFetchReason::SourceResultDirectoryMissing),
-      Vec::new(),
-    )
-  } else if !required_artifacts_present {
-    warnings.insert(
-      "source result manifest does not expose the required config/models artifacts for normalization"
-        .to_string(),
-    );
-    (
-      TrainingResultArtifactFetchStatus::Failed,
-      Some(TrainingResultArtifactFetchReason::SourceResultArtifactsMissing),
-      Vec::new(),
-    )
-  } else {
+  } else if source_result_dir_exists && required_artifacts_present {
     match normalize_result_artifacts(&source_result_dir, &normalized_result_dir) {
       Ok(artifacts) => (
         TrainingResultArtifactFetchStatus::Succeeded,
@@ -235,6 +274,86 @@ pub fn fetch_3dgs_training_result_artifacts(
         )
       }
     }
+  } else if let Some(command) = artifact_fetch_command {
+    match run_artifact_fetch_command(
+      &command,
+      &TrainingResultArtifactFetchCommandRequest {
+        source_training_result_manifest_path: inputs
+          .training_result_manifest_path
+          .to_string_lossy()
+          .into_owned(),
+        source_training_job_manifest_path: result_manifest
+          .source_training_job_manifest_path
+          .clone(),
+        source_training_launch_plan_path: result_manifest.source_training_launch_plan_path.clone(),
+        source_training_package_manifest_path: result_manifest
+          .source_training_package_manifest_path
+          .clone(),
+        source_scene_packet_manifest_path: result_manifest
+          .source_scene_packet_manifest_path
+          .clone(),
+        source_bundle_manifest_paths: result_manifest.source_bundle_manifest_paths.clone(),
+        source_run_ids: result_manifest.source_run_ids.clone(),
+        trainer_backend: result_manifest.trainer_backend.clone(),
+        job_backend: result_manifest.job_backend.clone(),
+        source_job_status: map_training_status(result_manifest.source_job_status),
+        source_result_status: result_manifest.status,
+        job_id: result_manifest.job_id.clone(),
+        job_url: result_manifest.job_url.clone(),
+        source_result_dir: result_manifest.result_dir.clone(),
+        normalized_result_dir: normalized_result_dir.to_string_lossy().into_owned(),
+      },
+      &normalized_result_dir,
+    ) {
+      Ok((artifacts, message)) => {
+        if let Some(message) = message {
+          warnings.insert(message);
+        }
+        if !source_result_dir_exists {
+          warnings.insert(
+            "source result directory was not locally readable; MC-8 D3 artifact fetch command materialized normalized artifacts"
+              .to_string(),
+          );
+        } else if !required_artifacts_present {
+          warnings.insert(
+            "source result manifest lacked local required artifact rows; MC-8 D3 artifact fetch command materialized normalized artifacts"
+              .to_string(),
+          );
+        }
+        (
+          TrainingResultArtifactFetchStatus::Succeeded,
+          None,
+          artifacts,
+        )
+      }
+      Err(error) => {
+        warnings.insert(error);
+        (
+          TrainingResultArtifactFetchStatus::Failed,
+          Some(TrainingResultArtifactFetchReason::CopyFailed),
+          Vec::new(),
+        )
+      }
+    }
+  } else if !source_result_dir_exists {
+    warnings.insert(
+      "source result directory is missing; D11 cannot fetch normalized artifacts without an MC-8 D3 artifact fetch command".to_string(),
+    );
+    (
+      TrainingResultArtifactFetchStatus::Failed,
+      Some(TrainingResultArtifactFetchReason::SourceResultDirectoryMissing),
+      Vec::new(),
+    )
+  } else {
+    warnings.insert(
+      "source result manifest does not expose the required config/models artifacts for normalization"
+        .to_string(),
+    );
+    (
+      TrainingResultArtifactFetchStatus::Failed,
+      Some(TrainingResultArtifactFetchReason::SourceResultArtifactsMissing),
+      Vec::new(),
+    )
   };
 
   let manifest = TrainingResultArtifactFetchManifest {
@@ -312,6 +431,16 @@ pub fn fetch_3dgs_training_result_artifacts(
   })
 }
 
+pub fn fetch_3dgs_training_result_artifacts_with_command(
+  inputs: TrainingResultArtifactFetchInputs,
+  artifact_fetch_command: Option<String>,
+) -> TrainingResultArtifactFetchResult<TrainingResultArtifactFetchOutput> {
+  fetch_3dgs_training_result_artifacts_with_environment(
+    inputs,
+    TrainingResultArtifactFetchEnvironment::with_values(artifact_fetch_command),
+  )
+}
+
 fn infer_source_result_reason(manifest: &TrainingResultManifest) -> Option<String> {
   if !PathBuf::from(&manifest.result_dir).is_dir() {
     return Some("result_directory_missing".to_string());
@@ -374,6 +503,114 @@ fn normalize_result_artifacts(
     ));
   }
 
+  Ok(artifacts)
+}
+
+fn run_artifact_fetch_command(
+  command_text: &str,
+  request: &TrainingResultArtifactFetchCommandRequest,
+  normalized_result_dir: &Path,
+) -> TrainingResultArtifactFetchResult<(Vec<TrainingResultNormalizedArtifactRecord>, Option<String>)>
+{
+  if let Some(parent) = normalized_result_dir.parent() {
+    fs::create_dir_all(parent).map_err(|error| {
+      format!(
+        "failed to create MC-8 D3 artifact fetch output parent {}: {error}",
+        parent.display()
+      )
+    })?;
+  }
+
+  let mut command = Command::new("sh");
+  command
+    .arg("-lc")
+    .arg(command_text)
+    .stdin(Stdio::piped())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped());
+
+  let mut child = command.spawn().map_err(|error| {
+    format!("failed to run MC-8 D3 artifact fetch command `{command_text}`: {error}")
+  })?;
+  {
+    let stdin = child
+      .stdin
+      .as_mut()
+      .ok_or_else(|| "failed to open stdin for MC-8 D3 artifact fetch command".to_string())?;
+    serde_json::to_writer(&mut *stdin, request)
+      .map_err(|error| format!("failed to write MC-8 D3 artifact fetch request JSON: {error}"))?;
+    stdin
+      .write_all(b"\n")
+      .map_err(|error| format!("failed to finish MC-8 D3 artifact fetch request JSON: {error}"))?;
+  }
+
+  let output = child.wait_with_output().map_err(|error| {
+    format!("failed to wait for MC-8 D3 artifact fetch command `{command_text}`: {error}")
+  })?;
+  if !output.status.success() {
+    return Err(format!(
+      "MC-8 D3 artifact fetch command `{}` failed with status {}: {}",
+      command_text,
+      output.status,
+      String::from_utf8_lossy(&output.stderr).trim()
+    ));
+  }
+
+  let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+  let message = if stdout.is_empty() {
+    None
+  } else {
+    serde_json::from_str::<TrainingResultArtifactFetchCommandResponse>(&stdout)
+      .map_err(|error| {
+        format!(
+          "failed to parse MC-8 D3 artifact fetch command output for job {}: {error}",
+          request.job_id
+        )
+      })?
+      .message
+  };
+
+  collect_normalized_artifacts(normalized_result_dir).map(|artifacts| (artifacts, message))
+}
+
+fn collect_normalized_artifacts(
+  normalized_result_dir: &Path,
+) -> TrainingResultArtifactFetchResult<Vec<TrainingResultNormalizedArtifactRecord>> {
+  let config = normalized_result_dir.join(RESULT_CONFIG_FILE);
+  if !config.is_file() {
+    return Err(format!(
+      "MC-8 D3 artifact fetch command did not materialize required normalized config {}",
+      config.display()
+    ));
+  }
+  let models = normalized_result_dir.join(RESULT_MODELS_DIR);
+  if !models.is_dir() {
+    return Err(format!(
+      "MC-8 D3 artifact fetch command did not materialize required normalized models directory {}",
+      models.display()
+    ));
+  }
+
+  let mut artifacts = vec![
+    normalized_artifact_record(
+      normalized_result_dir,
+      &config,
+      TrainingResultNormalizedArtifactKind::Config,
+    ),
+    normalized_artifact_record(
+      normalized_result_dir,
+      &models,
+      TrainingResultNormalizedArtifactKind::ModelsDirectory,
+    ),
+  ];
+  let status = normalized_result_dir.join(STATUS_SNAPSHOT_FILE);
+  if status.is_file() {
+    artifacts.push(normalized_artifact_record(
+      normalized_result_dir,
+      &status,
+      TrainingResultNormalizedArtifactKind::StatusSnapshot,
+    ));
+  }
   Ok(artifacts)
 }
 
@@ -527,11 +764,13 @@ mod tests {
     }
     let mut result_artifacts = Vec::new();
     if include_config {
-      fs::write(
-        result_dir.join(RESULT_CONFIG_FILE),
-        b"trainer: splatfacto\n",
-      )
-      .expect("config");
+      if create_result_dir {
+        fs::write(
+          result_dir.join(RESULT_CONFIG_FILE),
+          b"trainer: splatfacto\n",
+        )
+        .expect("config");
+      }
       result_artifacts.push(TrainingResultArtifactRecord {
         relative_path: RESULT_CONFIG_FILE.to_string(),
         absolute_path: result_dir.join(RESULT_CONFIG_FILE).display().to_string(),
@@ -540,12 +779,14 @@ mod tests {
       });
     }
     if include_models {
-      fs::create_dir_all(result_dir.join(RESULT_MODELS_DIR)).expect("models dir");
-      fs::write(
-        result_dir.join(RESULT_MODELS_DIR).join("step-000001.ckpt"),
-        b"checkpoint",
-      )
-      .expect("checkpoint");
+      if create_result_dir {
+        fs::create_dir_all(result_dir.join(RESULT_MODELS_DIR)).expect("models dir");
+        fs::write(
+          result_dir.join(RESULT_MODELS_DIR).join("step-000001.ckpt"),
+          b"checkpoint",
+        )
+        .expect("checkpoint");
+      }
       result_artifacts.push(TrainingResultArtifactRecord {
         relative_path: RESULT_MODELS_DIR.to_string(),
         absolute_path: result_dir.join(RESULT_MODELS_DIR).display().to_string(),
@@ -554,11 +795,13 @@ mod tests {
       });
     }
     if include_status_snapshot {
-      fs::write(
-        result_dir.join(STATUS_SNAPSHOT_FILE),
-        br#"{"status":"succeeded"}"#,
-      )
-      .expect("status snapshot");
+      if create_result_dir {
+        fs::write(
+          result_dir.join(STATUS_SNAPSHOT_FILE),
+          br#"{"status":"succeeded"}"#,
+        )
+        .expect("status snapshot");
+      }
       result_artifacts.push(TrainingResultArtifactRecord {
         relative_path: STATUS_SNAPSHOT_FILE.to_string(),
         absolute_path: result_dir.join(STATUS_SNAPSHOT_FILE).display().to_string(),
@@ -638,6 +881,48 @@ mod tests {
   }
 
   #[test]
+  fn fetch_training_result_artifacts_uses_command_when_local_result_dir_missing() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let manifest_path = write_training_result_manifest_fixture(
+      &temp,
+      TrainingResultStatus::Succeeded,
+      false,
+      true,
+      true,
+      true,
+    );
+    let output_dir = temp.path().join("normalized");
+    let normalized_result_dir = output_dir.join(NORMALIZED_RESULT_ROOT_DIR);
+    let command = "python3 -c \"import json, pathlib, sys; req=json.load(sys.stdin); root=pathlib.Path(req['normalized_result_dir']); (root/'nerfstudio_models').mkdir(parents=True, exist_ok=True); (root/'config.yml').write_text('trainer: remote\\n'); (root/'nerfstudio_models'/'step-000001.ckpt').write_text('checkpoint'); (root/'job_status.json').write_text('{\\\"status\\\":\\\"succeeded\\\"}'); json.dump({'message':'remote artifact fetch bridge'}, sys.stdout)\"".to_string();
+
+    let output = fetch_3dgs_training_result_artifacts_with_command(
+      TrainingResultArtifactFetchInputs {
+        training_result_manifest_path: manifest_path,
+        output_dir,
+      },
+      Some(command),
+    )
+    .expect("command fetch should succeed");
+
+    assert_eq!(
+      output.inspect_report.fetch_status,
+      TrainingResultArtifactFetchStatus::Succeeded
+    );
+    assert_eq!(output.inspect_report.fetch_reason, None);
+    assert!(normalized_result_dir.join(RESULT_CONFIG_FILE).is_file());
+    assert!(normalized_result_dir.join(RESULT_MODELS_DIR).is_dir());
+    assert!(normalized_result_dir.join(STATUS_SNAPSHOT_FILE).is_file());
+    assert_eq!(output.manifest.normalized_artifacts.len(), 3);
+    assert!(
+      output
+        .inspect_report
+        .warnings
+        .iter()
+        .any(|warning| warning.contains("remote artifact fetch bridge"))
+    );
+  }
+
+  #[test]
   fn fetch_training_result_artifacts_blocks_when_source_result_not_succeeded() {
     let temp = tempfile::tempdir().expect("temp dir");
     let manifest_path = write_training_result_manifest_fixture(
@@ -693,5 +978,44 @@ mod tests {
       Some(TrainingResultArtifactFetchReason::SourceResultArtifactsMissing)
     );
     assert!(output.manifest.normalized_artifacts.is_empty());
+  }
+
+  #[test]
+  fn fetch_training_result_artifacts_fails_when_command_output_missing_models() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let manifest_path = write_training_result_manifest_fixture(
+      &temp,
+      TrainingResultStatus::Succeeded,
+      false,
+      true,
+      true,
+      false,
+    );
+    let command = "python3 -c \"import json, pathlib, sys; req=json.load(sys.stdin); root=pathlib.Path(req['normalized_result_dir']); root.mkdir(parents=True, exist_ok=True); (root/'config.yml').write_text('trainer: remote\\n'); json.dump({'message':'missing models'}, sys.stdout)\"".to_string();
+
+    let output = fetch_3dgs_training_result_artifacts_with_command(
+      TrainingResultArtifactFetchInputs {
+        training_result_manifest_path: manifest_path,
+        output_dir: temp.path().join("normalized"),
+      },
+      Some(command),
+    )
+    .expect("failed command fetch still writes outputs");
+
+    assert_eq!(
+      output.inspect_report.fetch_status,
+      TrainingResultArtifactFetchStatus::Failed
+    );
+    assert_eq!(
+      output.inspect_report.fetch_reason,
+      Some(TrainingResultArtifactFetchReason::CopyFailed)
+    );
+    assert!(
+      output
+        .inspect_report
+        .warnings
+        .iter()
+        .any(|warning| warning.contains("did not materialize required normalized models directory"))
+    );
   }
 }

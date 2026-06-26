@@ -819,6 +819,7 @@ mod tests {
       TrainingResultEnvironment {
         endpoint: Some("https://jobs.example.test/v1".to_string()),
         token: Some("secret".to_string()),
+        status_command: None,
       },
     )
     .expect("blocked launch should still write outputs");

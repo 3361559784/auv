@@ -88,11 +88,13 @@ pub use training_result::{
 };
 pub use training_result_artifact::{
   TRAINING_RESULT_ARTIFACT_FETCH_INSPECT_REPORT_SCHEMA_VERSION,
-  TRAINING_RESULT_ARTIFACT_FETCH_MANIFEST_SCHEMA_VERSION, TrainingResultArtifactFetchInputs,
-  TrainingResultArtifactFetchInspectReport, TrainingResultArtifactFetchManifest,
-  TrainingResultArtifactFetchOutput, TrainingResultArtifactFetchReason,
-  TrainingResultArtifactFetchStatus, TrainingResultNormalizedArtifactKind,
-  TrainingResultNormalizedArtifactRecord, fetch_3dgs_training_result_artifacts,
+  TRAINING_RESULT_ARTIFACT_FETCH_MANIFEST_SCHEMA_VERSION, TrainingResultArtifactFetchEnvironment,
+  TrainingResultArtifactFetchInputs, TrainingResultArtifactFetchInspectReport,
+  TrainingResultArtifactFetchManifest, TrainingResultArtifactFetchOutput,
+  TrainingResultArtifactFetchReason, TrainingResultArtifactFetchStatus,
+  TrainingResultNormalizedArtifactKind, TrainingResultNormalizedArtifactRecord,
+  fetch_3dgs_training_result_artifacts, fetch_3dgs_training_result_artifacts_with_command,
+  fetch_3dgs_training_result_artifacts_with_environment,
 };
 pub use types::{
   BlockFace, BlockPosition, InventorySummaryEntry, MinecraftBlockTarget, MinecraftProjectedPoint,

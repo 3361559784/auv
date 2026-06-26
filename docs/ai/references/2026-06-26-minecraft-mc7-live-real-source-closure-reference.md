@@ -8,7 +8,7 @@ This note records the fresh MC-7 real-source closure run. It does not rely on th
 lost historical accepted-only `.auv` lineage. The closure starts from a new
 Minecraft live sweep and proceeds through the accepted-only MC-7 scene packet,
 training package, training launch prep, remote-job envelope, result collection,
-and read-side inspect smoke.
+normalized result artifact fetch, and read-side inspect smoke.
 
 This is not a trained-model quality gate. The final trainer-side state is
 blocked because no remote job configuration is present and `ns-train` is not
@@ -198,6 +198,71 @@ The text inspect output showed all trainer-side read sections:
 Paired inspect artifacts were rendered for the D3 package, D5 launch, D6 job,
 and D7 result records via `paired_report_artifact=` lines.
 
+
+## D11 Normalized Result Artifact Fetch
+
+Command:
+
+```sh
+cargo run --quiet -- minecraft fetch-3dgs-training-result-artifacts \
+  --training-result-manifest .tmp/mc7-live/closure/training-result/minecraft-3dgs-training-result.json \
+  --output-dir .tmp/mc7-live/closure/training-result-artifacts
+```
+
+Recorded run: `run_1782463279232_43757_0`
+
+Key terminal result:
+
+- `fetchStatus = blocked`
+- `sourceResultStatus = blocked`
+- `fetchReason = source_result_blocked`
+- `sourceResultDir = .tmp/mc7-live/closure/training-launch/trainer-output/nerfstudio-splatfacto`
+- `normalizedResultDir = .tmp/mc7-live/closure/training-result-artifacts/normalized-result`
+- `normalizedArtifactCount = 0`
+- `requiredArtifactsPresent = false`
+
+Key inspect result from
+`.tmp/mc7-live/closure/training-result-artifacts/minecraft-3dgs-training-result-artifact-inspect.json`:
+
+- `source_job_status = blocked`
+- `source_result_status = blocked`
+- `source_result_status_reason = result_not_succeeded`
+- `fetch_status = blocked`
+- `fetch_reason = source_result_blocked`
+- `source_result_dir_exists = false`
+- `required_artifacts_present = false`
+- `normalized_artifact_count = 0`
+
+D11 therefore closes the artifact-fetch contract for blocked training results
+without pretending normalized result files exist.
+
+## D12 Normalized Result Artifact Read-side Smoke
+
+Inspect smoke command:
+
+```sh
+cargo run --quiet -- inspect run_1782463279232_43757_0
+```
+
+Output saved locally at:
+
+```text
+.tmp/mc7-live/closure/inspect-smoke/run_1782463279232_43757_0-d11-d12.txt
+```
+
+The text inspect output includes:
+
+- `MC-7 Training Result Artifacts:`
+- `paired_report_artifact=artifact_0002`
+- `fetch_status=blocked`
+- `fetch_reason=source_result_blocked`
+- `source_result_dir_exists=false`
+- `required_artifacts_present=false`
+- `normalized_artifact_count=0`
+
+D12 therefore closes the read-side consumer path for D11 artifacts. This is a
+read/inspect/viewer evidence closure only; it is not model-quality validation.
+
 ## Current Closure State
 
 - Fresh accepted-only real-source lineage exists and was exported through D2.
@@ -206,6 +271,11 @@ and D7 result records via `paired_report_artifact=` lines.
 - D6 remote job envelope is blocked because remote job configuration is absent.
 - D7 result collection records that blocked state instead of pretending a model exists.
 - D8 read-side inspect can consume and display D3/D5/D6/D7 trainer-side lineage.
+- D11 normalized result artifact fetch records the blocked result state instead
+  of claiming `config.yml` or `nerfstudio_models/` were fetched.
+- D12 read-side inspect consumes the D11 normalized result artifact manifest and
+  inspect report, including `fetch_status`, `fetch_reason`,
+  `required_artifacts_present`, and `normalized_artifact_count`.
 
 This closure does not claim trained splat quality, trainer success, or model
 readiness. The next real trainer step requires configuring a remote job backend

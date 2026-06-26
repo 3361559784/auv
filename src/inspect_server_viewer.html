@@ -1302,6 +1302,15 @@
     return !!artifact && artifact.role === "minecraft-3dgs-training-result-artifact-manifest";
   }
 
+
+  function isMinecraftTrainingResultSemanticManifestArtifact(artifact) {
+    return !!artifact && artifact.role === "minecraft-3dgs-training-result-semantic";
+  }
+
+  function isMinecraftTrainingResultSemanticInspectArtifact(artifact) {
+    return !!artifact && artifact.role === "minecraft-3dgs-training-result-semantic-inspect";
+  }
+
   function isMinecraftTrainingResultArtifactFetchInspectArtifact(artifact) {
     return !!artifact && artifact.role === "minecraft-3dgs-training-result-artifact-inspect";
   }
@@ -1759,6 +1768,52 @@
         ["known_limits", countArray(parsed.known_limits)],
       ]);
     }
+
+    if (isMinecraftTrainingResultSemanticManifestArtifact(artifact)) {
+      return renderKeyValueSummary([
+        ["kind", "training result semantic manifest"],
+        ["schema", parsed.schema_version],
+        ["source_training_result_artifact_manifest", parsed.source_training_result_artifact_manifest_path],
+        ["source_training_result_manifest", parsed.source_training_result_manifest_path],
+        ["source_runs", countArray(parsed.source_run_ids)],
+        ["trainer_backend", parsed.trainer_backend],
+        ["job_backend", parsed.job_backend],
+        ["source_result_status", parsed.source_result_status],
+        ["normalized_result_dir", parsed.normalized_result_dir],
+        ["semantic_status", parsed.semantic_status],
+        ["semantic_reason", parsed.semantic_reason],
+        ["config_path", parsed.config_path],
+        ["models_dir_path", parsed.models_dir_path],
+        ["status_snapshot_path", parsed.status_snapshot_path],
+        ["config_trainer", parsed.config_trainer],
+        ["checkpoint_count", parsed.checkpoint_count],
+        ["checkpoint_files", countArray(parsed.checkpoint_files)],
+        ["known_limits", countArray(parsed.known_limits)],
+      ]);
+    }
+    if (isMinecraftTrainingResultSemanticInspectArtifact(artifact)) {
+      return renderKeyValueSummary([
+        ["kind", "training result semantic inspect report"],
+        ["schema", parsed.schema_version],
+        ["manifest_path", parsed.training_result_semantic_manifest_path],
+        ["source_training_result_artifact_manifest", parsed.source_training_result_artifact_manifest_path],
+        ["source_runs", countArray(parsed.source_run_ids)],
+        ["trainer_backend", parsed.trainer_backend],
+        ["job_backend", parsed.job_backend],
+        ["source_result_status", parsed.source_result_status],
+        ["normalized_result_dir", parsed.normalized_result_dir],
+        ["semantic_status", parsed.semantic_status],
+        ["semantic_reason", parsed.semantic_reason],
+        ["config_yaml_parsed", parsed.config_yaml_parsed],
+        ["config_trainer", parsed.config_trainer],
+        ["config_backend_matches", parsed.config_backend_matches],
+        ["models_dir_readable", parsed.models_dir_readable],
+        ["status_snapshot_present", parsed.status_snapshot_present],
+        ["checkpoint_count", parsed.checkpoint_count],
+        ["warnings", countArray(parsed.warnings)],
+        ["known_limits", countArray(parsed.known_limits)],
+      ]);
+    }
     return null;
   }
 
@@ -2015,6 +2070,8 @@
             || isMinecraftTrainingResultInspectArtifact(artifact)
             || isMinecraftTrainingResultArtifactFetchManifestArtifact(artifact)
             || isMinecraftTrainingResultArtifactFetchInspectArtifact(artifact)
+            || isMinecraftTrainingResultSemanticManifestArtifact(artifact)
+            || isMinecraftTrainingResultSemanticInspectArtifact(artifact)
           )) {
             const summaryCard = renderTrainingPackageSummaryCard(artifact, parsed)
               || renderTrainerLineageSummaryCard(artifact, parsed);

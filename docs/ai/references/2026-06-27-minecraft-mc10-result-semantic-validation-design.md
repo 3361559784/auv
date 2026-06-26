@@ -89,7 +89,7 @@ Status model:
 - backend hint uses top-level `trainer` scalar only
 - no render preview
 - no checkpoint semantic validation
-- no dedicated inspect/read-side summary (MC-11)
+- read-side inspect/viewer summary consumption is MC-11; see `docs/ai/references/2026-06-27-minecraft-mc11-semantic-read-side-inspect-consumer-design.md`
 
 ## Relationship to MC-9 / MC-11
 

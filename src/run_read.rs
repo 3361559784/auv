@@ -33,6 +33,8 @@ use auv_game_minecraft::{
   TrainingLaunchJobManifest, TrainingLaunchPlanManifest, TrainingPackageCounts,
   TrainingPackageInspectReport, TrainingPackageManifest, TrainingResultArtifactFetchInspectReport,
   TrainingResultArtifactFetchManifest, TrainingResultInspectReport, TrainingResultManifest,
+  TrainingResultSemanticCheckpointRecord, TrainingResultSemanticInspectReport,
+  TrainingResultSemanticManifest,
 };
 use auv_tracing_driver::store::{CanonicalRun, LocalStore};
 use auv_tracing_driver::trace::ArtifactRecordV1Alpha1;
@@ -110,6 +112,20 @@ pub struct MinecraftTrainingResultArtifactFetchManifestLineage {
 pub struct MinecraftTrainingResultArtifactFetchInspectReportLineage {
   pub artifact: ArtifactRefLineage,
   pub report: Option<MinecraftTrainingResultArtifactFetchInspectReportSummary>,
+  pub issue: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+pub struct MinecraftTrainingResultSemanticManifestLineage {
+  pub artifact: ArtifactRefLineage,
+  pub manifest: Option<MinecraftTrainingResultSemanticManifestSummary>,
+  pub issue: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+pub struct MinecraftTrainingResultSemanticInspectReportLineage {
+  pub artifact: ArtifactRefLineage,
+  pub report: Option<MinecraftTrainingResultSemanticInspectReportSummary>,
   pub issue: Option<String>,
 }
 
@@ -345,6 +361,66 @@ pub struct MinecraftTrainingResultNormalizedArtifactSummary {
   pub absolute_path: String,
   pub readable: bool,
   pub byte_size: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct MinecraftTrainingResultSemanticCheckpointSummary {
+  pub relative_path: String,
+  pub byte_size: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct MinecraftTrainingResultSemanticManifestSummary {
+  pub schema_version: u32,
+  pub source_training_result_artifact_manifest_path: String,
+  pub source_training_result_manifest_path: String,
+  pub source_training_job_manifest_path: String,
+  pub source_training_launch_plan_path: String,
+  pub source_training_package_manifest_path: String,
+  pub source_scene_packet_manifest_path: String,
+  pub source_bundle_manifest_paths: Vec<String>,
+  pub source_run_ids: Vec<String>,
+  pub trainer_backend: String,
+  pub job_backend: String,
+  pub source_result_status: String,
+  pub normalized_result_dir: String,
+  pub semantic_status: String,
+  pub semantic_reason: Option<String>,
+  pub config_path: String,
+  pub models_dir_path: String,
+  pub status_snapshot_path: Option<String>,
+  pub config_trainer: Option<String>,
+  pub checkpoint_files: Vec<MinecraftTrainingResultSemanticCheckpointSummary>,
+  pub checkpoint_count: usize,
+  pub known_limits: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct MinecraftTrainingResultSemanticInspectReportSummary {
+  pub schema_version: u32,
+  pub training_result_semantic_manifest_path: String,
+  pub source_training_result_artifact_manifest_path: String,
+  pub source_training_result_manifest_path: String,
+  pub source_training_job_manifest_path: String,
+  pub source_training_launch_plan_path: String,
+  pub source_training_package_manifest_path: String,
+  pub source_scene_packet_manifest_path: String,
+  pub source_bundle_manifest_paths: Vec<String>,
+  pub source_run_ids: Vec<String>,
+  pub trainer_backend: String,
+  pub job_backend: String,
+  pub source_result_status: String,
+  pub normalized_result_dir: String,
+  pub semantic_status: String,
+  pub semantic_reason: Option<String>,
+  pub config_yaml_parsed: bool,
+  pub config_trainer: Option<String>,
+  pub config_backend_matches: bool,
+  pub models_dir_readable: bool,
+  pub status_snapshot_present: bool,
+  pub checkpoint_count: usize,
+  pub warnings: Vec<String>,
+  pub known_limits: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -763,6 +839,22 @@ pub(crate) fn list_minecraft_training_result_artifact_fetch_inspect_reports(
   extract_minecraft_training_result_artifact_fetch_inspect_reports(store, &run)
 }
 
+pub(crate) fn list_minecraft_training_result_semantic_manifests(
+  store: &LocalStore,
+  run_id: &str,
+) -> AuvResult<Vec<MinecraftTrainingResultSemanticManifestLineage>> {
+  let run = store.read_run(run_id)?;
+  extract_minecraft_training_result_semantic_manifests(store, &run)
+}
+
+pub(crate) fn list_minecraft_training_result_semantic_inspect_reports(
+  store: &LocalStore,
+  run_id: &str,
+) -> AuvResult<Vec<MinecraftTrainingResultSemanticInspectReportLineage>> {
+  let run = store.read_run(run_id)?;
+  extract_minecraft_training_result_semantic_inspect_reports(store, &run)
+}
+
 pub(crate) fn list_minecraft_training_package_manifests(
   store: &LocalStore,
   run_id: &str,
@@ -1168,6 +1260,94 @@ pub(crate) fn extract_minecraft_training_result_artifact_fetch_inspect_reports(
         issue: None,
       }),
       Err(error) => reports.push(MinecraftTrainingResultArtifactFetchInspectReportLineage {
+        artifact: artifact_ref,
+        report: None,
+        issue: Some(error),
+      }),
+    }
+  }
+  Ok(reports)
+}
+
+pub(crate) fn extract_minecraft_training_result_semantic_manifests(
+  store: &LocalStore,
+  run: &CanonicalRun,
+) -> AuvResult<Vec<MinecraftTrainingResultSemanticManifestLineage>> {
+  let mut manifests = Vec::new();
+  for artifact in &run.artifacts {
+    if artifact.role != crate::minecraft::MINECRAFT_3DGS_TRAINING_RESULT_SEMANTIC_ROLE {
+      continue;
+    }
+    let artifact_ref = artifact_record_lineage(run.run.run_id.clone(), artifact);
+    if !is_json_mime(&artifact.mime_type) {
+      manifests.push(MinecraftTrainingResultSemanticManifestLineage {
+        artifact: artifact_ref,
+        manifest: None,
+        issue: Some(format!(
+          "minecraft training result semantic manifest mime_type {} is not JSON",
+          artifact.mime_type
+        )),
+      });
+      continue;
+    }
+    let parsed = read_artifact_json::<TrainingResultSemanticManifest>(
+      store,
+      run.run.run_id.as_str(),
+      artifact,
+      crate::minecraft::MINECRAFT_3DGS_TRAINING_RESULT_SEMANTIC_ROLE,
+    )
+    .map(MinecraftTrainingResultSemanticManifestSummary::from);
+    match parsed {
+      Ok(manifest) => manifests.push(MinecraftTrainingResultSemanticManifestLineage {
+        artifact: artifact_ref,
+        manifest: Some(manifest),
+        issue: None,
+      }),
+      Err(error) => manifests.push(MinecraftTrainingResultSemanticManifestLineage {
+        artifact: artifact_ref,
+        manifest: None,
+        issue: Some(error),
+      }),
+    }
+  }
+  Ok(manifests)
+}
+
+pub(crate) fn extract_minecraft_training_result_semantic_inspect_reports(
+  store: &LocalStore,
+  run: &CanonicalRun,
+) -> AuvResult<Vec<MinecraftTrainingResultSemanticInspectReportLineage>> {
+  let mut reports = Vec::new();
+  for artifact in &run.artifacts {
+    if artifact.role != crate::minecraft::MINECRAFT_3DGS_TRAINING_RESULT_SEMANTIC_INSPECT_ROLE {
+      continue;
+    }
+    let artifact_ref = artifact_record_lineage(run.run.run_id.clone(), artifact);
+    if !is_json_mime(&artifact.mime_type) {
+      reports.push(MinecraftTrainingResultSemanticInspectReportLineage {
+        artifact: artifact_ref,
+        report: None,
+        issue: Some(format!(
+          "minecraft training result semantic inspect mime_type {} is not JSON",
+          artifact.mime_type
+        )),
+      });
+      continue;
+    }
+    let parsed = read_artifact_json::<TrainingResultSemanticInspectReport>(
+      store,
+      run.run.run_id.as_str(),
+      artifact,
+      crate::minecraft::MINECRAFT_3DGS_TRAINING_RESULT_SEMANTIC_INSPECT_ROLE,
+    )
+    .map(MinecraftTrainingResultSemanticInspectReportSummary::from);
+    match parsed {
+      Ok(report) => reports.push(MinecraftTrainingResultSemanticInspectReportLineage {
+        artifact: artifact_ref,
+        report: Some(report),
+        issue: None,
+      }),
+      Err(error) => reports.push(MinecraftTrainingResultSemanticInspectReportLineage {
         artifact: artifact_ref,
         report: None,
         issue: Some(error),
@@ -2559,6 +2739,89 @@ impl From<TrainingResultArtifactFetchInspectReport>
   }
 }
 
+impl From<TrainingResultSemanticCheckpointRecord>
+  for MinecraftTrainingResultSemanticCheckpointSummary
+{
+  fn from(value: TrainingResultSemanticCheckpointRecord) -> Self {
+    Self {
+      relative_path: value.relative_path,
+      byte_size: value.byte_size,
+    }
+  }
+}
+
+impl From<TrainingResultSemanticManifest> for MinecraftTrainingResultSemanticManifestSummary {
+  fn from(value: TrainingResultSemanticManifest) -> Self {
+    Self {
+      schema_version: value.schema_version,
+      source_training_result_artifact_manifest_path: value
+        .source_training_result_artifact_manifest_path,
+      source_training_result_manifest_path: value.source_training_result_manifest_path,
+      source_training_job_manifest_path: value.source_training_job_manifest_path,
+      source_training_launch_plan_path: value.source_training_launch_plan_path,
+      source_training_package_manifest_path: value.source_training_package_manifest_path,
+      source_scene_packet_manifest_path: value.source_scene_packet_manifest_path,
+      source_bundle_manifest_paths: value.source_bundle_manifest_paths,
+      source_run_ids: value.source_run_ids,
+      trainer_backend: value.trainer_backend,
+      job_backend: value.job_backend,
+      source_result_status: value.source_result_status.as_str().to_string(),
+      normalized_result_dir: value.normalized_result_dir,
+      semantic_status: value.semantic_status.as_str().to_string(),
+      semantic_reason: value
+        .semantic_reason
+        .map(|reason| reason.as_str().to_string()),
+      config_path: value.config_path,
+      models_dir_path: value.models_dir_path,
+      status_snapshot_path: value.status_snapshot_path,
+      config_trainer: value.config_trainer,
+      checkpoint_files: value
+        .checkpoint_files
+        .into_iter()
+        .map(MinecraftTrainingResultSemanticCheckpointSummary::from)
+        .collect(),
+      checkpoint_count: value.checkpoint_count,
+      known_limits: value.known_limits,
+    }
+  }
+}
+
+impl From<TrainingResultSemanticInspectReport>
+  for MinecraftTrainingResultSemanticInspectReportSummary
+{
+  fn from(value: TrainingResultSemanticInspectReport) -> Self {
+    Self {
+      schema_version: value.schema_version,
+      training_result_semantic_manifest_path: value.training_result_semantic_manifest_path,
+      source_training_result_artifact_manifest_path: value
+        .source_training_result_artifact_manifest_path,
+      source_training_result_manifest_path: value.source_training_result_manifest_path,
+      source_training_job_manifest_path: value.source_training_job_manifest_path,
+      source_training_launch_plan_path: value.source_training_launch_plan_path,
+      source_training_package_manifest_path: value.source_training_package_manifest_path,
+      source_scene_packet_manifest_path: value.source_scene_packet_manifest_path,
+      source_bundle_manifest_paths: value.source_bundle_manifest_paths,
+      source_run_ids: value.source_run_ids,
+      trainer_backend: value.trainer_backend,
+      job_backend: value.job_backend,
+      source_result_status: value.source_result_status.as_str().to_string(),
+      normalized_result_dir: value.normalized_result_dir,
+      semantic_status: value.semantic_status.as_str().to_string(),
+      semantic_reason: value
+        .semantic_reason
+        .map(|reason| reason.as_str().to_string()),
+      config_yaml_parsed: value.config_yaml_parsed,
+      config_trainer: value.config_trainer,
+      config_backend_matches: value.config_backend_matches,
+      models_dir_readable: value.models_dir_readable,
+      status_snapshot_present: value.status_snapshot_present,
+      checkpoint_count: value.checkpoint_count,
+      warnings: value.warnings,
+      known_limits: value.known_limits,
+    }
+  }
+}
+
 impl From<auv_game_minecraft::TrainingResultNormalizedArtifactRecord>
   for MinecraftTrainingResultNormalizedArtifactSummary
 {
@@ -2614,7 +2877,9 @@ mod tests {
     extract_minecraft_training_result_artifact_fetch_inspect_reports,
     extract_minecraft_training_result_artifact_fetch_manifests,
     extract_minecraft_training_result_inspect_reports, extract_minecraft_training_result_manifests,
-    extract_observation_snapshots, extract_verifications, list_candidate_action_decision_lineage,
+    extract_minecraft_training_result_semantic_inspect_reports,
+    extract_minecraft_training_result_semantic_manifests, extract_observation_snapshots,
+    extract_verifications, list_candidate_action_decision_lineage,
     list_candidate_action_execution_lineage, list_candidate_promotion_lineage,
     list_detector_recognition_lineage, list_minecraft_spatial_bundle_manifests,
     list_minecraft_training_job_inspect_reports, list_minecraft_training_job_manifests,
@@ -2623,7 +2888,9 @@ mod tests {
     list_minecraft_training_result_artifact_fetch_inspect_reports,
     list_minecraft_training_result_artifact_fetch_manifests,
     list_minecraft_training_result_inspect_reports, list_minecraft_training_result_manifests,
-    list_observation_snapshots, list_verifications,
+    list_minecraft_training_result_semantic_inspect_reports,
+    list_minecraft_training_result_semantic_manifests, list_observation_snapshots,
+    list_verifications,
   };
   use crate::action_resolver_decision::{ActionResolverDecision, ActionResolverDecisionInput};
   use crate::candidate_action_decision::{
@@ -2659,7 +2926,9 @@ mod tests {
     TrainingResultArtifactFetchInspectReport, TrainingResultArtifactFetchManifest,
     TrainingResultArtifactFetchReason, TrainingResultArtifactFetchStatus,
     TrainingResultArtifactRecord, TrainingResultInspectReport, TrainingResultManifest,
-    TrainingResultNormalizedArtifactKind, TrainingResultReason, TrainingResultStatus,
+    TrainingResultNormalizedArtifactKind, TrainingResultReason,
+    TrainingResultSemanticInspectReport, TrainingResultSemanticManifest,
+    TrainingResultSemanticStatus, TrainingResultStatus,
   };
   use auv_tracing_driver::ArtifactFileSource;
   use auv_tracing_driver::store::{CanonicalRun, LocalStore};
@@ -3086,6 +3355,269 @@ mod tests {
     let _ = fs::remove_dir_all(root);
   }
 
+  #[test]
+  fn minecraft_training_result_semantic_manifest_lineage_reads_summary() {
+    let root = temp_dir("run-read-mc10-semantic-manifest");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let run = dummy_run("run_read_mc10_semantic_manifest");
+    let span = dummy_span(&run.root_span_id);
+
+    let manifest = TrainingResultSemanticManifest {
+      schema_version: 1,
+      generated_at_millis: 99,
+      source_training_result_artifact_manifest_path:
+        "/tmp/result/minecraft-3dgs-training-result-artifact-manifest.json".to_string(),
+      source_training_result_manifest_path: "/tmp/result/minecraft-3dgs-training-result.json"
+        .to_string(),
+      source_training_job_manifest_path: "/tmp/job/minecraft-3dgs-training-job.json".to_string(),
+      source_training_launch_plan_path: "/tmp/launch/minecraft-3dgs-training-launch-plan.json"
+        .to_string(),
+      source_training_package_manifest_path: "/tmp/package/run.json".to_string(),
+      source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
+      source_bundle_manifest_paths: vec!["/tmp/bundle-a/run.json".to_string()],
+      source_run_ids: vec!["run-a".to_string(), "run-b".to_string()],
+      trainer_backend: "nerfstudio.splatfacto".to_string(),
+      job_backend: "remote".to_string(),
+      source_result_status: TrainingResultStatus::Succeeded,
+      normalized_result_dir: "/tmp/result/normalized-result".to_string(),
+      semantic_status: TrainingResultSemanticStatus::Ready,
+      semantic_reason: None,
+      config_path: "/tmp/result/normalized-result/config.yml".to_string(),
+      models_dir_path: "/tmp/result/normalized-result/nerfstudio_models".to_string(),
+      status_snapshot_path: Some("/tmp/result/normalized-result/job_status.json".to_string()),
+      config_trainer: Some("nerfstudio.splatfacto".to_string()),
+      checkpoint_files: vec![auv_game_minecraft::TrainingResultSemanticCheckpointRecord {
+        relative_path: "step-000001.ckpt".to_string(),
+        byte_size: 32,
+      }],
+      checkpoint_count: 1,
+      known_limits: vec!["semantic gate only".to_string()],
+    };
+
+    let artifacts = vec![stage_json_artifact(
+      &store,
+      &root,
+      &run.run_id,
+      &span.span_id,
+      0,
+      crate::minecraft::MINECRAFT_3DGS_TRAINING_RESULT_SEMANTIC_ROLE,
+      "minecraft-3dgs-training-result-semantic.json",
+      &manifest,
+    )];
+
+    store
+      .write_run_snapshot(&CanonicalRun {
+        run,
+        spans: vec![span],
+        events: Vec::new(),
+        artifacts,
+      })
+      .expect("run snapshot should persist");
+
+    let canonical = store
+      .read_run("run_read_mc10_semantic_manifest")
+      .expect("run should read back");
+
+    let extracted = extract_minecraft_training_result_semantic_manifests(&store, &canonical)
+      .expect("manifest should extract");
+    assert_eq!(extracted.len(), 1);
+    let summary = extracted[0]
+      .manifest
+      .as_ref()
+      .expect("summary should be present");
+    assert_eq!(summary.semantic_status, "ready");
+    assert_eq!(summary.checkpoint_count, 1);
+    assert_eq!(summary.checkpoint_files.len(), 1);
+    assert_eq!(
+      summary.checkpoint_files[0].relative_path,
+      "step-000001.ckpt"
+    );
+    let serialized = serde_json::to_string(summary).expect("summary should serialize");
+    assert!(!serialized.contains("generated_at_millis"));
+
+    let listed =
+      list_minecraft_training_result_semantic_manifests(&store, "run_read_mc10_semantic_manifest")
+        .expect("manifest should list");
+    assert_eq!(listed, extracted);
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn minecraft_training_result_semantic_inspect_report_lineage_reads_summary() {
+    let root = temp_dir("run-read-mc10-semantic-inspect");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let run = dummy_run("run_read_mc10_semantic_inspect");
+    let span = dummy_span(&run.root_span_id);
+
+    let report = TrainingResultSemanticInspectReport {
+      schema_version: 1,
+      generated_at_millis: 99,
+      training_result_semantic_manifest_path:
+        "/tmp/result/minecraft-3dgs-training-result-semantic.json".to_string(),
+      source_training_result_artifact_manifest_path:
+        "/tmp/result/minecraft-3dgs-training-result-artifact-manifest.json".to_string(),
+      source_training_result_manifest_path: "/tmp/result/minecraft-3dgs-training-result.json"
+        .to_string(),
+      source_training_job_manifest_path: "/tmp/job/minecraft-3dgs-training-job.json".to_string(),
+      source_training_launch_plan_path: "/tmp/launch/minecraft-3dgs-training-launch-plan.json"
+        .to_string(),
+      source_training_package_manifest_path: "/tmp/package/run.json".to_string(),
+      source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
+      source_bundle_manifest_paths: vec!["/tmp/bundle-a/run.json".to_string()],
+      source_run_ids: vec!["run-a".to_string()],
+      trainer_backend: "nerfstudio.splatfacto".to_string(),
+      job_backend: "remote".to_string(),
+      source_result_status: TrainingResultStatus::Succeeded,
+      normalized_result_dir: "/tmp/result/normalized-result".to_string(),
+      semantic_status: TrainingResultSemanticStatus::Ready,
+      semantic_reason: None,
+      config_yaml_parsed: true,
+      config_trainer: Some("nerfstudio.splatfacto".to_string()),
+      config_backend_matches: true,
+      models_dir_readable: true,
+      status_snapshot_present: true,
+      checkpoint_count: 1,
+      warnings: vec![],
+      known_limits: vec!["semantic inspect only".to_string()],
+    };
+
+    let artifacts = vec![stage_json_artifact(
+      &store,
+      &root,
+      &run.run_id,
+      &span.span_id,
+      0,
+      crate::minecraft::MINECRAFT_3DGS_TRAINING_RESULT_SEMANTIC_INSPECT_ROLE,
+      "minecraft-3dgs-training-result-semantic-inspect.json",
+      &report,
+    )];
+
+    store
+      .write_run_snapshot(&CanonicalRun {
+        run,
+        spans: vec![span],
+        events: Vec::new(),
+        artifacts,
+      })
+      .expect("run snapshot should persist");
+
+    let canonical = store
+      .read_run("run_read_mc10_semantic_inspect")
+      .expect("run should read back");
+
+    let extracted = extract_minecraft_training_result_semantic_inspect_reports(&store, &canonical)
+      .expect("report should extract");
+    assert_eq!(extracted.len(), 1);
+    let summary = extracted[0]
+      .report
+      .as_ref()
+      .expect("summary should be present");
+    assert!(summary.config_yaml_parsed);
+    assert!(summary.config_backend_matches);
+    assert_eq!(summary.checkpoint_count, 1);
+    let serialized = serde_json::to_string(summary).expect("summary should serialize");
+    assert!(!serialized.contains("generated_at_millis"));
+
+    let listed = list_minecraft_training_result_semantic_inspect_reports(
+      &store,
+      "run_read_mc10_semantic_inspect",
+    )
+    .expect("report should list");
+    assert_eq!(listed, extracted);
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn minecraft_training_result_semantic_manifest_lineage_reports_non_json_mime() {
+    let root = temp_dir("run-read-mc10-semantic-manifest-non-json");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let run = dummy_run("run_read_mc10_semantic_manifest_non_json");
+    let span = dummy_span(&run.root_span_id);
+
+    let artifacts = vec![stage_text_artifact(
+      &store,
+      &root,
+      &run.run_id,
+      &span.span_id,
+      0,
+      crate::minecraft::MINECRAFT_3DGS_TRAINING_RESULT_SEMANTIC_ROLE,
+      "minecraft-3dgs-training-result-semantic.txt",
+      "not json",
+    )];
+
+    store
+      .write_run_snapshot(&CanonicalRun {
+        run,
+        spans: vec![span],
+        events: Vec::new(),
+        artifacts,
+      })
+      .expect("run snapshot should persist");
+
+    let extracted = list_minecraft_training_result_semantic_manifests(
+      &store,
+      "run_read_mc10_semantic_manifest_non_json",
+    )
+    .expect("manifest lineage should list");
+    assert_eq!(extracted.len(), 1);
+    assert!(extracted[0].manifest.is_none());
+    assert!(
+      extracted[0]
+        .issue
+        .as_deref()
+        .is_some_and(|issue| issue.contains("mime_type text/plain is not JSON"))
+    );
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn minecraft_training_result_semantic_inspect_report_lineage_reports_parse_failure() {
+    let root = temp_dir("run-read-mc10-semantic-inspect-malformed");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let run = dummy_run("run_read_mc10_semantic_inspect_malformed");
+    let span = dummy_span(&run.root_span_id);
+
+    let mut inspect_artifact = stage_text_artifact(
+      &store,
+      &root,
+      &run.run_id,
+      &span.span_id,
+      0,
+      crate::minecraft::MINECRAFT_3DGS_TRAINING_RESULT_SEMANTIC_INSPECT_ROLE,
+      "minecraft-3dgs-training-result-semantic-inspect.json",
+      "{ malformed",
+    );
+    inspect_artifact.mime_type = "application/json".to_string();
+
+    store
+      .write_run_snapshot(&CanonicalRun {
+        run,
+        spans: vec![span],
+        events: Vec::new(),
+        artifacts: vec![inspect_artifact],
+      })
+      .expect("run snapshot should persist");
+
+    let extracted = list_minecraft_training_result_semantic_inspect_reports(
+      &store,
+      "run_read_mc10_semantic_inspect_malformed",
+    )
+    .expect("report lineage should list");
+    assert_eq!(extracted.len(), 1);
+    assert!(extracted[0].report.is_none());
+    assert!(
+      extracted[0]
+        .issue
+        .as_deref()
+        .unwrap_or_default()
+        .contains("failed to parse")
+    );
+
+    let _ = fs::remove_dir_all(root);
+  }
   #[test]
   fn detector_recognition_lineage_extracts_ready_and_error_states() {
     let root = temp_dir("run-read-detector-recognition");

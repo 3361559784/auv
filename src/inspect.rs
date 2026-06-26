@@ -20,7 +20,8 @@ use crate::run_read::{
   MinecraftTrainingPackageInspectReportLineage, MinecraftTrainingPackageManifestLineage,
   MinecraftTrainingResultArtifactFetchInspectReportLineage,
   MinecraftTrainingResultArtifactFetchManifestLineage, MinecraftTrainingResultInspectReportLineage,
-  MinecraftTrainingResultManifestLineage, list_minecraft_projection_artifacts,
+  MinecraftTrainingResultManifestLineage, MinecraftTrainingResultSemanticInspectReportLineage,
+  MinecraftTrainingResultSemanticManifestLineage, list_minecraft_projection_artifacts,
   list_minecraft_spatial_bundle_manifests, list_minecraft_telemetry_sample_artifacts,
   list_minecraft_training_job_inspect_reports, list_minecraft_training_job_manifests,
   list_minecraft_training_launch_inspect_reports, list_minecraft_training_launch_manifests,
@@ -28,6 +29,8 @@ use crate::run_read::{
   list_minecraft_training_result_artifact_fetch_inspect_reports,
   list_minecraft_training_result_artifact_fetch_manifests,
   list_minecraft_training_result_inspect_reports, list_minecraft_training_result_manifests,
+  list_minecraft_training_result_semantic_inspect_reports,
+  list_minecraft_training_result_semantic_manifests,
 };
 use auv_tracing_driver::store::{CanonicalRun, LocalStore};
 use std::collections::BTreeSet;
@@ -119,6 +122,10 @@ pub fn inspect_run(store: &LocalStore, run_id: &str) -> AuvResult<String> {
     list_minecraft_training_result_artifact_fetch_manifests(store, run_id)?;
   let minecraft_training_result_artifact_fetch_inspect_reports =
     list_minecraft_training_result_artifact_fetch_inspect_reports(store, run_id)?;
+  let minecraft_training_result_semantic_manifests =
+    list_minecraft_training_result_semantic_manifests(store, run_id)?;
+  let minecraft_training_result_semantic_inspect_reports =
+    list_minecraft_training_result_semantic_inspect_reports(store, run_id)?;
   Ok(render_run_text(
     &canonical,
     &verifications,
@@ -140,6 +147,8 @@ pub fn inspect_run(store: &LocalStore, run_id: &str) -> AuvResult<String> {
     &minecraft_training_result_inspect_reports,
     &minecraft_training_result_artifact_fetch_manifests,
     &minecraft_training_result_artifact_fetch_inspect_reports,
+    &minecraft_training_result_semantic_manifests,
+    &minecraft_training_result_semantic_inspect_reports,
   ))
 }
 
@@ -164,6 +173,8 @@ pub fn render_run_text(
   minecraft_training_result_inspect_reports: &[MinecraftTrainingResultInspectReportLineage],
   minecraft_training_result_artifact_fetch_manifests: &[MinecraftTrainingResultArtifactFetchManifestLineage],
   minecraft_training_result_artifact_fetch_inspect_reports: &[MinecraftTrainingResultArtifactFetchInspectReportLineage],
+  minecraft_training_result_semantic_manifests: &[MinecraftTrainingResultSemanticManifestLineage],
+  minecraft_training_result_semantic_inspect_reports: &[MinecraftTrainingResultSemanticInspectReportLineage],
 ) -> String {
   let mut output = format!(
     "Run {}\nType: {}\nStatus: {}\nState: {}\n",
@@ -1256,6 +1267,171 @@ pub fn render_run_text(
     }
   }
 
+  output.push_str("\nMC-10 Training Result Semantics:\n");
+  if minecraft_training_result_semantic_manifests.is_empty()
+    && minecraft_training_result_semantic_inspect_reports.is_empty()
+  {
+    output.push_str("- none\n");
+  } else {
+    let mut rendered_report_artifacts = BTreeSet::new();
+    for manifest_lineage in minecraft_training_result_semantic_manifests {
+      let paired_report = manifest_lineage.manifest.as_ref().and_then(|manifest| {
+        unique_matching_report(
+          minecraft_training_result_semantic_inspect_reports,
+          |lineage| {
+            lineage.report.as_ref().is_some_and(|report| {
+              report.source_training_result_artifact_manifest_path
+                == manifest.source_training_result_artifact_manifest_path
+                && report.source_training_result_manifest_path
+                  == manifest.source_training_result_manifest_path
+                && report.source_training_job_manifest_path
+                  == manifest.source_training_job_manifest_path
+                && report.source_training_launch_plan_path
+                  == manifest.source_training_launch_plan_path
+                && report.source_scene_packet_manifest_path
+                  == manifest.source_scene_packet_manifest_path
+                && report.source_run_ids == manifest.source_run_ids
+            })
+          },
+        )
+      });
+      if let Some(report_lineage) = paired_report {
+        rendered_report_artifacts.insert(report_lineage.artifact.artifact_id.to_string());
+      }
+      if let Some(manifest) = &manifest_lineage.manifest {
+        output.push_str(&format!(
+          "- manifest_artifact={} role={} path={} schema={} source_training_result_artifact_manifest={} source_training_result_manifest={} source_runs={} trainer_backend={} job_backend={} source_result_status={} semantic_status={} semantic_reason={} normalized_result_dir={} config_path={} models_dir_path={} status_snapshot_path={} config_trainer={} checkpoint_count={} paired_report_artifact={} issue={}\n",
+          manifest_lineage.artifact.artifact_id,
+          manifest_lineage.artifact.role.as_deref().unwrap_or("n/a"),
+          manifest_lineage.artifact.path.as_deref().unwrap_or("n/a"),
+          manifest.schema_version,
+          manifest.source_training_result_artifact_manifest_path,
+          manifest.source_training_result_manifest_path,
+          manifest.source_run_ids.len(),
+          manifest.trainer_backend,
+          manifest.job_backend,
+          manifest.source_result_status,
+          manifest.semantic_status,
+          manifest.semantic_reason.as_deref().unwrap_or("n/a"),
+          manifest.normalized_result_dir,
+          manifest.config_path,
+          manifest.models_dir_path,
+          manifest.status_snapshot_path.as_deref().unwrap_or("n/a"),
+          manifest.config_trainer.as_deref().unwrap_or("n/a"),
+          manifest.checkpoint_count,
+          paired_report
+            .map(|report| report.artifact.artifact_id.to_string())
+            .unwrap_or_else(|| "n/a".to_string()),
+          manifest_lineage.issue.as_deref().unwrap_or("n/a"),
+        ));
+        if !manifest.checkpoint_files.is_empty() {
+          output.push_str(&format!(
+            "  checkpoints={}\n",
+            manifest
+              .checkpoint_files
+              .iter()
+              .map(|checkpoint| format!(
+                "relative_path={} byte_size={}",
+                checkpoint.relative_path, checkpoint.byte_size
+              ))
+              .collect::<Vec<_>>()
+              .join(" | ")
+          ));
+        }
+        if !manifest.known_limits.is_empty() {
+          output.push_str(&format!(
+            "  known_limits={}\n",
+            manifest.known_limits.join(" | ")
+          ));
+        }
+        if let Some(report) = paired_report.and_then(|lineage| lineage.report.as_ref()) {
+          output.push_str(&format!(
+            "  paired_report schema={} trainer_backend={} job_backend={} source_result_status={} semantic_status={} semantic_reason={} config_yaml_parsed={} config_trainer={} config_backend_matches={} models_dir_readable={} status_snapshot_present={} checkpoint_count={} warnings={} issue={}\n",
+            report.schema_version,
+            report.trainer_backend,
+            report.job_backend,
+            report.source_result_status,
+            report.semantic_status,
+            report.semantic_reason.as_deref().unwrap_or("n/a"),
+            report.config_yaml_parsed,
+            report.config_trainer.as_deref().unwrap_or("n/a"),
+            report.config_backend_matches,
+            report.models_dir_readable,
+            report.status_snapshot_present,
+            report.checkpoint_count,
+            report.warnings.len(),
+            paired_report
+              .and_then(|lineage| lineage.issue.as_deref())
+              .unwrap_or("n/a"),
+          ));
+          if !report.warnings.is_empty() {
+            output.push_str(&format!("  warnings={}\n", report.warnings.join(" | ")));
+          }
+          if !report.known_limits.is_empty() {
+            output.push_str(&format!(
+              "  known_limits={}\n",
+              report.known_limits.join(" | ")
+            ));
+          }
+        }
+      } else {
+        output.push_str(&format!(
+          "- manifest_artifact={} role={} path={} schema=n/a source_training_result_artifact_manifest=n/a source_training_result_manifest=n/a source_runs=n/a trainer_backend=n/a job_backend=n/a source_result_status=n/a semantic_status=n/a semantic_reason=n/a normalized_result_dir=n/a config_path=n/a models_dir_path=n/a status_snapshot_path=n/a config_trainer=n/a checkpoint_count=n/a paired_report_artifact=n/a issue={}\n",
+          manifest_lineage.artifact.artifact_id,
+          manifest_lineage.artifact.role.as_deref().unwrap_or("n/a"),
+          manifest_lineage.artifact.path.as_deref().unwrap_or("n/a"),
+          manifest_lineage.issue.as_deref().unwrap_or("n/a"),
+        ));
+      }
+    }
+    for report_lineage in minecraft_training_result_semantic_inspect_reports {
+      if rendered_report_artifacts.contains(&report_lineage.artifact.artifact_id.to_string()) {
+        continue;
+      }
+      if let Some(report) = &report_lineage.report {
+        output.push_str(&format!(
+          "- inspect_artifact={} role={} path={} schema={} training_result_semantic_manifest_path={} source_training_result_artifact_manifest={} source_runs={} trainer_backend={} job_backend={} source_result_status={} semantic_status={} semantic_reason={} config_yaml_parsed={} config_trainer={} config_backend_matches={} models_dir_readable={} status_snapshot_present={} checkpoint_count={} issue={}\n",
+          report_lineage.artifact.artifact_id,
+          report_lineage.artifact.role.as_deref().unwrap_or("n/a"),
+          report_lineage.artifact.path.as_deref().unwrap_or("n/a"),
+          report.schema_version,
+          report.training_result_semantic_manifest_path,
+          report.source_training_result_artifact_manifest_path,
+          report.source_run_ids.len(),
+          report.trainer_backend,
+          report.job_backend,
+          report.source_result_status,
+          report.semantic_status,
+          report.semantic_reason.as_deref().unwrap_or("n/a"),
+          report.config_yaml_parsed,
+          report.config_trainer.as_deref().unwrap_or("n/a"),
+          report.config_backend_matches,
+          report.models_dir_readable,
+          report.status_snapshot_present,
+          report.checkpoint_count,
+          report_lineage.issue.as_deref().unwrap_or("n/a"),
+        ));
+        if !report.warnings.is_empty() {
+          output.push_str(&format!("  warnings={}\n", report.warnings.join(" | ")));
+        }
+        if !report.known_limits.is_empty() {
+          output.push_str(&format!(
+            "  known_limits={}\n",
+            report.known_limits.join(" | ")
+          ));
+        }
+      } else {
+        output.push_str(&format!(
+          "- inspect_artifact={} role={} path={} schema=n/a training_result_semantic_manifest_path=n/a source_training_result_artifact_manifest=n/a source_runs=n/a trainer_backend=n/a job_backend=n/a source_result_status=n/a semantic_status=n/a semantic_reason=n/a config_yaml_parsed=n/a config_trainer=n/a config_backend_matches=n/a models_dir_readable=n/a status_snapshot_present=n/a checkpoint_count=n/a issue={}\n",
+          report_lineage.artifact.artifact_id,
+          report_lineage.artifact.role.as_deref().unwrap_or("n/a"),
+          report_lineage.artifact.path.as_deref().unwrap_or("n/a"),
+          report_lineage.issue.as_deref().unwrap_or("n/a"),
+        ));
+      }
+    }
+  }
+
   output.push_str("\nCandidate Action Execution Lineage:\n");
   if candidate_action_execution_lineage.is_empty() {
     output.push_str("- none\n");
@@ -1516,6 +1692,8 @@ mod tests {
     MinecraftTrainingResultArtifactFetchInspectReportLineage,
     MinecraftTrainingResultArtifactFetchManifestLineage,
     MinecraftTrainingResultInspectReportLineage, MinecraftTrainingResultManifestLineage,
+    MinecraftTrainingResultSemanticInspectReportLineage,
+    MinecraftTrainingResultSemanticManifestLineage,
   };
   use auv_game_minecraft::{
     TrainingCompatibilityStatus, TrainingCompatibilityViewReport, TrainingPackageCounts,
@@ -2386,6 +2564,118 @@ mod tests {
         issue: None,
       }];
 
+    let minecraft_training_result_semantic_manifests =
+      vec![MinecraftTrainingResultSemanticManifestLineage {
+        artifact: ArtifactRefLineage {
+          run_id: run.run.run_id.clone(),
+          artifact_id: ArtifactId::new("artifact_mc10_semantic_manifest"),
+          span_id: SpanId::new("span_mc10_semantic"),
+          captured_event_id: None,
+          role: Some("minecraft-3dgs-training-result-semantic".to_string()),
+          path: Some("artifacts/minecraft-3dgs-training-result-semantic.json".to_string()),
+          summary: Some("training result semantic manifest".to_string()),
+          resolved: true,
+        },
+        manifest: Some(
+          crate::run_read::MinecraftTrainingResultSemanticManifestSummary {
+            schema_version: 1,
+            source_training_result_artifact_manifest_path:
+              "/tmp/result/minecraft-3dgs-training-result-artifact-manifest.json".to_string(),
+            source_training_result_manifest_path: "/tmp/result/minecraft-3dgs-training-result.json"
+              .to_string(),
+            source_training_job_manifest_path: "/tmp/job/minecraft-3dgs-training-job.json"
+              .to_string(),
+            source_training_launch_plan_path:
+              "/tmp/launch/minecraft-3dgs-training-launch-plan.json".to_string(),
+            source_training_package_manifest_path: "/tmp/package/run.json".to_string(),
+            source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
+            source_bundle_manifest_paths: vec![
+              "/tmp/bundle-a/run.json".to_string(),
+              "/tmp/bundle-b/run.json".to_string(),
+            ],
+            source_run_ids: vec!["run_a".to_string(), "run_b".to_string()],
+            trainer_backend: "nerfstudio.splatfacto".to_string(),
+            job_backend: "remote".to_string(),
+            source_result_status: "succeeded".to_string(),
+            normalized_result_dir:
+              "/tmp/job/trainer-output/nerfstudio-splatfacto/normalized-result".to_string(),
+            semantic_status: "ready".to_string(),
+            semantic_reason: None,
+            config_path:
+              "/tmp/job/trainer-output/nerfstudio-splatfacto/normalized-result/config.yml"
+                .to_string(),
+            models_dir_path:
+              "/tmp/job/trainer-output/nerfstudio-splatfacto/normalized-result/nerfstudio_models"
+                .to_string(),
+            status_snapshot_path: Some(
+              "/tmp/job/trainer-output/nerfstudio-splatfacto/normalized-result/job_status.json"
+                .to_string(),
+            ),
+            config_trainer: Some("nerfstudio.splatfacto".to_string()),
+            checkpoint_files: vec![
+              crate::run_read::MinecraftTrainingResultSemanticCheckpointSummary {
+                relative_path: "step-000001.ckpt".to_string(),
+                byte_size: 32,
+              },
+            ],
+            checkpoint_count: 1,
+            known_limits: vec!["semantic gate only".to_string()],
+          },
+        ),
+        issue: None,
+      }];
+    let minecraft_training_result_semantic_inspect_reports =
+      vec![MinecraftTrainingResultSemanticInspectReportLineage {
+        artifact: ArtifactRefLineage {
+          run_id: run.run.run_id.clone(),
+          artifact_id: ArtifactId::new("artifact_mc10_semantic_inspect"),
+          span_id: SpanId::new("span_mc10_semantic"),
+          captured_event_id: None,
+          role: Some("minecraft-3dgs-training-result-semantic-inspect".to_string()),
+          path: Some("artifacts/minecraft-3dgs-training-result-semantic-inspect.json".to_string()),
+          summary: Some("training result semantic inspect".to_string()),
+          resolved: true,
+        },
+        report: Some(
+          crate::run_read::MinecraftTrainingResultSemanticInspectReportSummary {
+            schema_version: 1,
+            training_result_semantic_manifest_path:
+              "/tmp/result/minecraft-3dgs-training-result-semantic.json".to_string(),
+            source_training_result_artifact_manifest_path:
+              "/tmp/result/minecraft-3dgs-training-result-artifact-manifest.json".to_string(),
+            source_training_result_manifest_path: "/tmp/result/minecraft-3dgs-training-result.json"
+              .to_string(),
+            source_training_job_manifest_path: "/tmp/job/minecraft-3dgs-training-job.json"
+              .to_string(),
+            source_training_launch_plan_path:
+              "/tmp/launch/minecraft-3dgs-training-launch-plan.json".to_string(),
+            source_training_package_manifest_path: "/tmp/package/run.json".to_string(),
+            source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
+            source_bundle_manifest_paths: vec![
+              "/tmp/bundle-a/run.json".to_string(),
+              "/tmp/bundle-b/run.json".to_string(),
+            ],
+            source_run_ids: vec!["run_a".to_string(), "run_b".to_string()],
+            trainer_backend: "nerfstudio.splatfacto".to_string(),
+            job_backend: "remote".to_string(),
+            source_result_status: "succeeded".to_string(),
+            normalized_result_dir:
+              "/tmp/job/trainer-output/nerfstudio-splatfacto/normalized-result".to_string(),
+            semantic_status: "ready".to_string(),
+            semantic_reason: None,
+            config_yaml_parsed: true,
+            config_trainer: Some("nerfstudio.splatfacto".to_string()),
+            config_backend_matches: true,
+            models_dir_readable: true,
+            status_snapshot_present: true,
+            checkpoint_count: 1,
+            warnings: vec![],
+            known_limits: vec!["semantic inspect only".to_string()],
+          },
+        ),
+        issue: None,
+      }];
+
     let output = render_run_text(
       &run,
       &verifications,
@@ -2407,6 +2697,8 @@ mod tests {
       &minecraft_training_result_inspect_reports,
       &minecraft_training_result_artifact_fetch_manifests,
       &minecraft_training_result_artifact_fetch_inspect_reports,
+      &minecraft_training_result_semantic_manifests,
+      &minecraft_training_result_semantic_inspect_reports,
     );
 
     assert!(output.contains("Run run_inspect_test"));
@@ -2509,6 +2801,14 @@ mod tests {
         .contains("kind=status_snapshot relative_path=job_status.json readable=true byte_size=32")
     );
     assert!(output.contains("normalized artifacts only"));
+    assert!(output.contains("MC-10 Training Result Semantics:"));
+    assert!(output.contains("manifest_artifact=artifact_mc10_semantic_manifest"));
+    assert!(output.contains("paired_report_artifact=artifact_mc10_semantic_inspect"));
+    assert!(output.contains("semantic_status=ready"));
+    assert!(output.contains("semantic_reason=n/a"));
+    assert!(output.contains("config_backend_matches=true"));
+    assert!(output.contains("checkpoint_count=1"));
+
     assert!(output.contains("normalized_artifacts=3"));
     assert!(output.contains("Candidate Action Execution Lineage:"));
     assert!(output.contains("artifact=artifact_candidate_action_execution"));
@@ -2613,6 +2913,23 @@ mod tests {
         report: None,
         issue: Some("json parse error: expected value".to_string()),
       }],
+      &[],
+      &[MinecraftTrainingResultSemanticInspectReportLineage {
+        artifact: ArtifactRefLineage {
+          run_id: run.run.run_id.clone(),
+          artifact_id: ArtifactId::new("artifact_mc10_semantic_orphan"),
+          span_id: SpanId::new("span_mc10_semantic_orphan"),
+          captured_event_id: None,
+          role: Some("minecraft-3dgs-training-result-semantic-inspect".to_string()),
+          path: Some(
+            "artifacts/minecraft-3dgs-training-result-semantic-inspect-orphan.json".to_string(),
+          ),
+          summary: Some("training result semantic orphan inspect".to_string()),
+          resolved: true,
+        },
+        report: None,
+        issue: Some("json parse error: expected value".to_string()),
+      }],
     );
 
     assert!(output.contains("MC-7 Training Jobs:"));
@@ -2625,6 +2942,11 @@ mod tests {
       output.contains("path=artifacts/minecraft-3dgs-training-result-artifact-inspect-orphan.json")
     );
     assert!(output.contains("issue=json parse error: expected value"));
+    assert!(output.contains("MC-10 Training Result Semantics:"));
+    assert!(output.contains("inspect_artifact=artifact_mc10_semantic_orphan"));
+    assert!(
+      output.contains("path=artifacts/minecraft-3dgs-training-result-semantic-inspect-orphan.json")
+    );
   }
 
   #[test]
@@ -2773,6 +3095,8 @@ mod tests {
       &[],
       &[launch_manifest],
       &duplicate_reports,
+      &[],
+      &[],
       &[],
       &[],
       &[],
@@ -2965,6 +3289,8 @@ mod tests {
       &[],
       &[],
       &[],
+      &[],
+      &[],
     );
 
     assert!(output.contains("manifest_artifact=artifact_mc7_job_manifest_dup"));
@@ -3138,6 +3464,8 @@ mod tests {
       &[],
       &[package_manifest],
       &duplicate_reports,
+      &[],
+      &[],
       &[],
       &[],
       &[],
@@ -3326,6 +3654,8 @@ mod tests {
       &[],
       &[result_manifest],
       &duplicate_reports,
+      &[],
+      &[],
       &[],
       &[],
     );

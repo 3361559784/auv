@@ -433,20 +433,19 @@ core slices.
 
 ### Core-A D2 — terminology and seam admission note
 
-Before code extraction, write one short follow-up note that classifies current
-Minecraft stages as:
+Delivered in:
+`docs/ai/references/2026-06-27-auv-core-spatial-result-consumption-admission-table.md`
+
+That note classifies concrete Minecraft modules and symbols as:
 
 - keep app-specific
 - extract helper only
 - candidate core contract
 - explicitly deferred
 
-That note should name concrete modules and symbols.
-
 ### Core-A D3 — terms document update
 
-If the owner accepts the vocabulary here, update `docs/TERMS_AND_CONCEPTS.md`
-with a minimal new section for:
+Delivered in `docs/TERMS_AND_CONCEPTS.md` with minimal new sections for:
 
 - semantic gate
 - witness artifact
@@ -454,6 +453,18 @@ with a minimal new section for:
 - action readiness view
 
 Do not dump the whole Minecraft roadmap into terms.
+
+### Core-A D4 — candidate contract proof matrix
+
+Delivered in:
+`docs/ai/references/2026-06-27-auv-core-spatial-result-consumption-proof-matrix.md`
+
+That note defines, for each candidate contract:
+
+- what second-vertical evidence is still missing
+- what falsifier would stop graduation
+- what the smallest acceptable extraction shape would be
+- what still disqualifies extraction
 
 ### Core-B — first code extraction
 

@@ -235,6 +235,63 @@ This is a pattern note, not a stable runtime API. See
 `docs/ai/references/2026-06-27-auv-core-spatial-result-consumption-pattern.md`
 for the current design boundary, ownership split, and defer list.
 
+## Semantic Gate
+
+Semantic gate is a provisional term for the first typed consumer over a
+persisted producer artifact.
+
+It answers whether the upstream artifact is structurally consumable for the
+next semantic stage. A semantic gate should preserve lineage, report explicit
+status and reason, and avoid grading usefulness, outcome quality, or downstream
+actionability.
+
+The current expected stage-state shape is `ready`, `blocked`, or `failed`.
+This term is design vocabulary, not approval to extract current app-specific
+semantic gate code into core. See
+`docs/ai/references/2026-06-27-auv-core-spatial-result-consumption-pattern.md`
+and
+`docs/ai/references/2026-06-27-auv-core-spatial-result-consumption-admission-table.md`.
+
+## Action Readiness View
+
+Action readiness view is a provisional term for a derived read model over an
+existing persisted query result.
+
+It answers whether an existing answer can be consumed by action-facing code
+without rereading the raw query contract each time. An action readiness view
+does not dispatch actions, does not back-write new producer truth, and must not
+upgrade a blocked or failed query into readiness.
+
+The current expected action-facing shape is `click_ready`,
+`answer_non_clickable`, or `not_consumable`.
+
+## Witness Artifact
+
+Witness artifact is a provisional term for a persisted evidence artifact that
+names the concrete witness item later measurement or audit should use.
+
+Typical witness facts include the selected evidence frame, basis artifact,
+comparison image or scene reference, and copied lineage. The key rule is that
+later stages should consume the authoritative witness artifact rather than
+silently re-selecting witness inputs from scratch.
+
+Witness artifact is still evidence, not usefulness verdict.
+
+## Quality Measurement
+
+Quality measurement is a provisional term for an evidence-bearing measurement
+stage over an authoritative witness artifact.
+
+It records what measurements were computed, under which backend or measurement
+policy, and with which known limits. It should stay explicit about omitted
+metrics, alignment assumptions, resizing or non-resizing policy, and partial
+measurement conditions.
+
+Quality measurement is narrower than quality verdict. The current expected
+evidence shape is `measured_only`, `metric_partial`, `blocked`, or `failed`.
+It should not imply downstream promotion, usability judgment, or action
+approval by itself.
+
 ## Capture Frame
 
 Capture frame is a provisional term for an in-memory screenshot or cropped

@@ -122,7 +122,7 @@ cargo run --quiet --example mc19_query_wired_live_action -- \
 | answer_non_clickable | `run_1782590246310_18190_0` | refused + outside_window | no click span | yes |
 | not_consumable | `run_1782590246843_18194_0` | refused + MC-12 failed reason | no click span | yes |
 
-**D4 closed** for MC-19 v1 wiring honesty. Gameplay verification and inspect MC-19 lineage polish remain deferred (D5).
+**D4 closed** for MC-19 v1 wiring honesty. **D5 closed** for inspect / viewer MC-19 lineage polish.
 
 ## Honest limits
 
@@ -136,3 +136,37 @@ cargo run --quiet --example mc19_query_wired_live_action -- \
 - Design: `docs/ai/references/2026-06-27-minecraft-mc19-query-to-live-click-wiring-design.md`
 - MC-18 provider closure: `docs/ai/references/2026-06-27-minecraft-mc18-closed-scene-toy-provider-live-closure.md`
 - MC-14 action readiness closure: `docs/ai/references/2026-06-27-minecraft-mc14-spatial-query-action-facing-live-closure.md`
+
+## D5 inspect polish (2026-06-28)
+
+Terminal `inspect_run` now renders:
+
+```text
+MC-19 Query Wired Live Action:
+- operation_result_artifact=… query_artifact=… attempted=… action_eligibility=… window_point=… refusal_reason=… operation_status=… operation_message=… dispatch_command=… dispatch_outcome=… target_app=… target_title=… mc14_action_eligibility=… issue=…
+```
+
+Recorded snippets from `.tmp/mc19-live/store`:
+
+### click_ready (`run_1782590245467_18186_0`)
+
+```text
+MC-19 Query Wired Live Action:
+- operation_result_artifact=artifact_0003 query_artifact=artifact_0001 attempted=true action_eligibility=click_ready window_point=640,360 refusal_reason=n/a operation_status=completed operation_message=Command invocation failed after run creation. Inspect run_1782590245467_18186_0 for the recorded trace. dispatch_command=input.clickWindowPoint dispatch_outcome=failed: command input.clickWindowPoint handler failed: main visible window was not found target_app=com.todesktop.230313mzl4w4u92 target_title=Cursor mc14_action_eligibility=click_ready issue=n/a
+```
+
+### answer_non_clickable (`run_1782590246310_18190_0`)
+
+```text
+MC-19 Query Wired Live Action:
+- operation_result_artifact=artifact_0003 query_artifact=artifact_0001 attempted=false action_eligibility=answer_non_clickable window_point=n/a refusal_reason=visibility=outside_window operation_status=completed operation_message=visibility=outside_window dispatch_command=n/a dispatch_outcome=n/a target_app=com.todesktop.230313mzl4w4u92 target_title=Cursor mc14_action_eligibility=answer_non_clickable issue=n/a
+```
+
+### not_consumable (`run_1782590246843_18194_0`)
+
+```text
+MC-19 Query Wired Live Action:
+- operation_result_artifact=artifact_0003 query_artifact=artifact_0001 attempted=false action_eligibility=not_consumable window_point=n/a refusal_reason=status=failed operation_status=completed operation_message=status=failed reason=target_block_absent_from_scene_packet dispatch_command=n/a dispatch_outcome=n/a target_app=com.todesktop.230313mzl4w4u92 target_title=Cursor mc14_action_eligibility=not_consumable issue=n/a
+```
+
+Viewer: select `operation-result` for MC-19 summary card; select spatial query manifest for paired `wired_action_*` rows when a same-run MC-19 operation result links via `evidence_artifacts` / `freshness_basis.source_artifact`.

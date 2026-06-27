@@ -2,7 +2,7 @@
 
 Date: 2026-06-27
 
-Status: **D4 live closure recorded; D5 inspect polish deferred**.
+Status: **D4 live closure recorded; D5 inspect polish closed**.
 MC-19 D1 adds a runtime wiring seam with injectable executor,
 readiness-gated dispatch/refusal core, and unit-tested three-path
 attempt/refusal semantics in
@@ -167,7 +167,7 @@ Update boundary when MC-19 implements:
 | **D2** | **Retired** — original phase scope already landed inside D1 | No separate implementation slice remains |
 | **D3** | Library run recording + `OperationResult` wiring (**no CLI changes**) | **Implemented** — `run_minecraft_query_wired_live_action` + integration tests; no CLI |
 | **D4** | Three live closure gates | **Closed** — live closure note with run ids |
-| **D5** | Inspect / terminal consumer polish | Inspect or CLI shows attempt/refusal + lineage without new artifact role |
+| **D5** | Inspect / terminal consumer polish | **Closed** — `inspect_run` MC-19 section, viewer MC-19 card on `operation-result`, wired-action rows on query manifest |
 
 D1 implementation notes:
 
@@ -188,6 +188,12 @@ D3 implementation notes:
 - D4: `input.clickWindowPoint` is implemented in `crates/auv-cli-invoke/src/commands/input.rs` (offset/relative point inputs, window resolve, driver click).
 - Known limit: `MC19_V1_D4_QUERY_WIRED_LIVE_ACTION_KNOWN_LIMIT` (replaces the D3 limit to avoid stacked semantics).
 - Live closure: `docs/ai/references/2026-06-27-minecraft-mc19-query-to-live-click-wiring-live-closure.md`.
+
+D5 implementation notes:
+
+- Derived read-side summary: `derive_minecraft_query_wired_live_action_summary` / `list_minecraft_query_wired_live_action_summaries` in `src/run_read.rs`.
+- Terminal inspect section: `MC-19 Query Wired Live Action:` in `src/inspect.rs` (`cargo run -- inspect <run-id>`).
+- Viewer: MC-19 summary card on `operation-result` JSON preview and `wired_action_*` rows on spatial query manifest in `src/inspect_server_viewer.html`.
 
 Implement must **not** expand D3 into a new CLI surface unless the owner names
 that slice explicitly.

@@ -75,7 +75,7 @@ impl CheckpointNativeProviderInputs {
 }
 
 impl CheckpointNativeProviderOutcome {
-  pub fn into_backend_outcome(self) -> BackendOutcome {
+  pub(crate) fn into_backend_outcome(self) -> BackendOutcome {
     BackendOutcome {
       answer: self.answer,
       reference_source_frame_json_path: None,
@@ -84,7 +84,7 @@ impl CheckpointNativeProviderOutcome {
   }
 }
 
-pub fn run_checkpoint_native_provider_backend(
+pub(crate) fn run_checkpoint_native_provider_backend(
   semantic_manifest: &TrainingResultSemanticManifest,
   scene_packet_manifest: &ScenePacketManifest,
   scene_packet_dir: &Path,

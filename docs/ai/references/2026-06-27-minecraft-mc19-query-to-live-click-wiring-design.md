@@ -2,14 +2,14 @@
 
 Date: 2026-06-27
 
-Status: **D3 implemented (library-only); live closure deferred to D4**.
+Status: **D4 live closure recorded; D5 inspect polish deferred**.
 MC-19 D1 adds a runtime wiring seam with injectable executor,
 readiness-gated dispatch/refusal core, and unit-tested three-path
 attempt/refusal semantics in
 `training_result_spatial_query_action_wiring.rs`. MC-19 D3 adds library-only
 run recording via `run_minecraft_query_wired_live_action` in `src/minecraft.rs`,
-staging existing `operation-result` artifacts plus MC-12 query lineage. Live
-closure evidence remains deferred to D4.
+staging existing `operation-result` artifacts plus MC-12 query lineage. D4
+live closure is recorded in `2026-06-27-minecraft-mc19-query-to-live-click-wiring-live-closure.md`.
 
 ## One-line summary
 
@@ -166,7 +166,7 @@ Update boundary when MC-19 implements:
 | **D1** | Runtime wiring seam + executor injection + readiness-gated dispatch/refusal core (`wire_query_manifest_to_action`, `QueryLiveClickExecutor`) | Implemented with three-path unit tests; not live closure |
 | **D2** | **Retired** — original phase scope already landed inside D1 | No separate implementation slice remains |
 | **D3** | Library run recording + `OperationResult` wiring (**no CLI changes**) | **Implemented** — `run_minecraft_query_wired_live_action` + integration tests; no CLI |
-| **D4** | Three live closure gates | Live closure note with run ids |
+| **D4** | Three live closure gates | **Closed** — live closure note with run ids |
 | **D5** | Inspect / terminal consumer polish | Inspect or CLI shows attempt/refusal + lineage without new artifact role |
 
 D1 implementation notes:
@@ -185,8 +185,9 @@ D3 implementation notes:
 
 - Library entry: `run_minecraft_query_wired_live_action` / `run_minecraft_query_wired_live_action_with_executor` in `src/minecraft.rs`.
 - Shared click helper: `invoke_click_at_window_point` in `src/minecraft_query_live_action.rs` (also used by `run_minecraft_live_click` in `src/main.rs`).
-- NOTICE: `input.clickWindowPoint` in `crates/auv-cli-invoke/src/commands/input.rs` remains a stub; D3 integration tests use a mock `QueryLiveClickExecutor`. Real live click closure is deferred to D4.
-- Known limit: `MC19_V1_D3_QUERY_WIRED_LIVE_ACTION_KNOWN_LIMIT` (replaces the D1 wiring limit to avoid stacked semantics).
+- D4: `input.clickWindowPoint` is implemented in `crates/auv-cli-invoke/src/commands/input.rs` (offset/relative point inputs, window resolve, driver click).
+- Known limit: `MC19_V1_D4_QUERY_WIRED_LIVE_ACTION_KNOWN_LIMIT` (replaces the D3 limit to avoid stacked semantics).
+- Live closure: `docs/ai/references/2026-06-27-minecraft-mc19-query-to-live-click-wiring-live-closure.md`.
 
 Implement must **not** expand D3 into a new CLI surface unless the owner names
 that slice explicitly.

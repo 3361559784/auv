@@ -2,10 +2,14 @@
 
 Date: 2026-06-27
 
-Status: **D1 wiring seam implemented** (not live closure). MC-19 D1 adds a
-runtime wiring seam with injectable executor and unit-tested three-path
-refusal/attempt semantics in `training_result_spatial_query_action_wiring.rs`.
-Live closure evidence remains deferred to D4.
+Status: **D3 implemented (library-only); live closure deferred to D4**.
+MC-19 D1 adds a runtime wiring seam with injectable executor,
+readiness-gated dispatch/refusal core, and unit-tested three-path
+attempt/refusal semantics in
+`training_result_spatial_query_action_wiring.rs`. MC-19 D3 adds library-only
+run recording via `run_minecraft_query_wired_live_action` in `src/minecraft.rs`,
+staging existing `operation-result` artifacts plus MC-12 query lineage. Live
+closure evidence remains deferred to D4.
 
 ## One-line summary
 
@@ -159,9 +163,9 @@ Update boundary when MC-19 implements:
 
 | Slice | Scope | Done when |
 | --- | --- | --- |
-| **D1** | Runtime wiring seam + executor injection (`wire_query_manifest_to_action`, `QueryLiveClickExecutor`) | Implemented with three-path unit tests; not live closure |
-| **D2** | Readiness-gated dispatch/refusal core (library or `minecraft.rs` helper) | Unit tests for three eligibility branches |
-| **D3** | CLI + run recording wiring | One command path writes operation evidence + lineage |
+| **D1** | Runtime wiring seam + executor injection + readiness-gated dispatch/refusal core (`wire_query_manifest_to_action`, `QueryLiveClickExecutor`) | Implemented with three-path unit tests; not live closure |
+| **D2** | **Retired** — original phase scope already landed inside D1 | No separate implementation slice remains |
+| **D3** | Library run recording + `OperationResult` wiring (**no CLI changes**) | **Implemented** — `run_minecraft_query_wired_live_action` + integration tests; no CLI |
 | **D4** | Three live closure gates | Live closure note with run ids |
 | **D5** | Inspect / terminal consumer polish | Inspect or CLI shows attempt/refusal + lineage without new artifact role |
 
@@ -169,11 +173,23 @@ D1 implementation notes:
 
 - Module: `crates/auv-game-minecraft/src/training_result_spatial_query_action_wiring.rs`
 - Thin library helper: `wire_spatial_query_manifest_to_action` in `src/minecraft.rs`
-- Full `run_minecraft_live_click` integration is **deferred**; D3 will reuse the
-  `input.clickWindowPoint` invoke pattern without importing the telemetry +
-  screenshot + `assess_bound_projection` pipeline from `run_minecraft_live_click`.
+- Phase bookkeeping: the originally written D2 scope (“readiness-gated
+  dispatch/refusal core”) is already covered by landed D1 code. Do not
+  re-implement that layer under a new slice name.
+- Full `run_minecraft_live_click` integration is **deferred**; D3 should stay
+  library-only, reuse the `input.clickWindowPoint` invoke pattern, and avoid
+  importing the telemetry + screenshot + `assess_bound_projection` pipeline
+  from `run_minecraft_live_click`.
 
-Implement must **not** start D3 CLI until owner names that slice.
+D3 implementation notes:
+
+- Library entry: `run_minecraft_query_wired_live_action` / `run_minecraft_query_wired_live_action_with_executor` in `src/minecraft.rs`.
+- Shared click helper: `invoke_click_at_window_point` in `src/minecraft_query_live_action.rs` (also used by `run_minecraft_live_click` in `src/main.rs`).
+- NOTICE: `input.clickWindowPoint` in `crates/auv-cli-invoke/src/commands/input.rs` remains a stub; D3 integration tests use a mock `QueryLiveClickExecutor`. Real live click closure is deferred to D4.
+- Known limit: `MC19_V1_D3_QUERY_WIRED_LIVE_ACTION_KNOWN_LIMIT` (replaces the D1 wiring limit to avoid stacked semantics).
+
+Implement must **not** expand D3 into a new CLI surface unless the owner names
+that slice explicitly.
 
 ## Honest limits
 

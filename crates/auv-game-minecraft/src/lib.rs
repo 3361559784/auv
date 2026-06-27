@@ -145,8 +145,9 @@ pub use training_result_spatial_query_action::{
   derive_action_readiness,
 };
 pub use training_result_spatial_query_action_wiring::{
-  MC19_V1_D1_QUERY_ACTION_WIRING_KNOWN_LIMIT, QueryActionWiringLineage, QueryActionWiringOutcome,
-  QueryLiveClickExecutor, query_action_wiring_lineage_from_manifest, wire_query_manifest_to_action,
+  MC19_V1_D3_QUERY_WIRED_LIVE_ACTION_KNOWN_LIMIT, QueryActionWiringLineage,
+  QueryActionWiringOutcome, QueryLiveClickExecutor, query_action_wiring_lineage_from_manifest,
+  wire_query_manifest_to_action,
 };
 pub use training_result_spatial_query_provider::{
   MC15_V1_CHECKPOINT_NATIVE_KNOWN_LIMIT, MC18_V1_CLOSED_SCENE_TOY_KNOWN_LIMIT,

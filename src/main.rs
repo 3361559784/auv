@@ -1609,31 +1609,14 @@ fn run_minecraft_live_click(
       let window_point = auv_game_minecraft::input_target::projected_window_point(&projected_point)
         .ok_or_else(|| "projected minecraft point is not window-clickable".to_string())?;
 
-      let mut inputs = std::collections::BTreeMap::new();
-      inputs.insert("title".to_string(), target_title.to_string());
-      inputs.insert("offset_x".to_string(), format!("{:.3}", window_point.0.x));
-      inputs.insert("offset_y".to_string(), format!("{:.3}", window_point.0.y));
-
-      let registry = auv_cli_invoke::default_registry();
-      let command = registry
-        .resolve("input.clickWindowPoint")
-        .ok_or_else(|| "input.clickWindowPoint command is not registered".to_string())?;
-      let parent = context.current_span().clone();
-      let invoke_result = auv_cli_invoke::invoke_resolved_recorded_in_span(
-        runtime.recording(),
-        context.run_mut(),
-        &parent,
-        command,
-        InvokeRequest {
-          command_id: "input.clickWindowPoint".to_string(),
-          target: auv_cli::model::ExecutionTarget {
-            application_id: Some(target_app.to_string()),
-            target_label: None,
-          },
-          inputs,
-          dry_run: false,
-        },
-      )?;
+      let invoke_result_output_summary =
+        auv_cli::minecraft_query_live_action::invoke_click_at_window_point(
+          runtime.recording(),
+          context,
+          target_app,
+          target_title,
+          window_point,
+        )?;
       let post_frame = auv_game_minecraft::read_latest_spatial_frame_from_tail(&post_sample_path)?
         .ok_or_else(|| {
           format!(
@@ -1662,7 +1645,7 @@ fn run_minecraft_live_click(
         screenshot_artifact_id,
         projection_artifact_id,
         operation_result_artifact_id: operation_result_ref.artifact_id.as_str().to_string(),
-        input_summary: invoke_result.output_summary,
+        input_summary: invoke_result_output_summary,
         artifact_paths: vec![
           staged_screenshot_path,
           staged_frame_path,

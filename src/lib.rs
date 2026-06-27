@@ -12,6 +12,7 @@ pub mod inspect;
 pub mod inspect_server;
 pub mod mcp;
 pub mod minecraft;
+pub mod minecraft_query_live_action;
 pub mod minecraft_session;
 pub mod model;
 pub mod osu;

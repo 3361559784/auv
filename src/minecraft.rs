@@ -26,10 +26,16 @@ use auv_game_minecraft::{
 };
 
 use auv_tracing_driver::RecordingHandle;
+use auv_tracing_driver::recorded_operation::RecordedOperationContext;
 use auv_tracing_driver::recorded_operation::RecordedOperationOutput;
 use auv_tracing_driver::run_builder::RunSpec;
 use auv_tracing_driver::store::CanonicalRun;
 use auv_tracing_driver::trace::{RunType, TraceStatusCode};
+
+use crate::minecraft_query_live_action::{
+  InvokeWindowPointClickExecutor, QUERY_WIRED_LIVE_ACTION_OPERATION_ID,
+  build_query_wired_live_action_operation_result, stage_query_wired_live_action_operation_result,
+};
 
 use crate::model::AuvResult;
 
@@ -759,6 +765,149 @@ pub fn wire_spatial_query_manifest_to_action(
 ) -> QueryActionWiringOutcome {
   let lineage = query_action_wiring_lineage_from_manifest(manifest, manifest_path);
   wire_query_manifest_to_action(manifest, &lineage, executor)
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct QueryWiredLiveActionInputs {
+  pub training_result_semantic_manifest_path: PathBuf,
+  pub target_block: auv_game_minecraft::BlockPosition,
+  pub target_face: Option<auv_game_minecraft::BlockFace>,
+  pub target_semantics: auv_game_minecraft::MinecraftTargetSemantics,
+  pub query_command: Option<String>,
+  pub use_checkpoint_native_provider: bool,
+  pub use_closed_scene_toy_provider: bool,
+  pub closed_scene_fixture_path: Option<PathBuf>,
+  pub output_dir: PathBuf,
+  pub target_app: String,
+  pub target_title: String,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct QueryWiredLiveActionOutput {
+  pub query: TrainingResultSpatialQueryOutput,
+  pub wiring: QueryActionWiringOutcome,
+  pub operation_result_artifact_id: String,
+}
+
+pub fn run_minecraft_query_wired_live_action(
+  recording: &RecordingHandle,
+  inputs: QueryWiredLiveActionInputs,
+) -> AuvResult<RecordedOperationOutput<QueryWiredLiveActionOutput>> {
+  recording.run_recorded_operation(
+    RunSpec::new(RunType::Execute, QUERY_WIRED_LIVE_ACTION_OPERATION_ID),
+    "Minecraft MC-19 query wired live action",
+    |context| {
+      let click_executor = InvokeWindowPointClickExecutor::new(
+        context,
+        inputs.target_app.as_str(),
+        inputs.target_title.as_str(),
+      );
+      run_query_wired_live_action_core(context, &inputs, &click_executor)
+    },
+  )
+}
+
+pub fn run_minecraft_query_wired_live_action_with_executor<E: QueryLiveClickExecutor>(
+  recording: &RecordingHandle,
+  inputs: QueryWiredLiveActionInputs,
+  executor: &E,
+) -> AuvResult<RecordedOperationOutput<QueryWiredLiveActionOutput>> {
+  recording.run_recorded_operation(
+    RunSpec::new(RunType::Execute, QUERY_WIRED_LIVE_ACTION_OPERATION_ID),
+    "Minecraft MC-19 query wired live action",
+    |context| run_query_wired_live_action_core(context, &inputs, executor),
+  )
+}
+
+fn run_query_wired_live_action_core<E: QueryLiveClickExecutor>(
+  context: &mut RecordedOperationContext<'_>,
+  inputs: &QueryWiredLiveActionInputs,
+  executor: &E,
+) -> Result<QueryWiredLiveActionOutput, String> {
+  context.record_event(
+    "minecraft.query_wired_live_action.inputs",
+    Some(format!(
+      "training_result_semantic_manifest={} target_block={},{},{} target_app={} target_title={} checkpoint_native_provider={} closed_scene_toy_provider={} closed_scene_fixture={} output_dir={}",
+      inputs.training_result_semantic_manifest_path.display(),
+      inputs.target_block.x,
+      inputs.target_block.y,
+      inputs.target_block.z,
+      inputs.target_app,
+      inputs.target_title,
+      inputs.use_checkpoint_native_provider,
+      inputs.use_closed_scene_toy_provider,
+      inputs
+        .closed_scene_fixture_path
+        .as_ref()
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| "none".to_string()),
+      inputs.output_dir.display(),
+    )),
+  );
+
+  let query = query_3dgs_training_result(TrainingResultSpatialQueryInputs {
+    training_result_semantic_manifest_path: inputs.training_result_semantic_manifest_path.clone(),
+    target_block: inputs.target_block,
+    target_face: inputs.target_face,
+    target_semantics: inputs.target_semantics,
+    query_command: inputs.query_command.clone(),
+    use_checkpoint_native_provider: inputs.use_checkpoint_native_provider,
+    use_closed_scene_toy_provider: inputs.use_closed_scene_toy_provider,
+    closed_scene_fixture_path: inputs.closed_scene_fixture_path.clone(),
+    output_dir: inputs.output_dir.clone(),
+  })?;
+
+  let (_staged_manifest_path, query_manifest_ref) = context.in_span(
+    "minecraft.query_3dgs_training_result.artifacts",
+    |context| {
+      context.stage_artifact_file_with_ref(
+        MINECRAFT_3DGS_TRAINING_RESULT_QUERY_ROLE,
+        &query.manifest_path,
+        "minecraft-3dgs-training-result-query.json",
+        Some("MC-12 training result spatial query manifest".to_string()),
+      )
+    },
+  )?;
+  context.in_span(
+    "minecraft.query_3dgs_training_result.artifacts",
+    |context| {
+      context.stage_artifact_file(
+        MINECRAFT_3DGS_TRAINING_RESULT_QUERY_INSPECT_ROLE,
+        &query.inspect_report_path,
+        "minecraft-3dgs-training-result-query-inspect.json",
+        Some("MC-12 training result spatial query inspect report".to_string()),
+      )?;
+      Ok::<_, String>(())
+    },
+  )?;
+
+  let wiring =
+    wire_spatial_query_manifest_to_action(&query.manifest, &query.manifest_path, executor);
+
+  let operation_result = build_query_wired_live_action_operation_result(
+    context.run_id(),
+    &wiring,
+    Some(query_manifest_ref.clone()),
+  );
+  let (_staged_operation_result_path, operation_result_ref) =
+    stage_query_wired_live_action_operation_result(context, &operation_result)?;
+
+  context.record_event(
+    "minecraft.query_wired_live_action.outcome",
+    Some(format!(
+      "attempted={} action_eligibility={} refusal_reason={} query_manifest_path={}",
+      wiring.attempted,
+      wiring.action_eligibility.as_str(),
+      wiring.refusal_reason.as_deref().unwrap_or("none"),
+      query.manifest_path.display(),
+    )),
+  );
+
+  Ok(QueryWiredLiveActionOutput {
+    query,
+    wiring,
+    operation_result_artifact_id: operation_result_ref.artifact_id.as_str().to_string(),
+  })
 }
 
 pub fn run_minecraft_texture_sweep_sample_build(
@@ -2429,6 +2578,361 @@ mod tests {
       }),
       "recorded input event should expose MC-18 closed-scene toy boundary"
     );
+
+    let _ = fs::remove_dir_all(temp);
+  }
+  struct CountingQueryLiveClickExecutor {
+    calls: std::cell::Cell<usize>,
+    summary: Option<String>,
+  }
+
+  impl CountingQueryLiveClickExecutor {
+    fn success(summary: impl Into<String>) -> Self {
+      Self {
+        calls: std::cell::Cell::new(0),
+        summary: Some(summary.into()),
+      }
+    }
+  }
+
+  impl auv_game_minecraft::QueryLiveClickExecutor for CountingQueryLiveClickExecutor {
+    fn attempt_click(
+      &self,
+      _window_point: auv_driver::geometry::WindowPoint,
+      _lineage: &auv_game_minecraft::QueryActionWiringLineage,
+    ) -> Result<String, String> {
+      self.calls.set(self.calls.get() + 1);
+      Ok(
+        self
+          .summary
+          .clone()
+          .unwrap_or_else(|| "clicked".to_string()),
+      )
+    }
+  }
+
+  fn write_mc18_semantic_fixture(
+    temp: &std::path::Path,
+    target_block: auv_game_minecraft::BlockPosition,
+    frame: auv_game_minecraft::MinecraftSpatialFrame,
+  ) -> PathBuf {
+    let scene_packet_dir = temp.join("scene-packet");
+    fs::create_dir_all(scene_packet_dir.join("frames")).expect("frames dir");
+    fs::write(
+      scene_packet_dir.join("frames/frame_000001.json"),
+      serde_json::to_vec_pretty(&frame).expect("frame json"),
+    )
+    .expect("frame write");
+    let scene_packet_manifest = auv_game_minecraft::ScenePacketManifest {
+      schema_version: 1,
+      generated_at_millis: 1,
+      source_bundle_manifest_paths: vec!["/tmp/bundle.json".to_string()],
+      source_run_ids: vec!["run-1".to_string()],
+      counts: auv_game_minecraft::ScenePacketCounts {
+        frames: 1,
+        screenshots: 0,
+        missing_screenshots: 1,
+      },
+      frames: vec![auv_game_minecraft::ScenePacketFrameRecord {
+        frame_index: 1,
+        spatial_frame_id: frame.spatial_frame_id.clone(),
+        source_run_id: "run-1".to_string(),
+        source_bundle_manifest_path: "/tmp/bundle.json".to_string(),
+        source_frame_artifact_id: "artifact_0001".to_string(),
+        source_frame_bundle_path: "spatial_frames/frame.json".to_string(),
+        frame_json_path: "frames/frame_000001.json".to_string(),
+        screenshot_artifact_id: None,
+        screenshot_path: None,
+        monotonic_timestamp_ms: frame.monotonic_timestamp_ms,
+        viewport: frame.viewport,
+        screen_state: frame.screen_state.clone(),
+        resource_pack_ids: Vec::new(),
+      }],
+      known_limits: Vec::new(),
+    };
+    let scene_packet_manifest_path = scene_packet_dir.join("scene-packet.json");
+    fs::write(
+      &scene_packet_manifest_path,
+      serde_json::to_vec_pretty(&scene_packet_manifest).expect("scene packet json"),
+    )
+    .expect("scene packet write");
+
+    let normalized_dir = temp.join("normalized");
+    fs::create_dir_all(normalized_dir.join("nerfstudio_models")).expect("models dir");
+    fs::write(
+      normalized_dir.join("config.yml"),
+      "trainer: nerfstudio.splatfacto\n",
+    )
+    .expect("config");
+
+    let semantic_manifest = auv_game_minecraft::TrainingResultSemanticManifest {
+      schema_version: 1,
+      generated_at_millis: 1,
+      source_training_result_artifact_manifest_path: "/tmp/d11.json".to_string(),
+      source_training_result_manifest_path: "/tmp/result.json".to_string(),
+      source_training_job_manifest_path: "/tmp/job.json".to_string(),
+      source_training_launch_plan_path: "/tmp/launch.json".to_string(),
+      source_training_package_manifest_path: "/tmp/package.json".to_string(),
+      source_scene_packet_manifest_path: scene_packet_manifest_path.to_string_lossy().into_owned(),
+      source_bundle_manifest_paths: vec!["/tmp/bundle.json".to_string()],
+      source_run_ids: vec!["run-1".to_string()],
+      trainer_backend: "nerfstudio.splatfacto".to_string(),
+      job_backend: "remote".to_string(),
+      source_result_status: auv_game_minecraft::TrainingResultStatus::Succeeded,
+      normalized_result_dir: normalized_dir.to_string_lossy().into_owned(),
+      semantic_status: auv_game_minecraft::TrainingResultSemanticStatus::Ready,
+      semantic_reason: None,
+      config_path: normalized_dir
+        .join("config.yml")
+        .to_string_lossy()
+        .into_owned(),
+      models_dir_path: normalized_dir
+        .join("nerfstudio_models")
+        .to_string_lossy()
+        .into_owned(),
+      status_snapshot_path: None,
+      config_trainer: Some("nerfstudio.splatfacto".to_string()),
+      checkpoint_files: Vec::new(),
+      checkpoint_count: 0,
+      known_limits: vec!["fixture".to_string()],
+    };
+    let semantic_manifest_path = temp.join("semantic.json");
+    fs::write(
+      &semantic_manifest_path,
+      serde_json::to_vec_pretty(&semantic_manifest).expect("semantic json"),
+    )
+    .expect("semantic write");
+    semantic_manifest_path
+  }
+
+  fn mc18_target_frame(
+    target_block: auv_game_minecraft::BlockPosition,
+  ) -> auv_game_minecraft::MinecraftSpatialFrame {
+    auv_game_minecraft::MinecraftSpatialFrame {
+      spatial_frame_id: "frame-1".to_string(),
+      world_tick: 1,
+      monotonic_timestamp_ms: 100,
+      telemetry_session_id: None,
+      viewport: auv_game_minecraft::Viewport::new(800, 600),
+      view_matrix: identity_matrix(),
+      projection_matrix: identity_matrix(),
+      player_pose: auv_game_minecraft::PlayerPose {
+        eye_position: auv_game_minecraft::Vec3::new(0.0, 0.0, 0.0),
+        yaw: 0.0,
+        pitch: 0.0,
+      },
+      raycast_hit: Some(auv_game_minecraft::RaycastHit {
+        block_pos: target_block,
+        face: auv_game_minecraft::BlockFace::North,
+        block_id: "minecraft:oak_button".to_string(),
+      }),
+      nearby_blocks: Vec::new(),
+      nearby_entities: Vec::new(),
+      inventory_summary: Vec::new(),
+      screenshot_artifact_ref: None,
+      mc_capture_skew_ms: None,
+      screen_state: Some("in_game".to_string()),
+      resource_pack_ids: Vec::new(),
+    }
+  }
+
+  fn operation_output_message(output: &crate::contract::OperationOutput) -> String {
+    match output {
+      crate::contract::OperationOutput::Acknowledged { message } => {
+        message.clone().unwrap_or_default()
+      }
+      _ => String::new(),
+    }
+  }
+
+  fn read_operation_result_artifact(
+    store: &LocalStore,
+    run: &auv_tracing_driver::store::CanonicalRun,
+  ) -> crate::contract::OperationResult {
+    let artifact = run
+      .artifacts
+      .iter()
+      .find(|artifact| artifact.role == "operation-result")
+      .expect("operation-result artifact should be staged");
+    let artifact_path = store
+      .run_dir(run.run.run_id.as_str())
+      .expect("run dir")
+      .join(&artifact.path);
+    serde_json::from_slice(
+      &fs::read(&artifact_path).expect("operation-result artifact should be readable"),
+    )
+    .expect("operation-result json should parse")
+  }
+
+  #[test]
+  fn query_wired_live_action_click_ready_records_operation_result() {
+    let temp = temp_dir("mc19-d3-click-ready");
+    let store = LocalStore::new(temp.join("store")).expect("store");
+    let recording = RunRecordingBackend::new(store.clone(), Arc::new(NoopRunRecorder)).handle();
+    let target_block = auv_game_minecraft::BlockPosition::new(511, 73, 728);
+    let semantic_manifest_path =
+      write_mc18_semantic_fixture(&temp, target_block, mc18_target_frame(target_block));
+    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+      .join("crates/auv-game-minecraft/tests/fixtures/mc18/visible.json");
+    let executor = CountingQueryLiveClickExecutor::success("mock live click dispatched");
+
+    let output = run_minecraft_query_wired_live_action_with_executor(
+      &recording,
+      QueryWiredLiveActionInputs {
+        training_result_semantic_manifest_path: semantic_manifest_path,
+        target_block,
+        target_face: Some(auv_game_minecraft::BlockFace::North),
+        target_semantics: auv_game_minecraft::MinecraftTargetSemantics::HitFaceCenter,
+        query_command: None,
+        use_checkpoint_native_provider: false,
+        use_closed_scene_toy_provider: true,
+        closed_scene_fixture_path: Some(fixture_path),
+        output_dir: temp.join("query-output"),
+        target_app: "net.minecraft.client".to_string(),
+        target_title: "Minecraft".to_string(),
+      },
+      &executor,
+    )
+    .expect("click-ready wired live action should succeed");
+
+    assert!(output.value.wiring.attempted);
+    assert_eq!(executor.calls.get(), 1);
+    let run = recording
+      .read_run(output.run_id.as_str())
+      .expect("wired live action run should persist");
+    assert!(
+      run
+        .artifacts
+        .iter()
+        .any(|artifact| { artifact.role == MINECRAFT_3DGS_TRAINING_RESULT_QUERY_ROLE })
+    );
+    assert!(
+      run
+        .artifacts
+        .iter()
+        .any(|artifact| { artifact.role == MINECRAFT_3DGS_TRAINING_RESULT_QUERY_INSPECT_ROLE })
+    );
+    let outcome_event = run
+      .events
+      .iter()
+      .find(|event| event.name == "minecraft.query_wired_live_action.outcome")
+      .expect("outcome event should be recorded");
+    assert!(
+      outcome_event
+        .message
+        .as_deref()
+        .is_some_and(|message| message.contains("attempted=true"))
+    );
+    let operation_result = read_operation_result_artifact(&store, &run);
+    assert_eq!(
+      operation_result.operation_id,
+      crate::minecraft_query_live_action::QUERY_WIRED_LIVE_ACTION_OPERATION_ID
+    );
+    assert_eq!(
+      operation_result.status,
+      crate::contract::OperationStatus::Completed
+    );
+    assert!(
+      operation_output_message(&operation_result.output).contains("mock live click dispatched")
+    );
+    assert!(operation_result.known_limits.iter().any(|limit| {
+      limit == auv_game_minecraft::MC19_V1_D3_QUERY_WIRED_LIVE_ACTION_KNOWN_LIMIT
+    }));
+
+    let _ = fs::remove_dir_all(temp);
+  }
+
+  #[test]
+  fn query_wired_live_action_answer_non_clickable_refuses_without_executor() {
+    let temp = temp_dir("mc19-d3-outside-window");
+    let store = LocalStore::new(temp.join("store")).expect("store");
+    let recording = RunRecordingBackend::new(store.clone(), Arc::new(NoopRunRecorder)).handle();
+    let target_block = auv_game_minecraft::BlockPosition::new(511, 73, 728);
+    let semantic_manifest_path =
+      write_mc18_semantic_fixture(&temp, target_block, mc18_target_frame(target_block));
+    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+      .join("crates/auv-game-minecraft/tests/fixtures/mc18/outside_window.json");
+    let executor = CountingQueryLiveClickExecutor::success("should not run");
+
+    let output = run_minecraft_query_wired_live_action_with_executor(
+      &recording,
+      QueryWiredLiveActionInputs {
+        training_result_semantic_manifest_path: semantic_manifest_path,
+        target_block,
+        target_face: Some(auv_game_minecraft::BlockFace::North),
+        target_semantics: auv_game_minecraft::MinecraftTargetSemantics::HitFaceCenter,
+        query_command: None,
+        use_checkpoint_native_provider: false,
+        use_closed_scene_toy_provider: true,
+        closed_scene_fixture_path: Some(fixture_path),
+        output_dir: temp.join("query-output"),
+        target_app: "net.minecraft.client".to_string(),
+        target_title: "Minecraft".to_string(),
+      },
+      &executor,
+    )
+    .expect("outside-window wired live action should succeed");
+
+    assert!(!output.value.wiring.attempted);
+    assert_eq!(executor.calls.get(), 0);
+    let run = recording
+      .read_run(output.run_id.as_str())
+      .expect("wired live action run should persist");
+    let operation_result = read_operation_result_artifact(&store, &run);
+    assert_eq!(
+      operation_result.status,
+      crate::contract::OperationStatus::Completed
+    );
+    assert!(
+      operation_output_message(&operation_result.output).contains("visibility=outside_window")
+    );
+
+    let _ = fs::remove_dir_all(temp);
+  }
+
+  #[test]
+  fn query_wired_live_action_not_consumable_refuses_without_executor() {
+    let temp = temp_dir("mc19-d3-not-consumable");
+    let store = LocalStore::new(temp.join("store")).expect("store");
+    let recording = RunRecordingBackend::new(store.clone(), Arc::new(NoopRunRecorder)).handle();
+    let frame_block = auv_game_minecraft::BlockPosition::new(0, 0, 0);
+    let target_block = auv_game_minecraft::BlockPosition::new(9, 9, 9);
+    let semantic_manifest_path =
+      write_mc18_semantic_fixture(&temp, frame_block, mc18_target_frame(frame_block));
+    let executor = CountingQueryLiveClickExecutor::success("should not run");
+
+    let output = run_minecraft_query_wired_live_action_with_executor(
+      &recording,
+      QueryWiredLiveActionInputs {
+        training_result_semantic_manifest_path: semantic_manifest_path,
+        target_block,
+        target_face: None,
+        target_semantics: auv_game_minecraft::MinecraftTargetSemantics::HitFaceCenter,
+        query_command: None,
+        use_checkpoint_native_provider: false,
+        use_closed_scene_toy_provider: false,
+        closed_scene_fixture_path: None,
+        output_dir: temp.join("query-output"),
+        target_app: "net.minecraft.client".to_string(),
+        target_title: "Minecraft".to_string(),
+      },
+      &executor,
+    )
+    .expect("not-consumable wired live action should succeed");
+
+    assert!(!output.value.wiring.attempted);
+    assert_eq!(executor.calls.get(), 0);
+    let run = recording
+      .read_run(output.run_id.as_str())
+      .expect("wired live action run should persist");
+    let operation_result = read_operation_result_artifact(&store, &run);
+    assert_eq!(
+      operation_result.status,
+      crate::contract::OperationStatus::Completed
+    );
+    let message = operation_output_message(&operation_result.output);
+    assert!(message.contains("status=failed"));
+    assert!(message.contains("reason=target_block_absent_from_scene_packet"));
 
     let _ = fs::remove_dir_all(temp);
   }

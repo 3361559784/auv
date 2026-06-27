@@ -365,6 +365,8 @@ fn real_source_mc14_spatial_query_after_holdout_chain() {
     target_semantics: MinecraftTargetSemantics::BlockCenter,
     query_command: None,
     use_checkpoint_native_provider: false,
+    use_closed_scene_toy_provider: false,
+    closed_scene_fixture_path: None,
     output_dir: query_dir,
   });
 

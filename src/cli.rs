@@ -203,6 +203,8 @@ pub enum CliCommand {
     target_semantics: String,
     query_command: Option<String>,
     use_checkpoint_native_provider: bool,
+    use_closed_scene_toy_provider: bool,
+    closed_scene_fixture_path: Option<String>,
     output_dir: String,
     inspect: InspectClientOptions,
   },
@@ -1366,6 +1368,8 @@ fn parse_minecraft_query_3dgs_training_result(arguments: &[String]) -> AuvResult
   let mut target_semantics = "hit_face_center".to_string();
   let mut query_command = None;
   let mut use_checkpoint_native_provider = false;
+  let mut use_closed_scene_toy_provider = false;
+  let mut closed_scene_fixture_path = None;
   let mut output_dir = None;
   let mut inspect = InspectClientOptions::default();
   let mut index = 2;
@@ -1418,12 +1422,23 @@ fn parse_minecraft_query_3dgs_training_result(arguments: &[String]) -> AuvResult
       }
       "--query-provider" => {
         let value = required_flag_value(arguments, index, "--query-provider")?;
-        if value != "checkpoint-native" {
-          return Err(format!(
-            "invalid --query-provider {value:?}; expected checkpoint-native"
-          ));
+        match value.as_str() {
+          "checkpoint-native" => use_checkpoint_native_provider = true,
+          "closed-scene-toy" => use_closed_scene_toy_provider = true,
+          other => {
+            return Err(format!(
+              "invalid --query-provider {other:?}; expected checkpoint-native or closed-scene-toy"
+            ));
+          }
         }
-        use_checkpoint_native_provider = true;
+        index += 2;
+      }
+      "--closed-scene-fixture" => {
+        closed_scene_fixture_path = Some(required_flag_value(
+          arguments,
+          index,
+          "--closed-scene-fixture",
+        )?);
         index += 2;
       }
       "--query-command" => {
@@ -1445,9 +1460,28 @@ fn parse_minecraft_query_3dgs_training_result(arguments: &[String]) -> AuvResult
   let target_block = target_block.ok_or_else(|| "--target-block is required".to_string())?;
   validate_target_block_coordinates(&target_block)?;
 
+  if use_checkpoint_native_provider && use_closed_scene_toy_provider {
+    return Err(
+      "--query-provider checkpoint-native and --query-provider closed-scene-toy are mutually exclusive"
+        .to_string(),
+    );
+  }
+
   if use_checkpoint_native_provider && query_command.is_some() {
     return Err(
       "--query-provider checkpoint-native and --query-command are mutually exclusive".to_string(),
+    );
+  }
+
+  if use_closed_scene_toy_provider && query_command.is_some() {
+    return Err(
+      "--query-provider closed-scene-toy and --query-command are mutually exclusive".to_string(),
+    );
+  }
+
+  if use_closed_scene_toy_provider && closed_scene_fixture_path.is_none() {
+    return Err(
+      "--closed-scene-fixture is required when --query-provider closed-scene-toy".to_string(),
     );
   }
 
@@ -1459,6 +1493,8 @@ fn parse_minecraft_query_3dgs_training_result(arguments: &[String]) -> AuvResult
     target_semantics,
     query_command,
     use_checkpoint_native_provider,
+    use_closed_scene_toy_provider,
+    closed_scene_fixture_path,
     output_dir: output_dir.ok_or_else(|| "--output-dir is required".to_string())?,
     inspect,
   })
@@ -3324,6 +3360,66 @@ mod tests {
   }
 
   #[test]
+  fn parse_minecraft_query_3dgs_training_result_command_parses_closed_scene_toy_provider() {
+    let command = parse_cli(&[
+      "minecraft".to_string(),
+      "query-3dgs-training-result".to_string(),
+      "--training-result-semantic-manifest".to_string(),
+      "/tmp/semantic.json".to_string(),
+      "--target-block".to_string(),
+      "511,73,728".to_string(),
+      "--target-face".to_string(),
+      "north".to_string(),
+      "--query-provider".to_string(),
+      "closed-scene-toy".to_string(),
+      "--closed-scene-fixture".to_string(),
+      "/tmp/mc18-fixture.json".to_string(),
+      "--output-dir".to_string(),
+      "/tmp/query".to_string(),
+    ])
+    .expect("closed-scene-toy provider should parse");
+
+    match command {
+      CliCommand::MinecraftQuery3dgsTrainingResult {
+        use_closed_scene_toy_provider,
+        closed_scene_fixture_path,
+        query_command,
+        ..
+      } => {
+        assert!(use_closed_scene_toy_provider);
+        assert_eq!(
+          closed_scene_fixture_path.as_deref(),
+          Some("/tmp/mc18-fixture.json")
+        );
+        assert!(query_command.is_none());
+      }
+      other => panic!("unexpected command: {other:?}"),
+    }
+  }
+
+  #[test]
+  fn parse_minecraft_query_3dgs_training_result_command_rejects_dual_query_providers() {
+    let error = parse_cli(&[
+      "minecraft".to_string(),
+      "query-3dgs-training-result".to_string(),
+      "--training-result-semantic-manifest".to_string(),
+      "/tmp/semantic.json".to_string(),
+      "--target-block".to_string(),
+      "1,2,3".to_string(),
+      "--query-provider".to_string(),
+      "checkpoint-native".to_string(),
+      "--query-provider".to_string(),
+      "closed-scene-toy".to_string(),
+      "--closed-scene-fixture".to_string(),
+      "/tmp/mc18-fixture.json".to_string(),
+      "--output-dir".to_string(),
+      "/tmp/query".to_string(),
+    ])
+    .expect_err("dual providers should fail");
+
+    assert!(error.contains("mutually exclusive"));
+  }
+
   fn parse_minecraft_validate_3dgs_training_result_command_requires_manifest() {
     let error = parse_cli(&[
       "minecraft".to_string(),

@@ -814,6 +814,8 @@ async fn run() -> Result<(), String> {
       target_semantics,
       query_command,
       use_checkpoint_native_provider,
+      use_closed_scene_toy_provider,
+      closed_scene_fixture_path,
       output_dir,
       inspect,
     } => {
@@ -829,6 +831,8 @@ async fn run() -> Result<(), String> {
         target_semantics,
         query_command,
         use_checkpoint_native_provider,
+        use_closed_scene_toy_provider,
+        closed_scene_fixture_path.map(PathBuf::from),
         PathBuf::from(output_dir),
       )?;
       println!("runId: {}", output.run_id);

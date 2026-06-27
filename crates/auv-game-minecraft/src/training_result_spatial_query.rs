@@ -18,7 +18,9 @@ use crate::training_result_semantic::{
   TrainingResultSemanticManifest, TrainingResultSemanticStatus,
 };
 use crate::training_result_spatial_query_provider::{
-  MC15_V1_CHECKPOINT_NATIVE_KNOWN_LIMIT, run_checkpoint_native_provider_backend,
+  MC15_V1_CHECKPOINT_NATIVE_KNOWN_LIMIT, MC18_V1_CLOSED_SCENE_TOY_KNOWN_LIMIT,
+  MC18_V1_CLOSED_SCENE_TOY_NO_REFERENCE_LIMIT, run_checkpoint_native_provider_backend,
+  run_closed_scene_toy_provider_backend,
 };
 use crate::types::{
   BlockFace, BlockPosition, MinecraftSpatialFrame, MinecraftTargetSemantics, ProjectionVisibility,
@@ -41,6 +43,8 @@ pub struct TrainingResultSpatialQueryInputs {
   pub target_semantics: MinecraftTargetSemantics,
   pub query_command: Option<String>,
   pub use_checkpoint_native_provider: bool,
+  pub use_closed_scene_toy_provider: bool,
+  pub closed_scene_fixture_path: Option<PathBuf>,
   pub output_dir: PathBuf,
 }
 
@@ -336,6 +340,10 @@ pub fn query_3dgs_training_result(
   if inputs.use_checkpoint_native_provider {
     known_limits.insert(MC15_V1_CHECKPOINT_NATIVE_KNOWN_LIMIT.to_string());
   }
+  if inputs.use_closed_scene_toy_provider {
+    known_limits.insert(MC18_V1_CLOSED_SCENE_TOY_KNOWN_LIMIT.to_string());
+    known_limits.insert(MC18_V1_CLOSED_SCENE_TOY_NO_REFERENCE_LIMIT.to_string());
+  }
 
   let mut warnings = BTreeSet::new();
   let semantic_ready = semantic_manifest.semantic_status == TrainingResultSemanticStatus::Ready;
@@ -349,6 +357,15 @@ pub fn query_3dgs_training_result(
         &inputs,
       )?),
       Some(TrainingResultSpatialQueryBackend::CheckpointNative),
+    )
+  } else if inputs.use_closed_scene_toy_provider {
+    (
+      Some(run_closed_scene_toy_provider_backend(
+        &semantic_manifest,
+        &inputs,
+        inputs.closed_scene_fixture_path.as_deref(),
+      )?),
+      Some(TrainingResultSpatialQueryBackend::ClosedSceneToy),
     )
   } else if let Some(command) = inputs.query_command.as_deref() {
     (
@@ -1067,6 +1084,8 @@ mod tests {
       target_semantics: MinecraftTargetSemantics::HitFaceCenter,
       query_command: None,
       use_checkpoint_native_provider: false,
+      use_closed_scene_toy_provider: false,
+      closed_scene_fixture_path: None,
       output_dir: temp.path().join("query-output"),
     })
     .expect("reference-only happy path");
@@ -1109,6 +1128,8 @@ mod tests {
       target_semantics: MinecraftTargetSemantics::HitFaceCenter,
       query_command: None,
       use_checkpoint_native_provider: false,
+      use_closed_scene_toy_provider: false,
+      closed_scene_fixture_path: None,
       output_dir: temp.path().join("query-output"),
     })
     .expect("blocked semantic should still write artifacts");
@@ -1148,6 +1169,8 @@ mod tests {
       target_semantics: MinecraftTargetSemantics::HitFaceCenter,
       query_command: None,
       use_checkpoint_native_provider: false,
+      use_closed_scene_toy_provider: false,
+      closed_scene_fixture_path: None,
       output_dir: temp.path().join("query-output"),
     })
     .expect("missing target should still write artifacts");
@@ -1183,6 +1206,8 @@ mod tests {
       target_semantics: MinecraftTargetSemantics::HitFaceCenter,
       query_command: Some(provider_command.to_string()),
       use_checkpoint_native_provider: false,
+      use_closed_scene_toy_provider: false,
+      closed_scene_fixture_path: None,
       output_dir: temp.path().join("query-output"),
     })
     .expect("provider + reference");
@@ -1224,6 +1249,8 @@ mod tests {
       target_semantics: MinecraftTargetSemantics::HitFaceCenter,
       query_command: Some(provider_command),
       use_checkpoint_native_provider: false,
+      use_closed_scene_toy_provider: false,
+      closed_scene_fixture_path: None,
       output_dir: temp.path().join("query-output"),
     })
     .expect("invalid provider JSON should still write artifacts via reference fallback");
@@ -1274,6 +1301,8 @@ mod tests {
       target_semantics: MinecraftTargetSemantics::HitFaceCenter,
       query_command: Some("exit 17".to_string()),
       use_checkpoint_native_provider: false,
+      use_closed_scene_toy_provider: false,
+      closed_scene_fixture_path: None,
       output_dir: temp.path().join("query-output"),
     })
     .expect("provider failure should still write artifacts via reference fallback");
@@ -1317,6 +1346,8 @@ mod tests {
       target_semantics: MinecraftTargetSemantics::HitFaceCenter,
       query_command: None,
       use_checkpoint_native_provider: false,
+      use_closed_scene_toy_provider: false,
+      closed_scene_fixture_path: None,
       output_dir: temp.path().join("query-output"),
     })
     .expect("behind camera visibility");
@@ -1351,6 +1382,8 @@ mod tests {
       target_semantics: MinecraftTargetSemantics::HitFaceCenter,
       query_command: None,
       use_checkpoint_native_provider: false,
+      use_closed_scene_toy_provider: false,
+      closed_scene_fixture_path: None,
       output_dir: temp.path().join("query-output"),
     })
     .expect("out of frustum visibility");
@@ -1433,6 +1466,8 @@ mod tests {
       target_semantics: MinecraftTargetSemantics::HitFaceCenter,
       query_command: Some(provider_command.to_string()),
       use_checkpoint_native_provider: false,
+      use_closed_scene_toy_provider: false,
+      closed_scene_fixture_path: None,
       output_dir: temp.path().join("query-output"),
     })
     .expect("outside window visibility");
@@ -1477,6 +1512,8 @@ mod tests {
       target_semantics: MinecraftTargetSemantics::HitFaceCenter,
       query_command: None,
       use_checkpoint_native_provider: false,
+      use_closed_scene_toy_provider: false,
+      closed_scene_fixture_path: None,
       output_dir: temp.path().join("query-output"),
     })
     .expect("newest matching frame");
@@ -1515,6 +1552,8 @@ mod tests {
       target_semantics: MinecraftTargetSemantics::HitFaceCenter,
       query_command: None,
       use_checkpoint_native_provider: false,
+      use_closed_scene_toy_provider: false,
+      closed_scene_fixture_path: None,
       output_dir: temp.path().join("query-hit-face"),
     })
     .expect("hit face center semantics");
@@ -1526,6 +1565,8 @@ mod tests {
       target_semantics: MinecraftTargetSemantics::BlockCenter,
       query_command: None,
       use_checkpoint_native_provider: false,
+      use_closed_scene_toy_provider: false,
+      closed_scene_fixture_path: None,
       output_dir: temp.path().join("query-block-center"),
     })
     .expect("block center semantics");
@@ -1537,6 +1578,8 @@ mod tests {
       target_semantics: MinecraftTargetSemantics::BlockCenter,
       query_command: None,
       use_checkpoint_native_provider: false,
+      use_closed_scene_toy_provider: false,
+      closed_scene_fixture_path: None,
       output_dir: temp.path().join("query-explicit-face"),
     })
     .expect("explicit target face");
@@ -1584,6 +1627,8 @@ mod tests {
       target_semantics: MinecraftTargetSemantics::HitFaceCenter,
       query_command: None,
       use_checkpoint_native_provider: false,
+      use_closed_scene_toy_provider: false,
+      closed_scene_fixture_path: None,
       output_dir: temp.path().join("query-output"),
     })
     .expect_err("missing scene packet manifest");
@@ -1601,6 +1646,8 @@ mod tests {
       target_semantics: MinecraftTargetSemantics::HitFaceCenter,
       query_command: None,
       use_checkpoint_native_provider: false,
+      use_closed_scene_toy_provider: false,
+      closed_scene_fixture_path: None,
       output_dir: temp.path().join("query-output"),
     })
     .expect_err("missing semantic manifest");
@@ -1641,6 +1688,8 @@ mod tests {
       target_semantics: MinecraftTargetSemantics::HitFaceCenter,
       query_command: None,
       use_checkpoint_native_provider: true,
+      use_closed_scene_toy_provider: false,
+      closed_scene_fixture_path: None,
       output_dir: temp.path().join("query-output"),
     })
     .expect("checkpoint native query");
@@ -1673,6 +1722,57 @@ mod tests {
         .known_limits
         .iter()
         .any(|limit| limit.contains("Gaussian render inference is deferred"))
+    );
+  }
+  #[test]
+  fn closed_scene_toy_provider_selects_closed_scene_toy_backend() {
+    let temp = TempDir::new().expect("tempdir");
+    write_normalized_result_fixture(&temp, true);
+    let target_block = BlockPosition::new(511, 73, 728);
+    let frame = test_frame(target_block, identity_matrix(), identity_matrix());
+    let scene_packet_manifest_path = write_scene_packet_fixture(&temp, target_block, frame);
+    let semantic_manifest_path = write_semantic_manifest(
+      &temp,
+      TrainingResultSemanticStatus::Ready,
+      &scene_packet_manifest_path,
+    );
+    let fixture_path =
+      PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/mc18/visible.json");
+
+    let output = query_3dgs_training_result(TrainingResultSpatialQueryInputs {
+      training_result_semantic_manifest_path: semantic_manifest_path,
+      target_block,
+      target_face: Some(BlockFace::North),
+      target_semantics: MinecraftTargetSemantics::HitFaceCenter,
+      query_command: None,
+      use_checkpoint_native_provider: false,
+      use_closed_scene_toy_provider: true,
+      closed_scene_fixture_path: Some(fixture_path),
+      output_dir: temp.path().join("query-output"),
+    })
+    .expect("closed scene toy query");
+
+    assert_eq!(
+      output.manifest.status,
+      TrainingResultSpatialQueryStatus::Answered
+    );
+    assert_eq!(
+      output.manifest.selected_backend,
+      Some(TrainingResultSpatialQueryBackend::ClosedSceneToy)
+    );
+    assert!(
+      output
+        .manifest
+        .basis_frame_id
+        .as_deref()
+        .is_some_and(|basis| basis.starts_with("closed_scene_toy:"))
+    );
+    assert!(
+      output
+        .manifest
+        .known_limits
+        .iter()
+        .any(|limit| limit.contains("not Gaussian inference"))
     );
   }
 }

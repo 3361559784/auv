@@ -2,8 +2,10 @@
 
 Date: 2026-06-27
 
-Status: **design note only**. MC-19 is an owner-opened slice; no runtime wiring
-is claimed until a later implement handoff closes with live evidence.
+Status: **D1 wiring seam implemented** (not live closure). MC-19 D1 adds a
+runtime wiring seam with injectable executor and unit-tested three-path
+refusal/attempt semantics in `training_result_spatial_query_action_wiring.rs`.
+Live closure evidence remains deferred to D4.
 
 ## One-line summary
 
@@ -157,13 +159,21 @@ Update boundary when MC-19 implements:
 
 | Slice | Scope | Done when |
 | --- | --- | --- |
-| **D1** | Design + command/API sketch (`query-then-live-click` or narrow wrapper over existing query + live-click) | Owner accepts this note |
+| **D1** | Runtime wiring seam + executor injection (`wire_query_manifest_to_action`, `QueryLiveClickExecutor`) | Implemented with three-path unit tests; not live closure |
 | **D2** | Readiness-gated dispatch/refusal core (library or `minecraft.rs` helper) | Unit tests for three eligibility branches |
 | **D3** | CLI + run recording wiring | One command path writes operation evidence + lineage |
 | **D4** | Three live closure gates | Live closure note with run ids |
 | **D5** | Inspect / terminal consumer polish | Inspect or CLI shows attempt/refusal + lineage without new artifact role |
 
-Implement must **not** start until owner names the D1 command surface.
+D1 implementation notes:
+
+- Module: `crates/auv-game-minecraft/src/training_result_spatial_query_action_wiring.rs`
+- Thin library helper: `wire_spatial_query_manifest_to_action` in `src/minecraft.rs`
+- Full `run_minecraft_live_click` integration is **deferred**; D3 will reuse the
+  `input.clickWindowPoint` invoke pattern without importing the telemetry +
+  screenshot + `assess_bound_projection` pipeline from `run_minecraft_live_click`.
+
+Implement must **not** start D3 CLI until owner names that slice.
 
 ## Honest limits
 

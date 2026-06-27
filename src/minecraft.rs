@@ -1,25 +1,28 @@
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use auv_game_minecraft::{
-  ScenePacketInputs, ScenePacketOutput, SourceRunSummary, SpatialBundleInputs, SpatialBundleOutput,
-  SpatialBundleSourceArtifact, TextureSweepInputs, TextureSweepPreparationInputs,
-  TextureSweepPreparationOutput, TextureSweepReport, TextureSweepSampleBuildInputs,
-  TextureSweepSampleBuildOutput, TextureSweepThresholds, TrainingLaunchJobInputs,
-  TrainingLaunchPreparationInputs, TrainingLaunchPreparationOutput, TrainingPackageInputs,
-  TrainingPackageOutput, TrainingResultArtifactFetchInputs, TrainingResultArtifactFetchOutput,
+  QueryActionWiringOutcome, QueryLiveClickExecutor, ScenePacketInputs, ScenePacketOutput,
+  SourceRunSummary, SpatialBundleInputs, SpatialBundleOutput, SpatialBundleSourceArtifact,
+  TextureSweepInputs, TextureSweepPreparationInputs, TextureSweepPreparationOutput,
+  TextureSweepReport, TextureSweepSampleBuildInputs, TextureSweepSampleBuildOutput,
+  TextureSweepThresholds, TrainingLaunchJobInputs, TrainingLaunchPreparationInputs,
+  TrainingLaunchPreparationOutput, TrainingPackageInputs, TrainingPackageOutput,
+  TrainingResultArtifactFetchInputs, TrainingResultArtifactFetchOutput,
   TrainingResultHoldoutPreviewInputs, TrainingResultHoldoutPreviewOutput,
   TrainingResultHoldoutRenderQualityInputs, TrainingResultHoldoutRenderQualityOutput,
   TrainingResultInputs, TrainingResultOutput, TrainingResultSemanticValidationInputs,
   TrainingResultSemanticValidationOutput, TrainingResultSpatialQueryInputs,
-  TrainingResultSpatialQueryOutput, build_texture_sweep_samples_from_bundles,
-  collect_3dgs_training_job_result, collect_3dgs_training_job_result_with_environment,
-  evaluate_texture_sweep, export_3dgs_scene_packet, export_3dgs_training_package,
-  export_spatial_bundle, fetch_3dgs_training_result_artifacts_with_environment,
-  inspect_3dgs_training_result_holdout, launch_3dgs_training_job,
-  launch_3dgs_training_job_with_environment, measure_3dgs_holdout_render_quality,
-  prepare_3dgs_training_launch, prepare_texture_sweep_resource_packs, query_3dgs_training_result,
-  validate_3dgs_training_result,
+  TrainingResultSpatialQueryManifest, TrainingResultSpatialQueryOutput,
+  build_texture_sweep_samples_from_bundles, collect_3dgs_training_job_result,
+  collect_3dgs_training_job_result_with_environment, evaluate_texture_sweep,
+  export_3dgs_scene_packet, export_3dgs_training_package, export_spatial_bundle,
+  fetch_3dgs_training_result_artifacts_with_environment, inspect_3dgs_training_result_holdout,
+  launch_3dgs_training_job, launch_3dgs_training_job_with_environment,
+  measure_3dgs_holdout_render_quality, prepare_3dgs_training_launch,
+  prepare_texture_sweep_resource_packs, query_3dgs_training_result,
+  query_action_wiring_lineage_from_manifest, validate_3dgs_training_result,
+  wire_query_manifest_to_action,
 };
 
 use auv_tracing_driver::RecordingHandle;
@@ -747,6 +750,15 @@ pub fn run_minecraft_3dgs_training_result_spatial_query(
       Ok::<_, String>(result)
     },
   )
+}
+
+pub fn wire_spatial_query_manifest_to_action(
+  manifest: &TrainingResultSpatialQueryManifest,
+  manifest_path: &Path,
+  executor: &impl QueryLiveClickExecutor,
+) -> QueryActionWiringOutcome {
+  let lineage = query_action_wiring_lineage_from_manifest(manifest, manifest_path);
+  wire_query_manifest_to_action(manifest, &lineage, executor)
 }
 
 pub fn run_minecraft_texture_sweep_sample_build(

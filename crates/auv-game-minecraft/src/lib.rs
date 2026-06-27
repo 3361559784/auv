@@ -22,6 +22,7 @@ pub mod training_result_holdout_render_quality;
 pub mod training_result_semantic;
 pub mod training_result_spatial_query;
 pub mod training_result_spatial_query_action;
+pub mod training_result_spatial_query_action_wiring;
 pub mod training_result_spatial_query_provider;
 pub mod types;
 pub mod verify;
@@ -142,6 +143,10 @@ pub use training_result_spatial_query::{
 pub use training_result_spatial_query_action::{
   TrainingResultSpatialQueryActionEligibility, TrainingResultSpatialQueryActionReadiness,
   derive_action_readiness,
+};
+pub use training_result_spatial_query_action_wiring::{
+  MC19_V1_D1_QUERY_ACTION_WIRING_KNOWN_LIMIT, QueryActionWiringLineage, QueryActionWiringOutcome,
+  QueryLiveClickExecutor, query_action_wiring_lineage_from_manifest, wire_query_manifest_to_action,
 };
 pub use training_result_spatial_query_provider::{
   MC15_V1_CHECKPOINT_NATIVE_KNOWN_LIMIT, MC18_V1_CLOSED_SCENE_TOY_KNOWN_LIMIT,

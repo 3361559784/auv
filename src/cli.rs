@@ -188,6 +188,7 @@ pub enum CliCommand {
     target_face: Option<String>,
     target_semantics: String,
     query_command: Option<String>,
+    use_checkpoint_native_provider: bool,
     output_dir: String,
     inspect: InspectClientOptions,
   },
@@ -1342,6 +1343,7 @@ fn parse_minecraft_query_3dgs_training_result(arguments: &[String]) -> AuvResult
   let mut target_face = None;
   let mut target_semantics = "hit_face_center".to_string();
   let mut query_command = None;
+  let mut use_checkpoint_native_provider = false;
   let mut output_dir = None;
   let mut inspect = InspectClientOptions::default();
   let mut index = 2;
@@ -1392,6 +1394,16 @@ fn parse_minecraft_query_3dgs_training_result(arguments: &[String]) -> AuvResult
         }
         index += 2;
       }
+      "--query-provider" => {
+        let value = required_flag_value(arguments, index, "--query-provider")?;
+        if value != "checkpoint-native" {
+          return Err(format!(
+            "invalid --query-provider {value:?}; expected checkpoint-native"
+          ));
+        }
+        use_checkpoint_native_provider = true;
+        index += 2;
+      }
       "--query-command" => {
         query_command = Some(required_flag_value(arguments, index, "--query-command")?);
         index += 2;
@@ -1411,6 +1423,12 @@ fn parse_minecraft_query_3dgs_training_result(arguments: &[String]) -> AuvResult
   let target_block = target_block.ok_or_else(|| "--target-block is required".to_string())?;
   validate_target_block_coordinates(&target_block)?;
 
+  if use_checkpoint_native_provider && query_command.is_some() {
+    return Err(
+      "--query-provider checkpoint-native and --query-command are mutually exclusive".to_string(),
+    );
+  }
+
   Ok(CliCommand::MinecraftQuery3dgsTrainingResult {
     training_result_semantic_manifest_path: training_result_semantic_manifest_path
       .ok_or_else(|| "--training-result-semantic-manifest is required".to_string())?,
@@ -1418,6 +1436,7 @@ fn parse_minecraft_query_3dgs_training_result(arguments: &[String]) -> AuvResult
     target_face,
     target_semantics,
     query_command,
+    use_checkpoint_native_provider,
     output_dir: output_dir.ok_or_else(|| "--output-dir is required".to_string())?,
     inspect,
   })
@@ -3086,6 +3105,7 @@ mod tests {
         target_face,
         target_semantics,
         query_command,
+        use_checkpoint_native_provider,
         output_dir,
         ..
       } => {
@@ -3094,6 +3114,7 @@ mod tests {
         assert_eq!(target_face.as_deref(), Some("north"));
         assert_eq!(target_semantics, "block_center");
         assert_eq!(query_command.as_deref(), Some("python3 query.py"));
+        assert!(!use_checkpoint_native_provider);
         assert_eq!(output_dir, "/tmp/query");
       }
       other => panic!("unexpected command: {other:?}"),
@@ -3101,6 +3122,56 @@ mod tests {
   }
 
   #[test]
+  #[test]
+  fn parse_minecraft_query_3dgs_training_result_command_parses_checkpoint_native_provider() {
+    let command = parse_cli(&[
+      "minecraft".to_string(),
+      "query-3dgs-training-result".to_string(),
+      "--training-result-semantic-manifest".to_string(),
+      "/tmp/semantic.json".to_string(),
+      "--target-block".to_string(),
+      "1,2,3".to_string(),
+      "--query-provider".to_string(),
+      "checkpoint-native".to_string(),
+      "--output-dir".to_string(),
+      "/tmp/query".to_string(),
+    ])
+    .expect("checkpoint-native provider should parse");
+
+    match command {
+      CliCommand::MinecraftQuery3dgsTrainingResult {
+        use_checkpoint_native_provider,
+        query_command,
+        ..
+      } => {
+        assert!(use_checkpoint_native_provider);
+        assert!(query_command.is_none());
+      }
+      other => panic!("unexpected command: {other:?}"),
+    }
+  }
+
+  #[test]
+  fn parse_minecraft_query_3dgs_training_result_command_rejects_conflicting_provider_flags() {
+    let error = parse_cli(&[
+      "minecraft".to_string(),
+      "query-3dgs-training-result".to_string(),
+      "--training-result-semantic-manifest".to_string(),
+      "/tmp/semantic.json".to_string(),
+      "--target-block".to_string(),
+      "1,2,3".to_string(),
+      "--query-provider".to_string(),
+      "checkpoint-native".to_string(),
+      "--query-command".to_string(),
+      "python3 query.py".to_string(),
+      "--output-dir".to_string(),
+      "/tmp/query".to_string(),
+    ])
+    .expect_err("conflicting provider flags should fail");
+
+    assert!(error.contains("mutually exclusive"));
+  }
+
   fn parse_minecraft_validate_3dgs_training_result_command_requires_manifest() {
     let error = parse_cli(&[
       "minecraft".to_string(),

@@ -9,7 +9,7 @@ visibility answer for one block target.
 MC-12 is **not**:
 
 - a model-quality or splat-usefulness gate
-- a checkpoint-native or Gaussian-native query core
+- a checkpoint-native or Gaussian-native **inference** core (provider seam is MC-15)
 - entity / anchor / label query
 - render preview or action integration (MC-12 read-side consumer is MC-13:
   `docs/ai/references/2026-06-27-minecraft-mc13-spatial-query-read-side-inspect-consumer-design.md`)
@@ -18,8 +18,9 @@ MC-12 is **not**:
 `scene_packet + MinecraftProjector + mc6_projection_target_for_frame`. It closes the
 query contract honestly but does **not** claim real Gaussian inference.
 
-Checkpoint-native / Gaussian-native query cores remain deferred until owner approval and
-until source contracts expose stable query nouns.
+Checkpoint-native provider seam closed in MC-15:
+`docs/ai/references/2026-06-27-minecraft-mc15-checkpoint-native-query-provider-seam-design.md`.
+True Gaussian render inference remains deferred (MC-16 / MC-15+).
 
 ## Command
 
@@ -30,6 +31,7 @@ auv-cli minecraft query-3dgs-training-result \
   [--target-face <up|down|north|south|east|west>] \
   [--target-semantics hit_face_center|block_center] \
   [--query-command <command>] \
+  [--query-provider checkpoint-native] \
   --output-dir <dir>
 ```
 
@@ -43,6 +45,7 @@ Input boundary:
 
 1. `projection_reference` — always attempted when MC-10 `semantic_status = ready`.
 2. `command_provider` — only when `--query-command` is present.
+3. `checkpoint_native` — when `--query-provider checkpoint-native` is present (MC-15).
 
 Selection:
 

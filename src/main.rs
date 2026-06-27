@@ -697,6 +697,7 @@ async fn run() -> Result<(), String> {
       target_face,
       target_semantics,
       query_command,
+      use_checkpoint_native_provider,
       output_dir,
       inspect,
     } => {
@@ -711,6 +712,7 @@ async fn run() -> Result<(), String> {
         target_face,
         target_semantics,
         query_command,
+        use_checkpoint_native_provider,
         PathBuf::from(output_dir),
       )?;
       println!("runId: {}", output.run_id);

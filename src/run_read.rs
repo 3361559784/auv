@@ -1794,6 +1794,9 @@ fn parse_spatial_query_backend(
     "command_provider" => {
       Ok(auv_game_minecraft::TrainingResultSpatialQueryBackend::CommandProvider)
     }
+    "checkpoint_native" => {
+      Ok(auv_game_minecraft::TrainingResultSpatialQueryBackend::CheckpointNative)
+    }
     "projection_reference" => {
       Ok(auv_game_minecraft::TrainingResultSpatialQueryBackend::ProjectionReference)
     }

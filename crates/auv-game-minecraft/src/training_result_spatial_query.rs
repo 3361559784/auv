@@ -13,6 +13,9 @@ use crate::scene_packet::{ScenePacketFramePayload, ScenePacketFrameRecord, Scene
 use crate::training_result_semantic::{
   TrainingResultSemanticManifest, TrainingResultSemanticStatus,
 };
+use crate::training_result_spatial_query_provider::{
+  MC15_V1_CHECKPOINT_NATIVE_KNOWN_LIMIT, run_checkpoint_native_provider_backend,
+};
 use crate::types::{
   BlockFace, BlockPosition, MinecraftSpatialFrame, MinecraftTargetSemantics, ProjectionVisibility,
   mc6_projection_target_for_frame,
@@ -33,6 +36,7 @@ pub struct TrainingResultSpatialQueryInputs {
   pub target_face: Option<BlockFace>,
   pub target_semantics: MinecraftTargetSemantics,
   pub query_command: Option<String>,
+  pub use_checkpoint_native_provider: bool,
   pub output_dir: PathBuf,
 }
 
@@ -205,6 +209,7 @@ impl TrainingResultSpatialQueryStatus {
 #[serde(rename_all = "snake_case")]
 pub enum TrainingResultSpatialQueryBackend {
   CommandProvider,
+  CheckpointNative,
   ProjectionReference,
 }
 
@@ -212,6 +217,7 @@ impl TrainingResultSpatialQueryBackend {
   pub fn as_str(self) -> &'static str {
     match self {
       Self::CommandProvider => "command_provider",
+      Self::CheckpointNative => "checkpoint_native",
       Self::ProjectionReference => "projection_reference",
     }
   }
@@ -268,10 +274,10 @@ impl TrainingResultSpatialQueryComparisonVerdict {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-struct BackendOutcome {
-  answer: TrainingResultSpatialQueryAnswer,
-  reference_source_frame_json_path: Option<String>,
-  reference_screenshot_path: Option<String>,
+pub(crate) struct BackendOutcome {
+  pub(crate) answer: TrainingResultSpatialQueryAnswer,
+  pub(crate) reference_source_frame_json_path: Option<String>,
+  pub(crate) reference_screenshot_path: Option<String>,
 }
 
 pub fn query_3dgs_training_result(
@@ -321,18 +327,34 @@ pub fn query_3dgs_training_result(
     "MC-12 does not add entity query, anchor/label query, render preview, or dedicated read-side viewer consumption"
       .to_string(),
   );
+  if inputs.use_checkpoint_native_provider {
+    known_limits.insert(MC15_V1_CHECKPOINT_NATIVE_KNOWN_LIMIT.to_string());
+  }
 
   let mut warnings = BTreeSet::new();
   let semantic_ready = semantic_manifest.semantic_status == TrainingResultSemanticStatus::Ready;
 
-  let provider_outcome = if let Some(command) = inputs.query_command.as_deref() {
-    Some(run_command_provider_backend(
-      command,
-      &semantic_manifest,
-      &inputs,
-    )?)
+  let (provider_outcome, configured_provider_backend) = if inputs.use_checkpoint_native_provider {
+    (
+      Some(run_checkpoint_native_provider_backend(
+        &semantic_manifest,
+        &scene_packet_manifest,
+        scene_packet_dir,
+        &inputs,
+      )?),
+      Some(TrainingResultSpatialQueryBackend::CheckpointNative),
+    )
+  } else if let Some(command) = inputs.query_command.as_deref() {
+    (
+      Some(run_command_provider_backend(
+        command,
+        &semantic_manifest,
+        &inputs,
+      )?),
+      Some(TrainingResultSpatialQueryBackend::CommandProvider),
+    )
   } else {
-    None
+    (None, None)
   };
 
   let reference_outcome = if semantic_ready {
@@ -371,7 +393,7 @@ pub fn query_3dgs_training_result(
   let (selected_backend, selected_answer, comparison_verdict) = select_query_outcome(
     provider_answer.as_ref(),
     Some(&reference_answer),
-    provider_outcome.is_some(),
+    configured_provider_backend,
   );
 
   let manifest_path = inputs.output_dir.join(QUERY_MANIFEST_FILE);
@@ -489,12 +511,13 @@ pub fn query_3dgs_training_result(
 fn select_query_outcome(
   provider_answer: Option<&TrainingResultSpatialQueryAnswer>,
   reference_answer: Option<&TrainingResultSpatialQueryAnswer>,
-  provider_configured: bool,
+  configured_provider_backend: Option<TrainingResultSpatialQueryBackend>,
 ) -> (
   Option<TrainingResultSpatialQueryBackend>,
   TrainingResultSpatialQueryAnswer,
   Option<TrainingResultSpatialQueryComparisonVerdict>,
 ) {
+  let provider_configured = configured_provider_backend.is_some();
   let provider_answered = provider_answer
     .is_some_and(|answer| answer.status == TrainingResultSpatialQueryStatus::Answered);
   let reference_answered = reference_answer
@@ -507,7 +530,7 @@ fn select_query_outcome(
     let comparison_verdict =
       compare_answers(provider_answer, reference_answer, provider_configured);
     return (
-      Some(TrainingResultSpatialQueryBackend::CommandProvider),
+      configured_provider_backend.or(Some(TrainingResultSpatialQueryBackend::CommandProvider)),
       answer,
       comparison_verdict,
     );
@@ -709,7 +732,7 @@ fn run_command_provider_backend(
   })
 }
 
-fn run_projection_reference_backend(
+pub(crate) fn run_projection_reference_backend(
   scene_packet_manifest: &ScenePacketManifest,
   scene_packet_dir: &Path,
   inputs: &TrainingResultSpatialQueryInputs,
@@ -1031,6 +1054,7 @@ mod tests {
       target_face: None,
       target_semantics: MinecraftTargetSemantics::HitFaceCenter,
       query_command: None,
+      use_checkpoint_native_provider: false,
       output_dir: temp.path().join("query-output"),
     })
     .expect("reference-only happy path");
@@ -1072,6 +1096,7 @@ mod tests {
       target_face: None,
       target_semantics: MinecraftTargetSemantics::HitFaceCenter,
       query_command: None,
+      use_checkpoint_native_provider: false,
       output_dir: temp.path().join("query-output"),
     })
     .expect("blocked semantic should still write artifacts");
@@ -1110,6 +1135,7 @@ mod tests {
       target_face: None,
       target_semantics: MinecraftTargetSemantics::HitFaceCenter,
       query_command: None,
+      use_checkpoint_native_provider: false,
       output_dir: temp.path().join("query-output"),
     })
     .expect("missing target should still write artifacts");
@@ -1144,6 +1170,7 @@ mod tests {
       target_face: None,
       target_semantics: MinecraftTargetSemantics::HitFaceCenter,
       query_command: Some(provider_command.to_string()),
+      use_checkpoint_native_provider: false,
       output_dir: temp.path().join("query-output"),
     })
     .expect("provider + reference");
@@ -1184,6 +1211,7 @@ mod tests {
       target_face: None,
       target_semantics: MinecraftTargetSemantics::HitFaceCenter,
       query_command: Some(provider_command),
+      use_checkpoint_native_provider: false,
       output_dir: temp.path().join("query-output"),
     })
     .expect("invalid provider JSON should still write artifacts via reference fallback");
@@ -1233,6 +1261,7 @@ mod tests {
       target_face: None,
       target_semantics: MinecraftTargetSemantics::HitFaceCenter,
       query_command: Some("exit 17".to_string()),
+      use_checkpoint_native_provider: false,
       output_dir: temp.path().join("query-output"),
     })
     .expect("provider failure should still write artifacts via reference fallback");
@@ -1275,6 +1304,7 @@ mod tests {
       target_face: None,
       target_semantics: MinecraftTargetSemantics::HitFaceCenter,
       query_command: None,
+      use_checkpoint_native_provider: false,
       output_dir: temp.path().join("query-output"),
     })
     .expect("behind camera visibility");
@@ -1308,6 +1338,7 @@ mod tests {
       target_face: None,
       target_semantics: MinecraftTargetSemantics::HitFaceCenter,
       query_command: None,
+      use_checkpoint_native_provider: false,
       output_dir: temp.path().join("query-output"),
     })
     .expect("out of frustum visibility");
@@ -1389,6 +1420,7 @@ mod tests {
       target_face: None,
       target_semantics: MinecraftTargetSemantics::HitFaceCenter,
       query_command: Some(provider_command.to_string()),
+      use_checkpoint_native_provider: false,
       output_dir: temp.path().join("query-output"),
     })
     .expect("outside window visibility");
@@ -1432,6 +1464,7 @@ mod tests {
       target_face: None,
       target_semantics: MinecraftTargetSemantics::HitFaceCenter,
       query_command: None,
+      use_checkpoint_native_provider: false,
       output_dir: temp.path().join("query-output"),
     })
     .expect("newest matching frame");
@@ -1469,6 +1502,7 @@ mod tests {
       target_face: None,
       target_semantics: MinecraftTargetSemantics::HitFaceCenter,
       query_command: None,
+      use_checkpoint_native_provider: false,
       output_dir: temp.path().join("query-hit-face"),
     })
     .expect("hit face center semantics");
@@ -1479,6 +1513,7 @@ mod tests {
       target_face: None,
       target_semantics: MinecraftTargetSemantics::BlockCenter,
       query_command: None,
+      use_checkpoint_native_provider: false,
       output_dir: temp.path().join("query-block-center"),
     })
     .expect("block center semantics");
@@ -1489,6 +1524,7 @@ mod tests {
       target_face: Some(BlockFace::East),
       target_semantics: MinecraftTargetSemantics::BlockCenter,
       query_command: None,
+      use_checkpoint_native_provider: false,
       output_dir: temp.path().join("query-explicit-face"),
     })
     .expect("explicit target face");
@@ -1535,6 +1571,7 @@ mod tests {
       target_face: None,
       target_semantics: MinecraftTargetSemantics::HitFaceCenter,
       query_command: None,
+      use_checkpoint_native_provider: false,
       output_dir: temp.path().join("query-output"),
     })
     .expect_err("missing scene packet manifest");
@@ -1551,10 +1588,79 @@ mod tests {
       target_face: None,
       target_semantics: MinecraftTargetSemantics::HitFaceCenter,
       query_command: None,
+      use_checkpoint_native_provider: false,
       output_dir: temp.path().join("query-output"),
     })
     .expect_err("missing semantic manifest");
 
     assert!(error.contains("failed to open"));
+  }
+  fn write_normalized_result_fixture(temp: &TempDir, with_checkpoint: bool) {
+    let normalized_dir = temp.path().join("normalized");
+    let models_dir = normalized_dir.join("nerfstudio_models");
+    std::fs::create_dir_all(&models_dir).expect("models dir");
+    std::fs::write(
+      normalized_dir.join("config.yml"),
+      "trainer: nerfstudio.splatfacto\n",
+    )
+    .expect("config");
+    if with_checkpoint {
+      std::fs::write(models_dir.join("step-000001.ckpt"), b"fake-checkpoint").expect("checkpoint");
+    }
+  }
+
+  #[test]
+  fn checkpoint_native_provider_selects_checkpoint_backend() {
+    let temp = TempDir::new().expect("tempdir");
+    write_normalized_result_fixture(&temp, true);
+    let target_block = BlockPosition::new(0, 0, 0);
+    let frame = test_frame(target_block, identity_matrix(), identity_matrix());
+    let scene_packet_manifest_path = write_scene_packet_fixture(&temp, target_block, frame);
+    let semantic_manifest_path = write_semantic_manifest(
+      &temp,
+      TrainingResultSemanticStatus::Ready,
+      &scene_packet_manifest_path,
+    );
+
+    let output = query_3dgs_training_result(TrainingResultSpatialQueryInputs {
+      training_result_semantic_manifest_path: semantic_manifest_path,
+      target_block,
+      target_face: None,
+      target_semantics: MinecraftTargetSemantics::HitFaceCenter,
+      query_command: None,
+      use_checkpoint_native_provider: true,
+      output_dir: temp.path().join("query-output"),
+    })
+    .expect("checkpoint native query");
+
+    assert_eq!(
+      output.manifest.status,
+      TrainingResultSpatialQueryStatus::Answered
+    );
+    assert_eq!(
+      output.manifest.selected_backend,
+      Some(TrainingResultSpatialQueryBackend::CheckpointNative)
+    );
+    assert!(
+      output
+        .manifest
+        .basis_frame_id
+        .as_deref()
+        .is_some_and(|basis| basis.starts_with("checkpoint:"))
+    );
+    assert!(matches!(
+      output.manifest.comparison_verdict,
+      Some(
+        TrainingResultSpatialQueryComparisonVerdict::Match
+          | TrainingResultSpatialQueryComparisonVerdict::Divergent
+      )
+    ));
+    assert!(
+      output
+        .manifest
+        .known_limits
+        .iter()
+        .any(|limit| limit.contains("Gaussian render inference is deferred"))
+    );
   }
 }

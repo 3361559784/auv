@@ -527,7 +527,7 @@ fn extract_top_level_trainer(value: &Value) -> Result<Option<String>, String> {
     .ok_or_else(|| "config.yml top-level trainer must be a scalar string".to_string())
 }
 
-fn collect_checkpoint_files(
+pub(crate) fn collect_checkpoint_files(
   models_dir_path: &Path,
 ) -> Result<Vec<TrainingResultSemanticCheckpointRecord>, CheckpointScanError> {
   let mut checkpoints = Vec::new();
@@ -543,9 +543,9 @@ fn collect_checkpoint_files(
 }
 
 #[derive(Debug)]
-struct CheckpointScanError {
-  partial_files: Vec<TrainingResultSemanticCheckpointRecord>,
-  cause: std::io::Error,
+pub(crate) struct CheckpointScanError {
+  pub(crate) partial_files: Vec<TrainingResultSemanticCheckpointRecord>,
+  pub(crate) cause: std::io::Error,
 }
 
 fn visit_checkpoint_files(

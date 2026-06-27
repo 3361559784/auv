@@ -19,6 +19,7 @@ pub mod training_result_artifact;
 pub mod training_result_semantic;
 pub mod training_result_spatial_query;
 pub mod training_result_spatial_query_action;
+pub mod training_result_spatial_query_provider;
 pub mod types;
 pub mod verify;
 
@@ -119,6 +120,10 @@ pub use training_result_spatial_query::{
 pub use training_result_spatial_query_action::{
   TrainingResultSpatialQueryActionEligibility, TrainingResultSpatialQueryActionReadiness,
   derive_action_readiness,
+};
+pub use training_result_spatial_query_provider::{
+  CheckpointNativeProviderInputs, CheckpointNativeProviderOutcome,
+  MC15_V1_CHECKPOINT_NATIVE_KNOWN_LIMIT, run_checkpoint_native_provider_backend,
 };
 pub use types::{
   BlockFace, BlockPosition, InventorySummaryEntry, MinecraftBlockTarget, MinecraftProjectedPoint,

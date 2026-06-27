@@ -837,6 +837,21 @@ async fn run() -> Result<(), String> {
       )?;
       println!("runId: {}", output.run_id);
       println!("status: {}", output.value.manifest.status.as_str());
+      if matches!(
+        output.value.manifest.status,
+        auv_game_minecraft::TrainingResultSpatialQueryStatus::Blocked
+          | auv_game_minecraft::TrainingResultSpatialQueryStatus::Failed
+      ) {
+        println!(
+          "reason: {}",
+          output
+            .value
+            .manifest
+            .reason
+            .map(|reason| reason.as_str())
+            .unwrap_or("none")
+        );
+      }
       println!(
         "selectedBackend: {}",
         output

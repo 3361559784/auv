@@ -52,6 +52,7 @@ pub enum ClosedSceneToyFixtureLoadError {
   Parse(String),
   UnsupportedSchemaVersion { found: u32 },
   EmptyFixture,
+  DuplicateLabelAnswer { label_id: String },
 }
 
 impl ClosedSceneToyFixtureLoadError {
@@ -63,6 +64,9 @@ impl ClosedSceneToyFixtureLoadError {
         "unsupported closed-scene fixture schema_version {found}; expected {CLOSED_SCENE_TOY_FIXTURE_SCHEMA_VERSION}"
       ),
       Self::EmptyFixture => "closed-scene fixture has no frames".to_string(),
+      Self::DuplicateLabelAnswer { label_id } => format!(
+        "closed-scene fixture has multiple answer rows for label `{label_id}`; MC-18 v1 allows at most one authoritative row per label across all frames"
+      ),
     }
   }
 }
@@ -82,7 +86,27 @@ pub fn load_closed_scene_fixture(
   if fixture.frames.is_empty() {
     return Err(ClosedSceneToyFixtureLoadError::EmptyFixture);
   }
+  validate_one_answer_row_per_label(&fixture)?;
   Ok(fixture)
+}
+
+/// MC-18 v1 fixture contract: each closed label may appear in at most one frame answer
+/// row. `basis_frame_id` is the witness for that row; duplicate rows would make frame
+/// choice depend on array order instead of an explicit rule.
+fn validate_one_answer_row_per_label(
+  fixture: &ClosedSceneToyFixture,
+) -> Result<(), ClosedSceneToyFixtureLoadError> {
+  let mut seen = std::collections::HashSet::new();
+  for frame in &fixture.frames {
+    for answer in &frame.answers {
+      if !seen.insert(answer.label_id.clone()) {
+        return Err(ClosedSceneToyFixtureLoadError::DuplicateLabelAnswer {
+          label_id: answer.label_id.clone(),
+        });
+      }
+    }
+  }
+  Ok(())
 }
 
 pub fn resolve_closed_label_answer(
@@ -263,6 +287,92 @@ mod tests {
     assert_eq!(
       answer.reason,
       Some(TrainingResultSpatialQueryReason::TargetBlockAbsentFromScenePacket)
+    );
+  }
+
+  #[test]
+  fn load_fixture_rejects_duplicate_label_answers_across_frames() {
+    let temp = TempDir::new().expect("tempdir");
+    let path = temp.path().join("fixture.json");
+    let mut fixture = sample_fixture();
+    fixture.frames.push(ClosedSceneToyFrame {
+      basis_frame_id: "frame-0004".to_string(),
+      answers: vec![ClosedSceneToyFrameAnswer {
+        label_id: "door-north".to_string(),
+        visibility: ProjectionVisibility::OutsideWindow,
+        screen_point: Some(Point::new(1200.0, 360.0)),
+      }],
+    });
+    fs::write(
+      &path,
+      serde_json::to_vec_pretty(&fixture).expect("serialize"),
+    )
+    .expect("write");
+
+    let error = load_closed_scene_fixture(&path).expect_err("duplicate label row");
+    assert!(matches!(
+      error,
+      ClosedSceneToyFixtureLoadError::DuplicateLabelAnswer { .. }
+    ));
+  }
+
+  #[test]
+  fn multi_frame_fixture_resolves_label_from_its_single_authoritative_row() {
+    let fixture = ClosedSceneToyFixture {
+      schema_version: CLOSED_SCENE_TOY_FIXTURE_SCHEMA_VERSION,
+      fixture_id: "mc18-multi-frame-v1".to_string(),
+      generated_at: "2026-06-27T00:00:00Z".to_string(),
+      labels: vec![
+        ClosedSceneToyLabel {
+          id: "door-north".to_string(),
+          block: BlockPosition::new(511, 73, 728),
+          face: Some(BlockFace::North),
+          semantics: MinecraftTargetSemantics::HitFaceCenter,
+        },
+        ClosedSceneToyLabel {
+          id: "button-east".to_string(),
+          block: BlockPosition::new(512, 73, 728),
+          face: Some(BlockFace::East),
+          semantics: MinecraftTargetSemantics::HitFaceCenter,
+        },
+      ],
+      frames: vec![
+        ClosedSceneToyFrame {
+          basis_frame_id: "frame-0003".to_string(),
+          answers: vec![ClosedSceneToyFrameAnswer {
+            label_id: "door-north".to_string(),
+            visibility: ProjectionVisibility::Visible,
+            screen_point: Some(Point::new(640.0, 360.0)),
+          }],
+        },
+        ClosedSceneToyFrame {
+          basis_frame_id: "frame-0004".to_string(),
+          answers: vec![ClosedSceneToyFrameAnswer {
+            label_id: "button-east".to_string(),
+            visibility: ProjectionVisibility::OutsideWindow,
+            screen_point: Some(Point::new(1200.0, 360.0)),
+          }],
+        },
+      ],
+    };
+    validate_one_answer_row_per_label(&fixture).expect("valid multi-frame fixture");
+
+    let door = resolve_closed_label_answer(
+      &fixture,
+      &request_for(BlockPosition::new(511, 73, 728), Some(BlockFace::North)),
+    );
+    assert_eq!(
+      door.basis_frame_id.as_deref(),
+      Some("closed_scene_toy:mc18-multi-frame-v1:frame-0003")
+    );
+
+    let button = resolve_closed_label_answer(
+      &fixture,
+      &request_for(BlockPosition::new(512, 73, 728), Some(BlockFace::East)),
+    );
+    assert_eq!(
+      button.basis_frame_id.as_deref(),
+      Some("closed_scene_toy:mc18-multi-frame-v1:frame-0004")
     );
   }
 }

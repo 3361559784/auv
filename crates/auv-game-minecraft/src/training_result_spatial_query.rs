@@ -4,6 +4,11 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+use auv_compare::{
+  DualBackendAnswer, DualBackendCompareVerdict, DualBackendSelectedSide, DualBackendStageStatus,
+  compare_dual_backend_verdict, pick_blocked_or_failed_preferred,
+  screen_points_match_with_tolerance, select_dual_backend_outcome,
+};
 use auv_driver::geometry::Point;
 use auv_file::{
   JsonFileReadError, JsonFileWriteError, JsonWriteOptions, read_json_file as read_json_file_helper,
@@ -531,6 +536,51 @@ pub fn query_3dgs_training_result(
   })
 }
 
+impl DualBackendAnswer for TrainingResultSpatialQueryAnswer {
+  type VisibilityKey = ProjectionVisibility;
+
+  fn stage_status(&self) -> DualBackendStageStatus {
+    match self.status {
+      TrainingResultSpatialQueryStatus::Answered => DualBackendStageStatus::Answered,
+      TrainingResultSpatialQueryStatus::Blocked => DualBackendStageStatus::Blocked,
+      TrainingResultSpatialQueryStatus::Failed => DualBackendStageStatus::Failed,
+    }
+  }
+
+  fn visibility_key(&self) -> Option<Self::VisibilityKey> {
+    self.visibility
+  }
+
+  fn screen_point(&self) -> Option<auv_compare::ScreenPoint> {
+    self.screen_point.map(|point| auv_compare::ScreenPoint {
+      x: point.x,
+      y: point.y,
+    })
+  }
+
+  fn match_radius_px(&self) -> Option<f64> {
+    self.match_radius_px
+  }
+}
+
+fn map_comparison_verdict(
+  verdict: DualBackendCompareVerdict,
+) -> TrainingResultSpatialQueryComparisonVerdict {
+  match verdict {
+    DualBackendCompareVerdict::Match => TrainingResultSpatialQueryComparisonVerdict::Match,
+    DualBackendCompareVerdict::Divergent => TrainingResultSpatialQueryComparisonVerdict::Divergent,
+    DualBackendCompareVerdict::ProviderOnly => {
+      TrainingResultSpatialQueryComparisonVerdict::ProviderOnly
+    }
+    DualBackendCompareVerdict::ReferenceOnly => {
+      TrainingResultSpatialQueryComparisonVerdict::ReferenceOnly
+    }
+    DualBackendCompareVerdict::NotComparable => {
+      TrainingResultSpatialQueryComparisonVerdict::NotComparable
+    }
+  }
+}
+
 fn select_query_outcome(
   provider_answer: Option<&TrainingResultSpatialQueryAnswer>,
   reference_answer: Option<&TrainingResultSpatialQueryAnswer>,
@@ -540,99 +590,57 @@ fn select_query_outcome(
   TrainingResultSpatialQueryAnswer,
   Option<TrainingResultSpatialQueryComparisonVerdict>,
 ) {
-  let provider_configured = configured_provider_backend.is_some();
-  let provider_answered = provider_answer
-    .is_some_and(|answer| answer.status == TrainingResultSpatialQueryStatus::Answered);
-  let reference_answered = reference_answer
-    .is_some_and(|answer| answer.status == TrainingResultSpatialQueryStatus::Answered);
-
-  if provider_answered {
-    let answer = provider_answer
-      .expect("provider answered implies provider answer present")
-      .clone();
-    let comparison_verdict =
-      compare_answers(provider_answer, reference_answer, provider_configured);
-    return (
-      configured_provider_backend.or(Some(TrainingResultSpatialQueryBackend::CommandProvider)),
-      answer,
-      comparison_verdict,
-    );
-  }
-
-  if reference_answered {
-    let answer = reference_answer
-      .expect("reference answered implies reference answer present")
-      .clone();
-    let comparison_verdict =
-      compare_answers(provider_answer, reference_answer, provider_configured);
-    return (
-      Some(TrainingResultSpatialQueryBackend::ProjectionReference),
-      answer,
-      comparison_verdict,
-    );
-  }
-
-  let answer = pick_blocked_or_failed_answer(provider_answer, reference_answer);
-  let comparison_verdict = compare_answers(provider_answer, reference_answer, provider_configured);
-  (None, answer, comparison_verdict)
+  let (selected_side, answer, comparison_verdict) = select_dual_backend_outcome(
+    provider_answer,
+    reference_answer,
+    pick_blocked_or_failed_answer,
+  );
+  let selected_backend = match selected_side {
+    DualBackendSelectedSide::Provider => {
+      configured_provider_backend.or(Some(TrainingResultSpatialQueryBackend::CommandProvider))
+    }
+    DualBackendSelectedSide::Reference => {
+      Some(TrainingResultSpatialQueryBackend::ProjectionReference)
+    }
+    DualBackendSelectedSide::Neither => None,
+  };
+  (
+    selected_backend,
+    answer,
+    comparison_verdict.map(map_comparison_verdict),
+  )
 }
 
 fn pick_blocked_or_failed_answer(
   provider_answer: Option<&TrainingResultSpatialQueryAnswer>,
   reference_answer: Option<&TrainingResultSpatialQueryAnswer>,
 ) -> TrainingResultSpatialQueryAnswer {
-  let candidates = [provider_answer, reference_answer]
-    .into_iter()
-    .flatten()
-    .collect::<Vec<_>>();
-  if let Some(blocked) = candidates
-    .iter()
-    .find(|answer| answer.status == TrainingResultSpatialQueryStatus::Blocked)
-  {
-    return (*blocked).clone();
-  }
-  candidates
-    .first()
-    .map(|answer| (*answer).clone())
-    .unwrap_or(TrainingResultSpatialQueryAnswer {
-      status: TrainingResultSpatialQueryStatus::Failed,
-      reason: Some(TrainingResultSpatialQueryReason::TargetBlockAbsentFromScenePacket),
-      message: Some("MC-12 spatial query produced no backend answer".to_string()),
-      basis_frame_id: None,
-      visibility: None,
-      screen_point: None,
-      match_radius_px: None,
-      confidence: None,
-    })
+  pick_blocked_or_failed_preferred([provider_answer, reference_answer], |answer| {
+    answer.status == TrainingResultSpatialQueryStatus::Blocked
+  })
+  .cloned()
+  .unwrap_or(TrainingResultSpatialQueryAnswer {
+    status: TrainingResultSpatialQueryStatus::Failed,
+    reason: Some(TrainingResultSpatialQueryReason::TargetBlockAbsentFromScenePacket),
+    message: Some("MC-12 spatial query produced no backend answer".to_string()),
+    basis_frame_id: None,
+    visibility: None,
+    screen_point: None,
+    match_radius_px: None,
+    confidence: None,
+  })
 }
 
+// Core-B2 adapter surface; selection path compares via select_dual_backend_outcome.
+#[allow(dead_code)]
 fn compare_answers(
   provider_answer: Option<&TrainingResultSpatialQueryAnswer>,
   reference_answer: Option<&TrainingResultSpatialQueryAnswer>,
-  provider_configured: bool,
 ) -> Option<TrainingResultSpatialQueryComparisonVerdict> {
-  let _ = provider_configured;
-  let provider_answered = provider_answer
-    .is_some_and(|answer| answer.status == TrainingResultSpatialQueryStatus::Answered);
-  let reference_answered = reference_answer
-    .is_some_and(|answer| answer.status == TrainingResultSpatialQueryStatus::Answered);
-
-  match (provider_answered, reference_answered) {
-    (true, true) => {
-      let provider = provider_answer.expect("provider answered");
-      let reference = reference_answer.expect("reference answered");
-      Some(if answers_match(provider, reference) {
-        TrainingResultSpatialQueryComparisonVerdict::Match
-      } else {
-        TrainingResultSpatialQueryComparisonVerdict::Divergent
-      })
-    }
-    (true, false) => Some(TrainingResultSpatialQueryComparisonVerdict::ProviderOnly),
-    (false, true) => Some(TrainingResultSpatialQueryComparisonVerdict::ReferenceOnly),
-    (false, false) => Some(TrainingResultSpatialQueryComparisonVerdict::NotComparable),
-  }
+  compare_dual_backend_verdict(provider_answer, reference_answer).map(map_comparison_verdict)
 }
 
+#[allow(dead_code)]
 fn answers_match(
   provider: &TrainingResultSpatialQueryAnswer,
   reference: &TrainingResultSpatialQueryAnswer,
@@ -641,15 +649,18 @@ fn answers_match(
     return false;
   }
   match (provider.screen_point, reference.screen_point) {
-    (Some(provider_point), Some(reference_point)) => {
-      let tolerance = provider
-        .match_radius_px
-        .unwrap_or(1.0)
-        .max(reference.match_radius_px.unwrap_or(1.0));
-      let dx = provider_point.x - reference_point.x;
-      let dy = provider_point.y - reference_point.y;
-      (dx * dx + dy * dy).sqrt() <= tolerance
-    }
+    (Some(provider_point), Some(reference_point)) => screen_points_match_with_tolerance(
+      auv_compare::ScreenPoint {
+        x: provider_point.x,
+        y: provider_point.y,
+      },
+      auv_compare::ScreenPoint {
+        x: reference_point.x,
+        y: reference_point.y,
+      },
+      provider.match_radius_px,
+      reference.match_radius_px,
+    ),
     (None, None) => true,
     _ => false,
   }

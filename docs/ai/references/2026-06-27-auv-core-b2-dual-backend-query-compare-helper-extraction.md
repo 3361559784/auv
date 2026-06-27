@@ -2,9 +2,10 @@
 
 Date: 2026-06-27
 
-Status: **design note only**. This note records a proposed narrow helper
-extraction. It does **not** graduate any MC-10 through MC-17 donor contract
-into core, and no implementation commit is implied by this document.
+Status: **implemented** (Core-B2 helper extraction). This note records the
+narrow helper extraction that landed in `crates/auv-compare` with MC-12 thin
+adapters. It does **not** graduate any MC-10 through MC-17 donor contract into
+core.
 
 ## Why this slice exists
 
@@ -215,10 +216,14 @@ shapes, and end-to-end query behavior.
 
 ## Honest conclusion
 
-Core-B2 is a **shared compare policy helper extraction**, nothing more, and
-explicitly **not** a contract graduation.
+Core-B2 landed as a **shared compare policy helper extraction**, nothing more,
+and explicitly **not** a contract graduation.
+
+`crates/auv-compare` now owns `select_dual_backend_outcome`,
+`compare_dual_backend_verdict`, `screen_points_match_with_tolerance`, and
+`pick_blocked_or_failed_preferred`. MC-12 keeps donor enums, wire shapes, and
+the synthetic failed fallback message in thin adapters only.
 
 `TrainingResultSpatialQueryComparisonVerdict` stays a **candidate** in the
 proof matrix until a second vertical independently needs the same five-label
-dual-backend evidence split. Until then, `auv-compare` is honest prep: one
-donor today, generic helper names, MC-12 keeps all artifact semantics local.
+dual-backend evidence split.

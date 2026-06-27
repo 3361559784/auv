@@ -9,7 +9,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use crate::projection::MinecraftProjector;
-use crate::scene_packet::{ScenePacketFrameRecord, ScenePacketManifest};
+use crate::scene_packet::{ScenePacketFramePayload, ScenePacketFrameRecord, ScenePacketManifest};
 use crate::training_result_semantic::{
   TrainingResultSemanticManifest, TrainingResultSemanticStatus,
 };
@@ -846,7 +846,12 @@ fn load_scene_packet_frame(
   frame_record: &ScenePacketFrameRecord,
 ) -> TrainingResultSpatialQueryResult<MinecraftSpatialFrame> {
   let frame_path = scene_packet_dir.join(&frame_record.frame_json_path);
-  read_json_file(&frame_path, "MC-7 scene packet frame")
+  if let Ok(payload) =
+    read_json_file::<ScenePacketFramePayload>(&frame_path, "MC-7 scene packet frame")
+  {
+    return Ok(payload.spatial_frame);
+  }
+  read_json_file::<MinecraftSpatialFrame>(&frame_path, "MC-7 scene packet frame")
 }
 
 fn read_json_file<T: DeserializeOwned>(

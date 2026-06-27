@@ -79,3 +79,5 @@ implementation. Manual writer flow:
 - MC-10 semantic gate: `docs/ai/references/2026-06-27-minecraft-mc10-result-semantic-validation-design.md`
 - MC-11 read-side semantic inspect consumer:
   `docs/ai/references/2026-06-27-minecraft-mc11-semantic-read-side-inspect-consumer-design.md`
+- MC-12 live closure evidence:
+  `docs/ai/references/2026-06-27-minecraft-mc12-spatial-query-live-closure.md`

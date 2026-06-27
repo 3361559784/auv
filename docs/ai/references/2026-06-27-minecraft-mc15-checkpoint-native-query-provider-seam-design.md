@@ -62,6 +62,9 @@ auv-cli minecraft query-3dgs-training-result \
   [--target-face <face>] \
   [--target-semantics hit_face_center|block_center] \
   [--query-provider checkpoint-native] \
+  # MC-18 design-only (not implemented yet):
+  # [--query-provider closed-scene-toy] \
+  # [--closed-scene-fixture <fixture.json>] \
   [--query-command <command>] \
   --output-dir <dir>
 ```
@@ -81,8 +84,22 @@ Selection / inspect fields remain MC-12 (`provider_status`, `reference_status`,
 - MC-15 live closure:
   `docs/ai/references/2026-06-27-minecraft-mc15-checkpoint-native-query-provider-live-closure.md`
 
+## Sibling provider seam
+
+MC-18 closed-scene toy provider (design-only, parallel seam, no reference projector):
+`docs/ai/references/2026-06-27-minecraft-mc18-closed-scene-toy-provider-design.md`.
+
 ## Deferred
 
-- MC-16: render inspect / holdout preview consumer
-- MC-15+ / MC-17: true Gaussian render inference inside provider
-- MC-14+: action dispatch from query readiness
+- MC-15+ / MC-17: true Gaussian render inference inside query providers (MC-16/17
+  holdout witness/quality evidence does not close this gap)
+- MC-18: closed-scene toy provider implementation (after design review)
+
+## Closed related slices
+
+- MC-14 action-readiness consumer:
+  `docs/ai/references/2026-06-27-minecraft-mc14-spatial-query-action-facing-consumer-design.md`
+- MC-16 holdout preview:
+  `docs/ai/references/2026-06-27-minecraft-mc16-holdout-preview-render-inspect-design.md`
+- MC-17 holdout render quality:
+  `docs/ai/references/2026-06-27-minecraft-mc17-holdout-render-quality-design.md`

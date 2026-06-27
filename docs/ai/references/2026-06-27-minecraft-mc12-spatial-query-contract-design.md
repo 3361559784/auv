@@ -20,7 +20,11 @@ query contract honestly but does **not** claim real Gaussian inference.
 
 Checkpoint-native provider seam closed in MC-15:
 `docs/ai/references/2026-06-27-minecraft-mc15-checkpoint-native-query-provider-seam-design.md`.
-True Gaussian render inference remains deferred (MC-16 / MC-15+).
+Closed-scene toy provider seam (second provider, design-only):
+`docs/ai/references/2026-06-27-minecraft-mc18-closed-scene-toy-provider-design.md`.
+True Gaussian **render inference inside query providers** remains deferred (MC-15+).
+MC-16/17 holdout witness and render-quality evidence are separate slices and do not
+substitute for provider-internal Gaussian inference.
 
 ## Command
 
@@ -32,6 +36,9 @@ auv-cli minecraft query-3dgs-training-result \
   [--target-semantics hit_face_center|block_center] \
   [--query-command <command>] \
   [--query-provider checkpoint-native] \
+  # MC-18 design-only (not implemented yet):
+  # [--query-provider closed-scene-toy] \
+  # [--closed-scene-fixture <fixture.json>] \
   --output-dir <dir>
 ```
 
@@ -46,6 +53,8 @@ Input boundary:
 1. `projection_reference` — always attempted when MC-10 `semantic_status = ready`.
 2. `command_provider` — only when `--query-command` is present.
 3. `checkpoint_native` — when `--query-provider checkpoint-native` is present (MC-15).
+4. `closed_scene_toy` — when `--query-provider closed-scene-toy` is present (**MC-18**,
+   design-only until implementation).
 
 Selection:
 
@@ -85,3 +94,5 @@ implementation. Manual writer flow:
   `docs/ai/references/2026-06-27-minecraft-mc11-semantic-read-side-inspect-consumer-design.md`
 - MC-12 live closure evidence:
   `docs/ai/references/2026-06-27-minecraft-mc12-spatial-query-live-closure.md`
+- MC-18 closed-scene toy provider (design-only):
+  `docs/ai/references/2026-06-27-minecraft-mc18-closed-scene-toy-provider-design.md`

@@ -214,6 +214,7 @@ impl TrainingResultSpatialQueryStatus {
 pub enum TrainingResultSpatialQueryBackend {
   CommandProvider,
   CheckpointNative,
+  ClosedSceneToy,
   ProjectionReference,
 }
 
@@ -222,6 +223,7 @@ impl TrainingResultSpatialQueryBackend {
     match self {
       Self::CommandProvider => "command_provider",
       Self::CheckpointNative => "checkpoint_native",
+      Self::ClosedSceneToy => "closed_scene_toy",
       Self::ProjectionReference => "projection_reference",
     }
   }

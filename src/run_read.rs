@@ -2151,6 +2151,7 @@ fn parse_spatial_query_backend(
     "checkpoint_native" => {
       Ok(auv_game_minecraft::TrainingResultSpatialQueryBackend::CheckpointNative)
     }
+    "closed_scene_toy" => Ok(auv_game_minecraft::TrainingResultSpatialQueryBackend::ClosedSceneToy),
     "projection_reference" => {
       Ok(auv_game_minecraft::TrainingResultSpatialQueryBackend::ProjectionReference)
     }

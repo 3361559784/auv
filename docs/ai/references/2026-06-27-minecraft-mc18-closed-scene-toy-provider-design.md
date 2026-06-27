@@ -247,7 +247,9 @@ Rules:
 | **D4** | Unit tests — three evidence classes (below) | `cargo test` in provider + spatial_query modules |
 | **D5** | Live closure note (`docs/ai/references/2026-06-27-minecraft-mc18-closed-scene-toy-provider-live-closure.md`) | Fresh local run artifacts recorded |
 
-Do **not** start D1–D5 until owner accepts this design.
+**D1 skeleton** landed in `training_result_spatial_query_provider.rs` (provider types,
+`run_closed_scene_toy_provider_backend`, `TrainingResultSpatialQueryBackend::ClosedSceneToy`,
+unit tests). CLI dispatch and fixture resolution remain **D3** / **D2**.
 
 ## Acceptance criteria (design-level)
 

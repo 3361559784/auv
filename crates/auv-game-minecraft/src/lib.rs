@@ -142,7 +142,10 @@ pub use training_result_spatial_query_action::{
   TrainingResultSpatialQueryActionEligibility, TrainingResultSpatialQueryActionReadiness,
   derive_action_readiness,
 };
-pub use training_result_spatial_query_provider::MC15_V1_CHECKPOINT_NATIVE_KNOWN_LIMIT;
+pub use training_result_spatial_query_provider::{
+  MC15_V1_CHECKPOINT_NATIVE_KNOWN_LIMIT, MC18_V1_CLOSED_SCENE_TOY_KNOWN_LIMIT,
+  MC18_V1_CLOSED_SCENE_TOY_NO_REFERENCE_LIMIT,
+};
 pub use types::{
   BlockFace, BlockPosition, InventorySummaryEntry, MinecraftBlockTarget, MinecraftProjectedPoint,
   MinecraftSpatialFrame, MinecraftTargetSemantics, NearbyBlock, NearbyEntity, PlayerPose,

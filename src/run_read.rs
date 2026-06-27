@@ -34,7 +34,8 @@ use auv_game_minecraft::{
   TrainingPackageInspectReport, TrainingPackageManifest, TrainingResultArtifactFetchInspectReport,
   TrainingResultArtifactFetchManifest, TrainingResultInspectReport, TrainingResultManifest,
   TrainingResultSemanticCheckpointRecord, TrainingResultSemanticInspectReport,
-  TrainingResultSemanticManifest,
+  TrainingResultSemanticManifest, TrainingResultSpatialQueryInspectReport,
+  TrainingResultSpatialQueryManifest,
 };
 use auv_tracing_driver::store::{CanonicalRun, LocalStore};
 use auv_tracing_driver::trace::ArtifactRecordV1Alpha1;
@@ -126,6 +127,20 @@ pub struct MinecraftTrainingResultSemanticManifestLineage {
 pub struct MinecraftTrainingResultSemanticInspectReportLineage {
   pub artifact: ArtifactRefLineage,
   pub report: Option<MinecraftTrainingResultSemanticInspectReportSummary>,
+  pub issue: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+pub struct MinecraftTrainingResultSpatialQueryManifestLineage {
+  pub artifact: ArtifactRefLineage,
+  pub manifest: Option<MinecraftTrainingResultSpatialQueryManifestSummary>,
+  pub issue: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+pub struct MinecraftTrainingResultSpatialQueryInspectReportLineage {
+  pub artifact: ArtifactRefLineage,
+  pub report: Option<MinecraftTrainingResultSpatialQueryInspectReportSummary>,
   pub issue: Option<String>,
 }
 
@@ -419,6 +434,79 @@ pub struct MinecraftTrainingResultSemanticInspectReportSummary {
   pub models_dir_readable: bool,
   pub status_snapshot_present: bool,
   pub checkpoint_count: usize,
+  pub warnings: Vec<String>,
+  pub known_limits: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct MinecraftTrainingResultSpatialQueryManifestSummary {
+  pub schema_version: u32,
+  pub training_result_semantic_manifest_path: String,
+  pub source_training_result_artifact_manifest_path: String,
+  pub source_training_result_manifest_path: String,
+  pub source_training_job_manifest_path: String,
+  pub source_training_launch_plan_path: String,
+  pub source_training_package_manifest_path: String,
+  pub source_scene_packet_manifest_path: String,
+  pub source_bundle_manifest_paths: Vec<String>,
+  pub source_run_ids: Vec<String>,
+  pub trainer_backend: String,
+  pub job_backend: String,
+  pub normalized_result_dir: String,
+  pub query_kind: String,
+  pub target_block: String,
+  pub target_face: Option<String>,
+  pub target_semantics: String,
+  pub selected_backend: Option<String>,
+  pub status: String,
+  pub reason: Option<String>,
+  pub visibility: Option<String>,
+  pub screen_point: Option<String>,
+  pub match_radius_px: Option<f64>,
+  pub confidence: Option<f64>,
+  pub basis_frame_id: Option<String>,
+  pub comparison_verdict: Option<String>,
+  pub known_limits: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct MinecraftTrainingResultSpatialQueryInspectReportSummary {
+  pub schema_version: u32,
+  pub training_result_spatial_query_manifest_path: String,
+  pub training_result_semantic_manifest_path: String,
+  pub source_training_result_artifact_manifest_path: String,
+  pub source_training_result_manifest_path: String,
+  pub source_training_job_manifest_path: String,
+  pub source_training_launch_plan_path: String,
+  pub source_training_package_manifest_path: String,
+  pub source_scene_packet_manifest_path: String,
+  pub source_bundle_manifest_paths: Vec<String>,
+  pub source_run_ids: Vec<String>,
+  pub trainer_backend: String,
+  pub job_backend: String,
+  pub normalized_result_dir: String,
+  pub query_kind: String,
+  pub target_block: String,
+  pub target_face: Option<String>,
+  pub target_semantics: String,
+  pub selected_backend: Option<String>,
+  pub status: String,
+  pub reason: Option<String>,
+  pub visibility: Option<String>,
+  pub screen_point: Option<String>,
+  pub match_radius_px: Option<f64>,
+  pub confidence: Option<f64>,
+  pub basis_frame_id: Option<String>,
+  pub comparison_verdict: Option<String>,
+  pub provider_status: String,
+  pub provider_reason: Option<String>,
+  pub provider_message: Option<String>,
+  pub reference_status: String,
+  pub reference_reason: Option<String>,
+  pub reference_basis_frame_id: Option<String>,
+  pub reference_source_frame_json_path: Option<String>,
+  pub reference_screenshot_path: Option<String>,
+  pub scene_packet_frame_count: usize,
   pub warnings: Vec<String>,
   pub known_limits: Vec<String>,
 }
@@ -853,6 +941,22 @@ pub(crate) fn list_minecraft_training_result_semantic_inspect_reports(
 ) -> AuvResult<Vec<MinecraftTrainingResultSemanticInspectReportLineage>> {
   let run = store.read_run(run_id)?;
   extract_minecraft_training_result_semantic_inspect_reports(store, &run)
+}
+
+pub(crate) fn list_minecraft_training_result_spatial_query_manifests(
+  store: &LocalStore,
+  run_id: &str,
+) -> AuvResult<Vec<MinecraftTrainingResultSpatialQueryManifestLineage>> {
+  let run = store.read_run(run_id)?;
+  extract_minecraft_training_result_spatial_query_manifests(store, &run)
+}
+
+pub(crate) fn list_minecraft_training_result_spatial_query_inspect_reports(
+  store: &LocalStore,
+  run_id: &str,
+) -> AuvResult<Vec<MinecraftTrainingResultSpatialQueryInspectReportLineage>> {
+  let run = store.read_run(run_id)?;
+  extract_minecraft_training_result_spatial_query_inspect_reports(store, &run)
 }
 
 pub(crate) fn list_minecraft_training_package_manifests(
@@ -1348,6 +1452,94 @@ pub(crate) fn extract_minecraft_training_result_semantic_inspect_reports(
         issue: None,
       }),
       Err(error) => reports.push(MinecraftTrainingResultSemanticInspectReportLineage {
+        artifact: artifact_ref,
+        report: None,
+        issue: Some(error),
+      }),
+    }
+  }
+  Ok(reports)
+}
+
+pub(crate) fn extract_minecraft_training_result_spatial_query_manifests(
+  store: &LocalStore,
+  run: &CanonicalRun,
+) -> AuvResult<Vec<MinecraftTrainingResultSpatialQueryManifestLineage>> {
+  let mut manifests = Vec::new();
+  for artifact in &run.artifacts {
+    if artifact.role != crate::minecraft::MINECRAFT_3DGS_TRAINING_RESULT_QUERY_ROLE {
+      continue;
+    }
+    let artifact_ref = artifact_record_lineage(run.run.run_id.clone(), artifact);
+    if !is_json_mime(&artifact.mime_type) {
+      manifests.push(MinecraftTrainingResultSpatialQueryManifestLineage {
+        artifact: artifact_ref,
+        manifest: None,
+        issue: Some(format!(
+          "minecraft training result spatial query manifest mime_type {} is not JSON",
+          artifact.mime_type
+        )),
+      });
+      continue;
+    }
+    let parsed = read_artifact_json::<TrainingResultSpatialQueryManifest>(
+      store,
+      run.run.run_id.as_str(),
+      artifact,
+      crate::minecraft::MINECRAFT_3DGS_TRAINING_RESULT_QUERY_ROLE,
+    )
+    .map(MinecraftTrainingResultSpatialQueryManifestSummary::from);
+    match parsed {
+      Ok(manifest) => manifests.push(MinecraftTrainingResultSpatialQueryManifestLineage {
+        artifact: artifact_ref,
+        manifest: Some(manifest),
+        issue: None,
+      }),
+      Err(error) => manifests.push(MinecraftTrainingResultSpatialQueryManifestLineage {
+        artifact: artifact_ref,
+        manifest: None,
+        issue: Some(error),
+      }),
+    }
+  }
+  Ok(manifests)
+}
+
+pub(crate) fn extract_minecraft_training_result_spatial_query_inspect_reports(
+  store: &LocalStore,
+  run: &CanonicalRun,
+) -> AuvResult<Vec<MinecraftTrainingResultSpatialQueryInspectReportLineage>> {
+  let mut reports = Vec::new();
+  for artifact in &run.artifacts {
+    if artifact.role != crate::minecraft::MINECRAFT_3DGS_TRAINING_RESULT_QUERY_INSPECT_ROLE {
+      continue;
+    }
+    let artifact_ref = artifact_record_lineage(run.run.run_id.clone(), artifact);
+    if !is_json_mime(&artifact.mime_type) {
+      reports.push(MinecraftTrainingResultSpatialQueryInspectReportLineage {
+        artifact: artifact_ref,
+        report: None,
+        issue: Some(format!(
+          "minecraft training result spatial query inspect mime_type {} is not JSON",
+          artifact.mime_type
+        )),
+      });
+      continue;
+    }
+    let parsed = read_artifact_json::<TrainingResultSpatialQueryInspectReport>(
+      store,
+      run.run.run_id.as_str(),
+      artifact,
+      crate::minecraft::MINECRAFT_3DGS_TRAINING_RESULT_QUERY_INSPECT_ROLE,
+    )
+    .map(MinecraftTrainingResultSpatialQueryInspectReportSummary::from);
+    match parsed {
+      Ok(report) => reports.push(MinecraftTrainingResultSpatialQueryInspectReportLineage {
+        artifact: artifact_ref,
+        report: Some(report),
+        issue: None,
+      }),
+      Err(error) => reports.push(MinecraftTrainingResultSpatialQueryInspectReportLineage {
         artifact: artifact_ref,
         report: None,
         issue: Some(error),
@@ -2739,6 +2931,194 @@ impl From<TrainingResultArtifactFetchInspectReport>
   }
 }
 
+fn spatial_query_block_label(block: auv_game_minecraft::BlockPosition) -> String {
+  format!("{},{},{}", block.x, block.y, block.z)
+}
+
+fn spatial_query_optional_block_face_label(
+  face: Option<auv_game_minecraft::BlockFace>,
+) -> Option<String> {
+  face.map(|value| match value {
+    auv_game_minecraft::BlockFace::Up => "up".to_string(),
+    auv_game_minecraft::BlockFace::Down => "down".to_string(),
+    auv_game_minecraft::BlockFace::North => "north".to_string(),
+    auv_game_minecraft::BlockFace::South => "south".to_string(),
+    auv_game_minecraft::BlockFace::East => "east".to_string(),
+    auv_game_minecraft::BlockFace::West => "west".to_string(),
+  })
+}
+
+fn spatial_query_target_semantics_label(
+  semantics: auv_game_minecraft::MinecraftTargetSemantics,
+) -> String {
+  match semantics {
+    auv_game_minecraft::MinecraftTargetSemantics::HitFaceCenter => "hit_face_center".to_string(),
+    auv_game_minecraft::MinecraftTargetSemantics::BlockCenter => "block_center".to_string(),
+  }
+}
+
+fn spatial_query_kind_label(kind: auv_game_minecraft::TrainingResultSpatialQueryKind) -> String {
+  match kind {
+    auv_game_minecraft::TrainingResultSpatialQueryKind::BlockProjection => {
+      "block_projection".to_string()
+    }
+  }
+}
+
+fn spatial_query_visibility_label(visibility: auv_game_minecraft::ProjectionVisibility) -> String {
+  match visibility {
+    auv_game_minecraft::ProjectionVisibility::Visible => "visible".to_string(),
+    auv_game_minecraft::ProjectionVisibility::BehindCamera => "behind_camera".to_string(),
+    auv_game_minecraft::ProjectionVisibility::OutOfFrustum => "out_of_frustum".to_string(),
+    auv_game_minecraft::ProjectionVisibility::OutsideWindow => "outside_window".to_string(),
+  }
+}
+
+fn spatial_query_screen_point_label(point: auv_driver::geometry::Point) -> String {
+  format!("{},{}", point.x, point.y)
+}
+
+fn spatial_query_manifest_fields(
+  value: &TrainingResultSpatialQueryManifest,
+) -> MinecraftTrainingResultSpatialQueryManifestSummary {
+  MinecraftTrainingResultSpatialQueryManifestSummary {
+    schema_version: value.schema_version,
+    training_result_semantic_manifest_path: value.training_result_semantic_manifest_path.clone(),
+    source_training_result_artifact_manifest_path: value
+      .source_training_result_artifact_manifest_path
+      .clone(),
+    source_training_result_manifest_path: value.source_training_result_manifest_path.clone(),
+    source_training_job_manifest_path: value.source_training_job_manifest_path.clone(),
+    source_training_launch_plan_path: value.source_training_launch_plan_path.clone(),
+    source_training_package_manifest_path: value.source_training_package_manifest_path.clone(),
+    source_scene_packet_manifest_path: value.source_scene_packet_manifest_path.clone(),
+    source_bundle_manifest_paths: value.source_bundle_manifest_paths.clone(),
+    source_run_ids: value.source_run_ids.clone(),
+    trainer_backend: value.trainer_backend.clone(),
+    job_backend: value.job_backend.clone(),
+    normalized_result_dir: value.normalized_result_dir.clone(),
+    query_kind: spatial_query_kind_label(value.query_kind),
+    target_block: spatial_query_block_label(value.target_block),
+    target_face: spatial_query_optional_block_face_label(value.target_face),
+    target_semantics: spatial_query_target_semantics_label(value.target_semantics),
+    selected_backend: value
+      .selected_backend
+      .map(|backend| backend.as_str().to_string()),
+    status: value.status.as_str().to_string(),
+    reason: value.reason.map(|reason| reason.as_str().to_string()),
+    visibility: value.visibility.map(spatial_query_visibility_label),
+    screen_point: value.screen_point.map(spatial_query_screen_point_label),
+    match_radius_px: value.match_radius_px,
+    confidence: value.confidence,
+    basis_frame_id: value.basis_frame_id.clone(),
+    comparison_verdict: value
+      .comparison_verdict
+      .map(|verdict| verdict.as_str().to_string()),
+    known_limits: value.known_limits.clone(),
+  }
+}
+
+impl From<TrainingResultSpatialQueryManifest>
+  for MinecraftTrainingResultSpatialQueryManifestSummary
+{
+  fn from(value: TrainingResultSpatialQueryManifest) -> Self {
+    spatial_query_manifest_fields(&value)
+  }
+}
+
+impl From<TrainingResultSpatialQueryInspectReport>
+  for MinecraftTrainingResultSpatialQueryInspectReportSummary
+{
+  fn from(value: TrainingResultSpatialQueryInspectReport) -> Self {
+    let manifest_fields = spatial_query_manifest_fields(&TrainingResultSpatialQueryManifest {
+      schema_version: value.schema_version,
+      generated_at_millis: value.generated_at_millis,
+      training_result_semantic_manifest_path: value.training_result_semantic_manifest_path.clone(),
+      source_training_result_artifact_manifest_path: value
+        .source_training_result_artifact_manifest_path
+        .clone(),
+      source_training_result_manifest_path: value.source_training_result_manifest_path.clone(),
+      source_training_job_manifest_path: value.source_training_job_manifest_path.clone(),
+      source_training_launch_plan_path: value.source_training_launch_plan_path.clone(),
+      source_training_package_manifest_path: value.source_training_package_manifest_path.clone(),
+      source_scene_packet_manifest_path: value.source_scene_packet_manifest_path.clone(),
+      source_bundle_manifest_paths: value.source_bundle_manifest_paths.clone(),
+      source_run_ids: value.source_run_ids.clone(),
+      trainer_backend: value.trainer_backend.clone(),
+      job_backend: value.job_backend.clone(),
+      normalized_result_dir: value.normalized_result_dir.clone(),
+      query_kind: value.query_kind,
+      target_block: value.target_block,
+      target_face: value.target_face,
+      target_semantics: value.target_semantics,
+      selected_backend: value.selected_backend,
+      status: value.status,
+      reason: value.reason,
+      visibility: value.visibility,
+      screen_point: value.screen_point,
+      match_radius_px: value.match_radius_px,
+      confidence: value.confidence,
+      basis_frame_id: value.basis_frame_id.clone(),
+      comparison_verdict: value.comparison_verdict,
+      known_limits: value.known_limits.clone(),
+    });
+    Self {
+      schema_version: manifest_fields.schema_version,
+      training_result_spatial_query_manifest_path: value
+        .training_result_spatial_query_manifest_path
+        .clone(),
+      training_result_semantic_manifest_path: manifest_fields
+        .training_result_semantic_manifest_path
+        .clone(),
+      source_training_result_artifact_manifest_path: manifest_fields
+        .source_training_result_artifact_manifest_path
+        .clone(),
+      source_training_result_manifest_path: manifest_fields
+        .source_training_result_manifest_path
+        .clone(),
+      source_training_job_manifest_path: manifest_fields.source_training_job_manifest_path.clone(),
+      source_training_launch_plan_path: manifest_fields.source_training_launch_plan_path.clone(),
+      source_training_package_manifest_path: manifest_fields
+        .source_training_package_manifest_path
+        .clone(),
+      source_scene_packet_manifest_path: manifest_fields.source_scene_packet_manifest_path.clone(),
+      source_bundle_manifest_paths: manifest_fields.source_bundle_manifest_paths.clone(),
+      source_run_ids: manifest_fields.source_run_ids.clone(),
+      trainer_backend: manifest_fields.trainer_backend.clone(),
+      job_backend: manifest_fields.job_backend.clone(),
+      normalized_result_dir: manifest_fields.normalized_result_dir.clone(),
+      query_kind: manifest_fields.query_kind.clone(),
+      target_block: manifest_fields.target_block.clone(),
+      target_face: manifest_fields.target_face.clone(),
+      target_semantics: manifest_fields.target_semantics.clone(),
+      selected_backend: manifest_fields.selected_backend.clone(),
+      status: manifest_fields.status.clone(),
+      reason: manifest_fields.reason.clone(),
+      visibility: manifest_fields.visibility.clone(),
+      screen_point: manifest_fields.screen_point.clone(),
+      match_radius_px: manifest_fields.match_radius_px,
+      confidence: manifest_fields.confidence,
+      basis_frame_id: manifest_fields.basis_frame_id.clone(),
+      comparison_verdict: manifest_fields.comparison_verdict.clone(),
+      provider_status: value.provider_status.as_str().to_string(),
+      provider_reason: value
+        .provider_reason
+        .map(|reason| reason.as_str().to_string()),
+      provider_message: value.provider_message.clone(),
+      reference_status: value.reference_status.as_str().to_string(),
+      reference_reason: value
+        .reference_reason
+        .map(|reason| reason.as_str().to_string()),
+      reference_basis_frame_id: value.reference_basis_frame_id.clone(),
+      reference_source_frame_json_path: value.reference_source_frame_json_path.clone(),
+      reference_screenshot_path: value.reference_screenshot_path.clone(),
+      scene_packet_frame_count: value.scene_packet_frame_count,
+      warnings: value.warnings.clone(),
+      known_limits: manifest_fields.known_limits.clone(),
+    }
+  }
+}
+
 impl From<TrainingResultSemanticCheckpointRecord>
   for MinecraftTrainingResultSemanticCheckpointSummary
 {
@@ -2878,7 +3258,8 @@ mod tests {
     extract_minecraft_training_result_artifact_fetch_manifests,
     extract_minecraft_training_result_inspect_reports, extract_minecraft_training_result_manifests,
     extract_minecraft_training_result_semantic_inspect_reports,
-    extract_minecraft_training_result_semantic_manifests, extract_observation_snapshots,
+    extract_minecraft_training_result_semantic_manifests,
+    extract_minecraft_training_result_spatial_query_manifests, extract_observation_snapshots,
     extract_verifications, list_candidate_action_decision_lineage,
     list_candidate_action_execution_lineage, list_candidate_promotion_lineage,
     list_detector_recognition_lineage, list_minecraft_spatial_bundle_manifests,
@@ -2889,7 +3270,9 @@ mod tests {
     list_minecraft_training_result_artifact_fetch_manifests,
     list_minecraft_training_result_inspect_reports, list_minecraft_training_result_manifests,
     list_minecraft_training_result_semantic_inspect_reports,
-    list_minecraft_training_result_semantic_manifests, list_observation_snapshots,
+    list_minecraft_training_result_semantic_manifests,
+    list_minecraft_training_result_spatial_query_inspect_reports,
+    list_minecraft_training_result_spatial_query_manifests, list_observation_snapshots,
     list_verifications,
   };
   use crate::action_resolver_decision::{ActionResolverDecision, ActionResolverDecisionInput};
@@ -3618,6 +4001,337 @@ mod tests {
 
     let _ = fs::remove_dir_all(root);
   }
+
+  #[test]
+  fn minecraft_training_result_spatial_query_manifest_lineage_reads_summary() {
+    use auv_driver::geometry::Point;
+    use auv_game_minecraft::{
+      BlockPosition, TrainingResultSpatialQueryBackend,
+      TrainingResultSpatialQueryComparisonVerdict, TrainingResultSpatialQueryKind,
+      TrainingResultSpatialQueryManifest, TrainingResultSpatialQueryStatus,
+    };
+
+    let root = temp_dir("run-read-mc13-query-manifest");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let run = dummy_run("run_read_mc13_query_manifest");
+    let span = dummy_span(&run.root_span_id);
+
+    let manifest = TrainingResultSpatialQueryManifest {
+      schema_version: 1,
+      generated_at_millis: 99,
+      training_result_semantic_manifest_path: "/tmp/semantic.json".to_string(),
+      source_training_result_artifact_manifest_path:
+        "/tmp/d11/minecraft-3dgs-training-result-artifact-manifest.json".to_string(),
+      source_training_result_manifest_path: "/tmp/d7/minecraft-3dgs-training-result.json"
+        .to_string(),
+      source_training_job_manifest_path: "/tmp/d6/minecraft-3dgs-training-job.json".to_string(),
+      source_training_launch_plan_path: "/tmp/d5/minecraft-3dgs-training-launch-plan.json"
+        .to_string(),
+      source_training_package_manifest_path: "/tmp/package/run.json".to_string(),
+      source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
+      source_bundle_manifest_paths: vec!["/tmp/bundle-a/run.json".to_string()],
+      source_run_ids: vec!["run-a".to_string()],
+      trainer_backend: "nerfstudio.splatfacto".to_string(),
+      job_backend: "remote".to_string(),
+      normalized_result_dir: "/tmp/result/normalized-result".to_string(),
+      query_kind: TrainingResultSpatialQueryKind::BlockProjection,
+      target_block: BlockPosition::new(511, 73, 728),
+      target_face: None,
+      target_semantics: auv_game_minecraft::MinecraftTargetSemantics::HitFaceCenter,
+      selected_backend: Some(TrainingResultSpatialQueryBackend::ProjectionReference),
+      status: TrainingResultSpatialQueryStatus::Answered,
+      reason: None,
+      visibility: Some(auv_game_minecraft::ProjectionVisibility::Visible),
+      screen_point: Some(Point { x: 854.0, y: 480.0 }),
+      match_radius_px: Some(8.0),
+      confidence: Some(0.9),
+      basis_frame_id: Some("frame-355416".to_string()),
+      comparison_verdict: Some(TrainingResultSpatialQueryComparisonVerdict::ReferenceOnly),
+      known_limits: vec!["projection_reference only".to_string()],
+    };
+
+    let artifacts = vec![stage_json_artifact(
+      &store,
+      &root,
+      &run.run_id,
+      &span.span_id,
+      0,
+      crate::minecraft::MINECRAFT_3DGS_TRAINING_RESULT_QUERY_ROLE,
+      "minecraft-3dgs-training-result-query.json",
+      &manifest,
+    )];
+
+    store
+      .write_run_snapshot(&CanonicalRun {
+        run,
+        spans: vec![span],
+        events: Vec::new(),
+        artifacts,
+      })
+      .expect("run snapshot should persist");
+
+    let extracted = extract_minecraft_training_result_spatial_query_manifests(
+      &store,
+      &store.read_run("run_read_mc13_query_manifest").expect("run"),
+    )
+    .expect("manifest should extract");
+    assert_eq!(extracted.len(), 1);
+    let summary = extracted[0]
+      .manifest
+      .as_ref()
+      .expect("summary should be present");
+    assert_eq!(summary.status, "answered");
+    assert_eq!(summary.target_block, "511,73,728");
+    assert_eq!(
+      summary.selected_backend.as_deref(),
+      Some("projection_reference")
+    );
+    assert_eq!(summary.visibility.as_deref(), Some("visible"));
+    assert!(summary.screen_point.is_some());
+    assert_eq!(
+      list_minecraft_training_result_spatial_query_manifests(
+        &store,
+        "run_read_mc13_query_manifest"
+      )
+      .expect("list")
+      .len(),
+      1
+    );
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn minecraft_training_result_spatial_query_inspect_report_lineage_reads_summary() {
+    use auv_game_minecraft::{
+      BlockPosition, TrainingResultSpatialQueryBackend,
+      TrainingResultSpatialQueryComparisonVerdict, TrainingResultSpatialQueryInspectReport,
+      TrainingResultSpatialQueryKind, TrainingResultSpatialQueryManifest,
+      TrainingResultSpatialQueryStatus,
+    };
+
+    let root = temp_dir("run-read-mc13-query-inspect");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let run = dummy_run("run_read_mc13_query_inspect");
+    let span = dummy_span(&run.root_span_id);
+
+    let shared_manifest = TrainingResultSpatialQueryManifest {
+      schema_version: 1,
+      generated_at_millis: 99,
+      training_result_semantic_manifest_path: "/tmp/semantic.json".to_string(),
+      source_training_result_artifact_manifest_path:
+        "/tmp/d11/minecraft-3dgs-training-result-artifact-manifest.json".to_string(),
+      source_training_result_manifest_path: "/tmp/d7/minecraft-3dgs-training-result.json"
+        .to_string(),
+      source_training_job_manifest_path: "/tmp/d6/minecraft-3dgs-training-job.json".to_string(),
+      source_training_launch_plan_path: "/tmp/d5/minecraft-3dgs-training-launch-plan.json"
+        .to_string(),
+      source_training_package_manifest_path: "/tmp/package/run.json".to_string(),
+      source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
+      source_bundle_manifest_paths: vec!["/tmp/bundle-a/run.json".to_string()],
+      source_run_ids: vec!["run-a".to_string()],
+      trainer_backend: "nerfstudio.splatfacto".to_string(),
+      job_backend: "remote".to_string(),
+      normalized_result_dir: "/tmp/result/normalized-result".to_string(),
+      query_kind: TrainingResultSpatialQueryKind::BlockProjection,
+      target_block: BlockPosition::new(511, 73, 728),
+      target_face: None,
+      target_semantics: auv_game_minecraft::MinecraftTargetSemantics::HitFaceCenter,
+      selected_backend: Some(TrainingResultSpatialQueryBackend::ProjectionReference),
+      status: TrainingResultSpatialQueryStatus::Answered,
+      reason: None,
+      visibility: Some(auv_game_minecraft::ProjectionVisibility::Visible),
+      screen_point: None,
+      match_radius_px: None,
+      confidence: None,
+      basis_frame_id: Some("frame-355416".to_string()),
+      comparison_verdict: Some(TrainingResultSpatialQueryComparisonVerdict::ReferenceOnly),
+      known_limits: vec!["fixture".to_string()],
+    };
+
+    let inspect = TrainingResultSpatialQueryInspectReport {
+      schema_version: shared_manifest.schema_version,
+      generated_at_millis: shared_manifest.generated_at_millis,
+      training_result_spatial_query_manifest_path:
+        "/tmp/query/minecraft-3dgs-training-result-query.json".to_string(),
+      training_result_semantic_manifest_path: shared_manifest
+        .training_result_semantic_manifest_path
+        .clone(),
+      source_training_result_artifact_manifest_path: shared_manifest
+        .source_training_result_artifact_manifest_path
+        .clone(),
+      source_training_result_manifest_path: shared_manifest
+        .source_training_result_manifest_path
+        .clone(),
+      source_training_job_manifest_path: shared_manifest.source_training_job_manifest_path.clone(),
+      source_training_launch_plan_path: shared_manifest.source_training_launch_plan_path.clone(),
+      source_training_package_manifest_path: shared_manifest
+        .source_training_package_manifest_path
+        .clone(),
+      source_scene_packet_manifest_path: shared_manifest.source_scene_packet_manifest_path.clone(),
+      source_bundle_manifest_paths: shared_manifest.source_bundle_manifest_paths.clone(),
+      source_run_ids: shared_manifest.source_run_ids.clone(),
+      trainer_backend: shared_manifest.trainer_backend.clone(),
+      job_backend: shared_manifest.job_backend.clone(),
+      normalized_result_dir: shared_manifest.normalized_result_dir.clone(),
+      query_kind: shared_manifest.query_kind,
+      target_block: shared_manifest.target_block,
+      target_face: shared_manifest.target_face,
+      target_semantics: shared_manifest.target_semantics,
+      selected_backend: shared_manifest.selected_backend,
+      status: shared_manifest.status,
+      reason: shared_manifest.reason,
+      visibility: shared_manifest.visibility,
+      screen_point: shared_manifest.screen_point,
+      match_radius_px: shared_manifest.match_radius_px,
+      confidence: shared_manifest.confidence,
+      basis_frame_id: shared_manifest.basis_frame_id.clone(),
+      comparison_verdict: shared_manifest.comparison_verdict,
+      provider_status: TrainingResultSpatialQueryStatus::Blocked,
+      provider_reason: None,
+      provider_message: None,
+      reference_status: TrainingResultSpatialQueryStatus::Answered,
+      reference_reason: None,
+      reference_basis_frame_id: Some("frame-355416".to_string()),
+      reference_source_frame_json_path: Some(
+        "/tmp/scene-packet/frames/frame_000001.json".to_string(),
+      ),
+      reference_screenshot_path: None,
+      scene_packet_frame_count: 12,
+      warnings: vec!["provider not configured".to_string()],
+      known_limits: shared_manifest.known_limits.clone(),
+    };
+
+    let artifacts = vec![stage_json_artifact(
+      &store,
+      &root,
+      &run.run_id,
+      &span.span_id,
+      0,
+      crate::minecraft::MINECRAFT_3DGS_TRAINING_RESULT_QUERY_INSPECT_ROLE,
+      "minecraft-3dgs-training-result-query-inspect.json",
+      &inspect,
+    )];
+
+    store
+      .write_run_snapshot(&CanonicalRun {
+        run,
+        spans: vec![span],
+        events: Vec::new(),
+        artifacts,
+      })
+      .expect("run snapshot should persist");
+
+    let extracted = list_minecraft_training_result_spatial_query_inspect_reports(
+      &store,
+      "run_read_mc13_query_inspect",
+    )
+    .expect("inspect should list");
+    assert_eq!(extracted.len(), 1);
+    let summary = extracted[0]
+      .report
+      .as_ref()
+      .expect("summary should be present");
+    assert_eq!(summary.provider_status, "blocked");
+    assert_eq!(summary.reference_status, "answered");
+    assert_eq!(summary.scene_packet_frame_count, 12);
+    assert_eq!(summary.target_block, "511,73,728");
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn minecraft_training_result_spatial_query_manifest_lineage_reports_non_json_mime() {
+    let root = temp_dir("run-read-mc13-query-manifest-mime");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let run = dummy_run("run_read_mc13_query_manifest_mime");
+    let span = dummy_span(&run.root_span_id);
+
+    let mut manifest_artifact = stage_text_artifact(
+      &store,
+      &root,
+      &run.run_id,
+      &span.span_id,
+      0,
+      crate::minecraft::MINECRAFT_3DGS_TRAINING_RESULT_QUERY_ROLE,
+      "minecraft-3dgs-training-result-query.json",
+      "{}",
+    );
+    manifest_artifact.mime_type = "text/plain".to_string();
+
+    store
+      .write_run_snapshot(&CanonicalRun {
+        run,
+        spans: vec![span],
+        events: Vec::new(),
+        artifacts: vec![manifest_artifact],
+      })
+      .expect("run snapshot should persist");
+
+    let extracted = list_minecraft_training_result_spatial_query_manifests(
+      &store,
+      "run_read_mc13_query_manifest_mime",
+    )
+    .expect("manifest lineage should list");
+    assert_eq!(extracted.len(), 1);
+    assert!(extracted[0].manifest.is_none());
+    assert!(
+      extracted[0]
+        .issue
+        .as_deref()
+        .unwrap_or_default()
+        .contains("mime_type")
+    );
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn minecraft_training_result_spatial_query_inspect_report_lineage_reports_parse_failure() {
+    let root = temp_dir("run-read-mc13-query-inspect-malformed");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let run = dummy_run("run_read_mc13_query_inspect_malformed");
+    let span = dummy_span(&run.root_span_id);
+
+    let mut inspect_artifact = stage_text_artifact(
+      &store,
+      &root,
+      &run.run_id,
+      &span.span_id,
+      0,
+      crate::minecraft::MINECRAFT_3DGS_TRAINING_RESULT_QUERY_INSPECT_ROLE,
+      "minecraft-3dgs-training-result-query-inspect.json",
+      "{ malformed",
+    );
+    inspect_artifact.mime_type = "application/json".to_string();
+
+    store
+      .write_run_snapshot(&CanonicalRun {
+        run,
+        spans: vec![span],
+        events: Vec::new(),
+        artifacts: vec![inspect_artifact],
+      })
+      .expect("run snapshot should persist");
+
+    let extracted = list_minecraft_training_result_spatial_query_inspect_reports(
+      &store,
+      "run_read_mc13_query_inspect_malformed",
+    )
+    .expect("report lineage should list");
+    assert_eq!(extracted.len(), 1);
+    assert!(extracted[0].report.is_none());
+    assert!(
+      extracted[0]
+        .issue
+        .as_deref()
+        .unwrap_or_default()
+        .contains("failed to parse")
+    );
+
+    let _ = fs::remove_dir_all(root);
+  }
+
   #[test]
   fn detector_recognition_lineage_extracts_ready_and_error_states() {
     let root = temp_dir("run-read-detector-recognition");

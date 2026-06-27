@@ -11,7 +11,8 @@ MC-12 is **not**:
 - a model-quality or splat-usefulness gate
 - a checkpoint-native or Gaussian-native query core
 - entity / anchor / label query
-- render preview, action integration, or dedicated read-side viewer consumption
+- render preview or action integration (MC-12 read-side consumer is MC-13:
+  `docs/ai/references/2026-06-27-minecraft-mc13-spatial-query-read-side-inspect-consumer-design.md`)
 
 `projection_reference` is an in-repo **reference fallback** using
 `scene_packet + MinecraftProjector + mc6_projection_target_for_frame`. It closes the

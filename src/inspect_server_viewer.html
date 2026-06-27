@@ -1311,6 +1311,14 @@
     return !!artifact && artifact.role === "minecraft-3dgs-training-result-semantic-inspect";
   }
 
+  function isMinecraftTrainingResultSpatialQueryManifestArtifact(artifact) {
+    return !!artifact && artifact.role === "minecraft-3dgs-training-result-query";
+  }
+
+  function isMinecraftTrainingResultSpatialQueryInspectArtifact(artifact) {
+    return !!artifact && artifact.role === "minecraft-3dgs-training-result-query-inspect";
+  }
+
   function isMinecraftTrainingResultArtifactFetchInspectArtifact(artifact) {
     return !!artifact && artifact.role === "minecraft-3dgs-training-result-artifact-inspect";
   }
@@ -1769,6 +1777,39 @@
       ]);
     }
 
+    if (isMinecraftTrainingResultSpatialQueryManifestArtifact(artifact)) {
+      return renderKeyValueSummary([
+        ["kind", "training result spatial query manifest"],
+        ["schema", parsed.schema_version],
+        ["training_result_semantic_manifest", parsed.training_result_semantic_manifest_path],
+        ["target_block", parsed.target_block && [parsed.target_block.x, parsed.target_block.y, parsed.target_block.z].join(",")],
+        ["target_face", parsed.target_face],
+        ["target_semantics", parsed.target_semantics],
+        ["query_kind", parsed.query_kind],
+        ["selected_backend", parsed.selected_backend],
+        ["status", parsed.status],
+        ["reason", parsed.reason],
+        ["visibility", parsed.visibility],
+        ["screen_point", parsed.screen_point && [parsed.screen_point.x, parsed.screen_point.y].join(",")],
+        ["basis_frame_id", parsed.basis_frame_id],
+        ["comparison_verdict", parsed.comparison_verdict],
+        ["known_limits", countArray(parsed.known_limits)],
+      ]);
+    }
+    if (isMinecraftTrainingResultSpatialQueryInspectArtifact(artifact)) {
+      return renderKeyValueSummary([
+        ["kind", "training result spatial query inspect report"],
+        ["schema", parsed.schema_version],
+        ["manifest_path", parsed.training_result_spatial_query_manifest_path],
+        ["provider_status", parsed.provider_status],
+        ["reference_status", parsed.reference_status],
+        ["comparison_verdict", parsed.comparison_verdict],
+        ["visibility", parsed.visibility],
+        ["scene_packet_frame_count", parsed.scene_packet_frame_count],
+        ["warnings", countArray(parsed.warnings)],
+        ["known_limits", countArray(parsed.known_limits)],
+      ]);
+    }
     if (isMinecraftTrainingResultSemanticManifestArtifact(artifact)) {
       return renderKeyValueSummary([
         ["kind", "training result semantic manifest"],
@@ -2072,6 +2113,8 @@
             || isMinecraftTrainingResultArtifactFetchInspectArtifact(artifact)
             || isMinecraftTrainingResultSemanticManifestArtifact(artifact)
             || isMinecraftTrainingResultSemanticInspectArtifact(artifact)
+            || isMinecraftTrainingResultSpatialQueryManifestArtifact(artifact)
+            || isMinecraftTrainingResultSpatialQueryInspectArtifact(artifact)
           )) {
             const summaryCard = renderTrainingPackageSummaryCard(artifact, parsed)
               || renderTrainerLineageSummaryCard(artifact, parsed);

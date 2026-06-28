@@ -66,8 +66,8 @@ If any one of these fails, the candidate stays local.
 | Query status triad | `TrainingResultSpatialQueryStatus` | One non-Minecraft vertical must expose target-conditioned answers where `answered` must stay distinct from readiness or semantic success. | Show a real case where query answers are naturally boolean or where `answered` adds no information. If true, this stays app-local. | Shared query-status enum only. | Main matrix verdict unchanged pending owner acceptance of graduation review; osu adds probe-local recurrence only — see graduation review (admissibility-only, defer extraction). | `candidate, not admissible yet`¹ |
 | Provider comparison verdict | `TrainingResultSpatialQueryComparisonVerdict` | Another vertical must actually run dual-backend answer compare and need the same `match / divergent / provider_only / reference_only / not_comparable` split in persisted evidence. | Show a real compare seam where ordering, partiality, or uncertainty needs extra states beyond the five-label set. | Shared compare-verdict enum or helper. | Only Minecraft provider/reference compare exists. | `candidate, not admissible yet` |
 | Action readiness view | `TrainingResultSpatialQueryActionEligibility`, `TrainingResultSpatialQueryActionReadiness`, `derive_action_readiness`, `derive_minecraft_training_result_spatial_query_action_readiness` | Another vertical must need a **derived** action-facing view over persisted answer artifacts, with at least one `click_ready`-like path and one honest non-actionable path. | Show a real case where action-facing consumption must mutate producer truth or where dispatch and readiness cannot be kept separate. | Shared derived read-model contract only; no runtime dispatch wiring. | Main matrix verdict unchanged pending owner acceptance of graduation review; osu adds derived-shape recurrence only — capture-space, not dispatch-safe — see graduation review. | `candidate, not admissible yet`¹ |
-| Quality measurement verdict | `HoldoutRenderQualityVerdict` | Another vertical must measure witness-bound quality evidence and need the same split between `measured_only`, `metric_partial`, `blocked`, and `failed`. | Show a real measurement seam where thresholds are inseparable from measurement evidence, or where partial measurement is meaningless. | Shared evidence-verdict enum only. | osu WQ1 probe-local recurrence³; Balatro X2 adds **third** `metric_partial` semantic⁸ — A4 falsifier gate⁵ + Core-X3⁸ re-confirm **not** helper-only admissible; **A5a-prep⁹** maps three partial policies (docs-only, F3 still triggered). | `candidate, not admissible yet` |
-| Persisted backend label discipline | `HoldoutRenderQualityBackend`, `TrainingResultSpatialQueryBackend` | Another vertical must persist backend provenance and independently hit the same rule: stable backend labels belong in artifacts, raw runtime command text does not. | Show a real vertical where backend provenance cannot be represented by stable labels alone. | Shared label-discipline rule or tiny backend-label trait bound, if ever needed. | Query half recurs on three donors; render half MC-only; quality half split (MC `render_backend`, Balatro `quality_backend`, osu witness strings) — A4⁵ F2 full-row + Core-X3⁸; **A5b-prep¹⁰** three-surface split (docs-only). | `candidate, not admissible yet` |
+| Quality measurement verdict | `HoldoutRenderQualityVerdict` | Another vertical must measure witness-bound quality evidence and need the same split between `measured_only`, `metric_partial`, `blocked`, and `failed`. | Show a real measurement seam where thresholds are inseparable from measurement evidence, or where partial measurement is meaningless. | Shared evidence-verdict enum only. | osu WQ1 + Balatro X4 witness-bound quality¹¹; three `metric_partial` policies (A5a-prep⁹); X4 lineage honest but F3 divergence unchanged — **defer** Core-A5a. | `candidate, not admissible yet` |
+| Persisted backend label discipline | `HoldoutRenderQualityBackend`, `TrainingResultSpatialQueryBackend` | Another vertical must persist backend provenance and independently hit the same rule: stable backend labels belong in artifacts, raw runtime command text does not. | Show a real vertical where backend provenance cannot be represented by stable labels alone. | Shared label-discipline rule or tiny backend-label trait bound, if ever needed. | Query half three-donor recurrence; render MC-only; quality half split (MC `render_backend`, Balatro witness+quality `quality_backend`¹¹, osu strings) — F2 full-row + F3 osu gap; **defer** Core-A5b. | `candidate, not admissible yet` |
 
 
 ## osu! second-vertical probe (2026-06-27)
@@ -92,8 +92,9 @@ not matrix graduation.
 
 Rows marked probe-local remain **non-admissible for Core-B extraction** unless
 footnote³ helper-only admissible language applies (stage triad only on main matrix).
-Third-vertical probe for rows 69/70 semantic triangulation closed at Core-X3⁸
-(Balatro X2); main matrix verdict columns **unchanged**.
+Third-vertical probe for rows 69/70 re-adjudicated at Core-X3⁸ (Balatro X2 inline
+eval) and Core-X5¹¹ (Balatro X4 witness closure); main matrix verdict columns
+**unchanged**.
 Graduation reviews:
 `docs/ai/references/2026-06-27-auv-core-a-query-readiness-graduation-review.md` (rows 66/68)
 and Core-A2³ (rows 65/69/70). **Admissible does not mean recommended now**;
@@ -161,22 +162,34 @@ Core-A5a/A5b extraction.
 query recurrence on three donors; render MC-only; quality partial; main matrix verdict
 columns **unchanged**; **defer** Core-A5b extraction.
 
+¹¹ Core-X5 post-X4 third-donor graduation review (2026-06-30, `main` @ `fd42c67`):
+[`2026-06-30-auv-core-x5-post-x4-third-donor-graduation-review.md`](2026-06-30-auv-core-x5-post-x4-third-donor-graduation-review.md)
+— post-X4 re-adjudication of rows 69/70; Balatro witness-bound quality (schema v2)
+closes X3 inline-eval lineage gap but **does not** converge `metric_partial` (F3) or
+full-row backend discipline (F2/F3); main matrix verdict columns **unchanged**;
+**defer** Core-A5a/A5b extraction.
+
+
 ## Balatro third-vertical probe appendix (2026-06-29)
 
 Companion evidence:
 [`2026-06-29-auv-core-x2-balatro-consumption-probe-evidence.md`](2026-06-29-auv-core-x2-balatro-consumption-probe-evidence.md)
 
-Graduation review:
+Graduation reviews:
 [`2026-06-30-auv-core-x3-third-donor-graduation-review.md`](2026-06-30-auv-core-x3-third-donor-graduation-review.md)
+(Core-X3, inline eval) and
+[`2026-06-30-auv-core-x5-post-x4-third-donor-graduation-review.md`](2026-06-30-auv-core-x5-post-x4-third-donor-graduation-review.md)
+(Core-X5, witness closure).
 
-This probe closes **observe-only consumption** on Balatro fixtures only (semantic →
-spatial query → inline slot-coverage eval → quality manifest). Live admission,
-witness artifact role, and action readiness are **deferred** per Core-X2 scope.
+This probe closes **observe-only consumption** on Balatro fixtures. Core-X4
+(`fd42c67`) wires `semantic → spatial query → witness → quality` with
+witness-bound quality schema v2. Live admission and action readiness remain
+**deferred**.
 
 | Candidate contract | Verdict after Balatro X2 probe | Notes |
 | --- | --- | --- |
-| Quality measurement verdict | **third-vertical probe recurrence** | Third distinct `metric_partial` policy (slot coverage); main matrix **not** admissible⁸. |
-| Persisted backend label discipline | **quality-half probe recurrence** | `CardDetectionQualityBackend` enum persisted; render half still MC-only; main matrix **not** admissible⁸. |
+| Quality measurement verdict | **third-vertical probe recurrence** | Witness-bound partial (X4); third `metric_partial` policy; main matrix **not** admissible¹¹. |
+| Persisted backend label discipline | **quality-half probe recurrence strengthened** | `quality_backend` on witness + quality (X4); render half MC-only; main matrix **not** admissible¹¹. |
 | Stage status triad | **satisfied as probe-local recurrence** | Same `ready/blocked/failed` split; row 65 unchanged (Core-A2/A3). |
 | Query status triad | **satisfied as probe-local recurrence** | `answered` distinct from semantic `ready`; main matrix unchanged. |
 | Provider comparison verdict | **not satisfied** | Single backend only. |

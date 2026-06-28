@@ -212,6 +212,10 @@ Core graduation signal:
 - multiple verticals need the same “consume answer for action, but do not act
   yet” abstraction
 
+Core-C1 defines the action attempt admission design boundary between readiness
+and dispatch; see
+[`2026-06-28-auv-core-c1-action-attempt-admission-design.md`](2026-06-28-auv-core-c1-action-attempt-admission-design.md).
+
 ### 5. Witness Artifact
 
 **Question answered**

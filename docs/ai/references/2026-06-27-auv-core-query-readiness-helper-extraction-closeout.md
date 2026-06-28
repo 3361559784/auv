@@ -105,6 +105,10 @@ matrix L92–98 and helper note L124–131:
 [`2026-06-27-auv-core-a-query-readiness-falsifier-review.md`](2026-06-27-auv-core-a-query-readiness-falsifier-review.md)
 — **not** another extraction slice.
 
+For the separate action-attempt admission design boundary (owner slice after
+Core-A closeout), see
+[`2026-06-28-auv-core-c1-action-attempt-admission-design.md`](2026-06-28-auv-core-c1-action-attempt-admission-design.md).
+
 ## 7. Validation rerun (2026-06-28)
 
 All commands run from repo root on `feat/osu-second-vertical-consumption-probe`:

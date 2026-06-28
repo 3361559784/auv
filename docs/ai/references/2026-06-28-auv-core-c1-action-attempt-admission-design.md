@@ -147,6 +147,17 @@ MC-19 (`training_result_spatial_query_action_wiring.rs`) is the **current donor 
 | `click_summary` / executor error | Record field `dispatch_outcome` |
 | `QueryLiveClickExecutor` | Vertical injectable dispatch — **not** a core trait |
 
+**Donor field tension (honest defer):** Core-C1's conceptual record reserves
+`dispatch_outcome` for Layer 2 — driver or invoke failure after
+`attempted=true`. MC-19 donor `QueryActionWiringOutcome` has no
+`dispatch_outcome` slot: successful attempts surface in `click_summary`, and
+`wire_readiness_to_action` puts executor `Err` text in `refusal_reason` while
+`attempted=true` (see `training_result_spatial_query_action_wiring.rs`). That
+overload is acceptable donor evidence for MC-19 v1; aligning donor field names
+with Core-C1 Layer 2 vocabulary is **not** part of Core-C1 design closure —
+defer to owner-named Core-C2+ or vertical inspect polish only if repetition
+pain appears.
+
 MC-19 proves **query → derived readiness → one honest live attempt or refusal** with lineage intact. It does **not** prove generic cross-vertical admission API worth extracting now, controller / lease / authority semantics, or osu / third-vertical dispatch wiring.
 
 Core-C1 **owns the generic admission vocabulary**; MC-19 **owns Minecraft wiring evidence** until owner approves code extraction (Core-C2+ — not opened here).

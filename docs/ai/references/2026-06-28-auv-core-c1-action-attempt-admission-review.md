@@ -103,6 +103,7 @@ This review does **not**:
 1. **Label alignment debt** — `auv-query-readiness` still emits donor strings (`click_ready`); Core-C2 may map to core labels in inspect/helpers only if owner approves.
 2. **Second vertical dispatch** — osu has no live admission path; Core-C1 defer on authority conflation remains real if osu dispatch is ever opened.
 3. **Verification slot** — Layer 3 remains intentionally thin; do not backfill gameplay verification into C1 admission records without a named verification slice.
+4. **Dispatch outcome field split** — Core-C1 conceptual record uses `dispatch_outcome` for Layer 2 (post-attempt driver/invoke failure); MC-19 donor `QueryActionWiringOutcome` overloads `refusal_reason` for executor `Err` when `attempted=true` and has no `dispatch_outcome` field. **Defer** donor-to-core field alignment; no implementation promise in C1.
 
 ## One-sentence summary
 

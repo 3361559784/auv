@@ -272,6 +272,7 @@ pub struct OsuQueryWiredLiveActionSummary {
   pub dispatch_command: Option<String>,
   pub dispatch_outcome: Option<String>,
   pub readiness_class: Option<String>,
+  pub source_readiness_ref: Option<String>,
   pub issue: Option<String>,
 }
 
@@ -554,6 +555,7 @@ pub struct MinecraftQueryWiredLiveActionSummary {
   pub dispatch_outcome: Option<String>,
   pub mc14_action_eligibility: Option<String>,
   pub readiness_class: Option<String>,
+  pub source_readiness_ref: Option<String>,
   pub issue: Option<String>,
 }
 
@@ -3462,6 +3464,125 @@ fn map_action_eligibility_to_readiness_class(donor: &str) -> Option<String> {
   }
 }
 
+// NOTICE(core-c2-d2): reader-side provenance only — Core-C1 source_readiness_ref.
+fn format_source_readiness_ref(parts: &[(&str, &str)]) -> String {
+  parts
+    .iter()
+    .filter(|(_, value)| !value.is_empty())
+    .map(|(key, value)| format!("{key}={value}"))
+    .collect::<Vec<_>>()
+    .join(" ")
+}
+
+fn format_query_manifest_source_readiness_ref(artifact_id: &str, run_id: &str) -> String {
+  format_source_readiness_ref(&[
+    ("kind", "query_manifest"),
+    ("artifact_id", artifact_id),
+    ("run_id", run_id),
+  ])
+}
+
+fn format_derived_readiness_source_readiness_ref(query_artifact_id: &str, run_id: &str) -> String {
+  format_source_readiness_ref(&[
+    ("kind", "derived_readiness"),
+    ("query_artifact_id", query_artifact_id),
+    ("run_id", run_id),
+  ])
+}
+
+fn format_outcome_event_source_readiness_ref(
+  event_name: &str,
+  operation_result_artifact_id: Option<&str>,
+) -> String {
+  let mut parts = vec![("kind", "outcome_event"), ("event", event_name)];
+  if let Some(operation_result_artifact_id) =
+    operation_result_artifact_id.filter(|artifact_id| !artifact_id.is_empty())
+  {
+    parts.push(("operation_result_artifact_id", operation_result_artifact_id));
+  }
+  format_source_readiness_ref(&parts)
+}
+
+enum SourceReadinessManifestLookup {
+  MatchedValidManifest { artifact_id: String },
+  CleanMiss,
+  MatchedParseFailure,
+}
+
+fn classify_minecraft_manifest_source_readiness_lookup(
+  query_id: &str,
+  extract_result: &AuvResult<Vec<MinecraftTrainingResultSpatialQueryManifestLineage>>,
+) -> Option<SourceReadinessManifestLookup> {
+  match extract_result {
+    Err(_) => None,
+    Ok(manifests) => {
+      let matching = manifests
+        .iter()
+        .find(|manifest| manifest.artifact.artifact_id.as_str() == query_id);
+      Some(match matching {
+        None => SourceReadinessManifestLookup::CleanMiss,
+        Some(lineage) if lineage.manifest.is_some() => {
+          SourceReadinessManifestLookup::MatchedValidManifest {
+            artifact_id: lineage.artifact.artifact_id.as_str().to_string(),
+          }
+        }
+        Some(_) => SourceReadinessManifestLookup::MatchedParseFailure,
+      })
+    }
+  }
+}
+
+fn classify_osu_manifest_source_readiness_lookup(
+  query_id: &str,
+  extract_result: &AuvResult<Vec<OsuVisualTruthSpatialQueryManifestLineage>>,
+) -> Option<SourceReadinessManifestLookup> {
+  match extract_result {
+    Err(_) => None,
+    Ok(manifests) => {
+      let matching = manifests
+        .iter()
+        .find(|manifest| manifest.artifact.artifact_id.as_str() == query_id);
+      Some(match matching {
+        None => SourceReadinessManifestLookup::CleanMiss,
+        Some(lineage) if lineage.manifest.is_some() => {
+          SourceReadinessManifestLookup::MatchedValidManifest {
+            artifact_id: lineage.artifact.artifact_id.as_str().to_string(),
+          }
+        }
+        Some(_) => SourceReadinessManifestLookup::MatchedParseFailure,
+      })
+    }
+  }
+}
+
+fn resolve_query_wired_live_action_source_readiness_ref(
+  run_id: &str,
+  query_artifact_id: Option<&str>,
+  operation_result_artifact_id: Option<&str>,
+  outcome_event_name: &str,
+  has_outcome_event: bool,
+  manifest_lookup: Option<SourceReadinessManifestLookup>,
+) -> Option<String> {
+  if let Some(query_id) = query_artifact_id {
+    return match manifest_lookup? {
+      SourceReadinessManifestLookup::MatchedValidManifest { artifact_id } => Some(
+        format_query_manifest_source_readiness_ref(artifact_id.as_str(), run_id),
+      ),
+      SourceReadinessManifestLookup::CleanMiss => Some(
+        format_derived_readiness_source_readiness_ref(query_id, run_id),
+      ),
+      SourceReadinessManifestLookup::MatchedParseFailure => None,
+    };
+  }
+  if has_outcome_event {
+    return Some(format_outcome_event_source_readiness_ref(
+      outcome_event_name,
+      operation_result_artifact_id,
+    ));
+  }
+  None
+}
+
 pub fn derive_minecraft_query_wired_live_action_summary(
   store: &LocalStore,
   run: &CanonicalRun,
@@ -3514,10 +3635,15 @@ pub fn derive_minecraft_query_wired_live_action_summary(
 
   let (dispatch_command, dispatch_outcome) = derive_dispatch_evidence_from_events(run);
 
+  let run_id = run.run.run_id.as_str();
+  let manifest_extract = query_artifact_id
+    .as_deref()
+    .map(|_| extract_minecraft_training_result_spatial_query_manifests(store, run));
+
   let mut window_point = None;
   let mut mc14_action_eligibility = None;
   if let Some(query_id) = query_artifact_id.as_deref() {
-    if let Ok(manifests) = extract_minecraft_training_result_spatial_query_manifests(store, run) {
+    if let Some(Ok(ref manifests)) = manifest_extract {
       if let Some(lineage) = manifests
         .iter()
         .find(|manifest| manifest.artifact.artifact_id.as_str() == query_id)
@@ -3536,6 +3662,19 @@ pub fn derive_minecraft_query_wired_live_action_summary(
     .as_deref()
     .unwrap_or(action_eligibility.as_str());
   let readiness_class = map_action_eligibility_to_readiness_class(readiness_donor);
+  let manifest_lookup = query_artifact_id.as_deref().and_then(|query_id| {
+    manifest_extract.as_ref().and_then(|extract_result| {
+      classify_minecraft_manifest_source_readiness_lookup(query_id, extract_result)
+    })
+  });
+  let source_readiness_ref = resolve_query_wired_live_action_source_readiness_ref(
+    run_id,
+    query_artifact_id.as_deref(),
+    operation_result_artifact_id.as_deref(),
+    "minecraft.query_wired_live_action.outcome",
+    outcome_event.is_some(),
+    manifest_lookup,
+  );
 
   Some(MinecraftQueryWiredLiveActionSummary {
     operation_result_artifact_id,
@@ -3552,6 +3691,7 @@ pub fn derive_minecraft_query_wired_live_action_summary(
     dispatch_outcome,
     mc14_action_eligibility,
     readiness_class,
+    source_readiness_ref,
     issue,
   })
 }
@@ -3644,9 +3784,14 @@ pub fn derive_osu_query_wired_live_action_summary(
 
   let (dispatch_command, dispatch_outcome) = derive_dispatch_evidence_from_events(run);
 
+  let run_id = run.run.run_id.as_str();
+  let manifest_extract = query_artifact_id
+    .as_deref()
+    .map(|_| extract_osu_visual_truth_spatial_query_manifests(store, run));
+
   let mut readiness_class = map_action_eligibility_to_readiness_class(&action_eligibility);
   if let Some(query_id) = query_artifact_id.as_deref() {
-    if let Ok(manifests) = extract_osu_visual_truth_spatial_query_manifests(store, run) {
+    if let Some(Ok(ref manifests)) = manifest_extract {
       if let Some(lineage) = manifests
         .iter()
         .find(|manifest| manifest.artifact.artifact_id.as_str() == query_id)
@@ -3656,12 +3801,23 @@ pub fn derive_osu_query_wired_live_action_summary(
         if readiness.issue.is_some() {
           issue = readiness.issue;
         }
-        if pixel_point.is_none() {
-          // fall back to derived readiness when outcome event omitted pixel_point
-        }
       }
     }
   }
+
+  let manifest_lookup = query_artifact_id.as_deref().and_then(|query_id| {
+    manifest_extract.as_ref().and_then(|extract_result| {
+      classify_osu_manifest_source_readiness_lookup(query_id, extract_result)
+    })
+  });
+  let source_readiness_ref = resolve_query_wired_live_action_source_readiness_ref(
+    run_id,
+    query_artifact_id.as_deref(),
+    operation_result_artifact_id.as_deref(),
+    "osu.query_wired_live_action.outcome",
+    outcome_event.is_some(),
+    manifest_lookup,
+  );
 
   Some(OsuQueryWiredLiveActionSummary {
     operation_result_artifact_id,
@@ -3678,6 +3834,7 @@ pub fn derive_osu_query_wired_live_action_summary(
     dispatch_command,
     dispatch_outcome,
     readiness_class,
+    source_readiness_ref,
     issue,
   })
 }
@@ -6957,9 +7114,9 @@ mod tests {
     derive_minecraft_training_result_quality_baseline_report,
     derive_minecraft_training_result_quality_verdict,
     derive_minecraft_training_result_spatial_query_action_readiness,
-    extract_candidate_action_decision_lineage, extract_candidate_action_execution_lineage,
-    extract_candidate_promotion_lineage, extract_detector_recognition_lineage,
-    extract_minecraft_holdout_render_quality_inspect_reports,
+    derive_osu_query_wired_live_action_summary, extract_candidate_action_decision_lineage,
+    extract_candidate_action_execution_lineage, extract_candidate_promotion_lineage,
+    extract_detector_recognition_lineage, extract_minecraft_holdout_render_quality_inspect_reports,
     extract_minecraft_holdout_render_quality_manifests,
     extract_minecraft_training_job_inspect_reports, extract_minecraft_training_job_manifests,
     extract_minecraft_training_launch_inspect_reports, extract_minecraft_training_launch_manifests,
@@ -11229,6 +11386,7 @@ mod tests {
         Some("projection_reference"),
       ),
     );
+    let query_artifact_id = query_artifact.artifact_id.as_str().to_string();
     let operation_result = stage_json_artifact(
       &store,
       &root,
@@ -11239,7 +11397,7 @@ mod tests {
       "operation-result.json",
       &mc19_operation_result(
         &run.run_id,
-        query_artifact.artifact_id.as_str(),
+        query_artifact_id.as_str(),
         OperationStatus::Completed,
         "mock live click dispatched",
       ),
@@ -11298,6 +11456,17 @@ mod tests {
     );
     assert!(summary.window_point.is_some());
     assert_eq!(
+      summary.source_readiness_ref.as_deref(),
+      Some(
+        format!(
+          "kind=query_manifest artifact_id={} run_id={}",
+          query_artifact_id.as_str(),
+          run_id
+        )
+        .as_str()
+      )
+    );
+    assert_eq!(
       list_minecraft_query_wired_live_action_summaries(&store, run_id)
         .expect("list")
         .len(),
@@ -11331,6 +11500,7 @@ mod tests {
         Some("command_provider"),
       ),
     );
+    let query_artifact_id = query_artifact.artifact_id.as_str().to_string();
     let operation_result = stage_json_artifact(
       &store,
       &root,
@@ -11341,7 +11511,7 @@ mod tests {
       "operation-result.json",
       &mc19_operation_result(
         &run.run_id,
-        query_artifact.artifact_id.as_str(),
+        query_artifact_id.as_str(),
         OperationStatus::Completed,
         "visibility=outside_window",
       ),
@@ -11384,6 +11554,17 @@ mod tests {
       summary.mc14_action_eligibility.as_deref(),
       Some("answer_non_clickable")
     );
+    assert_eq!(
+      summary.source_readiness_ref.as_deref(),
+      Some(
+        format!(
+          "kind=query_manifest artifact_id={} run_id={}",
+          query_artifact_id.as_str(),
+          run_id
+        )
+        .as_str()
+      )
+    );
 
     let _ = fs::remove_dir_all(root);
   }
@@ -11412,6 +11593,7 @@ mod tests {
         None,
       ),
     );
+    let query_artifact_id = query_artifact.artifact_id.as_str().to_string();
     let operation_result = stage_json_artifact(
       &store,
       &root,
@@ -11422,7 +11604,7 @@ mod tests {
       "operation-result.json",
       &mc19_operation_result(
         &run.run_id,
-        query_artifact.artifact_id.as_str(),
+        query_artifact_id.as_str(),
         OperationStatus::Completed,
         "status=failed reason=target_block_absent_from_scene_packet",
       ),
@@ -11464,6 +11646,516 @@ mod tests {
     assert_eq!(
       summary.mc14_action_eligibility.as_deref(),
       Some("not_consumable")
+    );
+    assert_eq!(
+      summary.source_readiness_ref.as_deref(),
+      Some(
+        format!(
+          "kind=query_manifest artifact_id={} run_id={}",
+          query_artifact_id.as_str(),
+          run_id
+        )
+        .as_str()
+      )
+    );
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn minecraft_query_wired_live_action_summary_event_only_source_readiness_ref() {
+    let root = temp_dir("run-read-mc19-event-only");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let run_id = "run_read_mc19_event_only";
+    let run = dummy_run(run_id);
+    let span_id = run.root_span_id.clone();
+    let events = vec![dummy_mc19_event(
+      &span_id,
+      "minecraft.query_wired_live_action.outcome",
+      "attempted=false action_eligibility=answer_non_clickable refusal_reason=visibility=outside_window",
+    )];
+    write_mc19_run_snapshot(&store, &root, run_id, events, vec![]);
+
+    let summary = derive_minecraft_query_wired_live_action_summary(
+      &store,
+      &store.read_run(run_id).expect("run"),
+    )
+    .expect("summary should derive");
+    assert_eq!(
+      summary.source_readiness_ref.as_deref(),
+      Some("kind=outcome_event event=minecraft.query_wired_live_action.outcome")
+    );
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn minecraft_query_wired_live_action_summary_manifest_parse_failure_source_readiness_ref_none() {
+    let root = temp_dir("run-read-mc19-manifest-parse-failure");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let run_id = "run_read_mc19_manifest_parse_failure";
+    let run = dummy_run(run_id);
+    let span_id = run.root_span_id.clone();
+    let query_artifact = stage_text_artifact(
+      &store,
+      &root,
+      &run.run_id,
+      &span_id,
+      0,
+      crate::minecraft::MINECRAFT_3DGS_TRAINING_RESULT_QUERY_ROLE,
+      "minecraft-3dgs-training-result-query.json",
+      "{not valid json",
+    );
+    let operation_result = stage_json_artifact(
+      &store,
+      &root,
+      &run.run_id,
+      &span_id,
+      1,
+      "operation-result",
+      "operation-result.json",
+      &mc19_operation_result(
+        &run.run_id,
+        query_artifact.artifact_id.as_str(),
+        OperationStatus::Completed,
+        "manifest unreadable",
+      ),
+    );
+    let events = vec![dummy_mc19_event(
+      &span_id,
+      "minecraft.query_wired_live_action.outcome",
+      "attempted=false action_eligibility=not_consumable refusal_reason=manifest unreadable",
+    )];
+    write_mc19_run_snapshot(
+      &store,
+      &root,
+      run_id,
+      events,
+      vec![query_artifact, operation_result],
+    );
+
+    let summary = derive_minecraft_query_wired_live_action_summary(
+      &store,
+      &store.read_run(run_id).expect("run"),
+    )
+    .expect("summary should derive");
+    assert!(summary.source_readiness_ref.is_none());
+    assert!(
+      summary
+        .source_readiness_ref
+        .as_deref()
+        .is_none_or(|value| !value.contains("kind=derived_readiness"))
+    );
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn minecraft_query_wired_live_action_summary_clean_miss_derived_readiness_ref() {
+    let root = temp_dir("run-read-mc19-clean-miss");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let run_id = "run_read_mc19_clean_miss";
+    let run = dummy_run(run_id);
+    let span_id = run.root_span_id.clone();
+    let missing_query_id = "artifact_missing_query_manifest";
+    let operation_result = stage_json_artifact(
+      &store,
+      &root,
+      &run.run_id,
+      &span_id,
+      0,
+      "operation-result",
+      "operation-result.json",
+      &mc19_operation_result(
+        &run.run_id,
+        missing_query_id,
+        OperationStatus::Completed,
+        "query manifest absent from run",
+      ),
+    );
+    let events = vec![dummy_mc19_event(
+      &span_id,
+      "minecraft.query_wired_live_action.outcome",
+      "attempted=false action_eligibility=not_consumable refusal_reason=query manifest absent from run",
+    )];
+    write_mc19_run_snapshot(&store, &root, run_id, events, vec![operation_result]);
+
+    let summary = derive_minecraft_query_wired_live_action_summary(
+      &store,
+      &store.read_run(run_id).expect("run"),
+    )
+    .expect("summary should derive");
+    assert_eq!(
+      summary.source_readiness_ref.as_deref(),
+      Some(
+        format!("kind=derived_readiness query_artifact_id={missing_query_id} run_id={run_id}")
+          .as_str()
+      )
+    );
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn minecraft_query_wired_live_action_summary_partial_manifest_source_readiness_ref_none() {
+    let root = temp_dir("run-read-mc19-partial-manifest");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let run_id = "run_read_mc19_partial_manifest";
+    let run = dummy_run(run_id);
+    let span_id = run.root_span_id.clone();
+    let query_artifact = stage_json_artifact(
+      &store,
+      &root,
+      &run.run_id,
+      &span_id,
+      0,
+      crate::minecraft::MINECRAFT_3DGS_TRAINING_RESULT_QUERY_ROLE,
+      "minecraft-3dgs-training-result-query.json",
+      &serde_json::json!({"status": "answered"}),
+    );
+    let operation_result = stage_json_artifact(
+      &store,
+      &root,
+      &run.run_id,
+      &span_id,
+      1,
+      "operation-result",
+      "operation-result.json",
+      &mc19_operation_result(
+        &run.run_id,
+        query_artifact.artifact_id.as_str(),
+        OperationStatus::Completed,
+        "partial manifest",
+      ),
+    );
+    let events = vec![dummy_mc19_event(
+      &span_id,
+      "minecraft.query_wired_live_action.outcome",
+      "attempted=false action_eligibility=not_consumable refusal_reason=partial manifest",
+    )];
+    write_mc19_run_snapshot(
+      &store,
+      &root,
+      run_id,
+      events,
+      vec![query_artifact, operation_result],
+    );
+
+    let summary = derive_minecraft_query_wired_live_action_summary(
+      &store,
+      &store.read_run(run_id).expect("run"),
+    )
+    .expect("summary should derive");
+    assert!(summary.source_readiness_ref.is_none());
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn minecraft_query_wired_live_action_summary_schema_status_only_source_readiness_ref_none() {
+    let root = temp_dir("run-read-mc19-schema-status-only");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let run_id = "run_read_mc19_schema_status_only";
+    let run = dummy_run(run_id);
+    let span_id = run.root_span_id.clone();
+    let query_artifact = stage_json_artifact(
+      &store,
+      &root,
+      &run.run_id,
+      &span_id,
+      0,
+      crate::minecraft::MINECRAFT_3DGS_TRAINING_RESULT_QUERY_ROLE,
+      "minecraft-3dgs-training-result-query.json",
+      &serde_json::json!({"schema_version": 1, "status": "answered"}),
+    );
+    let operation_result = stage_json_artifact(
+      &store,
+      &root,
+      &run.run_id,
+      &span_id,
+      1,
+      "operation-result",
+      "operation-result.json",
+      &mc19_operation_result(
+        &run.run_id,
+        query_artifact.artifact_id.as_str(),
+        OperationStatus::Completed,
+        "schema status only manifest",
+      ),
+    );
+    let events = vec![dummy_mc19_event(
+      &span_id,
+      "minecraft.query_wired_live_action.outcome",
+      "attempted=false action_eligibility=not_consumable refusal_reason=schema status only manifest",
+    )];
+    write_mc19_run_snapshot(
+      &store,
+      &root,
+      run_id,
+      events,
+      vec![query_artifact, operation_result],
+    );
+
+    let summary = derive_minecraft_query_wired_live_action_summary(
+      &store,
+      &store.read_run(run_id).expect("run"),
+    )
+    .expect("summary should derive");
+    assert!(summary.source_readiness_ref.is_none());
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  fn osu_query_manifest_json(status: &str, pixel_visibility: Option<&str>) -> serde_json::Value {
+    let (pixel_x, pixel_y) = if pixel_visibility == Some("inside_capture") {
+      (Some(400.0), Some(300.0))
+    } else {
+      (None, None)
+    };
+    json!({
+      "schema_version": 1,
+      "generated_at_millis": 1,
+      "visual_truth_semantic_manifest_path": "/tmp/semantic.json",
+      "source_run_artifact_dir": "/tmp/run",
+      "source_visual_truth_manifest_path": "/tmp/vt.json",
+      "source_projection_path": "/tmp/proj.json",
+      "object_index": 0,
+      "capture_phase": "before_dispatch",
+      "object_kind": "circle",
+      "query_backend": "playfield_projection_reference",
+      "status": status,
+      "pixel_visibility": pixel_visibility,
+      "pixel_x": pixel_x,
+      "pixel_y": pixel_y,
+      "match_radius_px": 20.0,
+      "capture_width": 800,
+      "capture_height": 600,
+      "known_limits": []
+    })
+  }
+
+  fn osu_operation_result(
+    run_id: &RunId,
+    query_artifact_id: &str,
+    status: OperationStatus,
+    message: &str,
+  ) -> OperationResult {
+    let query_ref = ArtifactRef {
+      artifact_id: ArtifactId::new(query_artifact_id),
+      run_id: run_id.clone(),
+      span_id: SpanId::new("0000000000000001"),
+      captured_event_id: None,
+    };
+    OperationResult {
+      api_version: OPERATION_RESULT_API_VERSION.to_string(),
+      run_id: run_id.clone(),
+      status,
+      operation_id: crate::osu_query_live_action::QUERY_WIRED_LIVE_ACTION_OPERATION_ID.to_string(),
+      evidence_artifacts: vec![query_ref.clone()],
+      output: OperationOutput::Acknowledged {
+        message: Some(message.to_string()),
+      },
+      verifications: Vec::new(),
+      freshness_basis: Some(crate::contract::FreshnessBasis {
+        source_artifact: Some(query_ref),
+        source_operation_id: Some("auv.osu.query_visual_truth_spatial".to_string()),
+        notes: vec!["osu visual truth spatial query manifest staged in the same run".to_string()],
+      }),
+      known_limits: vec![
+        "osu_query_wired_live_action_capture_space_readiness_live_window_dispatch_no_gameplay_verification".to_string(),
+      ],
+    }
+  }
+
+  fn dummy_osu_event(
+    span_id: &SpanId,
+    name: &str,
+    message: &str,
+  ) -> auv_tracing_driver::trace::EventRecordV1Alpha1 {
+    dummy_mc19_event(span_id, name, message)
+  }
+
+  #[test]
+  fn osu_query_wired_live_action_summary_event_only_source_readiness_ref() {
+    let root = temp_dir("run-read-osu-event-only");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let run_id = "run_read_osu_event_only";
+    let run = dummy_run(run_id);
+    let span_id = run.root_span_id.clone();
+    let events = vec![dummy_osu_event(
+      &span_id,
+      "osu.query_wired_live_action.outcome",
+      "attempted=false action_eligibility=answer_non_clickable refusal_reason=pixel_visibility=outside_capture",
+    )];
+    write_mc19_run_snapshot(&store, &root, run_id, events, vec![]);
+
+    let summary =
+      derive_osu_query_wired_live_action_summary(&store, &store.read_run(run_id).expect("run"))
+        .expect("summary should derive");
+    assert_eq!(
+      summary.source_readiness_ref.as_deref(),
+      Some("kind=outcome_event event=osu.query_wired_live_action.outcome")
+    );
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn osu_query_wired_live_action_summary_manifest_parse_failure_source_readiness_ref_none() {
+    let root = temp_dir("run-read-osu-manifest-parse-failure");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let run_id = "run_read_osu_manifest_parse_failure";
+    let run = dummy_run(run_id);
+    let span_id = run.root_span_id.clone();
+    let query_artifact = stage_text_artifact(
+      &store,
+      &root,
+      &run.run_id,
+      &span_id,
+      0,
+      crate::osu::OSU_VISUAL_TRUTH_SPATIAL_QUERY_ROLE,
+      "osu-visual-truth-spatial-query.json",
+      "{not valid json",
+    );
+    let operation_result = stage_json_artifact(
+      &store,
+      &root,
+      &run.run_id,
+      &span_id,
+      1,
+      "operation-result",
+      "operation-result.json",
+      &osu_operation_result(
+        &run.run_id,
+        query_artifact.artifact_id.as_str(),
+        OperationStatus::Completed,
+        "manifest unreadable",
+      ),
+    );
+    let events = vec![dummy_osu_event(
+      &span_id,
+      "osu.query_wired_live_action.outcome",
+      "attempted=false action_eligibility=not_consumable refusal_reason=manifest unreadable",
+    )];
+    write_mc19_run_snapshot(
+      &store,
+      &root,
+      run_id,
+      events,
+      vec![query_artifact, operation_result],
+    );
+
+    let summary =
+      derive_osu_query_wired_live_action_summary(&store, &store.read_run(run_id).expect("run"))
+        .expect("summary should derive");
+    assert!(summary.source_readiness_ref.is_none());
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn osu_query_wired_live_action_summary_clean_miss_derived_readiness_ref() {
+    let root = temp_dir("run-read-osu-clean-miss");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let run_id = "run_read_osu_clean_miss";
+    let run = dummy_run(run_id);
+    let span_id = run.root_span_id.clone();
+    let missing_query_id = "artifact_missing_osu_query_manifest";
+    let operation_result = stage_json_artifact(
+      &store,
+      &root,
+      &run.run_id,
+      &span_id,
+      0,
+      "operation-result",
+      "operation-result.json",
+      &osu_operation_result(
+        &run.run_id,
+        missing_query_id,
+        OperationStatus::Completed,
+        "query manifest absent from run",
+      ),
+    );
+    let events = vec![dummy_osu_event(
+      &span_id,
+      "osu.query_wired_live_action.outcome",
+      "attempted=false action_eligibility=not_consumable refusal_reason=query manifest absent from run",
+    )];
+    write_mc19_run_snapshot(&store, &root, run_id, events, vec![operation_result]);
+
+    let summary =
+      derive_osu_query_wired_live_action_summary(&store, &store.read_run(run_id).expect("run"))
+        .expect("summary should derive");
+    assert_eq!(
+      summary.source_readiness_ref.as_deref(),
+      Some(
+        format!("kind=derived_readiness query_artifact_id={missing_query_id} run_id={run_id}")
+          .as_str()
+      )
+    );
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn osu_query_wired_live_action_summary_query_manifest_source_readiness_ref() {
+    let root = temp_dir("run-read-osu-query-manifest");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let run_id = "run_read_osu_query_manifest";
+    let run = dummy_run(run_id);
+    let span_id = run.root_span_id.clone();
+    let query_artifact = stage_json_artifact(
+      &store,
+      &root,
+      &run.run_id,
+      &span_id,
+      0,
+      crate::osu::OSU_VISUAL_TRUTH_SPATIAL_QUERY_ROLE,
+      "osu-visual-truth-spatial-query.json",
+      &osu_query_manifest_json("answered", Some("inside_capture")),
+    );
+    let query_artifact_id = query_artifact.artifact_id.as_str().to_string();
+    let operation_result = stage_json_artifact(
+      &store,
+      &root,
+      &run.run_id,
+      &span_id,
+      1,
+      "operation-result",
+      "operation-result.json",
+      &osu_operation_result(
+        &run.run_id,
+        query_artifact_id.as_str(),
+        OperationStatus::Completed,
+        "mock dispatch",
+      ),
+    );
+    let events = vec![dummy_osu_event(
+      &span_id,
+      "osu.query_wired_live_action.outcome",
+      "attempted=true action_eligibility=click_ready refusal_reason=none pixel_point=400,300",
+    )];
+    write_mc19_run_snapshot(
+      &store,
+      &root,
+      run_id,
+      events,
+      vec![query_artifact, operation_result],
+    );
+
+    let summary =
+      derive_osu_query_wired_live_action_summary(&store, &store.read_run(run_id).expect("run"))
+        .expect("summary should derive");
+    assert_eq!(
+      summary.source_readiness_ref.as_deref(),
+      Some(
+        format!(
+          "kind=query_manifest artifact_id={} run_id={}",
+          query_artifact_id.as_str(),
+          run_id
+        )
+        .as_str()
+      )
     );
 
     let _ = fs::remove_dir_all(root);

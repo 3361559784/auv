@@ -1589,6 +1589,149 @@
     return null;
   }
 
+
+  // NOTICE(core-c2-d2): reader-side provenance only — Core-C1 source_readiness_ref.
+  function formatSourceReadinessRef(parts) {
+    return parts
+      .filter(function (entry) { return entry[1]; })
+      .map(function (entry) { return entry[0] + "=" + entry[1]; })
+      .join(" ");
+  }
+
+  function formatQueryManifestSourceReadinessRef(artifactId, runId) {
+    return formatSourceReadinessRef([
+      ["kind", "query_manifest"],
+      ["artifact_id", artifactId],
+      ["run_id", runId],
+    ]);
+  }
+
+  function formatDerivedReadinessSourceReadinessRef(queryArtifactId, runId) {
+    return formatSourceReadinessRef([
+      ["kind", "derived_readiness"],
+      ["query_artifact_id", queryArtifactId],
+      ["run_id", runId],
+    ]);
+  }
+
+  function formatOutcomeEventSourceReadinessRef(eventName, operationResultArtifactId) {
+    const parts = [["kind", "outcome_event"], ["event", eventName]];
+    if (operationResultArtifactId) {
+      parts.push(["operation_result_artifact_id", operationResultArtifactId]);
+    }
+    return formatSourceReadinessRef(parts);
+  }
+
+  // NOTICE(core-c2-d2): parity with Rust manifest.is_some() — MC-19 required serde fields.
+  function nonEmptyString(value) {
+    return typeof value === "string" && value.length > 0;
+  }
+
+  function isCachedMc19QueryManifestProvenanceReady(manifest) {
+    if (!manifest || typeof manifest !== "object") return false;
+    if (typeof manifest.schema_version !== "number") return false;
+    if (typeof manifest.generated_at_millis !== "number") return false;
+    const status = manifest.status;
+    if (status !== "answered" && status !== "blocked" && status !== "failed") return false;
+    if (!nonEmptyString(manifest.query_kind)) return false;
+    if (!nonEmptyString(manifest.target_semantics)) return false;
+    if (!nonEmptyString(manifest.trainer_backend)) return false;
+    if (!nonEmptyString(manifest.job_backend)) return false;
+    if (!nonEmptyString(manifest.normalized_result_dir)) return false;
+    if (!nonEmptyString(manifest.training_result_semantic_manifest_path)) return false;
+    const sourcePaths = [
+      "source_training_result_artifact_manifest_path",
+      "source_training_result_manifest_path",
+      "source_training_job_manifest_path",
+      "source_training_launch_plan_path",
+      "source_training_package_manifest_path",
+      "source_scene_packet_manifest_path",
+    ];
+    for (let i = 0; i < sourcePaths.length; i++) {
+      if (!nonEmptyString(manifest[sourcePaths[i]])) return false;
+    }
+    if (!Array.isArray(manifest.source_bundle_manifest_paths)) return false;
+    if (!Array.isArray(manifest.source_run_ids)) return false;
+    if (!Array.isArray(manifest.known_limits)) return false;
+    const targetBlock = manifest.target_block;
+    if (!targetBlock || typeof targetBlock !== "object") return false;
+    if (typeof targetBlock.x !== "number" || typeof targetBlock.y !== "number" || typeof targetBlock.z !== "number") {
+      return false;
+    }
+    return true;
+  }
+
+  function mc19SelfTestManifestFixture() {
+    return {
+      schema_version: 1,
+      generated_at_millis: 1,
+      training_result_semantic_manifest_path: "/tmp/semantic.json",
+      source_training_result_artifact_manifest_path: "/tmp/artifact.json",
+      source_training_result_manifest_path: "/tmp/result.json",
+      source_training_job_manifest_path: "/tmp/job.json",
+      source_training_launch_plan_path: "/tmp/launch.json",
+      source_training_package_manifest_path: "/tmp/package.json",
+      source_scene_packet_manifest_path: "/tmp/scene-packet.json",
+      source_bundle_manifest_paths: ["/tmp/bundle.json"],
+      source_run_ids: ["run-a"],
+      trainer_backend: "nerfstudio.splatfacto",
+      job_backend: "remote",
+      normalized_result_dir: "/tmp/normalized",
+      query_kind: "block_projection",
+      target_block: { x: 511, y: 73, z: 728 },
+      target_semantics: "hit_face_center",
+      status: "answered",
+      visibility: "visible",
+      screen_point: { x: 1, y: 2 },
+      known_limits: [],
+    };
+  }
+
+  function classifyCachedQueryManifestSourceReadiness(queryArtifactId, queryRole, runArtifacts, artifactJsonCache) {
+    if (!queryArtifactId || !Array.isArray(runArtifacts)) return null;
+    const queryArtifact = runArtifacts.find(function (artifact) {
+      return artifact && artifact.artifact_id === queryArtifactId && artifact.role === queryRole;
+    });
+    if (!queryArtifact) return "clean_miss";
+    if (!artifactJsonCache) return null;
+    const cacheKey = artifactKey(queryArtifact);
+    if (!artifactJsonCache[cacheKey]) return null;
+    const manifest = artifactJsonCache[cacheKey];
+    if (!isCachedMc19QueryManifestProvenanceReady(manifest)) return "matched_parse_failure";
+    return "matched_valid_manifest";
+  }
+
+  function resolveQueryWiredLiveActionSourceReadinessRef(params) {
+    const queryArtifactId = params.queryArtifactId;
+    const operationResultArtifactId = params.operationResultArtifactId;
+    const runId = params.runId;
+    const hasOutcomeEvent = params.hasOutcomeEvent;
+    const runArtifacts = params.runArtifacts;
+    const artifactJsonCache = params.artifactJsonCache;
+    const outcomeEventName = "minecraft.query_wired_live_action.outcome";
+
+    if (queryArtifactId) {
+      const lookup = classifyCachedQueryManifestSourceReadiness(
+        queryArtifactId,
+        "minecraft-3dgs-training-result-query",
+        runArtifacts,
+        artifactJsonCache
+      );
+      if (lookup === null) return null;
+      if (lookup === "matched_valid_manifest") {
+        return formatQueryManifestSourceReadinessRef(queryArtifactId, runId);
+      }
+      if (lookup === "clean_miss") {
+        return formatDerivedReadinessSourceReadinessRef(queryArtifactId, runId);
+      }
+      return null;
+    }
+    if (hasOutcomeEvent) {
+      return formatOutcomeEventSourceReadinessRef(outcomeEventName, operationResultArtifactId);
+    }
+    return null;
+  }
+
   function parseEventMessageField(message, key) {
     if (!message) return null;
     const prefix = key + "=";
@@ -1619,7 +1762,7 @@
     return basis && basis.artifact_id ? basis.artifact_id : null;
   }
 
-  function deriveQueryWiredLiveActionCard(parsed, runEvents, runArtifacts) {
+  function deriveQueryWiredLiveActionCard(parsed, runEvents, runArtifacts, runId) {
     const events = Array.isArray(runEvents) ? runEvents : [];
     const outcomeEvent = events.find(function (event) {
       return event && event.name === "minecraft.query_wired_live_action.outcome";
@@ -1656,6 +1799,16 @@
     });
 
     const queryArtifactId = parsed ? queryArtifactIdFromOperationResult(parsed) : null;
+    let operationResultArtifactId = null;
+    if (parsed && Array.isArray(runArtifacts)) {
+      const opArtifact = runArtifacts.find(function (artifact) {
+        if (!isOperationResultArtifact(artifact)) return false;
+        const key = artifactKey(artifact);
+        const cached = state.artifactJsonCache && state.artifactJsonCache[key];
+        return cached === parsed;
+      });
+      if (opArtifact) operationResultArtifactId = opArtifact.artifact_id;
+    }
     const operationStatus = parsed && parsed.status ? parsed.status : null;
     let operationMessage = null;
     if (parsed && parsed.output && parsed.output.kind === "acknowledged") {
@@ -1679,6 +1832,17 @@
 
     const readinessDonor = mc14ActionEligibility || actionEligibility;
     const readinessClass = mapActionEligibilityToReadinessClass(readinessDonor);
+    const effectiveRunId = runId || state.activeRunId || null;
+    const sourceReadinessRef = effectiveRunId
+      ? resolveQueryWiredLiveActionSourceReadinessRef({
+          queryArtifactId: queryArtifactId,
+          operationResultArtifactId: operationResultArtifactId,
+          runId: effectiveRunId,
+          hasOutcomeEvent: !!outcomeEvent,
+          runArtifacts: runArtifacts,
+          artifactJsonCache: state.artifactJsonCache,
+        })
+      : null;
 
     return {
       attempted: attempted,
@@ -1694,6 +1858,7 @@
       target_title: targetTitle,
       mc14_action_eligibility: mc14ActionEligibility,
       readiness_class: readinessClass,
+      source_readiness_ref: sourceReadinessRef,
     };
   }
 
@@ -1719,6 +1884,7 @@
       ["target_title", card.target_title],
       ["mc14_action_eligibility", card.mc14_action_eligibility],
       ["readiness_class", card.readiness_class],
+      ["source_readiness_ref", card.source_readiness_ref],
       ["known_limits", countArray(parsed.known_limits)],
     ]);
   }
@@ -1753,6 +1919,7 @@
       ["wired_action_dispatch_outcome", card.dispatch_outcome],
       ["wired_action_operation_status", card.operation_status],
       ["wired_action_operation_message", card.operation_message],
+      ["wired_action_source_readiness_ref", card.source_readiness_ref],
     ];
   }
 
@@ -3052,6 +3219,75 @@
       ]));
     }
   }
+
+
+  // NOTICE(core-c2-d2): cache miss must not fabricate query_manifest or derived_readiness.
+  function selfTestSourceReadinessRef() {
+    const runId = "run_viewer_self_test";
+    const queryRole = "minecraft-3dgs-training-result-query";
+    const queryArtifactId = "artifact_query_self_test";
+    const runArtifacts = [{
+      artifact_id: queryArtifactId,
+      role: queryRole,
+      span_id: "span_test",
+      path: "/tmp/query.json",
+    }];
+    const baseParams = {
+      queryArtifactId: queryArtifactId,
+      operationResultArtifactId: null,
+      runId: runId,
+      hasOutcomeEvent: true,
+      runArtifacts: runArtifacts,
+    };
+
+    const cacheMissRef = resolveQueryWiredLiveActionSourceReadinessRef(
+      Object.assign({}, baseParams, { artifactJsonCache: {} })
+    );
+    console.assert(cacheMissRef === null, "cache miss should yield null source_readiness_ref");
+
+    const cacheKey = "span_test::" + queryArtifactId;
+    const invalidObjectRef = resolveQueryWiredLiveActionSourceReadinessRef(
+      Object.assign({}, baseParams, { artifactJsonCache: { [cacheKey]: {} } })
+    );
+    console.assert(
+      invalidObjectRef === null,
+      "empty cached object should not yield query_manifest provenance"
+    );
+
+    const validManifestRef = resolveQueryWiredLiveActionSourceReadinessRef(
+      Object.assign({}, baseParams, {
+        artifactJsonCache: {
+          [cacheKey]: mc19SelfTestManifestFixture(),
+        },
+      })
+    );
+    console.assert(
+      validManifestRef === "kind=query_manifest artifact_id=" + queryArtifactId + " run_id=" + runId,
+      "valid cached manifest should yield query_manifest provenance"
+    );
+
+    const partialManifestRef = resolveQueryWiredLiveActionSourceReadinessRef(
+      Object.assign({}, baseParams, {
+        artifactJsonCache: { [cacheKey]: { schema_version: 1, status: "answered" } },
+      })
+    );
+    console.assert(
+      partialManifestRef === null,
+      "partial manifest without required MC-19 fields should not yield query_manifest provenance"
+    );
+
+    const cleanMissRef = resolveQueryWiredLiveActionSourceReadinessRef(
+      Object.assign({}, baseParams, {
+        queryArtifactId: "artifact_absent_from_run",
+        artifactJsonCache: {},
+      })
+    );
+    console.assert(
+      cleanMissRef === "kind=derived_readiness query_artifact_id=artifact_absent_from_run run_id=" + runId,
+      "clean miss should yield derived_readiness provenance"
+    );
+  }
+  selfTestSourceReadinessRef();
 
   loadRuns();
 })();

@@ -106,23 +106,7 @@ pub struct TrainingResultSemanticCheckpointRecord {
   pub byte_size: u64,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TrainingResultSemanticStatus {
-  Ready,
-  Blocked,
-  Failed,
-}
-
-impl TrainingResultSemanticStatus {
-  pub fn as_str(self) -> &'static str {
-    match self {
-      Self::Ready => "ready",
-      Self::Blocked => "blocked",
-      Self::Failed => "failed",
-    }
-  }
-}
+pub type TrainingResultSemanticStatus = auv_stage_status::StageStatus;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -638,6 +622,19 @@ fn write_json_file<T: Serialize>(
 #[cfg(test)]
 mod tests {
   use super::*;
+  #[test]
+  fn semantic_status_type_alias_preserves_wire_labels() {
+    for (status, wire) in [
+      (TrainingResultSemanticStatus::Ready, "\"ready\""),
+      (TrainingResultSemanticStatus::Blocked, "\"blocked\""),
+      (TrainingResultSemanticStatus::Failed, "\"failed\""),
+    ] {
+      assert_eq!(serde_json::to_string(&status).expect("serialize"), wire);
+      let decoded: TrainingResultSemanticStatus = serde_json::from_str(wire).expect("deserialize");
+      assert_eq!(decoded, status);
+    }
+  }
+
   use crate::training_result_artifact::{
     TrainingResultArtifactFetchManifest, TrainingResultNormalizedArtifactKind,
     TrainingResultNormalizedArtifactRecord,

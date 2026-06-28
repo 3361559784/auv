@@ -111,23 +111,7 @@ pub struct DetectionEvalWitnessInspectReport {
   pub known_limits: Vec<String>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum DetectionEvalWitnessStatus {
-  Ready,
-  Blocked,
-  Failed,
-}
-
-impl DetectionEvalWitnessStatus {
-  pub fn as_str(self) -> &'static str {
-    match self {
-      Self::Ready => "ready",
-      Self::Blocked => "blocked",
-      Self::Failed => "failed",
-    }
-  }
-}
+pub type DetectionEvalWitnessStatus = auv_stage_status::StageStatus;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

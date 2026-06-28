@@ -190,6 +190,9 @@ Detector provenance is optional metadata, not the same discipline proof.
 
 ## Related references
 
+- Core-A3 helper extraction (implemented):
+  [`2026-06-29-auv-core-a3-stage-status-triad-helper-design.md`](2026-06-29-auv-core-a3-stage-status-triad-helper-design.md)
+
 - Full-chain falsifier + Core-C1 re-review:
   [`2026-06-28-auv-core-a2-full-chain-falsifier-review.md`](2026-06-28-auv-core-a2-full-chain-falsifier-review.md)
 - Prior query/readiness graduation:

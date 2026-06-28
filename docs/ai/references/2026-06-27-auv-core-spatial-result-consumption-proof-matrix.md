@@ -62,7 +62,7 @@ If any one of these fails, the candidate stays local.
 
 | Candidate contract | Current donor symbols | Positive evidence still required | Counter-evidence / falsifier still required | Smallest acceptable extraction shape | Current blockers | Current verdict |
 | --- | --- | --- | --- | --- | --- | --- |
-| Stage status triad | `TrainingResultSemanticStatus`, `HoldoutPreviewStatus`, `HoldoutRenderQualityStatus` | One non-Minecraft vertical must need the same `ready / blocked / failed` split across at least two persisted stages, with lineage-carrying artifacts. | Show a real case where one vertical needs a fourth state or where `blocked` and `failed` collapse without loss. If that happens, do not extract the triad yet. | Shared enum or label helper only; no shared manifest struct. | osu WQ1 adds semantic + witness + quality stages — see Core-A2 review³; default **defer** extraction. | `candidate, helper-only admissible`³ |
+| Stage status triad | `TrainingResultSemanticStatus`, `HoldoutPreviewStatus`, `HoldoutRenderQualityStatus` | One non-Minecraft vertical must need the same `ready / blocked / failed` split across at least two persisted stages, with lineage-carrying artifacts. | Show a real case where one vertical needs a fourth state or where `blocked` and `failed` collapse without loss. If that happens, do not extract the triad yet. | Shared enum or label helper only; no shared manifest struct. | osu WQ1 adds semantic + witness + quality stages — see Core-A2 review³; Core-A3 helper landed⁴; default **defer** Core-B extraction. | `candidate, helper-only admissible`³ |
 | Query status triad | `TrainingResultSpatialQueryStatus` | One non-Minecraft vertical must expose target-conditioned answers where `answered` must stay distinct from readiness or semantic success. | Show a real case where query answers are naturally boolean or where `answered` adds no information. If true, this stays app-local. | Shared query-status enum only. | Main matrix verdict unchanged pending owner acceptance of graduation review; osu adds probe-local recurrence only — see graduation review (admissibility-only, defer extraction). | `candidate, not admissible yet`¹ |
 | Provider comparison verdict | `TrainingResultSpatialQueryComparisonVerdict` | Another vertical must actually run dual-backend answer compare and need the same `match / divergent / provider_only / reference_only / not_comparable` split in persisted evidence. | Show a real compare seam where ordering, partiality, or uncertainty needs extra states beyond the five-label set. | Shared compare-verdict enum or helper. | Only Minecraft provider/reference compare exists. | `candidate, not admissible yet` |
 | Action readiness view | `TrainingResultSpatialQueryActionEligibility`, `TrainingResultSpatialQueryActionReadiness`, `derive_action_readiness`, `derive_minecraft_training_result_spatial_query_action_readiness` | Another vertical must need a **derived** action-facing view over persisted answer artifacts, with at least one `click_ready`-like path and one honest non-actionable path. | Show a real case where action-facing consumption must mutate producer truth or where dispatch and readiness cannot be kept separate. | Shared derived read-model contract only; no runtime dispatch wiring. | Main matrix verdict unchanged pending owner acceptance of graduation review; osu adds derived-shape recurrence only — capture-space, not dispatch-safe — see graduation review. | `candidate, not admissible yet`¹ |
@@ -114,6 +114,12 @@ matrix) and
 [`2026-06-28-auv-core-a2-full-chain-falsifier-review.md`](2026-06-28-auv-core-a2-full-chain-falsifier-review.md)
 (full-chain falsifier + Core-C1 re-review). **Admissible does not mean
 recommended now**; default **defer** extraction.
+
+
+⁴ Core-A3 helper extraction (2026-06-29, `feat/core-a3-stage-status-triad-helper`):
+[`2026-06-29-auv-core-a3-stage-status-triad-helper-design.md`](2026-06-29-auv-core-a3-stage-status-triad-helper-design.md)
+— `auv-stage-status::StageStatus` wired via donor type aliases; row 65 verdict
+unchanged; **not** Core-B graduation.
 
 ## What does not need a second vertical
 

@@ -16,6 +16,7 @@ repository.workspace = true
 auv-compare = { path = "../auv-compare" }
 auv-file = { path = "../auv-file" }
 auv-query-readiness = { path = "../auv-query-readiness" }
+auv-stage-status = { path = "../auv-stage-status" }
 auv-driver = { path = "../auv-driver" }
 auv-tracing-driver = { path = "../auv-tracing-driver" }
 image.workspace = true

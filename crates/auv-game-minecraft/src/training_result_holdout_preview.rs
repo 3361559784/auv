@@ -157,23 +157,7 @@ pub struct TrainingResultHoldoutPreviewInspectReport {
   pub known_limits: Vec<String>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum HoldoutPreviewStatus {
-  Ready,
-  Blocked,
-  Failed,
-}
-
-impl HoldoutPreviewStatus {
-  pub fn as_str(self) -> &'static str {
-    match self {
-      Self::Ready => "ready",
-      Self::Blocked => "blocked",
-      Self::Failed => "failed",
-    }
-  }
-}
+pub type HoldoutPreviewStatus = auv_stage_status::StageStatus;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

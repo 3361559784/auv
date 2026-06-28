@@ -72,23 +72,7 @@ pub struct VisualTruthSemanticInspectReport {
   pub known_limits: Vec<String>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum VisualTruthSemanticStatus {
-  Ready,
-  Blocked,
-  Failed,
-}
-
-impl VisualTruthSemanticStatus {
-  pub fn as_str(self) -> &'static str {
-    match self {
-      Self::Ready => "ready",
-      Self::Blocked => "blocked",
-      Self::Failed => "failed",
-    }
-  }
-}
+pub type VisualTruthSemanticStatus = auv_stage_status::StageStatus;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -359,6 +343,19 @@ mod tests {
   use crate::benchmark::{CapturePhase, MapSummary, ObjectKind};
   use crate::projection::{PlayfieldProjection, ProjectionArtifact, ProjectionDerivationMethod};
   use crate::visual_truth::{CaptureFrame, ExpectedObjectTruth, VisualTruthFrame};
+
+  #[test]
+  fn semantic_status_type_alias_preserves_wire_labels() {
+    for (status, wire) in [
+      (VisualTruthSemanticStatus::Ready, "\"ready\""),
+      (VisualTruthSemanticStatus::Blocked, "\"blocked\""),
+      (VisualTruthSemanticStatus::Failed, "\"failed\""),
+    ] {
+      assert_eq!(serde_json::to_string(&status).expect("serialize"), wire);
+      let decoded: VisualTruthSemanticStatus = serde_json::from_str(wire).expect("deserialize");
+      assert_eq!(decoded, status);
+    }
+  }
 
   fn write_probe_fixture(root: &Path) {
     let manifest = VisualTruthManifest {

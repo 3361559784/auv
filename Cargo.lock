@@ -477,6 +477,7 @@ dependencies = [
  "auv-driver",
  "auv-file",
  "auv-query-readiness",
+ "auv-stage-status",
  "auv-tracing-driver",
  "image",
  "serde",
@@ -494,6 +495,7 @@ dependencies = [
  "auv-file",
  "auv-inference-common",
  "auv-query-readiness",
+ "auv-stage-status",
  "auv-tracing-driver",
  "image",
  "rosu-map",
@@ -587,6 +589,14 @@ dependencies = [
 [[package]]
 name = "auv-query-readiness"
 version = "0.0.1"
+
+[[package]]
+name = "auv-stage-status"
+version = "0.0.1"
+dependencies = [
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "auv-steam"

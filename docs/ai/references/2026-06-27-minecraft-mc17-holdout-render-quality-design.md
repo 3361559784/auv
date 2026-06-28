@@ -84,7 +84,8 @@ Files: `minecraft-3dgs-holdout-render-quality.json`,
 
 - `run_read` extract/list helpers for both roles
 - `auv inspect` `MC-17 Holdout Render Quality:` section (after MC-16, before MC-12)
-- inspect server viewer cards deferred to D2
+- inspect server viewer cards deferred to D2 — **closed in D2**; see
+  `docs/ai/references/2026-06-27-minecraft-mc17-d2-quality-baseline-report-design.md`
 
 ## Known limits
 

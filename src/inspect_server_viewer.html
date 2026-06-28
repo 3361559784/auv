@@ -1762,6 +1762,133 @@
     return basis && basis.artifact_id ? basis.artifact_id : null;
   }
 
+
+  // NOTICE(core-c3-d2): reader-side Layer 3 summary only — verification_outcome projection.
+  function formatOperationResultVerificationSource(artifactId, runId) {
+    return formatSourceReadinessRef([
+      ["kind", "operation_result"],
+      ["artifact_id", artifactId],
+      ["run_id", runId],
+    ]);
+  }
+
+  function operationResultVerificationClaims(parsed) {
+    if (!parsed || typeof parsed !== "object") return [];
+    if (Array.isArray(parsed.verifications) && parsed.verifications.length > 0) {
+      return parsed.verifications;
+    }
+    if (parsed.output && parsed.output.kind === "verification" && parsed.output.verification) {
+      return [parsed.output.verification];
+    }
+    return [];
+  }
+
+  function isActivationOnlyVerification(verification) {
+    return !!verification
+      && verification.method
+      && verification.method.kind === "custom"
+      && verification.method.name === "activation_only";
+  }
+
+  function verificationClaimReasonSnippet(verification) {
+    if (!verification) return null;
+    if (typeof verification.observed_label === "string" && verification.observed_label.length > 0) {
+      return verification.observed_label;
+    }
+    if (verification.failure_layer) return verification.failure_layer;
+    return null;
+  }
+
+  function buildVerificationReasonFromClaims(claims) {
+    const parts = [];
+    claims.forEach(function (claim) {
+      const snippet = verificationClaimReasonSnippet(claim);
+      if (snippet && parts.indexOf(snippet) === -1) parts.push(snippet);
+    });
+    return parts.length ? parts.join("; ") : null;
+  }
+
+  function projectVerificationOutcomeFromClaims(claims) {
+    const semanticClaims = claims.filter(function (claim) {
+      return !isActivationOnlyVerification(claim);
+    });
+    const focus = semanticClaims.length ? semanticClaims : claims;
+
+    for (let i = 0; i < focus.length; i++) {
+      if (focus[i].failure_layer === "verification_unreliable") {
+        return { verification_outcome: "unreliable", verification_reason: buildVerificationReasonFromClaims(focus) };
+      }
+    }
+    for (let i = 0; i < focus.length; i++) {
+      const claim = focus[i];
+      if (claim.failure_layer === "semantic_mismatch"
+        || claim.failure_layer === "state_changed_no_match"
+        || claim.semantic_matched === false) {
+        return { verification_outcome: "failed", verification_reason: buildVerificationReasonFromClaims(focus) };
+      }
+    }
+    if (focus.length && focus.every(isActivationOnlyVerification)) {
+      return {
+        verification_outcome: "activation_only",
+        verification_reason: buildVerificationReasonFromClaims(focus)
+          || "input delivery recorded; no semantic post-action assertion",
+      };
+    }
+    if (focus.some(function (claim) { return claim.semantic_matched === true; })) {
+      return { verification_outcome: "passed", verification_reason: buildVerificationReasonFromClaims(focus) };
+    }
+    if (focus.some(function (claim) { return claim.state_changed && claim.semantic_matched == null; })) {
+      return { verification_outcome: "inconclusive", verification_reason: buildVerificationReasonFromClaims(focus) };
+    }
+    return {
+      verification_outcome: "absent",
+      verification_reason: "verification claims present but not mappable to a read-side outcome",
+    };
+  }
+
+  function resolveQueryWiredLiveActionVerificationProjection(options) {
+    const attempted = !!options.attempted;
+    const parsed = options.parsed;
+    const operationResultArtifactId = options.operationResultArtifactId || null;
+    const runId = options.runId || null;
+    const refusalReason = options.refusalReason || null;
+
+    if (!attempted) {
+      return {
+        verification_outcome: "not_attempted",
+        verification_source: formatSourceReadinessRef([["kind", "layer1_no_dispatch"]]),
+        verification_reason: refusalReason
+          || "post-action verification N/A; action not dispatched",
+      };
+    }
+    if (!parsed) {
+      return {
+        verification_outcome: "absent",
+        verification_source: null,
+        verification_reason: "attempted=true but operation-result artifact missing on read path",
+      };
+    }
+    const verificationSource = operationResultArtifactId && runId
+      ? formatOperationResultVerificationSource(operationResultArtifactId, runId)
+      : null;
+    const claims = operationResultVerificationClaims(parsed);
+    if (!claims.length) {
+      const knownLimits = Array.isArray(parsed.known_limits) ? parsed.known_limits : [];
+      return {
+        verification_outcome: "absent",
+        verification_source: verificationSource,
+        verification_reason: knownLimits[0]
+          || "no VerificationResult on operation-result; Layer 3 evidence absent",
+      };
+    }
+    const projected = projectVerificationOutcomeFromClaims(claims);
+    return {
+      verification_outcome: projected.verification_outcome,
+      verification_source: verificationSource,
+      verification_reason: projected.verification_reason,
+    };
+  }
+
   function deriveQueryWiredLiveActionCard(parsed, runEvents, runArtifacts, runId) {
     const events = Array.isArray(runEvents) ? runEvents : [];
     const outcomeEvent = events.find(function (event) {
@@ -1843,6 +1970,13 @@
           artifactJsonCache: state.artifactJsonCache,
         })
       : null;
+    const verificationProjection = resolveQueryWiredLiveActionVerificationProjection({
+      attempted: attempted,
+      parsed: parsed,
+      operationResultArtifactId: operationResultArtifactId,
+      runId: effectiveRunId,
+      refusalReason: refusalReason,
+    });
 
     return {
       attempted: attempted,
@@ -1859,6 +1993,9 @@
       mc14_action_eligibility: mc14ActionEligibility,
       readiness_class: readinessClass,
       source_readiness_ref: sourceReadinessRef,
+      verification_outcome: verificationProjection.verification_outcome,
+      verification_source: verificationProjection.verification_source,
+      verification_reason: verificationProjection.verification_reason,
     };
   }
 
@@ -1885,6 +2022,9 @@
       ["mc14_action_eligibility", card.mc14_action_eligibility],
       ["readiness_class", card.readiness_class],
       ["source_readiness_ref", card.source_readiness_ref],
+      ["verification_outcome", card.verification_outcome],
+      ["verification_source", card.verification_source],
+      ["verification_reason", card.verification_reason],
       ["known_limits", countArray(parsed.known_limits)],
     ]);
   }
@@ -1920,6 +2060,9 @@
       ["wired_action_operation_status", card.operation_status],
       ["wired_action_operation_message", card.operation_message],
       ["wired_action_source_readiness_ref", card.source_readiness_ref],
+      ["wired_action_verification_outcome", card.verification_outcome],
+      ["wired_action_verification_source", card.verification_source],
+      ["wired_action_verification_reason", card.verification_reason],
     ];
   }
 

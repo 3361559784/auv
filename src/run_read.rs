@@ -20,8 +20,8 @@ use crate::candidate_action_decision::{
 use crate::candidate_promotion::{CandidatePromotion, PromotionProjection, PromotionRefusal};
 use crate::candidate_promotion_recording::CandidatePromotionArtifact;
 use crate::contract::{
-  ArtifactRef, ObservationSnapshot, OperationOutput, OperationResult, OperationStatus,
-  RecognitionResult, RecognitionSource, VerificationResult,
+  ArtifactRef, FailureLayer, ObservationSnapshot, OperationOutput, OperationResult,
+  OperationStatus, RecognitionResult, RecognitionSource, VerificationMethod, VerificationResult,
 };
 use crate::minecraft_query_live_action::QUERY_WIRED_LIVE_ACTION_OPERATION_ID;
 use crate::model::AuvResult;
@@ -273,6 +273,9 @@ pub struct OsuQueryWiredLiveActionSummary {
   pub dispatch_outcome: Option<String>,
   pub readiness_class: Option<String>,
   pub source_readiness_ref: Option<String>,
+  pub verification_outcome: String,
+  pub verification_source: Option<String>,
+  pub verification_reason: Option<String>,
   pub issue: Option<String>,
 }
 
@@ -556,6 +559,9 @@ pub struct MinecraftQueryWiredLiveActionSummary {
   pub mc14_action_eligibility: Option<String>,
   pub readiness_class: Option<String>,
   pub source_readiness_ref: Option<String>,
+  pub verification_outcome: String,
+  pub verification_source: Option<String>,
+  pub verification_reason: Option<String>,
   pub issue: Option<String>,
 }
 
@@ -3583,6 +3589,208 @@ fn resolve_query_wired_live_action_source_readiness_ref(
   None
 }
 
+// NOTICE(core-c3-d2): reader-side Layer 3 summary only — verification_outcome projection.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct QueryWiredLiveActionVerificationProjection {
+  verification_outcome: String,
+  verification_source: Option<String>,
+  verification_reason: Option<String>,
+}
+
+fn format_operation_result_verification_source(artifact_id: &str, run_id: &str) -> String {
+  format_source_readiness_ref(&[
+    ("kind", "operation_result"),
+    ("artifact_id", artifact_id),
+    ("run_id", run_id),
+  ])
+}
+
+fn operation_result_verification_claims(
+  operation_result: &OperationResult,
+) -> Vec<&VerificationResult> {
+  if !operation_result.verifications.is_empty() {
+    return operation_result.verifications.iter().collect();
+  }
+  if let OperationOutput::Verification { verification } = &operation_result.output {
+    return vec![verification];
+  }
+  Vec::new()
+}
+
+fn is_activation_only_verification(verification: &VerificationResult) -> bool {
+  matches!(
+    &verification.method,
+    VerificationMethod::Custom { name } if name == "activation_only"
+  )
+}
+
+fn verification_failure_layer_label(layer: FailureLayer) -> &'static str {
+  match layer {
+    FailureLayer::GroundingFailed => "grounding_failed",
+    FailureLayer::CandidateExpired => "candidate_expired",
+    FailureLayer::ControlFailed => "control_failed",
+    FailureLayer::VerificationUnreliable => "verification_unreliable",
+    FailureLayer::StateChangedNoMatch => "state_changed_no_match",
+    FailureLayer::SemanticMismatch => "semantic_mismatch",
+  }
+}
+
+fn verification_claim_reason_snippet(verification: &VerificationResult) -> Option<String> {
+  if let Some(observed_label) = verification
+    .observed_label
+    .as_deref()
+    .filter(|label| !label.is_empty())
+  {
+    return Some(observed_label.to_string());
+  }
+  verification
+    .failure_layer
+    .map(verification_failure_layer_label)
+    .map(str::to_string)
+}
+
+fn build_verification_reason_from_claims(claims: &[&VerificationResult]) -> Option<String> {
+  let mut parts = claims
+    .iter()
+    .filter_map(|claim| verification_claim_reason_snippet(claim))
+    .collect::<Vec<_>>();
+  parts.dedup();
+  if parts.is_empty() {
+    None
+  } else {
+    Some(parts.join("; "))
+  }
+}
+
+fn project_verification_outcome_from_claims(
+  claims: &[&VerificationResult],
+) -> (String, Option<String>) {
+  let semantic_claims = claims
+    .iter()
+    .copied()
+    .filter(|claim| !is_activation_only_verification(claim))
+    .collect::<Vec<_>>();
+  let focus: &[&VerificationResult] = if semantic_claims.is_empty() {
+    claims
+  } else {
+    &semantic_claims
+  };
+
+  for claim in focus {
+    if matches!(
+      claim.failure_layer,
+      Some(FailureLayer::VerificationUnreliable)
+    ) {
+      return (
+        "unreliable".to_string(),
+        build_verification_reason_from_claims(focus),
+      );
+    }
+  }
+
+  for claim in focus {
+    if matches!(
+      claim.failure_layer,
+      Some(FailureLayer::SemanticMismatch | FailureLayer::StateChangedNoMatch)
+    ) || claim.semantic_matched == Some(false)
+    {
+      return (
+        "failed".to_string(),
+        build_verification_reason_from_claims(focus),
+      );
+    }
+  }
+
+  if focus
+    .iter()
+    .all(|claim| is_activation_only_verification(claim))
+  {
+    return (
+      "activation_only".to_string(),
+      build_verification_reason_from_claims(focus)
+        .or_else(|| Some("input delivery recorded; no semantic post-action assertion".to_string())),
+    );
+  }
+
+  if focus
+    .iter()
+    .any(|claim| claim.semantic_matched == Some(true))
+  {
+    return (
+      "passed".to_string(),
+      build_verification_reason_from_claims(focus),
+    );
+  }
+
+  if focus
+    .iter()
+    .any(|claim| claim.state_changed && claim.semantic_matched.is_none())
+  {
+    return (
+      "inconclusive".to_string(),
+      build_verification_reason_from_claims(focus),
+    );
+  }
+
+  (
+    "absent".to_string(),
+    Some("verification claims present but not mappable to a read-side outcome".to_string()),
+  )
+}
+
+fn resolve_query_wired_live_action_verification_projection(
+  attempted: bool,
+  operation_result_artifact_id: Option<&str>,
+  operation_result: Option<&OperationResult>,
+  run_id: &str,
+  refusal_reason: Option<&str>,
+) -> QueryWiredLiveActionVerificationProjection {
+  if !attempted {
+    return QueryWiredLiveActionVerificationProjection {
+      verification_outcome: "not_attempted".to_string(),
+      verification_source: Some(format_source_readiness_ref(&[(
+        "kind",
+        "layer1_no_dispatch",
+      )])),
+      verification_reason: refusal_reason
+        .filter(|reason| !reason.is_empty() && *reason != "none")
+        .map(str::to_string)
+        .or_else(|| Some("post-action verification N/A; action not dispatched".to_string())),
+    };
+  }
+
+  let Some(operation_result) = operation_result else {
+    return QueryWiredLiveActionVerificationProjection {
+      verification_outcome: "absent".to_string(),
+      verification_source: None,
+      verification_reason: Some(
+        "attempted=true but operation-result artifact missing on read path".to_string(),
+      ),
+    };
+  };
+
+  let verification_source = operation_result_artifact_id
+    .map(|artifact_id| format_operation_result_verification_source(artifact_id, run_id));
+  let claims = operation_result_verification_claims(operation_result);
+  if claims.is_empty() {
+    return QueryWiredLiveActionVerificationProjection {
+      verification_outcome: "absent".to_string(),
+      verification_source,
+      verification_reason: operation_result.known_limits.first().cloned().or_else(|| {
+        Some("no VerificationResult on operation-result; Layer 3 evidence absent".to_string())
+      }),
+    };
+  }
+
+  let (verification_outcome, verification_reason) =
+    project_verification_outcome_from_claims(&claims);
+  QueryWiredLiveActionVerificationProjection {
+    verification_outcome,
+    verification_source,
+    verification_reason,
+  }
+}
+
 pub fn derive_minecraft_query_wired_live_action_summary(
   store: &LocalStore,
   run: &CanonicalRun,
@@ -3622,10 +3830,10 @@ pub fn derive_minecraft_query_wired_live_action_summary(
     .and_then(|message| parse_event_message_field(message, "target_title"));
 
   let (operation_result_artifact_id, query_artifact_id, operation_status, operation_message) =
-    if let Some((artifact_ref, operation_result)) = operation_result_pair {
+    if let Some((ref artifact_ref, ref operation_result)) = operation_result_pair {
       (
         Some(artifact_ref.artifact_id.as_str().to_string()),
-        query_artifact_id_from_operation_result(&operation_result),
+        query_artifact_id_from_operation_result(operation_result),
         Some(operation_status_label(operation_result.status).to_string()),
         operation_acknowledged_message(&operation_result.output),
       )
@@ -3675,6 +3883,14 @@ pub fn derive_minecraft_query_wired_live_action_summary(
     outcome_event.is_some(),
     manifest_lookup,
   );
+  let operation_result_ref = operation_result_pair.as_ref().map(|(_, result)| result);
+  let verification_projection = resolve_query_wired_live_action_verification_projection(
+    attempted,
+    operation_result_artifact_id.as_deref(),
+    operation_result_ref,
+    run_id,
+    refusal_reason.as_deref(),
+  );
 
   Some(MinecraftQueryWiredLiveActionSummary {
     operation_result_artifact_id,
@@ -3692,6 +3908,9 @@ pub fn derive_minecraft_query_wired_live_action_summary(
     mc14_action_eligibility,
     readiness_class,
     source_readiness_ref,
+    verification_outcome: verification_projection.verification_outcome,
+    verification_source: verification_projection.verification_source,
+    verification_reason: verification_projection.verification_reason,
     issue,
   })
 }
@@ -3771,10 +3990,10 @@ pub fn derive_osu_query_wired_live_action_summary(
     .and_then(|message| parse_event_message_field(message, "target_title"));
 
   let (operation_result_artifact_id, query_artifact_id, operation_status, operation_message) =
-    if let Some((artifact_ref, operation_result)) = operation_result_pair {
+    if let Some((ref artifact_ref, ref operation_result)) = operation_result_pair {
       (
         Some(artifact_ref.artifact_id.as_str().to_string()),
-        query_artifact_id_from_operation_result(&operation_result),
+        query_artifact_id_from_operation_result(operation_result),
         Some(operation_status_label(operation_result.status).to_string()),
         operation_acknowledged_message(&operation_result.output),
       )
@@ -3818,6 +4037,14 @@ pub fn derive_osu_query_wired_live_action_summary(
     outcome_event.is_some(),
     manifest_lookup,
   );
+  let operation_result_ref = operation_result_pair.as_ref().map(|(_, result)| result);
+  let verification_projection = resolve_query_wired_live_action_verification_projection(
+    attempted,
+    operation_result_artifact_id.as_deref(),
+    operation_result_ref,
+    run_id,
+    refusal_reason.as_deref(),
+  );
 
   Some(OsuQueryWiredLiveActionSummary {
     operation_result_artifact_id,
@@ -3835,6 +4062,9 @@ pub fn derive_osu_query_wired_live_action_summary(
     dispatch_outcome,
     readiness_class,
     source_readiness_ref,
+    verification_outcome: verification_projection.verification_outcome,
+    verification_source: verification_projection.verification_source,
+    verification_reason: verification_projection.verification_reason,
     issue,
   })
 }
@@ -11360,6 +11590,81 @@ mod tests {
       })
       .expect("run snapshot should persist");
     let _ = root;
+  }
+
+  #[test]
+  fn query_wired_live_action_verification_projection_maps_semantic_pass_and_absent() {
+    use crate::contract::{
+      OperationStatus, VERIFICATION_RESULT_API_VERSION, VerificationMethod, VerificationResult,
+    };
+
+    let run_id = RunId::new("run_verification_projection");
+    let absent = super::resolve_query_wired_live_action_verification_projection(
+      true,
+      Some("artifact_op"),
+      Some(&mc19_operation_result(
+        &run_id,
+        "artifact_query",
+        OperationStatus::Completed,
+        "dispatched",
+      )),
+      run_id.as_str(),
+      None,
+    );
+    assert_eq!(absent.verification_outcome, "absent");
+    assert!(
+      absent
+        .verification_reason
+        .as_deref()
+        .is_some_and(|reason| reason.contains("mc19_v1_d4"))
+    );
+
+    let mut operation_result = mc19_operation_result(
+      &run_id,
+      "artifact_query",
+      OperationStatus::Completed,
+      "dispatched",
+    );
+    operation_result.verifications.push(VerificationResult {
+      api_version: VERIFICATION_RESULT_API_VERSION.to_string(),
+      method: VerificationMethod::SemanticMatch,
+      executed: true,
+      state_changed: true,
+      semantic_matched: Some(true),
+      failure_layer: None,
+      evidence: Vec::new(),
+      consumed_candidate_ref: None,
+      consumed_node_ref: None,
+      consumed_recognition_artifact_ref: None,
+      consumed_recognition_id: None,
+      consumed_recognized_item_id: None,
+      observed_label: Some("world diff matched".to_string()),
+    });
+    let passed = super::resolve_query_wired_live_action_verification_projection(
+      true,
+      Some("artifact_op"),
+      Some(&operation_result),
+      run_id.as_str(),
+      None,
+    );
+    assert_eq!(passed.verification_outcome, "passed");
+    assert_eq!(
+      passed.verification_reason.as_deref(),
+      Some("world diff matched")
+    );
+
+    let not_attempted = super::resolve_query_wired_live_action_verification_projection(
+      false,
+      None,
+      None,
+      run_id.as_str(),
+      Some("visibility=outside_window"),
+    );
+    assert_eq!(not_attempted.verification_outcome, "not_attempted");
+    assert_eq!(
+      not_attempted.verification_reason.as_deref(),
+      Some("visibility=outside_window")
+    );
   }
 
   #[test]

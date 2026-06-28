@@ -2531,7 +2531,7 @@ pub fn render_run_text(
   } else {
     for summary in osu_query_wired_live_action_summaries {
       output.push_str(&format!(
-        "- operation_result_artifact={} query_artifact={} attempted={} action_eligibility={} pixel_point={} window_point={} refusal_reason={} operation_status={} operation_message={} dispatch_command={} dispatch_outcome={} target_app={} target_title={} readiness_class={} source_readiness_ref={} issue={}\n",
+        "- operation_result_artifact={} query_artifact={} attempted={} action_eligibility={} pixel_point={} window_point={} refusal_reason={} operation_status={} operation_message={} dispatch_command={} dispatch_outcome={} target_app={} target_title={} readiness_class={} source_readiness_ref={} verification_outcome={} verification_source={} verification_reason={} issue={}\n",
         summary.operation_result_artifact_id.as_deref().unwrap_or("n/a"),
         summary.query_artifact_id.as_deref().unwrap_or("n/a"),
         summary.attempted,
@@ -2547,6 +2547,9 @@ pub fn render_run_text(
         summary.target_title.as_deref().unwrap_or("n/a"),
         summary.readiness_class.as_deref().unwrap_or("n/a"),
         summary.source_readiness_ref.as_deref().unwrap_or("n/a"),
+        summary.verification_outcome.as_str(),
+        summary.verification_source.as_deref().unwrap_or("n/a"),
+        summary.verification_reason.as_deref().unwrap_or("n/a"),
         summary.issue.as_deref().unwrap_or("n/a"),
       ));
     }
@@ -2643,7 +2646,7 @@ pub fn render_run_text(
   } else {
     for summary in minecraft_query_wired_live_action_summaries {
       output.push_str(&format!(
-        "- operation_result_artifact={} query_artifact={} attempted={} action_eligibility={} window_point={} refusal_reason={} operation_status={} operation_message={} dispatch_command={} dispatch_outcome={} target_app={} target_title={} mc14_action_eligibility={} readiness_class={} source_readiness_ref={} issue={}\n",
+        "- operation_result_artifact={} query_artifact={} attempted={} action_eligibility={} window_point={} refusal_reason={} operation_status={} operation_message={} dispatch_command={} dispatch_outcome={} target_app={} target_title={} mc14_action_eligibility={} readiness_class={} source_readiness_ref={} verification_outcome={} verification_source={} verification_reason={} issue={}\n",
         summary.operation_result_artifact_id.as_deref().unwrap_or("n/a"),
         summary.query_artifact_id.as_deref().unwrap_or("n/a"),
         summary.attempted,
@@ -2659,6 +2662,9 @@ pub fn render_run_text(
         summary.mc14_action_eligibility.as_deref().unwrap_or("n/a"),
         summary.readiness_class.as_deref().unwrap_or("n/a"),
         summary.source_readiness_ref.as_deref().unwrap_or("n/a"),
+        summary.verification_outcome.as_str(),
+        summary.verification_source.as_deref().unwrap_or("n/a"),
+        summary.verification_reason.as_deref().unwrap_or("n/a"),
         summary.issue.as_deref().unwrap_or("n/a"),
       ));
     }
@@ -4939,6 +4945,9 @@ mod tests {
         source_readiness_ref: Some(
           "kind=query_manifest artifact_id=artifact_mc19_click_ready_query run_id=run_inspect_mc19_three_gates".to_string(),
         ),
+        verification_outcome: "absent".to_string(),
+        verification_source: None,
+        verification_reason: None,
         issue: None,
       },
       MinecraftQueryWiredLiveActionSummary {
@@ -4959,6 +4968,9 @@ mod tests {
         source_readiness_ref: Some(
           "kind=query_manifest artifact_id=artifact_mc19_outside_query run_id=run_inspect_mc19_three_gates".to_string(),
         ),
+        verification_outcome: "not_attempted".to_string(),
+        verification_source: Some("kind=layer1_no_dispatch".to_string()),
+        verification_reason: None,
         issue: None,
       },
       MinecraftQueryWiredLiveActionSummary {
@@ -4983,6 +4995,9 @@ mod tests {
         source_readiness_ref: Some(
           "kind=query_manifest artifact_id=artifact_mc19_absent_query run_id=run_inspect_mc19_three_gates".to_string(),
         ),
+        verification_outcome: "not_attempted".to_string(),
+        verification_source: Some("kind=layer1_no_dispatch".to_string()),
+        verification_reason: None,
         issue: None,
       },
     ];
@@ -5101,6 +5116,9 @@ mod tests {
         source_readiness_ref: Some(
           "kind=query_manifest artifact_id=artifact_osu_click_ready_query run_id=run_inspect_osu_wired_three_gates".to_string(),
         ),
+        verification_outcome: "absent".to_string(),
+        verification_source: None,
+        verification_reason: None,
         issue: None,
       },
       OsuQueryWiredLiveActionSummary {
@@ -5121,6 +5139,9 @@ mod tests {
         source_readiness_ref: Some(
           "kind=query_manifest artifact_id=artifact_osu_outside_query run_id=run_inspect_osu_wired_three_gates".to_string(),
         ),
+        verification_outcome: "not_attempted".to_string(),
+        verification_source: Some("kind=layer1_no_dispatch".to_string()),
+        verification_reason: None,
         issue: None,
       },
       OsuQueryWiredLiveActionSummary {
@@ -5141,6 +5162,9 @@ mod tests {
         source_readiness_ref: Some(
           "kind=query_manifest artifact_id=artifact_osu_absent_query run_id=run_inspect_osu_wired_three_gates".to_string(),
         ),
+        verification_outcome: "not_attempted".to_string(),
+        verification_source: Some("kind=layer1_no_dispatch".to_string()),
+        verification_reason: None,
         issue: None,
       },
     ];

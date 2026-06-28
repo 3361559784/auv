@@ -15,10 +15,12 @@ Parent contracts:
 committed detection bundle fixture
   → semantic gate (ready / blocked / failed)
   → spatial query (answered / blocked / failed)
-  → inline eval report → quality manifest + verdict
+  → inline eval (derived in-process) → quality manifest metrics + verdict
 ```
 
 Observe-only: unit tests consume committed JSON; live ONNX remains optional behind `#[ignore]` integration tests.
+
+**Lineage honesty (v1):** quality manifest carries inline `metrics` / `verdict` derived from semantic bundle + `expected_slots.json`. There is **no** persisted `balatro-card-detection-eval-report.json` artifact role and **no** durable eval-report path field on the quality manifest.
 
 ## Build gap closed vs Core-X1
 

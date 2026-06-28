@@ -21,10 +21,10 @@ pub type CardDetectionQualityResult<T> = Result<T, String>;
 pub const CARD_DETECTION_QUALITY_MANIFEST_SCHEMA_VERSION: u32 = 1;
 pub const CARD_DETECTION_QUALITY_INSPECT_REPORT_SCHEMA_VERSION: u32 = 1;
 pub const BALATRO_X2_QUALITY_KNOWN_LIMIT: &str = "balatro X2 quality records slot-coverage measurement evidence only; it does not claim model usefulness, gameplay success, or pass/fail thresholds";
+pub const BALATRO_X2_INLINE_EVAL_KNOWN_LIMIT: &str = "balatro X2 v1 derives quality metrics/verdict inline from semantic bundle + expected_slots; no persisted eval-report artifact role or durable eval-report path";
 
 const QUALITY_MANIFEST_FILE: &str = "balatro-card-detection-quality.json";
 const QUALITY_INSPECT_FILE: &str = "balatro-card-detection-quality-inspect.json";
-const EVAL_REPORT_FILE: &str = "balatro-card-detection-eval-report.json";
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct CardDetectionQualityInputs {
@@ -38,7 +38,6 @@ pub struct CardDetectionQualityOutput {
   pub output_dir: PathBuf,
   pub manifest_path: PathBuf,
   pub inspect_report_path: PathBuf,
-  pub eval_report_path: PathBuf,
   pub manifest: CardDetectionQualityManifest,
   pub inspect_report: CardDetectionQualityInspectReport,
   pub eval_report: CardDetectionEvalReport,
@@ -81,7 +80,6 @@ pub struct CardDetectionQualityManifest {
   pub schema_version: u32,
   pub generated_at_millis: u64,
   pub card_detection_semantic_manifest_path: String,
-  pub card_detection_eval_report_path: String,
   pub source_detection_bundle_dir: String,
   pub semantic_status: CardDetectionSemanticStatus,
   pub status: CardDetectionQualityStatus,
@@ -188,7 +186,10 @@ pub fn build_card_detection_quality(
   })?;
 
   let generated_at_millis = auv_tracing_driver::now_millis();
-  let known_limits = BTreeSet::from([BALATRO_X2_QUALITY_KNOWN_LIMIT.to_string()]);
+  let known_limits = BTreeSet::from([
+    BALATRO_X2_QUALITY_KNOWN_LIMIT.to_string(),
+    BALATRO_X2_INLINE_EVAL_KNOWN_LIMIT.to_string(),
+  ]);
   let mut warnings = BTreeSet::new();
 
   let gate = evaluate_quality_gate(
@@ -218,7 +219,6 @@ pub fn build_card_detection_quality(
       .card_detection_semantic_manifest_path
       .display()
       .to_string(),
-    card_detection_eval_report_path: String::new(),
     source_detection_bundle_dir: eval_report
       .as_ref()
       .map(|report| report.source_detection_bundle_dir.clone())
@@ -232,14 +232,6 @@ pub fn build_card_detection_quality(
     metrics: outcome.metrics.clone(),
     known_limits: known_limits.into_iter().collect(),
   };
-
-  let eval_report_path = inputs.output_dir.join(EVAL_REPORT_FILE);
-  if let Some(report) = eval_report.as_ref() {
-    write_json_file(&eval_report_path, report)?;
-  }
-
-  let mut manifest = manifest;
-  manifest.card_detection_eval_report_path = eval_report_path.display().to_string();
 
   let manifest_path = inputs.output_dir.join(QUALITY_MANIFEST_FILE);
   write_json_file(&manifest_path, &manifest)?;
@@ -270,7 +262,6 @@ pub fn build_card_detection_quality(
     output_dir: inputs.output_dir.clone(),
     manifest_path,
     inspect_report_path,
-    eval_report_path,
     manifest,
     inspect_report,
     eval_report: eval_report.unwrap_or(CardDetectionEvalReport {
@@ -607,5 +598,38 @@ mod tests {
       CardDetectionQualityVerdict::Blocked
     );
     assert!(output.manifest.metrics.is_none());
+  }
+
+  #[test]
+  fn quality_does_not_persist_eval_report_path_or_sidecar_file() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let semantic_path = semantic_for(fixture_root(), &temp);
+    let output = build_card_detection_quality(&CardDetectionQualityInputs {
+      card_detection_semantic_manifest_path: semantic_path,
+      expected_slots_path: fixture_root().join("expected_slots.json"),
+      output_dir: temp.path().join("quality"),
+    })
+    .expect("quality");
+
+    let manifest_json = serde_json::to_string(&output.manifest).expect("manifest json");
+    assert!(
+      !manifest_json.contains("eval_report"),
+      "quality manifest must not claim a durable eval-report path"
+    );
+    assert!(
+      !temp
+        .path()
+        .join("quality/balatro-card-detection-eval-report.json")
+        .exists(),
+      "v1 inline eval must not write a separate eval-report file"
+    );
+    assert!(
+      output
+        .manifest
+        .known_limits
+        .iter()
+        .any(|limit| limit.contains("inline")),
+      "known_limits must document inline eval boundary"
+    );
   }
 }

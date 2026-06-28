@@ -2600,6 +2600,387 @@ pub fn collect_quality_baseline_evidence_for_run(
   })
 }
 
+pub const QUALITY_BASELINE_VERDICT_THRESHOLDS_PROBE_V1_JSON: &str = include_str!(
+  "../crates/auv-game-minecraft/tests/fixtures/mc17-d3/baseline-verdict-thresholds-v1-probe.json"
+);
+pub const QUALITY_BASELINE_VERDICT_THRESHOLDS_TRAINED_RENDER_V1_JSON: &str = include_str!(
+  "../crates/auv-game-minecraft/tests/fixtures/mc17-d3/baseline-verdict-thresholds-v1-trained-render.json"
+);
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct QualityBaselineSpatialQueryThresholds {
+  pub required_status: String,
+  #[serde(default)]
+  pub required_visibility: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct QualityBaselineHoldoutWitnessThresholds {
+  pub required_status: String,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct QualityBaselineRenderQualityThresholds {
+  pub required_status: String,
+  pub required_verdict: String,
+  pub require_image_size_match: bool,
+  #[serde(default)]
+  pub l1_mean_max: Option<f64>,
+  #[serde(default)]
+  pub mse_max: Option<f64>,
+  #[serde(default)]
+  pub psnr_min: Option<f64>,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct QualityBaselineVerdictThresholdSet {
+  pub spatial_query: QualityBaselineSpatialQueryThresholds,
+  pub holdout_witness: QualityBaselineHoldoutWitnessThresholds,
+  pub render_quality: QualityBaselineRenderQualityThresholds,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct QualityBaselineVerdictThresholds {
+  pub profile_id: String,
+  pub render_evidence_mode: String,
+  pub thresholds: QualityBaselineVerdictThresholdSet,
+  #[serde(default)]
+  pub trust_notes: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct QualityBaselineStageCheck {
+  pub stage: String,
+  pub outcome: String,
+  pub reasons: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct MinecraftTrainingResultQualityVerdictSummary {
+  pub profile_id: String,
+  pub render_evidence_mode: String,
+  pub evidence_coverage: String,
+  pub quality_verdict: String,
+  pub stage_checks: Vec<QualityBaselineStageCheck>,
+  pub trust_notes: Vec<String>,
+  pub issue: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct MinecraftQualityBaselineDualVerdicts {
+  pub probe: MinecraftTrainingResultQualityVerdictSummary,
+  pub trained_render: MinecraftTrainingResultQualityVerdictSummary,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct MinecraftQualityBaselineReportWithVerdicts {
+  #[serde(flatten)]
+  pub report: MinecraftTrainingResultQualityBaselineReportSummary,
+  pub verdicts: MinecraftQualityBaselineDualVerdicts,
+}
+
+pub fn quality_baseline_verdict_thresholds_probe_v1()
+-> Result<QualityBaselineVerdictThresholds, String> {
+  serde_json::from_str(QUALITY_BASELINE_VERDICT_THRESHOLDS_PROBE_V1_JSON)
+    .map_err(|error| format!("parse quality baseline verdict thresholds probe v1 fixture: {error}"))
+}
+
+pub fn quality_baseline_verdict_thresholds_trained_render_v1()
+-> Result<QualityBaselineVerdictThresholds, String> {
+  serde_json::from_str(QUALITY_BASELINE_VERDICT_THRESHOLDS_TRAINED_RENDER_V1_JSON).map_err(
+    |error| format!("parse quality baseline verdict thresholds trained_render v1 fixture: {error}"),
+  )
+}
+
+fn check_spatial_query_stage(
+  evidence: Option<&QualityBaselineSpatialQueryEvidence>,
+  thresholds: &QualityBaselineSpatialQueryThresholds,
+) -> QualityBaselineStageCheck {
+  let Some(evidence) = evidence else {
+    return QualityBaselineStageCheck {
+      stage: "spatial_query".to_string(),
+      outcome: "blocked".to_string(),
+      reasons: vec!["spatial query evidence missing".to_string()],
+    };
+  };
+  if evidence.status == "blocked" {
+    return QualityBaselineStageCheck {
+      stage: "spatial_query".to_string(),
+      outcome: "blocked".to_string(),
+      reasons: vec![format!(
+        "status={} blocks threshold evaluation",
+        evidence.status
+      )],
+    };
+  }
+  let mut reasons = Vec::new();
+  if evidence.status != thresholds.required_status {
+    reasons.push(format!(
+      "status={} expected required_status={}",
+      evidence.status, thresholds.required_status
+    ));
+  }
+  if let Some(required_visibility) = thresholds.required_visibility.as_deref() {
+    match evidence.visibility.as_deref() {
+      Some(visibility) if visibility == required_visibility => {}
+      Some(visibility) => reasons.push(format!(
+        "visibility={visibility} expected required_visibility={required_visibility}"
+      )),
+      None => reasons.push(format!(
+        "visibility missing expected required_visibility={required_visibility}"
+      )),
+    }
+  }
+  let outcome = if reasons.is_empty() {
+    "pass".to_string()
+  } else {
+    "fail".to_string()
+  };
+  QualityBaselineStageCheck {
+    stage: "spatial_query".to_string(),
+    outcome,
+    reasons,
+  }
+}
+
+fn check_holdout_witness_stage(
+  evidence: Option<&QualityBaselineHoldoutWitnessEvidence>,
+  thresholds: &QualityBaselineHoldoutWitnessThresholds,
+) -> QualityBaselineStageCheck {
+  let Some(evidence) = evidence else {
+    return QualityBaselineStageCheck {
+      stage: "holdout_witness".to_string(),
+      outcome: "blocked".to_string(),
+      reasons: vec!["holdout witness evidence missing".to_string()],
+    };
+  };
+  if evidence.status == "blocked" {
+    return QualityBaselineStageCheck {
+      stage: "holdout_witness".to_string(),
+      outcome: "blocked".to_string(),
+      reasons: vec![format!(
+        "status={} blocks threshold evaluation",
+        evidence.status
+      )],
+    };
+  }
+  if evidence.status != thresholds.required_status {
+    return QualityBaselineStageCheck {
+      stage: "holdout_witness".to_string(),
+      outcome: "fail".to_string(),
+      reasons: vec![format!(
+        "status={} expected required_status={}",
+        evidence.status, thresholds.required_status
+      )],
+    };
+  }
+  QualityBaselineStageCheck {
+    stage: "holdout_witness".to_string(),
+    outcome: "pass".to_string(),
+    reasons: vec![],
+  }
+}
+
+fn check_render_quality_stage(
+  evidence: Option<&QualityBaselineRenderQualityEvidence>,
+  thresholds: &QualityBaselineRenderQualityThresholds,
+) -> QualityBaselineStageCheck {
+  let Some(evidence) = evidence else {
+    return QualityBaselineStageCheck {
+      stage: "render_quality".to_string(),
+      outcome: "blocked".to_string(),
+      reasons: vec!["render quality evidence missing".to_string()],
+    };
+  };
+  if evidence.status == "blocked" {
+    return QualityBaselineStageCheck {
+      stage: "render_quality".to_string(),
+      outcome: "blocked".to_string(),
+      reasons: vec![format!(
+        "status={} blocks threshold evaluation",
+        evidence.status
+      )],
+    };
+  }
+  if evidence.verdict == "metric_partial" {
+    return QualityBaselineStageCheck {
+      stage: "render_quality".to_string(),
+      outcome: "partial".to_string(),
+      reasons: vec!["verdict=metric_partial records incomplete photometric evidence".to_string()],
+    };
+  }
+  let mut reasons = Vec::new();
+  if evidence.status != thresholds.required_status {
+    reasons.push(format!(
+      "status={} expected required_status={}",
+      evidence.status, thresholds.required_status
+    ));
+  }
+  if evidence.verdict != thresholds.required_verdict {
+    reasons.push(format!(
+      "verdict={} expected required_verdict={}",
+      evidence.verdict, thresholds.required_verdict
+    ));
+  }
+  if thresholds.require_image_size_match && !evidence.image_size_match {
+    reasons.push("image_size_match=false expected true".to_string());
+  }
+  if let Some(max) = thresholds.l1_mean_max {
+    match evidence.l1_mean {
+      Some(value) if value <= max => {}
+      Some(value) => reasons.push(format!("l1_mean={value} exceeds l1_mean_max={max}")),
+      None => reasons.push("l1_mean missing for threshold evaluation".to_string()),
+    }
+  }
+  if let Some(max) = thresholds.mse_max {
+    match evidence.mse {
+      Some(value) if value <= max => {}
+      Some(value) => reasons.push(format!("mse={value} exceeds mse_max={max}")),
+      None => reasons.push("mse missing for threshold evaluation".to_string()),
+    }
+  }
+  if let Some(min) = thresholds.psnr_min {
+    match evidence.psnr {
+      Some(value) if value >= min => {}
+      Some(value) => reasons.push(format!("psnr={value} below psnr_min={min}")),
+      None => reasons.push("psnr missing for threshold evaluation".to_string()),
+    }
+  }
+  let has_metric_threshold_miss = reasons.iter().any(|reason| {
+    reason.contains("exceeds l1_mean_max=")
+      || reason.contains("exceeds mse_max=")
+      || reason.contains("below psnr_min=")
+  });
+  let outcome = if reasons.is_empty() {
+    "pass".to_string()
+  } else if has_metric_threshold_miss {
+    "fail".to_string()
+  } else {
+    "fail".to_string()
+  };
+  QualityBaselineStageCheck {
+    stage: "render_quality".to_string(),
+    outcome,
+    reasons,
+  }
+}
+
+fn aggregate_quality_verdict(
+  baseline: &MinecraftTrainingResultQualityBaselineReportSummary,
+  stage_checks: &[QualityBaselineStageCheck],
+) -> String {
+  if baseline.evidence_coverage != "complete" {
+    return "blocked".to_string();
+  }
+  if baseline.issue.is_some() {
+    return "blocked".to_string();
+  }
+  if stage_checks.iter().any(|check| check.outcome == "blocked") {
+    return "blocked".to_string();
+  }
+  if stage_checks.iter().all(|check| check.outcome == "pass") {
+    return "pass".to_string();
+  }
+  if stage_checks.iter().any(|check| {
+    check.outcome == "fail"
+      && check.reasons.iter().any(|reason| {
+        reason.contains("exceeds l1_mean_max=")
+          || reason.contains("exceeds mse_max=")
+          || reason.contains("below psnr_min=")
+      })
+  }) {
+    return "fail".to_string();
+  }
+  if stage_checks
+    .iter()
+    .any(|check| check.outcome == "partial" || check.outcome == "fail")
+  {
+    return "partial".to_string();
+  }
+  "blocked".to_string()
+}
+
+fn build_quality_verdict_trust_notes(
+  baseline: &MinecraftTrainingResultQualityBaselineReportSummary,
+  thresholds: &QualityBaselineVerdictThresholds,
+) -> Vec<String> {
+  let mut notes = build_quality_baseline_trust_notes(baseline.render_quality.as_ref());
+  for note in &thresholds.trust_notes {
+    if !notes.iter().any(|existing| existing == note) {
+      notes.push(note.clone());
+    }
+  }
+  notes
+}
+
+pub fn derive_minecraft_training_result_quality_verdict(
+  baseline: &MinecraftTrainingResultQualityBaselineReportSummary,
+  thresholds: &QualityBaselineVerdictThresholds,
+) -> MinecraftTrainingResultQualityVerdictSummary {
+  let spatial_check = check_spatial_query_stage(
+    baseline.spatial_query.as_ref(),
+    &thresholds.thresholds.spatial_query,
+  );
+  let holdout_check = check_holdout_witness_stage(
+    baseline.holdout_witness.as_ref(),
+    &thresholds.thresholds.holdout_witness,
+  );
+  let render_check = check_render_quality_stage(
+    baseline.render_quality.as_ref(),
+    &thresholds.thresholds.render_quality,
+  );
+  let stage_checks = vec![spatial_check, holdout_check, render_check];
+  let quality_verdict = aggregate_quality_verdict(baseline, &stage_checks);
+  let trust_notes = build_quality_verdict_trust_notes(baseline, thresholds);
+  let issue = if baseline.evidence_coverage != "complete" {
+    baseline.issue.clone().or_else(|| {
+      Some(format!(
+        "evidence_coverage={} blocks threshold verdict evaluation",
+        baseline.evidence_coverage
+      ))
+    })
+  } else {
+    baseline.issue.clone()
+  };
+
+  MinecraftTrainingResultQualityVerdictSummary {
+    profile_id: thresholds.profile_id.clone(),
+    render_evidence_mode: thresholds.render_evidence_mode.clone(),
+    evidence_coverage: baseline.evidence_coverage.clone(),
+    quality_verdict,
+    stage_checks,
+    trust_notes,
+    issue,
+  }
+}
+
+pub fn quality_baseline_verdict_for_run(
+  store: &LocalStore,
+  run_id: &str,
+  thresholds: &QualityBaselineVerdictThresholds,
+) -> AuvResult<MinecraftTrainingResultQualityVerdictSummary> {
+  let baseline = quality_baseline_report_for_run(store, run_id)?;
+  Ok(derive_minecraft_training_result_quality_verdict(
+    &baseline, thresholds,
+  ))
+}
+
+pub fn quality_baseline_report_with_verdicts_for_run(
+  store: &LocalStore,
+  run_id: &str,
+) -> AuvResult<MinecraftQualityBaselineReportWithVerdicts> {
+  let report = quality_baseline_report_for_run(store, run_id)?;
+  let probe = quality_baseline_verdict_thresholds_probe_v1()?;
+  let trained_render = quality_baseline_verdict_thresholds_trained_render_v1()?;
+  Ok(MinecraftQualityBaselineReportWithVerdicts {
+    report: report.clone(),
+    verdicts: MinecraftQualityBaselineDualVerdicts {
+      probe: derive_minecraft_training_result_quality_verdict(&report, &probe),
+      trained_render: derive_minecraft_training_result_quality_verdict(&report, &trained_render),
+    },
+  })
+}
+
 fn spatial_query_manifest_summary_for_action_readiness(
   summary: &MinecraftTrainingResultSpatialQueryManifestSummary,
 ) -> Result<TrainingResultSpatialQueryManifest, String> {
@@ -4690,10 +5071,12 @@ mod tests {
     MinecraftSpatialBundleManifestSummary,
     MinecraftTrainingResultHoldoutPreviewFrameWitnessSummary,
     MinecraftTrainingResultHoldoutPreviewManifestSummary,
+    MinecraftTrainingResultQualityBaselineReportSummary,
     MinecraftTrainingResultSpatialQueryManifestLineage,
     MinecraftTrainingResultSpatialQueryManifestSummary,
     derive_minecraft_query_wired_live_action_summary,
     derive_minecraft_training_result_quality_baseline_report,
+    derive_minecraft_training_result_quality_verdict,
     derive_minecraft_training_result_spatial_query_action_readiness,
     extract_candidate_action_decision_lineage, extract_candidate_action_execution_lineage,
     extract_candidate_promotion_lineage, extract_detector_recognition_lineage,
@@ -4725,7 +5108,8 @@ mod tests {
     list_minecraft_training_result_semantic_manifests,
     list_minecraft_training_result_spatial_query_inspect_reports,
     list_minecraft_training_result_spatial_query_manifests, list_observation_snapshots,
-    list_verifications, quality_baseline_profile_v1,
+    list_verifications, quality_baseline_profile_v1, quality_baseline_verdict_thresholds_probe_v1,
+    quality_baseline_verdict_thresholds_trained_render_v1,
   };
   use crate::action_resolver_decision::{ActionResolverDecision, ActionResolverDecisionInput};
   use crate::candidate_action_decision::{
@@ -9317,5 +9701,173 @@ mod tests {
         .as_ref()
         .is_some_and(|issue| issue.contains("read holdout preview manifest"))
     );
+  }
+
+  fn sample_complete_quality_baseline_report(
+    l1_mean: f64,
+    mse: f64,
+    render_verdict: &str,
+    spatial_visibility: Option<&str>,
+  ) -> MinecraftTrainingResultQualityBaselineReportSummary {
+    let profile = quality_baseline_profile_v1().expect("profile");
+    let semantic = profile.training_result_semantic_manifest_path.clone();
+    let spatial = MinecraftTrainingResultSpatialQueryManifestSummary {
+      schema_version: 1,
+      training_result_semantic_manifest_path: semantic.clone(),
+      source_training_result_artifact_manifest_path: "/tmp/artifact.json".to_string(),
+      source_training_result_manifest_path: "/tmp/result.json".to_string(),
+      source_training_job_manifest_path: "/tmp/job.json".to_string(),
+      source_training_launch_plan_path: "/tmp/launch.json".to_string(),
+      source_training_package_manifest_path: "/tmp/package.json".to_string(),
+      source_scene_packet_manifest_path: "/tmp/scene.json".to_string(),
+      source_bundle_manifest_paths: vec![],
+      source_run_ids: vec![],
+      trainer_backend: "nerfstudio.splatfacto".to_string(),
+      job_backend: "remote".to_string(),
+      normalized_result_dir: "/tmp/normalized".to_string(),
+      query_kind: "block_projection".to_string(),
+      target_block: profile.query_target_block.clone(),
+      target_face: profile.query_target_face.clone(),
+      target_semantics: profile.query_target_semantics.clone(),
+      selected_backend: Some("projection_reference".to_string()),
+      status: "answered".to_string(),
+      reason: None,
+      visibility: spatial_visibility.map(str::to_string),
+      screen_point: Some("854.0,480.0".to_string()),
+      match_radius_px: Some(8.0),
+      confidence: Some(0.9),
+      basis_frame_id: Some("frame-355416".to_string()),
+      comparison_verdict: Some("reference_only".to_string()),
+      known_limits: vec![],
+    };
+    let holdout = MinecraftTrainingResultHoldoutPreviewManifestSummary {
+      schema_version: 1,
+      training_result_semantic_manifest_path: semantic.clone(),
+      source_training_result_artifact_manifest_path: "/tmp/artifact.json".to_string(),
+      source_training_result_manifest_path: "/tmp/result.json".to_string(),
+      source_training_job_manifest_path: "/tmp/job.json".to_string(),
+      source_training_launch_plan_path: "/tmp/launch.json".to_string(),
+      source_training_package_manifest_path: "/tmp/package.json".to_string(),
+      source_scene_packet_manifest_path: "/tmp/scene.json".to_string(),
+      source_bundle_manifest_paths: vec![],
+      source_run_ids: vec![],
+      trainer_backend: "nerfstudio.splatfacto".to_string(),
+      job_backend: "remote".to_string(),
+      normalized_result_dir: "/tmp/normalized".to_string(),
+      holdout_frame_index: profile.holdout_frame_index,
+      holdout_frame: Some(MinecraftTrainingResultHoldoutPreviewFrameWitnessSummary {
+        frame_index: 6,
+        spatial_frame_id: "frame-355416".to_string(),
+        screenshot_path: "/tmp/frame_000006.png".to_string(),
+        frame_json_path: "/tmp/frame_000006.json".to_string(),
+      }),
+      basis_checkpoint_path: Some(format!(
+        "/tmp/normalized/nerfstudio_models/{}",
+        profile.basis_checkpoint_suffix
+      )),
+      holdout_screenshot_path: Some("/tmp/frame_000006.png".to_string()),
+      reference_overlay_path: None,
+      status: "ready".to_string(),
+      reason: None,
+      known_limits: vec![],
+    };
+    let render = MinecraftHoldoutRenderQualityManifestSummary {
+      schema_version: 1,
+      training_result_semantic_manifest_path: semantic,
+      holdout_preview_manifest_path: "/tmp/holdout-preview.json".to_string(),
+      source_training_result_artifact_manifest_path: "/tmp/artifact.json".to_string(),
+      source_training_result_manifest_path: "/tmp/result.json".to_string(),
+      source_training_job_manifest_path: "/tmp/job.json".to_string(),
+      source_scene_packet_manifest_path: "/tmp/scene.json".to_string(),
+      source_run_ids: vec![],
+      holdout_frame_index: profile.holdout_frame_index,
+      basis_checkpoint_path: holdout.basis_checkpoint_path.clone(),
+      rendered_image_path: Some("/tmp/rendered.png".to_string()),
+      image_size_match: true,
+      metrics: Some(MinecraftHoldoutRenderQualityMetricsSummary {
+        l1_mean: Some(l1_mean),
+        mse: Some(mse),
+        psnr: None,
+      }),
+      status: "ready".to_string(),
+      reason: None,
+      verdict: render_verdict.to_string(),
+      known_limits: vec![],
+    };
+    derive_minecraft_training_result_quality_baseline_report(
+      &profile,
+      Some(&spatial),
+      Some(&holdout),
+      Some(&render),
+      &[],
+    )
+  }
+
+  #[test]
+  fn quality_baseline_verdict_probe_passes_on_complete_zero_metric_baseline() {
+    let baseline =
+      sample_complete_quality_baseline_report(0.0, 0.0, "measured_only", Some("visible"));
+    let thresholds = quality_baseline_verdict_thresholds_probe_v1().expect("probe thresholds");
+    let verdict = derive_minecraft_training_result_quality_verdict(&baseline, &thresholds);
+    assert_eq!(verdict.quality_verdict, "pass");
+    assert_eq!(verdict.render_evidence_mode, "screenshot_copy_probe");
+  }
+
+  #[test]
+  fn quality_baseline_verdict_fails_when_l1_exceeds_probe_max() {
+    let baseline =
+      sample_complete_quality_baseline_report(0.42, 0.0, "measured_only", Some("visible"));
+    let thresholds = quality_baseline_verdict_thresholds_probe_v1().expect("probe thresholds");
+    let verdict = derive_minecraft_training_result_quality_verdict(&baseline, &thresholds);
+    assert_eq!(verdict.quality_verdict, "fail");
+    assert!(
+      verdict
+        .stage_checks
+        .iter()
+        .any(|check| check.stage == "render_quality" && check.outcome == "fail")
+    );
+  }
+
+  #[test]
+  fn quality_baseline_verdict_blocks_on_partial_evidence_coverage() {
+    let profile = quality_baseline_profile_v1().expect("profile");
+    let baseline =
+      derive_minecraft_training_result_quality_baseline_report(&profile, None, None, None, &[]);
+    let thresholds = quality_baseline_verdict_thresholds_probe_v1().expect("probe thresholds");
+    let verdict = derive_minecraft_training_result_quality_verdict(&baseline, &thresholds);
+    assert_eq!(verdict.quality_verdict, "blocked");
+  }
+
+  #[test]
+  fn quality_baseline_verdict_partial_on_metric_partial_render() {
+    let baseline =
+      sample_complete_quality_baseline_report(0.0, 0.0, "metric_partial", Some("visible"));
+    let thresholds = quality_baseline_verdict_thresholds_probe_v1().expect("probe thresholds");
+    let verdict = derive_minecraft_training_result_quality_verdict(&baseline, &thresholds);
+    assert_eq!(verdict.quality_verdict, "partial");
+  }
+
+  #[test]
+  fn quality_baseline_verdict_partial_on_spatial_outside_window() {
+    let baseline =
+      sample_complete_quality_baseline_report(0.0, 0.0, "measured_only", Some("outside_window"));
+    let thresholds = quality_baseline_verdict_thresholds_probe_v1().expect("probe thresholds");
+    let verdict = derive_minecraft_training_result_quality_verdict(&baseline, &thresholds);
+    assert_eq!(verdict.quality_verdict, "partial");
+    assert!(
+      verdict
+        .stage_checks
+        .iter()
+        .any(|check| check.stage == "spatial_query" && check.outcome == "fail")
+    );
+  }
+
+  #[test]
+  fn quality_baseline_verdict_threshold_fixtures_load() {
+    let probe = quality_baseline_verdict_thresholds_probe_v1().expect("probe");
+    let trained = quality_baseline_verdict_thresholds_trained_render_v1().expect("trained");
+    assert_eq!(probe.render_evidence_mode, "screenshot_copy_probe");
+    assert_eq!(trained.render_evidence_mode, "trained_render");
+    assert_eq!(probe.profile_id, "mc17-d2-primary-v1");
   }
 }

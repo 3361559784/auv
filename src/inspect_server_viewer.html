@@ -1450,30 +1450,74 @@
     return { spatialQuery: spatialQuery, holdoutPreview: holdoutPreview, renderQuality: renderQuality };
   }
 
+  function formatQualityVerdictStageSummary(verdict) {
+    if (!verdict || !verdict.stage_checks) return "n/a";
+    return verdict.stage_checks.map(function (check) {
+      const reason = check.reasons && check.reasons.length ? " reason=" + check.reasons[0] : "";
+      return check.stage + "=" + check.outcome + reason;
+    }).join(" ");
+  }
+
+  function qualityVerdictToSummaryRows(verdict) {
+    if (!verdict) return [];
+    return [
+      ["render_evidence_mode", verdict.render_evidence_mode || "n/a"],
+      ["quality_verdict", verdict.quality_verdict || "n/a"],
+      ["stage_checks", formatQualityVerdictStageSummary(verdict)],
+      ["verdict_issue", verdict.issue || "n/a"],
+      ["trust_notes", verdict.trust_notes && verdict.trust_notes.length
+        ? verdict.trust_notes.join(" | ")
+        : "n/a"],
+    ];
+  }
+
   function qualityBaselineReportToSummaryRows(report) {
     if (!report || report.evidence_coverage === "missing_stage") return null;
     const spatial = report.spatial_query || {};
     const holdout = report.holdout_witness || {};
     const render = report.render_quality || {};
-    return renderKeyValueSummary([
+    const spatialQueryStatus = spatial.status || report.spatial_query_status || "n/a";
+    const visibility = spatial.visibility || report.visibility || "n/a";
+    const screenPoint = spatial.screen_point || report.screen_point || "n/a";
+    const holdoutStatus = holdout.status || report.holdout_status || "n/a";
+    const holdoutFrameIndex = holdout.holdout_frame_index != null
+      ? holdout.holdout_frame_index
+      : (report.holdout_frame_index != null ? report.holdout_frame_index : "n/a");
+    const basisCheckpointPath = holdout.basis_checkpoint_path || report.basis_checkpoint_path || "n/a";
+    const renderQualityStatus = render.status || report.render_quality_status || "n/a";
+    const renderVerdict = render.verdict || report.verdict || "n/a";
+    const imageSizeMatch = render.image_size_match != null
+      ? render.image_size_match
+      : (report.image_size_match != null ? report.image_size_match : "n/a");
+    const l1Mean = render.l1_mean != null ? render.l1_mean : (report.l1_mean != null ? report.l1_mean : "n/a");
+    const mse = render.mse != null ? render.mse : (report.mse != null ? report.mse : "n/a");
+    const psnr = render.psnr != null ? render.psnr : (report.psnr != null ? report.psnr : "n/a");
+    const entries = [
       ["kind", "MC-17 quality baseline report"],
       ["profile_id", report.profile_id],
       ["evidence_coverage", report.evidence_coverage],
-      ["spatial_query_status", spatial.status || "n/a"],
-      ["visibility", spatial.visibility || "n/a"],
-      ["screen_point", spatial.screen_point || "n/a"],
-      ["holdout_status", holdout.status || "n/a"],
-      ["holdout_frame_index", holdout.holdout_frame_index != null ? holdout.holdout_frame_index : "n/a"],
-      ["basis_checkpoint_path", holdout.basis_checkpoint_path || "n/a"],
-      ["render_quality_status", render.status || "n/a"],
-      ["verdict", render.verdict || "n/a"],
-      ["image_size_match", render.image_size_match != null ? render.image_size_match : "n/a"],
-      ["l1_mean", render.l1_mean != null ? render.l1_mean : "n/a"],
-      ["mse", render.mse != null ? render.mse : "n/a"],
-      ["psnr", render.psnr != null ? render.psnr : "n/a"],
+      ["spatial_query_status", spatialQueryStatus],
+      ["visibility", visibility],
+      ["screen_point", screenPoint],
+      ["holdout_status", holdoutStatus],
+      ["holdout_frame_index", holdoutFrameIndex],
+      ["basis_checkpoint_path", basisCheckpointPath],
+      ["render_quality_status", renderQualityStatus],
+      ["verdict", renderVerdict],
+      ["image_size_match", imageSizeMatch],
+      ["l1_mean", l1Mean],
+      ["mse", mse],
+      ["psnr", psnr],
       ["issue", report.issue || "n/a"],
       ["trust_notes", (report.trust_notes || []).join(" | ")],
-    ]);
+    ];
+    if (report.verdicts) {
+      entries.push(["kind", "MC-17 quality verdict (probe)"]);
+      entries.push.apply(entries, qualityVerdictToSummaryRows(report.verdicts.probe));
+      entries.push(["kind", "MC-17 quality verdict (trained_render)"]);
+      entries.push.apply(entries, qualityVerdictToSummaryRows(report.verdicts.trained_render));
+    }
+    return renderKeyValueSummary(entries);
   }
 
   function renderQualityBaselineSummaryCardFromServerReport(report) {

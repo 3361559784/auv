@@ -26,11 +26,13 @@ use crate::run_read::{
   MinecraftTrainingResultHoldoutPreviewManifestLineage,
   MinecraftTrainingResultInspectReportLineage, MinecraftTrainingResultManifestLineage,
   MinecraftTrainingResultQualityBaselineReportSummary,
+  MinecraftTrainingResultQualityVerdictSummary,
   MinecraftTrainingResultSemanticInspectReportLineage,
   MinecraftTrainingResultSemanticManifestLineage,
   MinecraftTrainingResultSpatialQueryInspectReportLineage,
   MinecraftTrainingResultSpatialQueryManifestLineage, collect_quality_baseline_evidence_for_run,
   derive_minecraft_training_result_quality_baseline_report,
+  derive_minecraft_training_result_quality_verdict,
   derive_minecraft_training_result_spatial_query_action_readiness,
   list_minecraft_holdout_render_quality_inspect_reports,
   list_minecraft_holdout_render_quality_manifests, list_minecraft_projection_artifacts,
@@ -48,6 +50,8 @@ use crate::run_read::{
   list_minecraft_training_result_semantic_manifests,
   list_minecraft_training_result_spatial_query_inspect_reports,
   list_minecraft_training_result_spatial_query_manifests, quality_baseline_profile_v1,
+  quality_baseline_verdict_thresholds_probe_v1,
+  quality_baseline_verdict_thresholds_trained_render_v1,
 };
 use auv_tracing_driver::store::{CanonicalRun, LocalStore};
 use std::collections::BTreeSet;
@@ -216,6 +220,17 @@ pub fn inspect_run(store: &LocalStore, run_id: &str) -> AuvResult<String> {
         )
       })
   });
+  let (quality_verdict_probe, quality_verdict_trained_render) = quality_baseline_report
+    .as_ref()
+    .map_or((None, None), |report| {
+      let probe = quality_baseline_verdict_thresholds_probe_v1()
+        .ok()
+        .map(|thresholds| derive_minecraft_training_result_quality_verdict(report, &thresholds));
+      let trained_render = quality_baseline_verdict_thresholds_trained_render_v1()
+        .ok()
+        .map(|thresholds| derive_minecraft_training_result_quality_verdict(report, &thresholds));
+      (probe, trained_render)
+    });
   Ok(render_run_text(
     &canonical,
     &verifications,
@@ -247,7 +262,48 @@ pub fn inspect_run(store: &LocalStore, run_id: &str) -> AuvResult<String> {
     &minecraft_training_result_spatial_query_inspect_reports,
     &minecraft_query_wired_live_action_summaries,
     quality_baseline_report.as_ref(),
+    quality_verdict_probe.as_ref(),
+    quality_verdict_trained_render.as_ref(),
   ))
+}
+
+fn format_quality_verdict_stage_summary(
+  verdict: &MinecraftTrainingResultQualityVerdictSummary,
+) -> String {
+  verdict
+    .stage_checks
+    .iter()
+    .map(|check| {
+      let reason = check
+        .reasons
+        .first()
+        .map(|value| format!(" reason={value}"))
+        .unwrap_or_default();
+      format!("{}={}{}", check.stage, check.outcome, reason)
+    })
+    .collect::<Vec<_>>()
+    .join(" ")
+}
+
+fn format_quality_verdict_line(verdict: &MinecraftTrainingResultQualityVerdictSummary) -> String {
+  let mut line = format!(
+    "- profile_id={} render_evidence_mode={} evidence_coverage={} quality_verdict={} {} issue={}
+",
+    verdict.profile_id,
+    verdict.render_evidence_mode,
+    verdict.evidence_coverage,
+    verdict.quality_verdict,
+    format_quality_verdict_stage_summary(verdict),
+    verdict.issue.as_deref().unwrap_or("n/a"),
+  );
+  if !verdict.trust_notes.is_empty() {
+    line.push_str(&format!(
+      "  trust_notes={}
+",
+      verdict.trust_notes.join(" | ")
+    ));
+  }
+  line
 }
 
 pub fn render_run_text(
@@ -281,6 +337,8 @@ pub fn render_run_text(
   minecraft_training_result_spatial_query_inspect_reports: &[MinecraftTrainingResultSpatialQueryInspectReportLineage],
   minecraft_query_wired_live_action_summaries: &[MinecraftQueryWiredLiveActionSummary],
   quality_baseline_report: Option<&MinecraftTrainingResultQualityBaselineReportSummary>,
+  quality_verdict_probe: Option<&MinecraftTrainingResultQualityVerdictSummary>,
+  quality_verdict_trained_render: Option<&MinecraftTrainingResultQualityVerdictSummary>,
 ) -> String {
   let mut output = format!(
     "Run {}\nType: {}\nStatus: {}\nState: {}\n",
@@ -1927,6 +1985,18 @@ pub fn render_run_text(
     }
   } else {
     output.push_str("- profile_unavailable\n");
+  }
+
+  output.push_str("\nMC-17 Quality Verdict:\n");
+  if let Some(verdict) = quality_verdict_probe {
+    output.push_str(&format_quality_verdict_line(verdict));
+  } else {
+    output.push_str("- probe_profile_unavailable\n");
+  }
+  if let Some(verdict) = quality_verdict_trained_render {
+    output.push_str(&format_quality_verdict_line(verdict));
+  } else {
+    output.push_str("- trained_render_profile_unavailable\n");
   }
 
   output.push_str("\nMC-12 Training Result Spatial Query:\n");
@@ -3646,6 +3716,8 @@ mod tests {
       &minecraft_training_result_spatial_query_inspect_reports,
       &[],
       None,
+      None,
+      None,
     );
 
     assert!(output.contains("Run run_inspect_test"));
@@ -3948,6 +4020,8 @@ mod tests {
       }],
       &[],
       None,
+      None,
+      None,
     );
 
     assert!(output.contains("MC-7 Training Jobs:"));
@@ -4120,6 +4194,8 @@ mod tests {
       &[],
       &[],
       None,
+      None,
+      None,
     );
 
     assert!(output.contains("MC-14 Training Result Spatial Query Action Readiness:"));
@@ -4246,6 +4322,8 @@ mod tests {
       &[],
       &[],
       &summaries,
+      None,
+      None,
       None,
     );
 
@@ -4424,6 +4502,8 @@ mod tests {
       &[],
       &[],
       &[],
+      None,
+      None,
       None,
     );
 
@@ -4621,6 +4701,8 @@ mod tests {
       &[],
       &[],
       None,
+      None,
+      None,
     );
 
     assert!(output.contains("manifest_artifact=artifact_mc7_job_manifest_dup"));
@@ -4811,6 +4893,8 @@ mod tests {
       &[],
       &[],
       &[],
+      None,
+      None,
       None,
     );
 
@@ -5003,6 +5087,8 @@ mod tests {
       &[],
       &[],
       &[],
+      None,
+      None,
       None,
     );
 
@@ -5208,6 +5294,8 @@ mod tests {
       &[],
       &[],
       None,
+      None,
+      None,
     );
 
     assert!(output.contains("MC-16 Training Result Holdout Preview:"));
@@ -5222,6 +5310,9 @@ mod tests {
     use crate::run_read::{
       MinecraftTrainingResultQualityBaselineReportSummary, QualityBaselineHoldoutWitnessEvidence,
       QualityBaselineRenderQualityEvidence, QualityBaselineSpatialQueryEvidence,
+      derive_minecraft_training_result_quality_verdict,
+      quality_baseline_verdict_thresholds_probe_v1,
+      quality_baseline_verdict_thresholds_trained_render_v1,
     };
     let run_id = RunId::new("run_inspect_mc17_d2_baseline");
     let root_span_id = SpanId::new("span_mc17_d2_root");
@@ -5283,6 +5374,13 @@ mod tests {
       ],
       issue: None,
     };
+    let probe_thresholds = quality_baseline_verdict_thresholds_probe_v1().expect("probe");
+    let trained_thresholds =
+      quality_baseline_verdict_thresholds_trained_render_v1().expect("trained");
+    let probe_verdict =
+      derive_minecraft_training_result_quality_verdict(&report, &probe_thresholds);
+    let trained_verdict =
+      derive_minecraft_training_result_quality_verdict(&report, &trained_thresholds);
 
     let output = render_run_text(
       &run,
@@ -5315,15 +5413,25 @@ mod tests {
       &[],
       &[],
       Some(&report),
+      Some(&probe_verdict),
+      Some(&trained_verdict),
     );
 
     assert!(output.contains("MC-17 Quality Baseline Report:"));
+    assert!(output.contains("MC-17 Quality Verdict:"));
     assert!(output.contains("profile_id=mc17-d2-primary-v1 evidence_coverage=complete"));
     assert!(output.contains("spatial_query_status=answered visibility=visible"));
     assert!(output.contains("holdout_status=ready holdout_frame_index=6"));
     assert!(output.contains("render_quality_status=ready verdict=measured_only"));
     assert!(output.contains("l1_mean=0 mse=0"));
     assert!(output.contains("trust_notes="));
+    assert!(output.contains("render_evidence_mode=screenshot_copy_probe"));
+    assert!(output.contains("quality_verdict=pass"));
+    assert!(output.contains("render_evidence_mode=trained_render"));
+    assert!(
+      output.contains("screenshot_copy_probe thresholds judge pipeline wiring only"),
+      "verdict trust_notes should surface probe disclaimer"
+    );
   }
 
   #[test]
@@ -5405,5 +5513,11 @@ mod tests {
     );
     assert!(output.contains("l1_mean=0 mse=0"), "{run_id}");
     assert!(output.contains("trust_notes="), "{run_id}");
+    assert!(output.contains("MC-17 Quality Verdict:"), "{run_id}");
+    assert!(
+      output.contains("render_evidence_mode=screenshot_copy_probe")
+        && output.contains("quality_verdict=pass"),
+      "{run_id}"
+    );
   }
 }

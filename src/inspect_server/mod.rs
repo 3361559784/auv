@@ -397,9 +397,10 @@ async fn get_minecraft_quality_baseline_report(
   State(state): State<InspectServerState>,
   Path(run_id): Path<String>,
 ) -> Result<Response, InspectHttpError> {
-  let report = crate::run_read::quality_baseline_report_for_run(state.store.as_ref(), &run_id)
-    .map_err(InspectHttpError::from_store)?;
-  Ok(Json(report).into_response())
+  let payload =
+    crate::run_read::quality_baseline_report_with_verdicts_for_run(state.store.as_ref(), &run_id)
+      .map_err(InspectHttpError::from_store)?;
+  Ok(Json(payload).into_response())
 }
 
 async fn get_artifacts(

@@ -102,6 +102,7 @@ One combined baseline card (MC-17 D1 viewer deferral fulfilled in D2):
 
 - MC-17 D1: producer + per-stage inspect section
 - MC-17 D2: derived baseline synthesis on fixed profile
+- MC-17 D3: derived threshold verdict on D2 evidence (pass | partial | fail | blocked); see docs/ai/references/2026-06-27-minecraft-mc17-d3-quality-verdict-design.md
 - MC-19: wiring honesty (`query → click`); orthogonal to D2 trust evidence
 - Live closure: `docs/ai/references/2026-06-27-minecraft-mc17-d2-quality-baseline-live-closure.md`
 

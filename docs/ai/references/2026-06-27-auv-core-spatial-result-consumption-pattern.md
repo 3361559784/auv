@@ -490,7 +490,7 @@ This note intentionally defers:
 - generic action lease / dispatch protocol
 - candidate promotion integration
 - Gaussian-native inference abstraction
-- threshold-based quality verdicts
+- threshold-based quality verdicts (opened only for MC-17 D3 derived read-side; see docs/ai/references/2026-06-27-minecraft-mc17-d3-quality-verdict-design.md)
 - viewer unification
 - public SDK surface
 

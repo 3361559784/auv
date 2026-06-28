@@ -5674,11 +5674,6 @@ mod tests {
     TrainingResultSemanticInspectReport, TrainingResultSemanticManifest,
     TrainingResultSemanticStatus, TrainingResultStatus,
   };
-  use auv_game_osu::{
-    VisualTruthSemanticInspectReport, VisualTruthSemanticManifest,
-    VisualTruthSpatialQueryInspectReport, VisualTruthSpatialQueryManifest,
-    derive_visual_truth_spatial_query_action_readiness,
-  };
   use auv_tracing_driver::ArtifactFileSource;
   use auv_tracing_driver::store::{CanonicalRun, LocalStore};
   use auv_tracing_driver::trace::{
@@ -6374,12 +6369,6 @@ mod tests {
       HoldoutFrameSelection, HoldoutFrameWitness, HoldoutPreviewStatus,
       TrainingResultHoldoutPreviewInspectReport, TrainingResultHoldoutPreviewManifest,
     };
-    use auv_game_osu::{
-      VisualTruthSemanticInspectReport, VisualTruthSemanticManifest,
-      VisualTruthSpatialQueryInspectReport, VisualTruthSpatialQueryManifest,
-      derive_visual_truth_spatial_query_action_readiness,
-    };
-
     let root = temp_dir("run-read-mc16-holdout-manifest");
     let store = LocalStore::new(root.clone()).expect("store should initialize");
     let run = dummy_run("run_read_mc16_holdout_manifest");
@@ -6519,12 +6508,6 @@ mod tests {
       TrainingResultHoldoutPreviewManifest, TrainingResultHoldoutRenderQualityInspectReport,
       TrainingResultHoldoutRenderQualityManifest,
     };
-    use auv_game_osu::{
-      VisualTruthSemanticInspectReport, VisualTruthSemanticManifest,
-      VisualTruthSpatialQueryInspectReport, VisualTruthSpatialQueryManifest,
-      derive_visual_truth_spatial_query_action_readiness,
-    };
-
     let root = temp_dir("run-read-mc17-holdout-quality-manifest");
     let store = LocalStore::new(root.clone()).expect("store should initialize");
     let run = dummy_run("run_read_mc17_holdout_quality_manifest");
@@ -6717,12 +6700,6 @@ mod tests {
       TrainingResultSpatialQueryComparisonVerdict, TrainingResultSpatialQueryKind,
       TrainingResultSpatialQueryManifest, TrainingResultSpatialQueryStatus,
     };
-    use auv_game_osu::{
-      VisualTruthSemanticInspectReport, VisualTruthSemanticManifest,
-      VisualTruthSpatialQueryInspectReport, VisualTruthSpatialQueryManifest,
-      derive_visual_truth_spatial_query_action_readiness,
-    };
-
     let root = temp_dir("run-read-mc13-query-manifest");
     let store = LocalStore::new(root.clone()).expect("store should initialize");
     let run = dummy_run("run_read_mc13_query_manifest");
@@ -6933,12 +6910,6 @@ mod tests {
       TrainingResultSpatialQueryKind, TrainingResultSpatialQueryManifest,
       TrainingResultSpatialQueryStatus,
     };
-    use auv_game_osu::{
-      VisualTruthSemanticInspectReport, VisualTruthSemanticManifest,
-      VisualTruthSpatialQueryInspectReport, VisualTruthSpatialQueryManifest,
-      derive_visual_truth_spatial_query_action_readiness,
-    };
-
     let root = temp_dir("run-read-mc13-query-inspect");
     let store = LocalStore::new(root.clone()).expect("store should initialize");
     let run = dummy_run("run_read_mc13_query_inspect");

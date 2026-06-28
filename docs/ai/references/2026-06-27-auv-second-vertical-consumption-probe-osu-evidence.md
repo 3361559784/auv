@@ -44,6 +44,21 @@ These row verdicts are **proof-appendix conclusions** only. They support
 - No witness/quality/live-click wiring
 - No shared stage-status discipline graduation from this probe alone
 
+
+
+## Full-chain graduation review (2026-06-28)
+
+**Status:** Slice 1–2 + WQ1 + wired live action evidence is consolidated under
+Core-A2 reviews. This appendix remains the probe-era evidence index; matrix
+verdict updates live in the proof matrix footnote³.
+
+- Stage / quality / backend re-grading:
+  [`2026-06-28-auv-core-a2-stage-quality-graduation-review.md`](2026-06-28-auv-core-a2-stage-quality-graduation-review.md)
+- Full-chain falsifier + Core-C1 dispatch re-review:
+  [`2026-06-28-auv-core-a2-full-chain-falsifier-review.md`](2026-06-28-auv-core-a2-full-chain-falsifier-review.md)
+- Wired live action closure:
+  [`2026-06-28-osu-visual-truth-query-wired-live-action-live-closure.md`](2026-06-28-osu-visual-truth-query-wired-live-action-live-closure.md)
+
 ## Related docs
 
 - Design: `docs/ai/references/2026-06-27-auv-second-vertical-consumption-probe-osu-design.md`

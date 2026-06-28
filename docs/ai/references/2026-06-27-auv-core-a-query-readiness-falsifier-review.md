@@ -149,3 +149,11 @@ only — no fix without owner approval.
 ## One-sentence summary
 
 Falsifier review finds **no triggered failures** — triad and dispatch separation hold for MC + osu; **latent** risks remain on status-only normalization and `click_ready` label reuse; proof-matrix rows 66/68 stay **`candidate, not admissible yet`**.
+
+## Superseded scope note (2026-06-28)
+
+This review covers query/readiness only **before** osu wired live action (PR #54).
+Full-chain re-review after semantic→query→readiness→live admission→witness→quality:
+[`2026-06-28-auv-core-a2-full-chain-falsifier-review.md`](2026-06-28-auv-core-a2-full-chain-falsifier-review.md).
+Stage/quality/backend row re-grading:
+[`2026-06-28-auv-core-a2-stage-quality-graduation-review.md`](2026-06-28-auv-core-a2-stage-quality-graduation-review.md).

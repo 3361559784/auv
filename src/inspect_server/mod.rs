@@ -206,6 +206,10 @@ fn router_with_config(
     .route("/runs/{run_id}/events", get(get_events))
     .route("/runs/{run_id}/artifacts", get(get_artifacts))
     .route("/runs/{run_id}/artifacts/{artifact_id}", get(get_artifact))
+    .route(
+      "/runs/{run_id}/minecraft-quality-baseline-report",
+      get(get_minecraft_quality_baseline_report),
+    )
     .route("/runs/{run_id}/stream", get(stream_run))
     .route("/write/runs/{run_id}/updates", post(write_updates))
     .route(
@@ -387,6 +391,15 @@ async fn get_events(
     .read_run(&run_id)
     .map_err(InspectHttpError::from_store)?;
   Ok(Json(run.events).into_response())
+}
+
+async fn get_minecraft_quality_baseline_report(
+  State(state): State<InspectServerState>,
+  Path(run_id): Path<String>,
+) -> Result<Response, InspectHttpError> {
+  let report = crate::run_read::quality_baseline_report_for_run(state.store.as_ref(), &run_id)
+    .map_err(InspectHttpError::from_store)?;
+  Ok(Json(report).into_response())
 }
 
 async fn get_artifacts(

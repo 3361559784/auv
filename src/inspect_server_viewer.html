@@ -1319,6 +1319,210 @@
     return !!artifact && artifact.role === "minecraft-3dgs-training-result-holdout-preview-inspect";
   }
 
+
+  const QUALITY_BASELINE_PROFILE_V1 = {
+    profile_id: "mc17-d2-primary-v1",
+    training_result_semantic_manifest_path: ".tmp/mc10-smoke-review/semantic/minecraft-3dgs-training-result-semantic.json",
+    query_target_block: "511,73,728",
+    query_target_face: "north",
+    query_target_semantics: "hit_face_center",
+    holdout_frame_index: 6,
+    basis_checkpoint_suffix: "step-000001.ckpt",
+    recorded_run_ids: {
+      mc12: "run_1782594518255_60230_0",
+      mc16: "run_1782594524936_60749_0",
+      mc17: "run_1782594531314_61141_0",
+    },
+  };
+
+  function isMinecraftHoldoutRenderQualityManifestArtifact(artifact) {
+    return !!artifact && artifact.role === "minecraft-3dgs-holdout-render-quality";
+  }
+
+  function isMinecraftHoldoutRenderQualityInspectArtifact(artifact) {
+    return !!artifact && artifact.role === "minecraft-3dgs-holdout-render-quality-inspect";
+  }
+
+  function blockLabelFromParsedTargetBlock(targetBlock) {
+    if (!targetBlock) return null;
+    if (typeof targetBlock === "string") return targetBlock;
+    return [targetBlock.x, targetBlock.y, targetBlock.z].join(",");
+  }
+
+  function spatialQueryMatchesProfile(parsed, profile) {
+    if (!parsed || !profile) return false;
+    return parsed.training_result_semantic_manifest_path === profile.training_result_semantic_manifest_path
+      && blockLabelFromParsedTargetBlock(parsed.target_block) === profile.query_target_block
+      && (parsed.target_face || null) === (profile.query_target_face || null)
+      && parsed.target_semantics === profile.query_target_semantics;
+  }
+
+  function holdoutPreviewMatchesProfile(parsed, profile) {
+    if (!parsed || !profile) return false;
+    const checkpoint = parsed.basis_checkpoint_path || "";
+    return parsed.training_result_semantic_manifest_path === profile.training_result_semantic_manifest_path
+      && parsed.holdout_frame_index === profile.holdout_frame_index
+      && checkpoint.endsWith(profile.basis_checkpoint_suffix);
+  }
+
+  function holdoutRenderQualityMatchesProfile(parsed, profile) {
+    if (!parsed || !profile) return false;
+    const checkpoint = parsed.basis_checkpoint_path || "";
+    return parsed.training_result_semantic_manifest_path === profile.training_result_semantic_manifest_path
+      && parsed.holdout_frame_index === profile.holdout_frame_index
+      && checkpoint.endsWith(profile.basis_checkpoint_suffix);
+  }
+
+  function buildQualityBaselineTrustNotes(renderQuality) {
+    const notes = [
+      "MC-12 projection_reference answers are scene-packet reference geometry only; they are not Gaussian-native inference",
+      "MC-17 screenshot-copy render probe measures pipeline comparability only; it is not trained-splat usefulness evidence",
+    ];
+    if (renderQuality && Array.isArray(renderQuality.known_limits)) {
+      renderQuality.known_limits.forEach(function (limit) {
+        if (notes.indexOf(limit) < 0) notes.push(limit);
+      });
+    }
+    return notes;
+  }
+
+  function deriveQualityBaselineReport(profile, spatialQuery, holdoutPreview, renderQuality) {
+    const issues = [];
+    if (spatialQuery && !spatialQueryMatchesProfile(spatialQuery, profile)) {
+      issues.push("spatial query manifest does not match baseline profile pins");
+    }
+    if (holdoutPreview && !holdoutPreviewMatchesProfile(holdoutPreview, profile)) {
+      issues.push("holdout preview manifest does not match baseline profile pins");
+    }
+    if (renderQuality && !holdoutRenderQualityMatchesProfile(renderQuality, profile)) {
+      issues.push("holdout render quality manifest does not match baseline profile pins");
+    }
+    const stageCount = [spatialQuery, holdoutPreview, renderQuality].filter(Boolean).length;
+    let evidenceCoverage = "partial";
+    if (stageCount === 0) evidenceCoverage = "missing_stage";
+    else if (stageCount === 3 && issues.length === 0) evidenceCoverage = "complete";
+
+    const metrics = renderQuality && renderQuality.metrics ? renderQuality.metrics : null;
+    return {
+      profile_id: profile.profile_id,
+      training_result_semantic_manifest_path: profile.training_result_semantic_manifest_path,
+      evidence_coverage: evidenceCoverage,
+      spatial_query_status: spatialQuery ? spatialQuery.status : "n/a",
+      visibility: spatialQuery ? spatialQuery.visibility : "n/a",
+      screen_point: spatialQuery && spatialQuery.screen_point
+        ? [spatialQuery.screen_point.x, spatialQuery.screen_point.y].join(",")
+        : "n/a",
+      holdout_status: holdoutPreview ? holdoutPreview.status : "n/a",
+      holdout_frame_index: holdoutPreview ? holdoutPreview.holdout_frame_index : "n/a",
+      basis_checkpoint_path: holdoutPreview ? holdoutPreview.basis_checkpoint_path : "n/a",
+      render_quality_status: renderQuality ? renderQuality.status : "n/a",
+      verdict: renderQuality ? renderQuality.verdict : "n/a",
+      image_size_match: renderQuality ? renderQuality.image_size_match : "n/a",
+      l1_mean: metrics && metrics.l1_mean != null ? metrics.l1_mean : "n/a",
+      mse: metrics && metrics.mse != null ? metrics.mse : "n/a",
+      psnr: metrics && metrics.psnr != null ? metrics.psnr : "n/a",
+      trust_notes: buildQualityBaselineTrustNotes(renderQuality),
+      issue: issues.length ? issues.join(" | ") : "n/a",
+    };
+  }
+
+  function collectQualityBaselineEvidenceFromCache(artifacts, cache) {
+    let spatialQuery = null;
+    let holdoutPreview = null;
+    let renderQuality = null;
+    (artifacts || []).forEach(function (artifact) {
+      const parsed = cache[artifactKey(artifact)];
+      if (!parsed) return;
+      if (isMinecraftTrainingResultSpatialQueryManifestArtifact(artifact)
+        && spatialQueryMatchesProfile(parsed, QUALITY_BASELINE_PROFILE_V1)) {
+        spatialQuery = parsed;
+      }
+      if (isMinecraftTrainingResultHoldoutPreviewManifestArtifact(artifact)
+        && holdoutPreviewMatchesProfile(parsed, QUALITY_BASELINE_PROFILE_V1)) {
+        holdoutPreview = parsed;
+      }
+      if (isMinecraftHoldoutRenderQualityManifestArtifact(artifact)) {
+        if (!renderQuality || holdoutRenderQualityMatchesProfile(parsed, QUALITY_BASELINE_PROFILE_V1)) {
+          renderQuality = parsed;
+        }
+      }
+    });
+    return { spatialQuery: spatialQuery, holdoutPreview: holdoutPreview, renderQuality: renderQuality };
+  }
+
+  function qualityBaselineReportToSummaryRows(report) {
+    if (!report || report.evidence_coverage === "missing_stage") return null;
+    const spatial = report.spatial_query || {};
+    const holdout = report.holdout_witness || {};
+    const render = report.render_quality || {};
+    return renderKeyValueSummary([
+      ["kind", "MC-17 quality baseline report"],
+      ["profile_id", report.profile_id],
+      ["evidence_coverage", report.evidence_coverage],
+      ["spatial_query_status", spatial.status || "n/a"],
+      ["visibility", spatial.visibility || "n/a"],
+      ["screen_point", spatial.screen_point || "n/a"],
+      ["holdout_status", holdout.status || "n/a"],
+      ["holdout_frame_index", holdout.holdout_frame_index != null ? holdout.holdout_frame_index : "n/a"],
+      ["basis_checkpoint_path", holdout.basis_checkpoint_path || "n/a"],
+      ["render_quality_status", render.status || "n/a"],
+      ["verdict", render.verdict || "n/a"],
+      ["image_size_match", render.image_size_match != null ? render.image_size_match : "n/a"],
+      ["l1_mean", render.l1_mean != null ? render.l1_mean : "n/a"],
+      ["mse", render.mse != null ? render.mse : "n/a"],
+      ["psnr", render.psnr != null ? render.psnr : "n/a"],
+      ["issue", report.issue || "n/a"],
+      ["trust_notes", (report.trust_notes || []).join(" | ")],
+    ]);
+  }
+
+  function renderQualityBaselineSummaryCardFromServerReport(report) {
+    return qualityBaselineReportToSummaryRows(report);
+  }
+
+  function renderQualityBaselineSummaryCardFallback(artifacts, cache) {
+    const evidence = collectQualityBaselineEvidenceFromCache(artifacts, cache);
+    if (!evidence.renderQuality && !evidence.spatialQuery && !evidence.holdoutPreview) {
+      return null;
+    }
+    const report = deriveQualityBaselineReport(
+      QUALITY_BASELINE_PROFILE_V1,
+      evidence.spatialQuery,
+      evidence.holdoutPreview,
+      evidence.renderQuality,
+    );
+    return qualityBaselineReportToSummaryRows(report);
+  }
+
+  function loadQualityBaselineSummaryCard(preview, insertBeforeNode, requestId) {
+    if (!state.activeRunId) return;
+    fetch("/runs/" + encodeURIComponent(state.activeRunId) + "/minecraft-quality-baseline-report")
+      .then(function (response) {
+        if (!response.ok) throw new Error("HTTP " + response.status);
+        return response.json();
+      })
+      .then(function (report) {
+        if (requestId !== state.activeEvidenceRequestId) return;
+        const card = renderQualityBaselineSummaryCardFromServerReport(report);
+        if (!card) return;
+        if (insertBeforeNode && insertBeforeNode.parentNode === preview) {
+          preview.insertBefore(card, insertBeforeNode);
+        } else {
+          preview.insertBefore(card, preview.firstChild);
+        }
+      })
+      .catch(function () {
+        if (requestId !== state.activeEvidenceRequestId) return;
+        const card = renderQualityBaselineSummaryCardFallback(state.artifacts, state.artifactJsonCache);
+        if (!card) return;
+        if (insertBeforeNode && insertBeforeNode.parentNode === preview) {
+          preview.insertBefore(card, insertBeforeNode);
+        } else {
+          preview.insertBefore(card, preview.firstChild);
+        }
+      });
+  }
+
   function isMinecraftTrainingResultSpatialQueryManifestArtifact(artifact) {
     return !!artifact && artifact.role === "minecraft-3dgs-training-result-query";
   }
@@ -2073,6 +2277,40 @@
         ["known_limits", countArray(parsed.known_limits)],
       ]);
     }
+
+    if (isMinecraftHoldoutRenderQualityManifestArtifact(artifact)) {
+      const metrics = parsed.metrics || {};
+      return renderKeyValueSummary([
+        ["kind", "holdout render quality manifest"],
+        ["schema", parsed.schema_version],
+        ["training_result_semantic_manifest", parsed.training_result_semantic_manifest_path],
+        ["holdout_preview_manifest", parsed.holdout_preview_manifest_path],
+        ["holdout_frame_index", parsed.holdout_frame_index],
+        ["status", parsed.status],
+        ["verdict", parsed.verdict],
+        ["image_size_match", parsed.image_size_match],
+        ["l1_mean", metrics.l1_mean],
+        ["mse", metrics.mse],
+        ["psnr", metrics.psnr],
+        ["known_limits", countArray(parsed.known_limits)],
+      ]);
+    }
+    if (isMinecraftHoldoutRenderQualityInspectArtifact(artifact)) {
+      const metrics = parsed.metrics || {};
+      return renderKeyValueSummary([
+        ["kind", "holdout render quality inspect report"],
+        ["schema", parsed.schema_version],
+        ["manifest_path", parsed.training_result_holdout_render_quality_manifest_path],
+        ["status", parsed.status],
+        ["verdict", parsed.verdict],
+        ["image_size_match", parsed.image_size_match],
+        ["l1_mean", metrics.l1_mean],
+        ["mse", metrics.mse],
+        ["psnr", metrics.psnr],
+        ["warnings", countArray(parsed.warnings)],
+        ["known_limits", countArray(parsed.known_limits)],
+      ]);
+    }
     if (isMinecraftTrainingResultSemanticManifestArtifact(artifact)) {
       return renderKeyValueSummary([
         ["kind", "training result semantic manifest"],
@@ -2366,6 +2604,15 @@
           if (parsed) {
             state.artifactJsonCache[expectedArtifactKey] = parsed;
           }
+
+          if (
+            isMinecraftHoldoutRenderQualityManifestArtifact(artifact)
+            || isMinecraftHoldoutRenderQualityInspectArtifact(artifact)
+            || isMinecraftTrainingResultSpatialQueryManifestArtifact(artifact)
+            || isMinecraftTrainingResultHoldoutPreviewManifestArtifact(artifact)
+          ) {
+            loadQualityBaselineSummaryCard(preview, surface, state.activeEvidenceRequestId);
+          }
           const mc19Card = renderQueryWiredLiveActionSummaryCard(artifact, parsed, state.events, state.artifacts);
           if (mc19Card) {
             preview.insertBefore(mc19Card, surface);
@@ -2387,6 +2634,8 @@
             || isMinecraftTrainingResultHoldoutPreviewInspectArtifact(artifact)
             || isMinecraftTrainingResultSpatialQueryManifestArtifact(artifact)
             || isMinecraftTrainingResultSpatialQueryInspectArtifact(artifact)
+            || isMinecraftHoldoutRenderQualityManifestArtifact(artifact)
+            || isMinecraftHoldoutRenderQualityInspectArtifact(artifact)
           )) {
             const summaryCard = renderTrainingPackageSummaryCard(artifact, parsed)
               || renderTrainerLineageSummaryCard(artifact, parsed);

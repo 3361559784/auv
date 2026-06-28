@@ -25,10 +25,12 @@ use crate::run_read::{
   MinecraftTrainingResultHoldoutPreviewInspectReportLineage,
   MinecraftTrainingResultHoldoutPreviewManifestLineage,
   MinecraftTrainingResultInspectReportLineage, MinecraftTrainingResultManifestLineage,
+  MinecraftTrainingResultQualityBaselineReportSummary,
   MinecraftTrainingResultSemanticInspectReportLineage,
   MinecraftTrainingResultSemanticManifestLineage,
   MinecraftTrainingResultSpatialQueryInspectReportLineage,
-  MinecraftTrainingResultSpatialQueryManifestLineage,
+  MinecraftTrainingResultSpatialQueryManifestLineage, collect_quality_baseline_evidence_for_run,
+  derive_minecraft_training_result_quality_baseline_report,
   derive_minecraft_training_result_spatial_query_action_readiness,
   list_minecraft_holdout_render_quality_inspect_reports,
   list_minecraft_holdout_render_quality_manifests, list_minecraft_projection_artifacts,
@@ -45,7 +47,7 @@ use crate::run_read::{
   list_minecraft_training_result_semantic_inspect_reports,
   list_minecraft_training_result_semantic_manifests,
   list_minecraft_training_result_spatial_query_inspect_reports,
-  list_minecraft_training_result_spatial_query_manifests,
+  list_minecraft_training_result_spatial_query_manifests, quality_baseline_profile_v1,
 };
 use auv_tracing_driver::store::{CanonicalRun, LocalStore};
 use std::collections::BTreeSet;
@@ -201,6 +203,19 @@ pub fn inspect_run(store: &LocalStore, run_id: &str) -> AuvResult<String> {
     list_minecraft_training_result_spatial_query_inspect_reports(store, run_id)?;
   let minecraft_query_wired_live_action_summaries =
     list_minecraft_query_wired_live_action_summaries(store, run_id)?;
+  let quality_baseline_report = quality_baseline_profile_v1().ok().and_then(|profile| {
+    collect_quality_baseline_evidence_for_run(store, run_id, &profile)
+      .ok()
+      .map(|bundle| {
+        derive_minecraft_training_result_quality_baseline_report(
+          &profile,
+          bundle.spatial_query.as_ref(),
+          bundle.holdout_preview.as_ref(),
+          bundle.render_quality.as_ref(),
+          &bundle.collection_issues,
+        )
+      })
+  });
   Ok(render_run_text(
     &canonical,
     &verifications,
@@ -231,6 +246,7 @@ pub fn inspect_run(store: &LocalStore, run_id: &str) -> AuvResult<String> {
     &minecraft_training_result_spatial_query_manifests,
     &minecraft_training_result_spatial_query_inspect_reports,
     &minecraft_query_wired_live_action_summaries,
+    quality_baseline_report.as_ref(),
   ))
 }
 
@@ -264,6 +280,7 @@ pub fn render_run_text(
   minecraft_training_result_spatial_query_manifests: &[MinecraftTrainingResultSpatialQueryManifestLineage],
   minecraft_training_result_spatial_query_inspect_reports: &[MinecraftTrainingResultSpatialQueryInspectReportLineage],
   minecraft_query_wired_live_action_summaries: &[MinecraftQueryWiredLiveActionSummary],
+  quality_baseline_report: Option<&MinecraftTrainingResultQualityBaselineReportSummary>,
 ) -> String {
   let mut output = format!(
     "Run {}\nType: {}\nStatus: {}\nState: {}\n",
@@ -1817,6 +1834,99 @@ pub fn render_run_text(
         ));
       }
     }
+  }
+
+  output.push_str("\nMC-17 Quality Baseline Report:\n");
+  if let Some(report) = quality_baseline_report {
+    let spatial_query_status = report
+      .spatial_query
+      .as_ref()
+      .map(|evidence| evidence.status.as_str())
+      .unwrap_or("n/a");
+    let spatial_visibility = report
+      .spatial_query
+      .as_ref()
+      .and_then(|evidence| evidence.visibility.as_deref())
+      .unwrap_or("n/a");
+    let spatial_screen_point = report
+      .spatial_query
+      .as_ref()
+      .and_then(|evidence| evidence.screen_point.as_deref())
+      .unwrap_or("n/a");
+    let holdout_status = report
+      .holdout_witness
+      .as_ref()
+      .map(|evidence| evidence.status.as_str())
+      .unwrap_or("n/a");
+    let holdout_frame_index = report
+      .holdout_witness
+      .as_ref()
+      .map(|evidence| evidence.holdout_frame_index.to_string())
+      .unwrap_or_else(|| "n/a".to_string());
+    let basis_checkpoint_path = report
+      .holdout_witness
+      .as_ref()
+      .and_then(|evidence| evidence.basis_checkpoint_path.as_deref())
+      .unwrap_or("n/a");
+    let render_quality_status = report
+      .render_quality
+      .as_ref()
+      .map(|evidence| evidence.status.as_str())
+      .unwrap_or("n/a");
+    let render_verdict = report
+      .render_quality
+      .as_ref()
+      .map(|evidence| evidence.verdict.as_str())
+      .unwrap_or("n/a");
+    let l1_mean = report
+      .render_quality
+      .as_ref()
+      .and_then(|evidence| evidence.l1_mean)
+      .map(|value| value.to_string())
+      .unwrap_or_else(|| "n/a".to_string());
+    let mse = report
+      .render_quality
+      .as_ref()
+      .and_then(|evidence| evidence.mse)
+      .map(|value| value.to_string())
+      .unwrap_or_else(|| "n/a".to_string());
+    let psnr = report
+      .render_quality
+      .as_ref()
+      .and_then(|evidence| evidence.psnr)
+      .map(|value| value.to_string())
+      .unwrap_or_else(|| "n/a".to_string());
+    output.push_str(&format!(
+      "- profile_id={} evidence_coverage={} training_result_semantic_manifest={} spatial_query_status={} visibility={} screen_point={} holdout_status={} holdout_frame_index={} basis_checkpoint_path={} render_quality_status={} verdict={} image_size_match={} l1_mean={} mse={} psnr={} issue={}\n",
+      report.profile_id,
+      report.evidence_coverage,
+      report.training_result_semantic_manifest_path,
+      spatial_query_status,
+      spatial_visibility,
+      spatial_screen_point,
+      holdout_status,
+      holdout_frame_index,
+      basis_checkpoint_path,
+      render_quality_status,
+      render_verdict,
+      report
+        .render_quality
+        .as_ref()
+        .map(|evidence| evidence.image_size_match.to_string())
+        .unwrap_or_else(|| "n/a".to_string()),
+      l1_mean,
+      mse,
+      psnr,
+      report.issue.as_deref().unwrap_or("n/a"),
+    ));
+    if !report.trust_notes.is_empty() {
+      output.push_str(&format!(
+        "  trust_notes={}\n",
+        report.trust_notes.join(" | ")
+      ));
+    }
+  } else {
+    output.push_str("- profile_unavailable\n");
   }
 
   output.push_str("\nMC-12 Training Result Spatial Query:\n");
@@ -3535,6 +3645,7 @@ mod tests {
       &minecraft_training_result_spatial_query_manifests,
       &minecraft_training_result_spatial_query_inspect_reports,
       &[],
+      None,
     );
 
     assert!(output.contains("Run run_inspect_test"));
@@ -3836,6 +3947,7 @@ mod tests {
         issue: Some("json parse error: expected value".to_string()),
       }],
       &[],
+      None,
     );
 
     assert!(output.contains("MC-7 Training Jobs:"));
@@ -4007,6 +4119,7 @@ mod tests {
       &manifests,
       &[],
       &[],
+      None,
     );
 
     assert!(output.contains("MC-14 Training Result Spatial Query Action Readiness:"));
@@ -4133,6 +4246,7 @@ mod tests {
       &[],
       &[],
       &summaries,
+      None,
     );
 
     assert!(output.contains("MC-19 Query Wired Live Action:"));
@@ -4310,6 +4424,7 @@ mod tests {
       &[],
       &[],
       &[],
+      None,
     );
 
     assert!(output.contains("manifest_artifact=artifact_mc7_launch_manifest"));
@@ -4505,6 +4620,7 @@ mod tests {
       &[],
       &[],
       &[],
+      None,
     );
 
     assert!(output.contains("manifest_artifact=artifact_mc7_job_manifest_dup"));
@@ -4695,6 +4811,7 @@ mod tests {
       &[],
       &[],
       &[],
+      None,
     );
 
     assert!(output.contains("manifest_artifact=artifact_mc7_package_manifest_dup"));
@@ -4886,6 +5003,7 @@ mod tests {
       &[],
       &[],
       &[],
+      None,
     );
 
     assert!(output.contains("manifest_artifact=artifact_mc7_result_manifest_dup"));
@@ -5089,6 +5207,7 @@ mod tests {
       &[],
       &[],
       &[],
+      None,
     );
 
     assert!(output.contains("MC-16 Training Result Holdout Preview:"));
@@ -5096,6 +5215,115 @@ mod tests {
     assert!(output.contains("paired_report_artifact=n/a"));
     assert!(output.contains("inspect_artifact=artifact_mc16_holdout_report_a"));
     assert!(output.contains("inspect_artifact=artifact_mc16_holdout_report_b"));
+  }
+
+  #[test]
+  fn render_run_text_renders_mc17_d2_quality_baseline_report() {
+    use crate::run_read::{
+      MinecraftTrainingResultQualityBaselineReportSummary, QualityBaselineHoldoutWitnessEvidence,
+      QualityBaselineRenderQualityEvidence, QualityBaselineSpatialQueryEvidence,
+    };
+    let run_id = RunId::new("run_inspect_mc17_d2_baseline");
+    let root_span_id = SpanId::new("span_mc17_d2_root");
+    let run = CanonicalRun {
+      run: RunRecordV1Alpha1 {
+        api_version: RUN_API_VERSION.to_string(),
+        run_id: run_id.clone(),
+        trace_id: TraceId::new("trace_mc17_d2_baseline"),
+        run_type: RunType::Command,
+        state: TraceState::Ended,
+        status_code: TraceStatusCode::Ok,
+        started_at_millis: 1,
+        finished_at_millis: Some(2),
+        root_span_id,
+        attributes: BTreeMap::new(),
+        summary: Some("mc17 d2 baseline".to_string()),
+        failure: None,
+      },
+      spans: vec![],
+      events: vec![],
+      artifacts: vec![],
+    };
+    let report = MinecraftTrainingResultQualityBaselineReportSummary {
+      profile_id: "mc17-d2-primary-v1".to_string(),
+      training_result_semantic_manifest_path:
+        ".tmp/mc10-smoke-review/semantic/minecraft-3dgs-training-result-semantic.json".to_string(),
+      evidence_coverage: "complete".to_string(),
+      spatial_query: Some(QualityBaselineSpatialQueryEvidence {
+        status: "answered".to_string(),
+        visibility: Some("visible".to_string()),
+        screen_point: Some("854.0,480.0".to_string()),
+        selected_backend: Some("projection_reference".to_string()),
+        comparison_verdict: Some("reference_only".to_string()),
+        basis_frame_id: Some("frame-355416".to_string()),
+        target_block: "511,73,728".to_string(),
+        target_face: Some("north".to_string()),
+        target_semantics: "hit_face_center".to_string(),
+      }),
+      holdout_witness: Some(QualityBaselineHoldoutWitnessEvidence {
+        status: "ready".to_string(),
+        holdout_frame_index: 6,
+        basis_checkpoint_path: Some(
+          "/tmp/normalized/nerfstudio_models/step-000001.ckpt".to_string(),
+        ),
+        holdout_screenshot_path: Some("/tmp/frame_000006.png".to_string()),
+        spatial_frame_id: Some("frame-355416-47699343801916".to_string()),
+      }),
+      render_quality: Some(QualityBaselineRenderQualityEvidence {
+        status: "ready".to_string(),
+        verdict: "measured_only".to_string(),
+        image_size_match: true,
+        l1_mean: Some(0.0),
+        mse: Some(0.0),
+        psnr: None,
+        known_limits: vec!["metrics evidence only".to_string()],
+      }),
+      trust_notes: vec![
+        "MC-12 projection_reference answers are scene-packet reference geometry only; they are not Gaussian-native inference".to_string(),
+      ],
+      issue: None,
+    };
+
+    let output = render_run_text(
+      &run,
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      Some(&report),
+    );
+
+    assert!(output.contains("MC-17 Quality Baseline Report:"));
+    assert!(output.contains("profile_id=mc17-d2-primary-v1 evidence_coverage=complete"));
+    assert!(output.contains("spatial_query_status=answered visibility=visible"));
+    assert!(output.contains("holdout_status=ready holdout_frame_index=6"));
+    assert!(output.contains("render_quality_status=ready verdict=measured_only"));
+    assert!(output.contains("l1_mean=0 mse=0"));
+    assert!(output.contains("trust_notes="));
   }
 
   #[test]
@@ -5147,5 +5375,35 @@ mod tests {
         }
       }
     }
+  }
+  #[test]
+  fn mc17_d2_live_store_inspect_acceptance() {
+    use std::path::PathBuf;
+    let store_root = PathBuf::from(".tmp/mc17-d2-live/store");
+    if !store_root.exists() {
+      return;
+    }
+    let store = auv_tracing_driver::store::LocalStore::new(store_root).expect("store");
+    let run_id = "run_1782594531314_61141_0";
+    let output = inspect_run(&store, run_id).unwrap_or_else(|error| panic!("{run_id}: {error}"));
+    assert!(
+      output.contains("MC-17 Quality Baseline Report:"),
+      "{run_id}"
+    );
+    assert!(
+      output.contains("profile_id=mc17-d2-primary-v1 evidence_coverage=complete"),
+      "{run_id}"
+    );
+    assert!(output.contains("spatial_query_status=answered"), "{run_id}");
+    assert!(
+      output.contains("holdout_status=ready holdout_frame_index=6"),
+      "{run_id}"
+    );
+    assert!(
+      output.contains("render_quality_status=ready verdict=measured_only"),
+      "{run_id}"
+    );
+    assert!(output.contains("l1_mean=0 mse=0"), "{run_id}");
+    assert!(output.contains("trust_notes="), "{run_id}");
   }
 }

@@ -16,7 +16,7 @@ pub mod minecraft_query_live_action;
 pub mod minecraft_session;
 pub mod model;
 pub mod osu;
-mod run_read;
+pub mod run_read;
 pub mod runtime;
 pub mod scroll_scan;
 pub mod session;

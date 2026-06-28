@@ -2175,6 +2175,431 @@ pub(crate) fn list_minecraft_query_wired_live_action_summaries(
   )
 }
 
+pub const QUALITY_BASELINE_PROFILE_V1_JSON: &str =
+  include_str!("../crates/auv-game-minecraft/tests/fixtures/mc17-d2/baseline-profile-v1.json");
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct QualityBaselineProfile {
+  pub profile_id: String,
+  pub training_result_semantic_manifest_path: String,
+  pub query_target_block: String,
+  pub query_target_face: Option<String>,
+  pub query_target_semantics: String,
+  pub holdout_frame_index: usize,
+  pub basis_checkpoint_suffix: String,
+  #[serde(default)]
+  pub recorded_run_ids: Option<QualityBaselineRecordedRunIds>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, Default)]
+pub struct QualityBaselineRecordedRunIds {
+  pub mc12: Option<String>,
+  pub mc16: Option<String>,
+  pub mc17: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct QualityBaselineSpatialQueryEvidence {
+  pub status: String,
+  pub visibility: Option<String>,
+  pub screen_point: Option<String>,
+  pub selected_backend: Option<String>,
+  pub comparison_verdict: Option<String>,
+  pub basis_frame_id: Option<String>,
+  pub target_block: String,
+  pub target_face: Option<String>,
+  pub target_semantics: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct QualityBaselineHoldoutWitnessEvidence {
+  pub status: String,
+  pub holdout_frame_index: usize,
+  pub basis_checkpoint_path: Option<String>,
+  pub holdout_screenshot_path: Option<String>,
+  pub spatial_frame_id: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct QualityBaselineRenderQualityEvidence {
+  pub status: String,
+  pub verdict: String,
+  pub image_size_match: bool,
+  pub l1_mean: Option<f64>,
+  pub mse: Option<f64>,
+  pub psnr: Option<f64>,
+  pub known_limits: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct MinecraftTrainingResultQualityBaselineReportSummary {
+  pub profile_id: String,
+  pub training_result_semantic_manifest_path: String,
+  pub evidence_coverage: String,
+  pub spatial_query: Option<QualityBaselineSpatialQueryEvidence>,
+  pub holdout_witness: Option<QualityBaselineHoldoutWitnessEvidence>,
+  pub render_quality: Option<QualityBaselineRenderQualityEvidence>,
+  pub trust_notes: Vec<String>,
+  pub issue: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+pub struct QualityBaselineEvidenceBundle {
+  pub spatial_query: Option<MinecraftTrainingResultSpatialQueryManifestSummary>,
+  pub holdout_preview: Option<MinecraftTrainingResultHoldoutPreviewManifestSummary>,
+  pub render_quality: Option<MinecraftHoldoutRenderQualityManifestSummary>,
+  pub collection_issues: Vec<String>,
+}
+
+pub fn quality_baseline_report_for_run(
+  store: &LocalStore,
+  run_id: &str,
+) -> AuvResult<MinecraftTrainingResultQualityBaselineReportSummary> {
+  let profile = quality_baseline_profile_v1()?;
+  let bundle = collect_quality_baseline_evidence_for_run(store, run_id, &profile)?;
+  Ok(derive_minecraft_training_result_quality_baseline_report(
+    &profile,
+    bundle.spatial_query.as_ref(),
+    bundle.holdout_preview.as_ref(),
+    bundle.render_quality.as_ref(),
+    &bundle.collection_issues,
+  ))
+}
+
+pub fn quality_baseline_profile_v1() -> Result<QualityBaselineProfile, String> {
+  serde_json::from_str(QUALITY_BASELINE_PROFILE_V1_JSON)
+    .map_err(|error| format!("parse quality baseline profile v1 fixture: {error}"))
+}
+
+fn spatial_query_matches_profile(
+  manifest: &MinecraftTrainingResultSpatialQueryManifestSummary,
+  profile: &QualityBaselineProfile,
+) -> bool {
+  manifest.training_result_semantic_manifest_path == profile.training_result_semantic_manifest_path
+    && manifest.target_block == profile.query_target_block
+    && manifest.target_face.as_deref() == profile.query_target_face.as_deref()
+    && manifest.target_semantics == profile.query_target_semantics
+}
+
+fn holdout_preview_matches_profile(
+  manifest: &MinecraftTrainingResultHoldoutPreviewManifestSummary,
+  profile: &QualityBaselineProfile,
+) -> bool {
+  manifest.training_result_semantic_manifest_path == profile.training_result_semantic_manifest_path
+    && manifest.holdout_frame_index == profile.holdout_frame_index
+    && manifest
+      .basis_checkpoint_path
+      .as_deref()
+      .is_some_and(|path| path.ends_with(&profile.basis_checkpoint_suffix))
+}
+
+fn holdout_render_quality_matches_profile(
+  manifest: &MinecraftHoldoutRenderQualityManifestSummary,
+  profile: &QualityBaselineProfile,
+) -> bool {
+  manifest.training_result_semantic_manifest_path == profile.training_result_semantic_manifest_path
+    && manifest.holdout_frame_index == profile.holdout_frame_index
+    && manifest
+      .basis_checkpoint_path
+      .as_deref()
+      .is_some_and(|path| path.ends_with(&profile.basis_checkpoint_suffix))
+}
+
+fn spatial_query_evidence_from_summary(
+  summary: &MinecraftTrainingResultSpatialQueryManifestSummary,
+) -> QualityBaselineSpatialQueryEvidence {
+  QualityBaselineSpatialQueryEvidence {
+    status: summary.status.clone(),
+    visibility: summary.visibility.clone(),
+    screen_point: summary.screen_point.clone(),
+    selected_backend: summary.selected_backend.clone(),
+    comparison_verdict: summary.comparison_verdict.clone(),
+    basis_frame_id: summary.basis_frame_id.clone(),
+    target_block: summary.target_block.clone(),
+    target_face: summary.target_face.clone(),
+    target_semantics: summary.target_semantics.clone(),
+  }
+}
+
+fn holdout_witness_evidence_from_summary(
+  summary: &MinecraftTrainingResultHoldoutPreviewManifestSummary,
+) -> QualityBaselineHoldoutWitnessEvidence {
+  QualityBaselineHoldoutWitnessEvidence {
+    status: summary.status.clone(),
+    holdout_frame_index: summary.holdout_frame_index,
+    basis_checkpoint_path: summary.basis_checkpoint_path.clone(),
+    holdout_screenshot_path: summary.holdout_screenshot_path.clone(),
+    spatial_frame_id: summary
+      .holdout_frame
+      .as_ref()
+      .map(|frame| frame.spatial_frame_id.clone()),
+  }
+}
+
+fn render_quality_evidence_from_summary(
+  summary: &MinecraftHoldoutRenderQualityManifestSummary,
+) -> QualityBaselineRenderQualityEvidence {
+  let (l1_mean, mse, psnr) = summary
+    .metrics
+    .as_ref()
+    .map(|metrics| (metrics.l1_mean, metrics.mse, metrics.psnr))
+    .unwrap_or((None, None, None));
+  QualityBaselineRenderQualityEvidence {
+    status: summary.status.clone(),
+    verdict: summary.verdict.clone(),
+    image_size_match: summary.image_size_match,
+    l1_mean,
+    mse,
+    psnr,
+    known_limits: summary.known_limits.clone(),
+  }
+}
+
+fn build_quality_baseline_trust_notes(
+  render_quality: Option<&QualityBaselineRenderQualityEvidence>,
+) -> Vec<String> {
+  let mut notes = vec![
+    "MC-12 projection_reference answers are scene-packet reference geometry only; they are not Gaussian-native inference".to_string(),
+    "MC-17 screenshot-copy render probe measures pipeline comparability only; it is not trained-splat usefulness evidence".to_string(),
+  ];
+  if let Some(render) = render_quality {
+    for limit in &render.known_limits {
+      if !notes.iter().any(|note| note == limit) {
+        notes.push(limit.clone());
+      }
+    }
+  }
+  notes
+}
+
+pub fn derive_minecraft_training_result_quality_baseline_report(
+  profile: &QualityBaselineProfile,
+  spatial_query: Option<&MinecraftTrainingResultSpatialQueryManifestSummary>,
+  holdout_preview: Option<&MinecraftTrainingResultHoldoutPreviewManifestSummary>,
+  render_quality: Option<&MinecraftHoldoutRenderQualityManifestSummary>,
+  collection_issues: &[String],
+) -> MinecraftTrainingResultQualityBaselineReportSummary {
+  let mut issues = collection_issues.to_vec();
+  let spatial_query_evidence = spatial_query.map(spatial_query_evidence_from_summary);
+  let holdout_witness_evidence = holdout_preview.map(holdout_witness_evidence_from_summary);
+  let render_quality_evidence = render_quality.map(render_quality_evidence_from_summary);
+
+  if let Some(manifest) = spatial_query {
+    if !spatial_query_matches_profile(manifest, profile) {
+      issues.push("spatial query manifest does not match baseline profile pins".to_string());
+    }
+  }
+  if let Some(manifest) = holdout_preview {
+    if !holdout_preview_matches_profile(manifest, profile) {
+      issues.push("holdout preview manifest does not match baseline profile pins".to_string());
+    }
+  }
+  if let Some(manifest) = render_quality {
+    if !holdout_render_quality_matches_profile(manifest, profile) {
+      issues
+        .push("holdout render quality manifest does not match baseline profile pins".to_string());
+    }
+  }
+
+  let stage_count = [
+    spatial_query_evidence.is_some(),
+    holdout_witness_evidence.is_some(),
+    render_quality_evidence.is_some(),
+  ]
+  .into_iter()
+  .filter(|present| *present)
+  .count();
+
+  let evidence_coverage = if stage_count == 0 {
+    "missing_stage".to_string()
+  } else if stage_count == 3 && issues.is_empty() {
+    "complete".to_string()
+  } else {
+    "partial".to_string()
+  };
+
+  let trust_notes = build_quality_baseline_trust_notes(render_quality_evidence.as_ref());
+  let issue = if issues.is_empty() {
+    None
+  } else {
+    Some(issues.join(" | "))
+  };
+
+  MinecraftTrainingResultQualityBaselineReportSummary {
+    profile_id: profile.profile_id.clone(),
+    training_result_semantic_manifest_path: profile.training_result_semantic_manifest_path.clone(),
+    evidence_coverage,
+    spatial_query: spatial_query_evidence,
+    holdout_witness: holdout_witness_evidence,
+    render_quality: render_quality_evidence,
+    trust_notes,
+    issue,
+  }
+}
+
+fn read_holdout_preview_summary_from_path(
+  path: &str,
+) -> Result<MinecraftTrainingResultHoldoutPreviewManifestSummary, String> {
+  let bytes = fs::read_to_string(path)
+    .map_err(|error| format!("read holdout preview manifest at {path}: {error}"))?;
+  let manifest: TrainingResultHoldoutPreviewManifest = serde_json::from_str(&bytes)
+    .map_err(|error| format!("parse holdout preview manifest at {path}: {error}"))?;
+  Ok(MinecraftTrainingResultHoldoutPreviewManifestSummary::from(
+    manifest,
+  ))
+}
+
+fn select_matching_spatial_query_manifest(
+  manifests: &[MinecraftTrainingResultSpatialQueryManifestLineage],
+  profile: &QualityBaselineProfile,
+) -> Option<MinecraftTrainingResultSpatialQueryManifestSummary> {
+  manifests
+    .iter()
+    .filter_map(|lineage| lineage.manifest.as_ref())
+    .find(|manifest| spatial_query_matches_profile(manifest, profile))
+    .cloned()
+}
+
+fn select_matching_holdout_preview_manifest(
+  manifests: &[MinecraftTrainingResultHoldoutPreviewManifestLineage],
+  profile: &QualityBaselineProfile,
+) -> Option<MinecraftTrainingResultHoldoutPreviewManifestSummary> {
+  manifests
+    .iter()
+    .filter_map(|lineage| lineage.manifest.as_ref())
+    .find(|manifest| holdout_preview_matches_profile(manifest, profile))
+    .cloned()
+}
+
+fn select_matching_holdout_render_quality_manifest(
+  manifests: &[MinecraftHoldoutRenderQualityManifestLineage],
+  profile: &QualityBaselineProfile,
+) -> Option<MinecraftHoldoutRenderQualityManifestSummary> {
+  manifests
+    .iter()
+    .filter_map(|lineage| lineage.manifest.as_ref())
+    .find(|manifest| holdout_render_quality_matches_profile(manifest, profile))
+    .cloned()
+    .or_else(|| {
+      manifests
+        .iter()
+        .filter_map(|lineage| lineage.manifest.as_ref())
+        .find(|manifest| {
+          manifest.training_result_semantic_manifest_path
+            == profile.training_result_semantic_manifest_path
+        })
+        .cloned()
+    })
+}
+
+fn find_spatial_query_manifest_in_run(
+  store: &LocalStore,
+  run_id: &str,
+  profile: &QualityBaselineProfile,
+) -> Option<MinecraftTrainingResultSpatialQueryManifestSummary> {
+  let manifests = list_minecraft_training_result_spatial_query_manifests(store, run_id).ok()?;
+  select_matching_spatial_query_manifest(&manifests, profile)
+}
+
+fn find_holdout_preview_manifest_in_run(
+  store: &LocalStore,
+  run_id: &str,
+  profile: &QualityBaselineProfile,
+) -> Option<MinecraftTrainingResultHoldoutPreviewManifestSummary> {
+  let manifests = list_minecraft_training_result_holdout_preview_manifests(store, run_id).ok()?;
+  select_matching_holdout_preview_manifest(&manifests, profile)
+}
+
+fn find_spatial_query_manifest_in_store(
+  store: &LocalStore,
+  profile: &QualityBaselineProfile,
+) -> Option<MinecraftTrainingResultSpatialQueryManifestSummary> {
+  if let Some(run_id) = profile
+    .recorded_run_ids
+    .as_ref()
+    .and_then(|ids| ids.mc12.as_deref())
+  {
+    if let Some(manifest) = find_spatial_query_manifest_in_run(store, run_id, profile) {
+      return Some(manifest);
+    }
+  }
+  let runs = store.list_runs().ok()?;
+  for run in runs.iter().rev() {
+    if let Some(manifest) = find_spatial_query_manifest_in_run(store, run.run_id.as_str(), profile)
+    {
+      return Some(manifest);
+    }
+  }
+  None
+}
+
+fn find_holdout_preview_manifest_in_store(
+  store: &LocalStore,
+  profile: &QualityBaselineProfile,
+) -> Option<MinecraftTrainingResultHoldoutPreviewManifestSummary> {
+  if let Some(run_id) = profile
+    .recorded_run_ids
+    .as_ref()
+    .and_then(|ids| ids.mc16.as_deref())
+  {
+    if let Some(manifest) = find_holdout_preview_manifest_in_run(store, run_id, profile) {
+      return Some(manifest);
+    }
+  }
+  let runs = store.list_runs().ok()?;
+  for run in runs.iter().rev() {
+    if let Some(manifest) =
+      find_holdout_preview_manifest_in_run(store, run.run_id.as_str(), profile)
+    {
+      return Some(manifest);
+    }
+  }
+  None
+}
+
+pub fn collect_quality_baseline_evidence_for_run(
+  store: &LocalStore,
+  run_id: &str,
+  profile: &QualityBaselineProfile,
+) -> AuvResult<QualityBaselineEvidenceBundle> {
+  let spatial_query_manifests =
+    list_minecraft_training_result_spatial_query_manifests(store, run_id)?;
+  let holdout_preview_manifests =
+    list_minecraft_training_result_holdout_preview_manifests(store, run_id)?;
+  let render_quality_manifests = list_minecraft_holdout_render_quality_manifests(store, run_id)?;
+
+  let render_quality =
+    select_matching_holdout_render_quality_manifest(&render_quality_manifests, profile);
+
+  let mut collection_issues = Vec::new();
+
+  let mut holdout_preview =
+    select_matching_holdout_preview_manifest(&holdout_preview_manifests, profile);
+  if holdout_preview.is_none() {
+    holdout_preview = find_holdout_preview_manifest_in_store(store, profile);
+  }
+  if holdout_preview.is_none() {
+    if let Some(render) = &render_quality {
+      match read_holdout_preview_summary_from_path(render.holdout_preview_manifest_path.as_str()) {
+        Ok(summary) => holdout_preview = Some(summary),
+        Err(error) => collection_issues.push(error),
+      }
+    }
+  }
+
+  let mut spatial_query = select_matching_spatial_query_manifest(&spatial_query_manifests, profile);
+  if spatial_query.is_none() {
+    spatial_query = find_spatial_query_manifest_in_store(store, profile);
+  }
+
+  Ok(QualityBaselineEvidenceBundle {
+    spatial_query,
+    holdout_preview,
+    render_quality,
+    collection_issues,
+  })
+}
+
 fn spatial_query_manifest_summary_for_action_readiness(
   summary: &MinecraftTrainingResultSpatialQueryManifestSummary,
 ) -> Result<TrainingResultSpatialQueryManifest, String> {
@@ -4261,8 +4686,14 @@ mod tests {
     CandidateActionDecisionLineageStatus, CandidateActionExecutionClosureState,
     CandidateActionExecutionLineageStatus, CandidatePromotionLineageStatus,
     DETECTOR_RECOGNITION_ARTIFACT_ROLE, DetectorRecognitionLineageStatus,
-    MinecraftSpatialBundleManifestSummary, MinecraftTrainingResultSpatialQueryManifestLineage,
+    MinecraftHoldoutRenderQualityManifestSummary, MinecraftHoldoutRenderQualityMetricsSummary,
+    MinecraftSpatialBundleManifestSummary,
+    MinecraftTrainingResultHoldoutPreviewFrameWitnessSummary,
+    MinecraftTrainingResultHoldoutPreviewManifestSummary,
+    MinecraftTrainingResultSpatialQueryManifestLineage,
+    MinecraftTrainingResultSpatialQueryManifestSummary,
     derive_minecraft_query_wired_live_action_summary,
+    derive_minecraft_training_result_quality_baseline_report,
     derive_minecraft_training_result_spatial_query_action_readiness,
     extract_candidate_action_decision_lineage, extract_candidate_action_execution_lineage,
     extract_candidate_promotion_lineage, extract_detector_recognition_lineage,
@@ -4294,7 +4725,7 @@ mod tests {
     list_minecraft_training_result_semantic_manifests,
     list_minecraft_training_result_spatial_query_inspect_reports,
     list_minecraft_training_result_spatial_query_manifests, list_observation_snapshots,
-    list_verifications,
+    list_verifications, quality_baseline_profile_v1,
   };
   use crate::action_resolver_decision::{ActionResolverDecision, ActionResolverDecisionInput};
   use crate::candidate_action_decision::{
@@ -8701,5 +9132,190 @@ mod tests {
     );
 
     let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn quality_baseline_profile_v1_fixture_loads() {
+    let profile = quality_baseline_profile_v1().expect("profile v1 fixture should parse");
+    assert_eq!(profile.profile_id, "mc17-d2-primary-v1");
+    assert_eq!(profile.query_target_block, "511,73,728");
+    assert_eq!(profile.holdout_frame_index, 6);
+  }
+
+  #[test]
+  fn quality_baseline_derive_complete_when_all_stages_match_profile() {
+    let profile = quality_baseline_profile_v1().expect("profile");
+    let semantic = profile.training_result_semantic_manifest_path.clone();
+    let spatial = MinecraftTrainingResultSpatialQueryManifestSummary {
+      schema_version: 1,
+      training_result_semantic_manifest_path: semantic.clone(),
+      source_training_result_artifact_manifest_path: "/tmp/artifact.json".to_string(),
+      source_training_result_manifest_path: "/tmp/result.json".to_string(),
+      source_training_job_manifest_path: "/tmp/job.json".to_string(),
+      source_training_launch_plan_path: "/tmp/launch.json".to_string(),
+      source_training_package_manifest_path: "/tmp/package.json".to_string(),
+      source_scene_packet_manifest_path: "/tmp/scene.json".to_string(),
+      source_bundle_manifest_paths: vec![],
+      source_run_ids: vec![],
+      trainer_backend: "nerfstudio.splatfacto".to_string(),
+      job_backend: "remote".to_string(),
+      normalized_result_dir: "/tmp/normalized".to_string(),
+      query_kind: "block_projection".to_string(),
+      target_block: profile.query_target_block.clone(),
+      target_face: profile.query_target_face.clone(),
+      target_semantics: profile.query_target_semantics.clone(),
+      selected_backend: Some("projection_reference".to_string()),
+      status: "answered".to_string(),
+      reason: None,
+      visibility: Some("visible".to_string()),
+      screen_point: Some("854.0,480.0".to_string()),
+      match_radius_px: Some(8.0),
+      confidence: Some(0.9),
+      basis_frame_id: Some("frame-355416".to_string()),
+      comparison_verdict: Some("reference_only".to_string()),
+      known_limits: vec![],
+    };
+    let holdout = MinecraftTrainingResultHoldoutPreviewManifestSummary {
+      schema_version: 1,
+      training_result_semantic_manifest_path: semantic.clone(),
+      source_training_result_artifact_manifest_path: "/tmp/artifact.json".to_string(),
+      source_training_result_manifest_path: "/tmp/result.json".to_string(),
+      source_training_job_manifest_path: "/tmp/job.json".to_string(),
+      source_training_launch_plan_path: "/tmp/launch.json".to_string(),
+      source_training_package_manifest_path: "/tmp/package.json".to_string(),
+      source_scene_packet_manifest_path: "/tmp/scene.json".to_string(),
+      source_bundle_manifest_paths: vec![],
+      source_run_ids: vec![],
+      trainer_backend: "nerfstudio.splatfacto".to_string(),
+      job_backend: "remote".to_string(),
+      normalized_result_dir: "/tmp/normalized".to_string(),
+      holdout_frame_index: profile.holdout_frame_index,
+      holdout_frame: Some(MinecraftTrainingResultHoldoutPreviewFrameWitnessSummary {
+        frame_index: 6,
+        spatial_frame_id: "frame-355416".to_string(),
+        screenshot_path: "/tmp/frame_000006.png".to_string(),
+        frame_json_path: "/tmp/frame_000006.json".to_string(),
+      }),
+      basis_checkpoint_path: Some(format!(
+        "/tmp/normalized/nerfstudio_models/{}",
+        profile.basis_checkpoint_suffix
+      )),
+      holdout_screenshot_path: Some("/tmp/frame_000006.png".to_string()),
+      reference_overlay_path: None,
+      status: "ready".to_string(),
+      reason: None,
+      known_limits: vec![],
+    };
+    let render = MinecraftHoldoutRenderQualityManifestSummary {
+      schema_version: 1,
+      training_result_semantic_manifest_path: semantic,
+      holdout_preview_manifest_path: "/tmp/holdout-preview.json".to_string(),
+      source_training_result_artifact_manifest_path: "/tmp/artifact.json".to_string(),
+      source_training_result_manifest_path: "/tmp/result.json".to_string(),
+      source_training_job_manifest_path: "/tmp/job.json".to_string(),
+      source_scene_packet_manifest_path: "/tmp/scene.json".to_string(),
+      source_run_ids: vec![],
+      holdout_frame_index: profile.holdout_frame_index,
+      basis_checkpoint_path: holdout.basis_checkpoint_path.clone(),
+      rendered_image_path: Some("/tmp/rendered.png".to_string()),
+      image_size_match: true,
+      metrics: Some(MinecraftHoldoutRenderQualityMetricsSummary {
+        l1_mean: Some(0.0),
+        mse: Some(0.0),
+        psnr: None,
+      }),
+      status: "ready".to_string(),
+      reason: None,
+      verdict: "measured_only".to_string(),
+      known_limits: vec!["metrics evidence only".to_string()],
+    };
+
+    let report = derive_minecraft_training_result_quality_baseline_report(
+      &profile,
+      Some(&spatial),
+      Some(&holdout),
+      Some(&render),
+      &[],
+    );
+    assert_eq!(report.evidence_coverage, "complete");
+    assert!(report.issue.is_none());
+    assert!(report.spatial_query.is_some());
+    assert!(report.holdout_witness.is_some());
+    assert!(report.render_quality.is_some());
+    assert!(
+      report
+        .trust_notes
+        .iter()
+        .any(|note| note.contains("projection_reference"))
+    );
+  }
+
+  #[test]
+  fn quality_baseline_derive_partial_when_stage_missing() {
+    let profile = quality_baseline_profile_v1().expect("profile");
+    let report =
+      derive_minecraft_training_result_quality_baseline_report(&profile, None, None, None, &[]);
+    assert_eq!(report.evidence_coverage, "missing_stage");
+  }
+
+  #[test]
+  fn quality_baseline_derive_partial_on_profile_mismatch() {
+    let profile = quality_baseline_profile_v1().expect("profile");
+    let spatial = MinecraftTrainingResultSpatialQueryManifestSummary {
+      schema_version: 1,
+      training_result_semantic_manifest_path: "/tmp/other-semantic.json".to_string(),
+      source_training_result_artifact_manifest_path: "/tmp/artifact.json".to_string(),
+      source_training_result_manifest_path: "/tmp/result.json".to_string(),
+      source_training_job_manifest_path: "/tmp/job.json".to_string(),
+      source_training_launch_plan_path: "/tmp/launch.json".to_string(),
+      source_training_package_manifest_path: "/tmp/package.json".to_string(),
+      source_scene_packet_manifest_path: "/tmp/scene.json".to_string(),
+      source_bundle_manifest_paths: vec![],
+      source_run_ids: vec![],
+      trainer_backend: "nerfstudio.splatfacto".to_string(),
+      job_backend: "remote".to_string(),
+      normalized_result_dir: "/tmp/normalized".to_string(),
+      query_kind: "block_projection".to_string(),
+      target_block: "9,9,9".to_string(),
+      target_face: None,
+      target_semantics: "hit_face_center".to_string(),
+      selected_backend: None,
+      status: "failed".to_string(),
+      reason: Some("target_block_absent_from_scene_packet".to_string()),
+      visibility: None,
+      screen_point: None,
+      match_radius_px: None,
+      confidence: None,
+      basis_frame_id: None,
+      comparison_verdict: None,
+      known_limits: vec![],
+    };
+    let report = derive_minecraft_training_result_quality_baseline_report(
+      &profile,
+      Some(&spatial),
+      None,
+      None,
+      &[],
+    );
+    assert_eq!(report.evidence_coverage, "partial");
+    assert!(report.issue.is_some());
+  }
+  #[test]
+  fn quality_baseline_derive_surfaces_collection_issues() {
+    let profile = quality_baseline_profile_v1().expect("profile");
+    let report = derive_minecraft_training_result_quality_baseline_report(
+      &profile,
+      None,
+      None,
+      None,
+      &["read holdout preview manifest at /missing/path: no such file".to_string()],
+    );
+    assert_eq!(report.evidence_coverage, "missing_stage");
+    assert!(
+      report
+        .issue
+        .as_ref()
+        .is_some_and(|issue| issue.contains("read holdout preview manifest"))
+    );
   }
 }

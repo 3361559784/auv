@@ -46,6 +46,18 @@ benchmarks/longmemeval/results/
 .worktrees
 .worktrees/
 
+# Cursor / ECC
+# Keep the repo-local ECC hook runtime tracked, but drop install state,
+# vendored dependency directories, generic rule packs, generic skills,
+# and auto-added MCP configs that are not AUV-specific.
+.cursor/ecc-install-state.json
+.cursor/node_modules/
+.cursor/mcp.json
+.cursor/mcp-configs/
+.cursor/skills/
+.cursor/rules/*.mdc
+!.cursor/rules/rust-rustrover-cargo.mdc
+
 # Logs
 logs
 *.log
@@ -55,6 +67,7 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# Node.js dependencies
 node_modules
 dist
 dist-ssr

@@ -5,11 +5,18 @@
  * Controls:
  * - ECC_HOOK_PROFILE=minimal|standard|strict (default: standard)
  * - ECC_DISABLED_HOOKS=comma,separated,hook,ids
+ * - Project marker: `.cursor/hooks/disable-gateguard.js` (see gateguard-project-disable.js)
  */
 
 'use strict';
 
+const { isProjectGateGuardDisabled } = require('./gateguard-project-disable');
+
 const VALID_PROFILES = new Set(['minimal', 'standard', 'strict']);
+const GATEGUARD_HOOK_IDS = new Set([
+  'pre:edit-write:gateguard-fact-force',
+  'pre:bash:gateguard-fact-force',
+]);
 
 function normalizeId(value) {
   return String(value || '').trim().toLowerCase();
@@ -60,6 +67,10 @@ function isHookEnabled(hookId, options = {}) {
 
   const disabled = getDisabledHookIds();
   if (disabled.has(id)) {
+    return false;
+  }
+
+  if (GATEGUARD_HOOK_IDS.has(id) && isProjectGateGuardDisabled()) {
     return false;
   }
 

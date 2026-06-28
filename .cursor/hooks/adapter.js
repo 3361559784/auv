@@ -7,6 +7,7 @@
 
 const { execFileSync } = require('child_process');
 const path = require('path');
+const { isProjectGateGuardDisabled } = require('../scripts/lib/gateguard-project-disable');
 
 const MAX_STDIN = 1024 * 1024;
 
@@ -72,6 +73,14 @@ function hookEnabled(hookId, allowedProfiles = ['standard', 'strict']) {
   );
 
   if (disabled.has(String(hookId || '').toLowerCase())) {
+    return false;
+  }
+
+  const gateIds = new Set([
+    'pre:edit-write:gateguard-fact-force',
+    'pre:bash:gateguard-fact-force',
+  ]);
+  if (gateIds.has(String(hookId || '').toLowerCase()) && isProjectGateGuardDisabled()) {
     return false;
   }
 

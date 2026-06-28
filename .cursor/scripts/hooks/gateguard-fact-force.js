@@ -26,6 +26,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { extractCommandSubstitutions, extractSubshellGroups, extractBraceGroups } = require('../lib/shell-substitution');
+const { isProjectGateGuardDisabled } = require('../lib/gateguard-project-disable');
 
 // Session state — scoped per session to avoid cross-session races.
 const STATE_DIR = process.env.GATEGUARD_STATE_DIR || path.join(process.env.HOME || process.env.USERPROFILE || '/tmp', '.gateguard');
@@ -682,7 +683,11 @@ function normalizeEnvValue(value) {
     .toLowerCase();
 }
 
-function isGateGuardDisabled() {
+function isGateGuardDisabled(extraStarts = []) {
+  if (isProjectGateGuardDisabled(extraStarts)) {
+    return true;
+  }
+
   if (normalizeEnvValue(process.env.GATEGUARD_DISABLED) === '1') {
     return true;
   }
@@ -1171,6 +1176,9 @@ function run(rawInput) {
 
   const rawToolName = data.tool_name || '';
   const toolInput = data.tool_input || {};
+  if (isGateGuardDisabled([toolInput.file_path || toolInput.path || ''].filter(Boolean))) {
+    return rawInput;
+  }
   // Normalize: case-insensitive matching via lookup map
   const TOOL_MAP = { edit: 'Edit', write: 'Write', multiedit: 'MultiEdit', bash: 'Bash' };
   const toolName = TOOL_MAP[rawToolName.toLowerCase()] || rawToolName;

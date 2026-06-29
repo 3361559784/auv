@@ -86,6 +86,43 @@ check('after-file-edit reaches post-edit accumulator', () => {
   fs.unlinkSync(tmpFile);
 });
 
+
+check('after-file-edit accumulates .rs paths', () => {
+  const tmpFile = path.join(os.tmpdir(), `ecc-smoke-rust-${process.pid}.rs`);
+  fs.writeFileSync(tmpFile, 'fn x() {}\n');
+  const result = runHook('after-file-edit.js', {
+    hook_event_name: 'afterFileEdit',
+    path: tmpFile,
+    workspace_roots: [repoRoot],
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const accum = path.join(
+    os.tmpdir(),
+    `ecc-edited-${require('crypto').createHash('sha1').update(repoRoot).digest('hex').slice(0, 12)}.txt`
+  );
+  const raw = fs.existsSync(accum) ? fs.readFileSync(accum, 'utf8') : '';
+  assert.ok(raw.includes(tmpFile), `accumulator missing rust path: ${accum}`);
+  fs.unlinkSync(tmpFile);
+});
+
+check('stop-format-rust runs cargo fmt on accumulated .rs files', () => {
+  const smokeDir = path.join(repoRoot, 'target', 'ecc-hook-smoke');
+  fs.mkdirSync(smokeDir, { recursive: true });
+  const tmpFile = path.join(smokeDir, `fmt-${process.pid}.rs`);
+  fs.writeFileSync(tmpFile, 'fn   badly_formatted( )->bool{true}\n');
+  const accum = path.join(
+    os.tmpdir(),
+    `ecc-edited-${require('crypto').createHash('sha1').update(repoRoot).digest('hex').slice(0, 12)}.txt`
+  );
+  fs.writeFileSync(accum, `${tmpFile}\n`, 'utf8');
+  const stopFormatRust = require(path.join(repoRoot, '.cursor', 'scripts', 'hooks', 'stop-format-rust.js'));
+  stopFormatRust.run('{}');
+  const formatted = fs.readFileSync(tmpFile, 'utf8');
+  assert.ok(!/fn\s{2,}/.test(formatted), `expected rustfmt to normalize spacing: ${formatted}`);
+  assert.ok(!fs.existsSync(accum), 'rust stop should clear accum when only rust paths were present');
+  fs.unlinkSync(tmpFile);
+});
+
 check('stop hook runs without throwing', () => {
   const result = runHook('stop.js', {
     hook_event_name: 'stop',
@@ -95,6 +132,51 @@ check('stop hook runs without throwing', () => {
     last_assistant_message: 'smoke',
   });
   assert.equal(result.status, 0, result.stderr);
+});
+
+
+check('read-cursor-md resolves explicit CURSOR_MD_PATH', () => {
+  const { readCursorMd, formatInjectedContext } = require(path.join(repoRoot, '.cursor', 'scripts', 'lib', 'read-cursor-md'));
+  const tmpCursorMd = path.join(os.tmpdir(), `ecc-smoke-cursor-md-${process.pid}.md`);
+  fs.writeFileSync(tmpCursorMd, '# smoke\nWork on AUV core.\n');
+  const previous = process.env.CURSOR_MD_PATH;
+  process.env.CURSOR_MD_PATH = tmpCursorMd;
+  try {
+    const { path: cursorPath, content } = readCursorMd({ extraStarts: [repoRoot] });
+    assert.equal(cursorPath, tmpCursorMd);
+    assert.ok(content.includes('AUV core'), content.slice(0, 120));
+    const injected = formatInjectedContext(content, cursorPath);
+    assert.ok(injected.includes('[cursor.md'));
+  } finally {
+    if (previous === undefined) delete process.env.CURSOR_MD_PATH;
+    else process.env.CURSOR_MD_PATH = previous;
+    fs.unlinkSync(tmpCursorMd);
+  }
+});
+
+check('inject-cursor-md hook emits additional_context JSON', () => {
+  const tmpCursorMd = path.join(os.tmpdir(), `ecc-smoke-inject-${process.pid}.md`);
+  fs.writeFileSync(tmpCursorMd, '# smoke\nWork on AUV core.\n');
+  const result = spawnSync('node', [path.join(repoRoot, '.cursor', 'hooks', 'inject-cursor-md.js')], {
+    input: JSON.stringify({
+      hook_event_name: 'beforeSubmitPrompt',
+      prompt: 'smoke test',
+      workspace_roots: [repoRoot],
+    }),
+    encoding: 'utf8',
+    cwd: repoRoot,
+    env: {
+      ...process.env,
+      ECC_HOOK_PROFILE: 'standard',
+      CURSOR_PROJECT_DIR: repoRoot,
+      CURSOR_MD_PATH: tmpCursorMd,
+    },
+  });
+  fs.unlinkSync(tmpCursorMd);
+  assert.equal(result.status, 0, result.stderr);
+  const payload = JSON.parse(result.stdout.trim());
+  assert.equal(payload.continue, true);
+  assert.ok(String(payload.additional_context).includes('AUV core'));
 });
 
 console.log(`cursor-ecc-smoke: ${passed} passed, ${failed} failed`);

@@ -90,3 +90,6 @@ scan-page-*-observe.json
 sidecar/minecraft-telemetry/.gradle/
 sidecar/minecraft-telemetry/build/
 sidecar/minecraft-telemetry/run/
+
+# Local Cursor instructions (hook injects when present)
+cursor.md

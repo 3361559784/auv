@@ -135,29 +135,21 @@ check('stop hook runs without throwing', () => {
 });
 
 
-check('read-cursor-md resolves explicit CURSOR_MD_PATH', () => {
-  const { readCursorMd, formatInjectedContext } = require(path.join(repoRoot, '.cursor', 'scripts', 'lib', 'read-cursor-md'));
-  const tmpCursorMd = path.join(os.tmpdir(), `ecc-smoke-cursor-md-${process.pid}.md`);
-  fs.writeFileSync(tmpCursorMd, '# smoke\nWork on AUV core.\n');
-  const previous = process.env.CURSOR_MD_PATH;
-  process.env.CURSOR_MD_PATH = tmpCursorMd;
-  try {
-    const { path: cursorPath, content } = readCursorMd({ extraStarts: [repoRoot] });
-    assert.equal(cursorPath, tmpCursorMd);
-    assert.ok(content.includes('AUV core'), content.slice(0, 120));
-    const injected = formatInjectedContext(content, cursorPath);
-    assert.ok(injected.includes('[cursor.md'));
-  } finally {
-    if (previous === undefined) delete process.env.CURSOR_MD_PATH;
-    else process.env.CURSOR_MD_PATH = previous;
-    fs.unlinkSync(tmpCursorMd);
-  }
+check('buildProjectContext includes AGENTS.md and excludes codex.md', () => {
+  const { buildProjectContext } = require(path.join(repoRoot, '.cursor', 'scripts', 'lib', 'read-project-context'));
+  const context = buildProjectContext({ extraStarts: [repoRoot] });
+  assert.ok(context.includes('[AGENTS.md'), context.slice(0, 200));
+  assert.ok(context.includes('AUV Agent Guide') || context.includes('Project Mission'), context.slice(0, 200));
+  assert.ok(!context.includes('[codex.md'), context);
+  assert.ok(!context.includes('Codex — AUV review'), context);
 });
 
-check('inject-cursor-md hook emits additional_context JSON', () => {
-  const tmpCursorMd = path.join(os.tmpdir(), `ecc-smoke-inject-${process.pid}.md`);
-  fs.writeFileSync(tmpCursorMd, '# smoke\nWork on AUV core.\n');
-  const result = spawnSync('node', [path.join(repoRoot, '.cursor', 'hooks', 'inject-cursor-md.js')], {
+check('inject-project-context emits docs on beforeSubmitPrompt', () => {
+  const tmpContributing = path.join(os.tmpdir(), `ecc-smoke-contrib-${process.pid}.md`);
+  const tmpCursor = path.join(os.tmpdir(), `ecc-smoke-cursor-${process.pid}.md`);
+  fs.writeFileSync(tmpContributing, '# veto\nSlice classification required.\n');
+  fs.writeFileSync(tmpCursor, '# cursor\nWork on AUV core.\n');
+  const result = spawnSync('node', [path.join(repoRoot, '.cursor', 'hooks', 'inject-project-context.js')], {
     input: JSON.stringify({
       hook_event_name: 'beforeSubmitPrompt',
       prompt: 'smoke test',
@@ -169,14 +161,40 @@ check('inject-cursor-md hook emits additional_context JSON', () => {
       ...process.env,
       ECC_HOOK_PROFILE: 'standard',
       CURSOR_PROJECT_DIR: repoRoot,
-      CURSOR_MD_PATH: tmpCursorMd,
+      CONTRIBUTING_LOCAL_PATH: tmpContributing,
+      CURSOR_MD_PATH: tmpCursor,
     },
   });
-  fs.unlinkSync(tmpCursorMd);
+  fs.unlinkSync(tmpContributing);
+  fs.unlinkSync(tmpCursor);
   assert.equal(result.status, 0, result.stderr);
   const payload = JSON.parse(result.stdout.trim());
   assert.equal(payload.continue, true);
-  assert.ok(String(payload.additional_context).includes('AUV core'));
+  const ctx = String(payload.additional_context);
+  assert.ok(ctx.includes('Slice classification'), ctx.slice(0, 240));
+  assert.ok(ctx.includes('AUV core'), ctx.slice(0, 240));
+  assert.ok(ctx.includes('AGENTS.md'), ctx.slice(0, 240));
+});
+
+check('pre-compact hook re-injects project context', () => {
+  const result = spawnSync('node', [path.join(repoRoot, '.cursor', 'hooks', 'pre-compact.js')], {
+    input: JSON.stringify({
+      hook_event_name: 'preCompact',
+      trigger: 'auto',
+      workspace_roots: [repoRoot],
+    }),
+    encoding: 'utf8',
+    cwd: repoRoot,
+    env: {
+      ...process.env,
+      ECC_HOOK_PROFILE: 'standard',
+      CURSOR_PROJECT_DIR: repoRoot,
+    },
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const payload = JSON.parse(result.stdout.trim());
+  assert.ok(String(payload.additional_context).includes('[AGENTS.md'), payload.additional_context?.slice(0, 200));
+  assert.ok(String(payload.user_message).includes('compacted'), payload.user_message);
 });
 
 console.log(`cursor-ecc-smoke: ${passed} passed, ${failed} failed`);

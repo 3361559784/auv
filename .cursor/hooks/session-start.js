@@ -10,7 +10,7 @@ const {
   AGENT_DATA_HOME_ENV,
   getCursorSessionEnvPayload,
 } = require('../scripts/lib/agent-data-home');
-const { readCursorMd, formatInjectedContext } = require('../scripts/lib/read-cursor-md');
+const { buildProjectContext, workspaceRootsFromInput } = require('../scripts/lib/read-project-context');
 
 readStdin()
   .then(raw => {
@@ -33,15 +33,13 @@ readStdin()
       runExistingHook('session-start.js', claudeInput);
     }
 
-    const workspaceRoots = input.workspace_roots || input.workspaceRoots || [];
-    const { path: cursorPath, content: cursorContent } = readCursorMd({
-      extraStarts: Array.isArray(workspaceRoots) ? workspaceRoots : [workspaceRoots],
+    const projectContext = buildProjectContext({
+      extraStarts: workspaceRootsFromInput(input),
     });
-    const cursorContext = formatInjectedContext(cursorContent, cursorPath);
     const payload = {
       env: envPayload,
       additional_context: [
-        cursorContext,
+        projectContext,
         'ECC Cursor runtime initialized for this session.',
         `CLAUDE_PLUGIN_ROOT=${pluginRoot}`,
         `${AGENT_DATA_HOME_ENV}=${envPayload[AGENT_DATA_HOME_ENV]}`,

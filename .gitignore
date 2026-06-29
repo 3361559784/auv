@@ -93,3 +93,9 @@ sidecar/minecraft-telemetry/run/
 
 # Local Cursor instructions (hook injects when present)
 cursor.md
+
+# Local implementation veto checklist (hook-injected when present)
+CONTRIBUTING.local.md
+
+# Local Codex review brain (never hook-injected)
+codex.md

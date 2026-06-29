@@ -69,9 +69,9 @@
         "description": "Detect secrets in prompts (sk-, ghp_, AKIA patterns)"
       },
       {
-        "command": "node .cursor/hooks/inject-cursor-md.js",
+        "command": "node .cursor/hooks/inject-project-context.js",
         "event": "beforeSubmitPrompt",
-        "description": "Inject cursor.md context on every user prompt submission"
+        "description": "Inject CONTRIBUTING.local.md, cursor.md, and AGENTS.md on every prompt (never codex.md)"
       }
     ],
     "subagentStart": [

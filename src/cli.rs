@@ -334,34 +334,16 @@ USAGE
   auv permissions check [--json]
   auv app probe <bundle-id> [--output-dir <dir>]
   auv app analyze <probe-dir-or-probe-json>
-  auv osu benchmark <beatmap.osu> [--output-dir <dir>]
-  auv osu dispatch <beatmap.osu> --target-app <name> [--output-dir <dir>] [--dispatch-limit <n>] [--capture-verify]
-  auv osu export-dataset <run-artifact-dir> --output-dir <dir>
-  auv osu eval-detections <run-artifact-dir> --detections <dir-or-json> [--output-dir <dir>]
-  auv osu vision-demo <beatmap.osu> --target-app <name> [--output-dir <dir>] [--dispatch-limit <n>] [--capture-verify]
   auv invoke <command-id> [--dry-run] [--target <application-id>] [--label <text>] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
   auv inspect <run-id>
   auv inspect serve [--host <host>] [--port <port>] [--store-root <path>] [--enable-write] [--write-token <token>] [--write-token-file <path>] [--no-write-token]
   auv mcp serve
-  auv minecraft bridge --sample <telemetry.jsonl> (--screenshot <frame.png> | --capture-target-app <bundle-id> [--capture-target-title <window-title-substring>]) --target-block <x,y,z> [--capture-skew-ms <ms>] [--screenshot-is-minecraft-window true|false] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
-  auv minecraft calibrate-projection --frame <minecraft-spatial-frame.json> --screenshot <frame.png> --target-block <x,y,z> [--target-semantics hit_face_center|block_center] [--screenshot-is-minecraft-window true|false] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
-  auv minecraft live-click --sample <telemetry.jsonl> --screenshot <frame.png> --target-block <x,y,z> --target-app <application-id> --target-title <window title> [--post-sample <telemetry.jsonl>] [--capture-skew-ms <ms>] [--screenshot-is-minecraft-window true|false] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
-  auv minecraft export-spatial-bundle <run-id> --output-dir <dir> [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
-  auv minecraft export-3dgs-scene-packet --bundle-manifest <bundle/run.json>... --output-dir <dir> [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
-  auv minecraft export-3dgs-training-package --scene-packet-manifest <scene-packet/run.json> --output-dir <dir> [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
-  auv minecraft prepare-3dgs-training --training-package-manifest <training-package/run.json> --output-dir <dir> [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
-  auv minecraft launch-3dgs-training-job --training-launch-plan <training-launch-plan.json> --output-dir <dir> [--training-job-endpoint <url>] [--training-job-token <token>] [--training-job-submit-command <command>] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
-  auv minecraft collect-3dgs-training-job-result --training-job-manifest <training-job.json> --output-dir <dir> [--training-job-endpoint <url>] [--training-job-token <token>] [--training-job-status-command <command>] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
-  auv minecraft fetch-3dgs-training-result-artifacts --training-result-manifest <training-result.json> --output-dir <dir> [--training-job-endpoint <url>] [--training-job-token <token>] [--artifact-fetch-command <command>] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
-  auv minecraft validate-3dgs-training-result --training-result-artifact-manifest <d11-manifest.json> --output-dir <dir> [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
-  auv minecraft query-3dgs-training-result --training-result-semantic-manifest <semantic.json> --target-block <x,y,z> [--target-face <up|down|north|south|east|west>] [--target-semantics hit_face_center|block_center] [--query-command <command>] --output-dir <dir> [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
-  auv minecraft inspect-3dgs-training-result-holdout --training-result-semantic-manifest <semantic.json> [--holdout-frame-index <n>] [--holdout-render-command <command>] --output-dir <dir>
-  auv minecraft measure-3dgs-holdout-render-quality --training-result-semantic-manifest <semantic.json> --holdout-preview-manifest <mc16.json> --render-command <command> --output-dir <dir> [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
-  auv minecraft prepare-texture-sweep --sidecar-run-dir <dir> --output-dir <dir> [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
-  auv minecraft build-texture-sweep-samples --bundle-manifest <bundle/run.json>... --output <samples.json> [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
-  auv minecraft eval-texture-sweep --samples <samples.json> --output-dir <dir> [--require-real-source] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
   auv scan window-region --target <application-id> --region <left,top,right,bottom> [--direction up|down|left|right] [--max-pages <n>] [--max-scrolls <n>]
-  auv candidate-action run --target-app <bundle-id> [(--query <text> --role <ax-role> [--action click|type-text] [--text <content>]) | (--intent <text> [--proposer-model <id>] [--proposer-base-url <url>])] [(--dev-self-minted-consent --granted-by <who>) | (--human-gesture-consent [--granted-by <who>] [--human-gesture-timeout-ms <ms>])] [--reveal-shortcut <shortcut>] [--reveal-settle-ms <ms>] [--stable-frames <n>] [--stable-frame-delay-ms <ms>] [--max-centroid-drift-px <px>] [--require-stable-text true|false] [--proposal-id <id>] [--promotion-id <id>] [--decision-id <id>] [--execution-id <id>] [--promotion-scope-note <text>] [--promotion-evidence-note <text>] [--execution-scope-note <text>] [--execution-evidence-note <text>] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
+
+REFERENCE VERTICALS
+  auv minecraft --help
+  auv osu --help
+  These are reference verticals for spatial-result consumption research, not the default AUV product path.
 
 NOTES
   - Names are provisional and reflect the current phase-0/1 runtime skeleton.
@@ -2430,6 +2412,65 @@ mod tests {
     assert!(help.contains("list-commands"));
     assert!(help.contains("auv invoke --help"));
     assert!(help.contains("retired"));
+  }
+
+  #[test]
+  fn help_text_keeps_core_paths_visible() {
+    let help = help_text();
+
+    for expected in [
+      "auv doctor [--json]",
+      "auv permissions check [--json]",
+      "auv app probe <bundle-id> [--output-dir <dir>]",
+      "auv app analyze <probe-dir-or-probe-json>",
+      "auv invoke <command-id>",
+      "auv inspect <run-id>",
+      "auv inspect serve [--host <host>] [--port <port>] [--store-root <path>] [--enable-write] [--write-token <token>] [--write-token-file <path>] [--no-write-token]",
+      "auv mcp serve",
+      "auv scan window-region --target <application-id> --region <left,top,right,bottom> [--direction up|down|left|right] [--max-pages <n>] [--max-scrolls <n>]",
+    ] {
+      assert!(
+        help.contains(expected),
+        "top-level help should keep core path visible: {expected}"
+      );
+    }
+  }
+
+  #[test]
+  fn help_text_exposes_reference_vertical_entrypoints_only() {
+    let help = help_text();
+
+    assert!(help.contains("REFERENCE VERTICALS"));
+    assert!(help.contains("auv minecraft --help"));
+    assert!(help.contains("auv osu --help"));
+    assert!(help.contains("reference verticals"));
+
+    for omitted in [
+      "auv minecraft bridge",
+      "auv minecraft calibrate-projection",
+      "auv osu benchmark",
+      "auv osu dispatch",
+    ] {
+      assert!(
+        !help.contains(omitted),
+        "top-level help should not expand vertical command: {omitted}"
+      );
+    }
+  }
+
+  #[test]
+  fn help_text_keeps_candidate_action_as_note_only() {
+    let help = help_text();
+    let usage_end = help
+      .find("REFERENCE VERTICALS")
+      .expect("reference section should exist");
+    let usage = &help[..usage_end];
+
+    assert!(
+      !usage.contains("candidate-action run"),
+      "candidate-action should not appear in top-level usage"
+    );
+    assert!(help.contains("`candidate-action run` is a frozen archived macOS AX copilot vertical"));
   }
 
   #[test]

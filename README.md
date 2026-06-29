@@ -43,7 +43,7 @@ are still primarily interactive model-tool loops, not scriptable GUI automation
 libraries.
 
 <table>
-<thead><tr><th>Tool-call loop</th><th>Rust reusable operation</th></tr></thead>
+<thead><tr><th>Tool-call loop</th><th>Rust scripts</th></tr></thead>
 <tbody>
 <tr><td>
 
@@ -174,7 +174,7 @@ app-local commands, and shared runtime reuse across frontends.
 
 Legend: ✅ supported, ⚠️ partial or platform-limited, ❌ not the focus.
 
-| Capability | AUV | [Cua](https://github.com/trycua/cua) | [KWWKComputerUseCore](https://github.com/EYHN/kwwk-computer-use-core) / OpenBridge-style | Playwright/WebDriver |
+| Capability | AUV | [Cua](https://github.com/trycua/cua) | [OpenBridge](https://github.com/AFK-surf/OpenBridge) / [KWWKComputerUseCore](https://github.com/EYHN/kwwk-computer-use-core) | Playwright |
 | --- | --- | --- | --- | --- |
 | Agent model | 💡 BYOA | 💡 BYOA + Agent | 💡 BYOA | ❌ |
 | Scriptable | ✅ Rust ⏳ JS/TS/Python | ⚠️ Agent tools only | ⚠️ Swift API | ✅ JS/TS/Python/... |

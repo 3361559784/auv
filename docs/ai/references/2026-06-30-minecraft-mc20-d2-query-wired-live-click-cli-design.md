@@ -3,6 +3,8 @@
 Date: 2026-06-30
 
 Status: **D2 implemented** — stable vertical CLI for the MC-19+MC-20 D1 library chain.
+**D2.1 live closure recorded** (2026-06-30) — see
+[`2026-06-30-minecraft-mc20-d2-1-canonical-cli-live-closure.md`](2026-06-30-minecraft-mc20-d2-1-canonical-cli-live-closure.md).
 MC-20 controller / planner lane remains **paused** after this slice.
 
 ## One-line summary
@@ -128,7 +130,8 @@ src/cli.rs + src/main.rs (parse + thin dispatch)
 - osu `query-wired-live-click` CLI symmetry
 - Proxy `live-click` through query-wired library path
 - MC-20 controller / action lease
-- D2.1 macOS live closure evidence doc with witness paths
+- ~~D2.1 macOS live closure evidence doc with witness paths~~ **closed** →
+  [`2026-06-30-minecraft-mc20-d2-1-canonical-cli-live-closure.md`](2026-06-30-minecraft-mc20-d2-1-canonical-cli-live-closure.md)
 
 ## Related
 

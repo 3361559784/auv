@@ -155,6 +155,7 @@ cargo run --quiet --example mc19_query_wired_live_action -- \
 
 - Design: `docs/ai/references/2026-06-27-minecraft-mc19-query-to-live-click-wiring-design.md`
 - MC-18 provider closure: `docs/ai/references/2026-06-27-minecraft-mc18-closed-scene-toy-provider-live-closure.md`
+- MC-20 verification live evidence (canonical CLI): [`2026-06-30-minecraft-mc20-d2-1-canonical-cli-live-closure.md`](2026-06-30-minecraft-mc20-d2-1-canonical-cli-live-closure.md)
 - MC-14 action readiness closure: `docs/ai/references/2026-06-27-minecraft-mc14-spatial-query-action-facing-live-closure.md`
 
 ## D5 inspect polish (2026-06-28)

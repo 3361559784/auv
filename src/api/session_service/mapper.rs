@@ -269,4 +269,32 @@ mod tests {
         .any(|limit| limit.contains("runtime_summary_unavailable"))
     );
   }
+
+  #[test]
+  fn joined_propagates_runtime_status_mismatch_known_limit() {
+    let joined = JoinedOperationSummary {
+      run_id: "run-mismatch".to_string(),
+      operation_id: "music.search.results".to_string(),
+      status: OperationStatus::Completed,
+      known_limits: vec![
+        "semantic_shaping_synthetic".to_string(),
+        "auv.api.session.runtime_status_mismatch".to_string(),
+      ],
+      artifacts: Vec::new(),
+      runtime: Some(RuntimeOperationSummary {
+        output_summary: "runtime failed".to_string(),
+        signals: BTreeMap::new(),
+        failure_message: Some("boom".to_string()),
+      }),
+    };
+    let response = joined_to_get_operation_response(&joined);
+    assert_eq!(response.status, "completed");
+    assert!(
+      response
+        .known_limits
+        .iter()
+        .any(|limit| limit == "auv.api.session.runtime_status_mismatch")
+    );
+    assert_eq!(response.failure_message, "boom");
+  }
 }

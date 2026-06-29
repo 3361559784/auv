@@ -6,6 +6,12 @@
 //! session-aware invoke (API-P5), the operation summary cache (API-P6), and the
 //! two-source `GetOperation` join (API-P7). Binding a transport is a later
 //! owner-named slice (see the `mod.rs` TODO).
+//!
+//! NOTICE(api-p5-invoke-persist): `Invoke` records a run and caches the runtime
+//! summary (API-P6) but does not yet persist an `OperationResult` artifact.
+//! That write path belongs to `Runtime::record_operation`; until it is wired
+//! through this handler, `GetOperation` returns `PersistedOperationRequired`
+//! for runs created only via `Invoke`.
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -18,7 +24,9 @@ use auv_tracing_driver::{MemoryRunRecorder, RunRecordingBackend, SessionId};
 use crate::api::session_service::SessionApiError;
 use crate::api::session_service::mapper;
 use crate::api::session_service::registry::SessionRegistry;
-use crate::api::session_service::summary::load_joined_operation_summary;
+use crate::api::session_service::summary::{
+  JoinedOperationSummaryLoad, load_joined_operation_summary,
+};
 
 /// Process-local session API handler over one store path.
 ///
@@ -41,7 +49,7 @@ impl SessionApiHandler {
   }
 
   fn open_store(&self) -> Result<LocalStore, SessionApiError> {
-    LocalStore::new(self.store_root.clone()).map_err(SessionApiError::Execution)
+    LocalStore::new(self.store_root.clone()).map_err(SessionApiError::Storage)
   }
 
   /// `CreateSession`: allocate + register lightweight session metadata, return a
@@ -96,7 +104,7 @@ impl SessionApiHandler {
       host_request,
       SessionId::new(session_id),
     )
-    .map_err(SessionApiError::Execution)?;
+    .map_err(SessionApiError::InvokeExecution)?;
 
     self
       .summaries
@@ -118,15 +126,26 @@ impl SessionApiHandler {
       .ok_or(SessionApiError::MissingField("operation"))?;
     let run_id = operation.run_id;
 
+    let runtime_summary = {
+      let summaries = self.summaries.lock().expect("summary cache mutex poisoned");
+      summaries.get(&run_id).cloned()
+    };
+
     let store = self.open_store()?;
-    let summaries = self.summaries.lock().expect("summary cache mutex poisoned");
-    let runtime = summaries
-      .get(&run_id)
+    let runtime = runtime_summary
+      .as_ref()
       .map(|summary| summary as &dyn auv_cli_invoke::OperationSummarySource);
-    let joined = load_joined_operation_summary(&store, &run_id, runtime)
-      .map_err(SessionApiError::Execution)?
-      .ok_or_else(|| SessionApiError::OperationNotFound(run_id.clone()))?;
-    Ok(mapper::joined_to_get_operation_response(&joined))
+    match load_joined_operation_summary(&store, &run_id, runtime)
+      .map_err(SessionApiError::Storage)?
+    {
+      JoinedOperationSummaryLoad::Found(joined) => {
+        Ok(mapper::joined_to_get_operation_response(&joined))
+      }
+      JoinedOperationSummaryLoad::RunNotFound => Err(SessionApiError::RunNotFound(run_id)),
+      JoinedOperationSummaryLoad::NoPersistedOperationResult => {
+        Err(SessionApiError::PersistedOperationRequired(run_id))
+      }
+    }
   }
 
   /// `StreamSessionEvents`: validates the session, then refuses.
@@ -231,12 +250,12 @@ mod tests {
   }
 
   #[test]
-  fn get_operation_without_persisted_record_is_not_found() {
+  fn get_operation_without_persisted_record_requires_persisted_operation_result() {
     // The invoke path records a run and caches the runtime summary (API-P6) but
     // does NOT write a persisted OperationResult (that is a higher-level
     // Runtime::record_operation concern). API-P7's join requires the persisted
-    // skeleton, so GetOperation reports NotFound even though the runtime summary
-    // is cached for this run.
+    // skeleton, so GetOperation reports PersistedOperationRequired even though
+    // the runtime summary is cached for this run.
     let handler = handler();
     let session = handler
       .create_session(proto::CreateSessionRequest {
@@ -262,7 +281,140 @@ mod tests {
         }),
       })
       .expect_err("missing persisted operation result should fail");
-    assert!(matches!(error, SessionApiError::OperationNotFound(_)));
+    assert!(matches!(
+      error,
+      SessionApiError::PersistedOperationRequired(_)
+    ));
+  }
+
+  #[test]
+  fn get_operation_returns_joined_response_when_persisted_and_cached() {
+    use std::collections::BTreeMap;
+    use std::fs;
+
+    use crate::contract::{
+      OPERATION_RESULT_API_VERSION, OperationOutput, OperationResult, OperationStatus,
+    };
+    use auv_cli_invoke::{InvokeResult, OperationSummary, RunStatus};
+    use auv_tracing_driver::artifact::ArtifactFileSource;
+    use auv_tracing_driver::store::CanonicalRun;
+    use auv_tracing_driver::trace::{
+      RUN_API_VERSION, RunId, RunRecordV1Alpha1, RunType, SPAN_API_VERSION, SpanId,
+      SpanRecordV1Alpha1, TraceId, TraceState, TraceStatusCode,
+    };
+
+    let unique = DIR_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let root = std::env::temp_dir().join(format!(
+      "auv-session-api-joined-{}-{}",
+      now_millis(),
+      unique
+    ));
+    let handler = SessionApiHandler::new(root.clone());
+
+    let run_id = "run-get-op-happy";
+    let store = handler.open_store().expect("open store");
+    let root_span_id = SpanId::new("0000000000000001");
+    let run = RunRecordV1Alpha1 {
+      api_version: RUN_API_VERSION.to_string(),
+      run_id: RunId::new(run_id),
+      trace_id: TraceId::new("00000000000000000000000000000001"),
+      run_type: RunType::Execute,
+      state: TraceState::Ended,
+      status_code: TraceStatusCode::Ok,
+      started_at_millis: 100,
+      finished_at_millis: Some(200),
+      root_span_id: root_span_id.clone(),
+      attributes: BTreeMap::new(),
+      summary: Some("done".to_string()),
+      failure: None,
+    };
+    let span = SpanRecordV1Alpha1 {
+      api_version: SPAN_API_VERSION.to_string(),
+      span_id: root_span_id.clone(),
+      parent_span_id: None,
+      name: "auv.run.read".to_string(),
+      state: TraceState::Ended,
+      status_code: TraceStatusCode::Ok,
+      started_at_millis: 100,
+      finished_at_millis: Some(200),
+      attributes: BTreeMap::new(),
+      summary: None,
+      failure: None,
+    };
+    let operation = OperationResult {
+      api_version: OPERATION_RESULT_API_VERSION.to_string(),
+      run_id: RunId::new(run_id),
+      status: OperationStatus::Completed,
+      operation_id: "music.search.results".to_string(),
+      evidence_artifacts: Vec::new(),
+      output: OperationOutput::Acknowledged { message: None },
+      verifications: Vec::new(),
+      freshness_basis: None,
+      known_limits: Vec::new(),
+    };
+    let source_path = root.join("source-operation-result.json");
+    let rendered = serde_json::to_string_pretty(&operation).expect("serialize") + "\n";
+    fs::write(&source_path, rendered).expect("write artifact source");
+    let artifact = store
+      .stage_artifact_file(
+        &run.run_id,
+        0,
+        &span.span_id,
+        None,
+        ArtifactFileSource {
+          role: "operation-result".to_string(),
+          source_path,
+          preferred_name: "operation-result.json".to_string(),
+          summary: None,
+        },
+      )
+      .expect("stage artifact");
+    store
+      .write_run_snapshot(&CanonicalRun {
+        run,
+        spans: vec![span],
+        events: Vec::new(),
+        artifacts: vec![artifact],
+      })
+      .expect("persist run");
+
+    let mut signals = BTreeMap::new();
+    signals.insert("now_playing".to_string(), "track-x".to_string());
+    handler
+      .summaries
+      .lock()
+      .expect("summary cache mutex poisoned")
+      .record(OperationSummary::capture(&InvokeResult {
+        run_id: run_id.to_string(),
+        producer_span_id: SpanId::new("0000000000000001"),
+        status: RunStatus::Completed,
+        output_summary: "did the thing".to_string(),
+        signals,
+        artifacts: Vec::new(),
+        artifact_paths: Vec::new(),
+        failure_message: None,
+      }));
+
+    let response = handler
+      .get_operation(proto::GetOperationRequest {
+        operation: Some(proto::OperationRef {
+          run_id: run_id.to_string(),
+          operation_id: String::new(),
+        }),
+      })
+      .expect("get_operation should succeed");
+
+    assert_eq!(response.status, "completed");
+    assert_eq!(response.output_summary, "did the thing");
+    assert_eq!(
+      response.signals.get("now_playing").map(String::as_str),
+      Some("track-x")
+    );
+    let operation_ref = response.operation.expect("operation ref");
+    assert_eq!(operation_ref.run_id, run_id);
+    assert_eq!(operation_ref.operation_id, "music.search.results");
+
+    let _ = fs::remove_dir_all(root);
   }
 
   #[test]

@@ -14,12 +14,23 @@
 
 use std::collections::BTreeMap;
 
-use auv_cli_invoke::OperationSummarySource;
+use auv_cli_invoke::{OperationSummarySource, RunStatus};
 use auv_tracing_driver::store::LocalStore;
 
 use crate::contract::{ArtifactRef, OperationResult, OperationStatus};
 use crate::model::AuvResult;
 use crate::run_read;
+
+/// Outcome of loading and joining a `GetOperation` summary for one run.
+#[derive(Clone, Debug, PartialEq)]
+pub enum JoinedOperationSummaryLoad {
+  /// Persisted skeleton found and joined with the supplied runtime source.
+  Found(JoinedOperationSummary),
+  /// The run directory does not exist in the store.
+  RunNotFound,
+  /// The run exists but recorded no `operation-result` JSON artifact.
+  NoPersistedOperationResult,
+}
 
 /// The `InvokeResult`-sourced half of the summary projection, captured as owned
 /// data for one operation.
@@ -57,10 +68,21 @@ pub struct JoinedOperationSummary {
   pub runtime: Option<RuntimeOperationSummary>,
 }
 
+fn runtime_status_matches_persisted(persisted: OperationStatus, runtime: RunStatus) -> bool {
+  matches!(
+    (persisted, runtime),
+    (OperationStatus::Completed, RunStatus::Completed)
+      | (OperationStatus::Failed, RunStatus::Failed)
+  )
+}
+
 /// Join a persisted `OperationResult` with an optional runtime summary source.
 ///
 /// Pure join policy: the persisted record provides the required fields; the
 /// runtime summary is layered on when present, otherwise `runtime` is `None`.
+/// When both halves are present but disagree on completion status, a
+/// `auv.api.session.runtime_status_mismatch` known_limit is appended so callers
+/// do not silently return contradictory status and failure_message fields.
 pub fn join_operation_summary(
   operation: &OperationResult,
   runtime: Option<&dyn OperationSummarySource>,
@@ -70,11 +92,17 @@ pub fn join_operation_summary(
   // `command_id`. The proto `operation_id` mapping rule (command_id vs domain
   // label vs widened ref) is API-P3 open decision 2 / API-P4 gate 3 and is
   // resolved at the proto mapper (API-P8), not in this read path.
+  let mut known_limits = operation.known_limits.clone();
+  if let Some(source) = runtime {
+    if !runtime_status_matches_persisted(operation.status, source.status()) {
+      known_limits.push("auv.api.session.runtime_status_mismatch".to_string());
+    }
+  }
   JoinedOperationSummary {
     run_id: operation.run_id.as_str().to_string(),
     operation_id: operation.operation_id.clone(),
     status: operation.status,
-    known_limits: operation.known_limits.clone(),
+    known_limits,
     artifacts: operation.evidence_artifacts.clone(),
     runtime: runtime.map(RuntimeOperationSummary::from_source),
   }
@@ -84,28 +112,44 @@ pub fn join_operation_summary(
 ///
 /// Reads the persisted `OperationResult` (storage-side read path via
 /// [`run_read::read_operation_result`]) and joins it with the supplied runtime
-/// summary source. Returns `Ok(None)` when the run recorded no `OperationResult`
-/// (the persisted skeleton is required; without it there is nothing
-/// authoritative to return).
+/// summary source. Distinguishes a missing run from a run that exists but
+/// recorded no `OperationResult`.
 pub fn load_joined_operation_summary(
   store: &LocalStore,
   run_id: &str,
   runtime: Option<&dyn OperationSummarySource>,
-) -> AuvResult<Option<JoinedOperationSummary>> {
+) -> AuvResult<JoinedOperationSummaryLoad> {
+  let run_dir = store.run_dir(run_id)?;
+  if !run_dir.join("run.json").exists() {
+    return Ok(JoinedOperationSummaryLoad::RunNotFound);
+  }
   let Some(operation) = run_read::read_operation_result(store, run_id)? else {
-    return Ok(None);
+    return Ok(JoinedOperationSummaryLoad::NoPersistedOperationResult);
   };
-  Ok(Some(join_operation_summary(&operation, runtime)))
+  Ok(JoinedOperationSummaryLoad::Found(join_operation_summary(
+    &operation, runtime,
+  )))
 }
 
 #[cfg(test)]
 mod tests {
   use std::collections::BTreeMap;
+  use std::fs;
+  use std::path::{Path, PathBuf};
 
   use auv_cli_invoke::{InvokeResult, OperationSummary, RunStatus};
-  use auv_tracing_driver::trace::{RunId, SpanId};
+  use auv_tracing_driver::artifact::ArtifactFileSource;
+  use auv_tracing_driver::store::{CanonicalRun, LocalStore};
+  use auv_tracing_driver::trace::{
+    RUN_API_VERSION, RunId, RunRecordV1Alpha1, RunType, SPAN_API_VERSION, SpanId,
+    SpanRecordV1Alpha1, TraceId, TraceState, TraceStatusCode,
+  };
+  use serde::Serialize;
 
-  use super::{JoinedOperationSummary, join_operation_summary};
+  use super::{
+    JoinedOperationSummary, JoinedOperationSummaryLoad, join_operation_summary,
+    load_joined_operation_summary,
+  };
   use crate::contract::{
     OPERATION_RESULT_API_VERSION, OperationOutput, OperationResult, OperationStatus,
   };
@@ -137,6 +181,106 @@ mod tests {
       artifact_paths: Vec::new(),
       failure_message: None,
     })
+  }
+
+  fn temp_dir(label: &str) -> PathBuf {
+    let path = std::env::temp_dir().join(format!("auv-{label}-{}", crate::model::now_millis()));
+    let _ = fs::remove_dir_all(&path);
+    fs::create_dir_all(&path).expect("temp dir should be creatable");
+    path
+  }
+
+  fn dummy_run(run_id: &str) -> RunRecordV1Alpha1 {
+    let root_span_id = SpanId::new("0000000000000001");
+    RunRecordV1Alpha1 {
+      api_version: RUN_API_VERSION.to_string(),
+      run_id: RunId::new(run_id),
+      trace_id: TraceId::new("00000000000000000000000000000001"),
+      run_type: RunType::Execute,
+      state: TraceState::Ended,
+      status_code: TraceStatusCode::Ok,
+      started_at_millis: 100,
+      finished_at_millis: Some(200),
+      root_span_id,
+      attributes: BTreeMap::new(),
+      summary: Some("done".to_string()),
+      failure: None,
+    }
+  }
+
+  fn dummy_span(span_id: &SpanId) -> SpanRecordV1Alpha1 {
+    SpanRecordV1Alpha1 {
+      api_version: SPAN_API_VERSION.to_string(),
+      span_id: span_id.clone(),
+      parent_span_id: None,
+      name: "auv.run.read".to_string(),
+      state: TraceState::Ended,
+      status_code: TraceStatusCode::Ok,
+      started_at_millis: 100,
+      finished_at_millis: Some(200),
+      attributes: BTreeMap::new(),
+      summary: None,
+      failure: None,
+    }
+  }
+
+  fn stage_json_artifact<T: Serialize>(
+    store: &LocalStore,
+    root: &Path,
+    run_id: &RunId,
+    span_id: &SpanId,
+    index: usize,
+    role: &str,
+    preferred_name: &str,
+    value: &T,
+  ) -> auv_tracing_driver::trace::ArtifactRecordV1Alpha1 {
+    let source_path = root.join(format!("source-{index}-{preferred_name}"));
+    let rendered =
+      serde_json::to_string_pretty(value).expect("artifact json should serialize") + "\n";
+    fs::write(&source_path, rendered).expect("artifact source should write");
+    store
+      .stage_artifact_file(
+        run_id,
+        index,
+        span_id,
+        None,
+        ArtifactFileSource {
+          role: role.to_string(),
+          source_path,
+          preferred_name: preferred_name.to_string(),
+          summary: None,
+        },
+      )
+      .expect("artifact should stage")
+  }
+
+  fn persist_run_with_operation_result(
+    run_id: &str,
+    operation: &OperationResult,
+  ) -> (PathBuf, LocalStore) {
+    let root = temp_dir("session-summary-load");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let run = dummy_run(run_id);
+    let span = dummy_span(&run.root_span_id);
+    let artifact = stage_json_artifact(
+      &store,
+      &root,
+      &run.run_id,
+      &span.span_id,
+      0,
+      "operation-result",
+      "operation-result.json",
+      operation,
+    );
+    store
+      .write_run_snapshot(&CanonicalRun {
+        run,
+        spans: vec![span],
+        events: Vec::new(),
+        artifacts: vec![artifact],
+      })
+      .expect("run snapshot should persist");
+    (root, store)
   }
 
   #[test]
@@ -182,6 +326,95 @@ mod tests {
 
     assert_eq!(joined.status, OperationStatus::Failed);
     assert_eq!(joined.known_limits, vec!["dispatch_failed"]);
+  }
+
+  #[test]
+  fn join_flags_runtime_status_mismatch() {
+    let operation = sample_operation("run-mismatch");
+    let summary = OperationSummary::capture(&InvokeResult {
+      run_id: "run-mismatch".to_string(),
+      producer_span_id: SpanId::new("0000000000000001"),
+      status: RunStatus::Failed,
+      output_summary: "runtime failed".to_string(),
+      signals: BTreeMap::new(),
+      artifacts: Vec::new(),
+      artifact_paths: Vec::new(),
+      failure_message: Some("boom".to_string()),
+    });
+
+    let joined = join_operation_summary(&operation, Some(&summary));
+
+    assert_eq!(joined.status, OperationStatus::Completed);
+    assert!(
+      joined
+        .known_limits
+        .iter()
+        .any(|limit| limit == "auv.api.session.runtime_status_mismatch")
+    );
+    let runtime = joined.runtime.expect("runtime summary should be present");
+    assert_eq!(runtime.failure_message.as_deref(), Some("boom"));
+  }
+
+  #[test]
+  fn load_joined_operation_summary_returns_run_not_found_for_missing_run() {
+    let root = temp_dir("session-summary-missing-run");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+
+    let loaded =
+      load_joined_operation_summary(&store, "missing-run", None).expect("load should succeed");
+    assert_eq!(loaded, JoinedOperationSummaryLoad::RunNotFound);
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn load_joined_operation_summary_returns_no_persisted_result_when_run_lacks_artifact() {
+    let root = temp_dir("session-summary-no-op-result");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let run = dummy_run("run-no-op-result");
+    let span = dummy_span(&run.root_span_id);
+    store
+      .write_run_snapshot(&CanonicalRun {
+        run,
+        spans: vec![span],
+        events: Vec::new(),
+        artifacts: Vec::new(),
+      })
+      .expect("run snapshot should persist");
+
+    let loaded =
+      load_joined_operation_summary(&store, "run-no-op-result", None).expect("load should succeed");
+    assert_eq!(
+      loaded,
+      JoinedOperationSummaryLoad::NoPersistedOperationResult
+    );
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn load_joined_operation_summary_joins_persisted_and_runtime_halves() {
+    let operation = sample_operation("run-happy");
+    let (_root, store) = persist_run_with_operation_result("run-happy", &operation);
+    let summary = runtime_summary("run-happy");
+
+    let loaded = load_joined_operation_summary(&store, "run-happy", Some(&summary))
+      .expect("load should succeed");
+    let JoinedOperationSummaryLoad::Found(joined) = loaded else {
+      panic!("expected joined summary, got {loaded:?}");
+    };
+
+    assert_eq!(joined.run_id, "run-happy");
+    assert_eq!(joined.operation_id, "music.search.results");
+    assert_eq!(joined.status, OperationStatus::Completed);
+    let runtime = joined.runtime.expect("runtime summary should be present");
+    assert_eq!(runtime.output_summary, "did the thing");
+    assert_eq!(
+      runtime.signals.get("now_playing").map(String::as_str),
+      Some("track-x")
+    );
+
+    let _ = fs::remove_dir_all(_root);
   }
 
   fn _assert_send_sync<T: Send + Sync>() {}

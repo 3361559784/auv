@@ -33,10 +33,14 @@ pub enum SessionApiError {
   UnknownSession(String),
   /// `json_payload` could not be decoded into a host invoke request.
   PayloadDecode(String),
-  /// Underlying storage open or invoke execution failed (carries the host error).
-  Execution(String),
-  /// No operation summary was available for the requested run.
-  OperationNotFound(String),
+  /// Local store open or read-side storage I/O failed.
+  Storage(String),
+  /// Session-aware invoke execution failed after validation.
+  InvokeExecution(String),
+  /// `GetOperation` referenced a run that was never recorded in the store.
+  RunNotFound(String),
+  /// The run exists but recorded no persisted `OperationResult` artifact.
+  PersistedOperationRequired(String),
   /// A seam this RPC depends on is not wired in the current skeleton.
   NotWired { gate: &'static str },
 }
@@ -47,8 +51,12 @@ impl fmt::Display for SessionApiError {
       Self::MissingField(field) => write!(f, "missing required field: {field}"),
       Self::UnknownSession(id) => write!(f, "unknown session: {id}"),
       Self::PayloadDecode(message) => write!(f, "failed to decode json_payload: {message}"),
-      Self::Execution(message) => write!(f, "invoke execution failed: {message}"),
-      Self::OperationNotFound(run_id) => write!(f, "no operation summary for run: {run_id}"),
+      Self::Storage(message) => write!(f, "storage error: {message}"),
+      Self::InvokeExecution(message) => write!(f, "invoke execution failed: {message}"),
+      Self::RunNotFound(run_id) => write!(f, "run not found: {run_id}"),
+      Self::PersistedOperationRequired(run_id) => {
+        write!(f, "no persisted operation result for run: {run_id}")
+      }
       Self::NotWired { gate } => write!(f, "session API seam not wired: {gate}"),
     }
   }

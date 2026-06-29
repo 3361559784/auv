@@ -4,6 +4,9 @@ readStdin().then(raw => {
   const input = JSON.parse(raw || '{}');
   const claudeInput = transformToClaude(input);
 
+  if (hookEnabled('stop:format-typecheck', ['standard', 'strict'])) {
+    runExistingHook('stop-format-typecheck.js', claudeInput);
+  }
   if (hookEnabled('stop:check-console-log', ['standard', 'strict'])) {
     runExistingHook('check-console-log.js', claudeInput);
   }

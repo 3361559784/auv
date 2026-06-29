@@ -44,9 +44,19 @@ function resolveEccRoot(options = {}) {
     return envRoot.trim();
   }
 
+  const probe = options.probe || path.join('scripts', 'lib', 'utils.js');
+
+  const { resolveCursorEccPluginRoot } = require('./cursor-ecc-root');
+  const vendoredRoot = resolveCursorEccPluginRoot({
+    hostRoot: options.hostRoot,
+    extraStarts: options.extraStarts,
+  });
+  if (fs.existsSync(path.join(vendoredRoot, probe))) {
+    return vendoredRoot;
+  }
+
   const homeDir = options.homeDir || os.homedir();
   const claudeDir = path.join(homeDir, '.claude');
-  const probe = options.probe || path.join('scripts', 'lib', 'utils.js');
 
   // Standard install — files are copied directly into ~/.claude/
   if (fs.existsSync(path.join(claudeDir, probe))) {

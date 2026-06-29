@@ -18,7 +18,8 @@ function getPluginRoot(options = {}) {
   if (process.env.ECC_PLUGIN_ROOT && process.env.ECC_PLUGIN_ROOT.trim()) {
     return process.env.ECC_PLUGIN_ROOT.trim();
   }
-  return path.resolve(__dirname, '..', '..');
+  const { resolveCursorEccPluginRoot } = require('../lib/cursor-ecc-root');
+  return resolveCursorEccPluginRoot();
 }
 
 function resolveTarget(rootDir, relPath) {

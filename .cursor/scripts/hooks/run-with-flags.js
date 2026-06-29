@@ -94,10 +94,8 @@ function resolveLegacySpawnStdout(raw, result) {
 }
 
 function getPluginRoot() {
-  if (process.env.CLAUDE_PLUGIN_ROOT && process.env.CLAUDE_PLUGIN_ROOT.trim()) {
-    return process.env.CLAUDE_PLUGIN_ROOT;
-  }
-  return path.resolve(__dirname, '..', '..');
+  const { resolveCursorEccPluginRoot } = require('../lib/cursor-ecc-root');
+  return resolveCursorEccPluginRoot();
 }
 
 //Safely extract target context from hook stdin JSON for dry-run preview.

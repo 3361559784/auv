@@ -5,9 +5,9 @@
  * then delegates to existing scripts/hooks/*.js
  */
 
-const fs = require('fs');
 const { execFileSync } = require('child_process');
 const path = require('path');
+const { resolveCursorEccPluginRoot } = require('../scripts/lib/cursor-ecc-root');
 
 const MAX_STDIN = 1024 * 1024;
 
@@ -23,14 +23,7 @@ function readStdin() {
 }
 
 function getPluginRoot() {
-  const cursorRoot = path.resolve(__dirname, '..');
-  // NOTICE(auv-ecc-layout): AUV vendors ECC scripts under `.cursor/scripts/`.
-  // Upstream ECC `.cursor/hooks/adapter.js` resolves the host repo root for
-  // monorepo `scripts/`; prefer the vendored layout when present.
-  if (fs.existsSync(path.join(cursorRoot, 'scripts', 'hooks'))) {
-    return cursorRoot;
-  }
-  return path.resolve(__dirname, '..', '..');
+  return resolveCursorEccPluginRoot();
 }
 
 function transformToClaude(cursorInput, overrides = {}) {
@@ -55,16 +48,22 @@ function transformToClaude(cursorInput, overrides = {}) {
 }
 
 function runExistingHook(scriptName, stdinData) {
-  const scriptPath = path.join(getPluginRoot(), 'scripts', 'hooks', scriptName);
+  const pluginRoot = getPluginRoot();
+  const scriptPath = path.join(pluginRoot, 'scripts', 'hooks', scriptName);
   try {
     execFileSync('node', [scriptPath], {
       input: typeof stdinData === 'string' ? stdinData : JSON.stringify(stdinData),
       stdio: ['pipe', 'pipe', 'pipe'],
       timeout: 15000,
       cwd: process.cwd(),
+      env: {
+        ...process.env,
+        CLAUDE_PLUGIN_ROOT: pluginRoot,
+        ECC_PLUGIN_ROOT: pluginRoot,
+      },
     });
   } catch (e) {
-    if (e.status === 2) process.exit(2); // Forward blocking exit code
+    if (e.status === 2) process.exit(2);
   }
 }
 

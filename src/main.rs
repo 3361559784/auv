@@ -1430,6 +1430,14 @@ struct MinecraftCalibrationOutput {
 const MINECRAFT_LIVE_CLICK_POST_FRAME_WAIT: auv_game_minecraft::TailFrameWaitConfig =
   auv_game_minecraft::TailFrameWaitConfig::new(750, 25);
 
+type MinecraftLiveClickDispatch = for<'a> fn(
+  &auv_cli::runtime::Runtime,
+  &mut auv_tracing_driver::recorded_operation::RecordedOperationContext<'a>,
+  &str,
+  &str,
+  auv_driver::geometry::WindowPoint,
+) -> Result<String, String>;
+
 #[derive(Debug)]
 struct MinecraftLiveClickOutput {
   screenshot_artifact_id: String,
@@ -1508,6 +1516,51 @@ fn run_minecraft_live_click(
   target_title: &str,
   capture_skew_ms: Option<i64>,
   screenshot_is_minecraft_window: bool,
+) -> Result<
+  auv_tracing_driver::recorded_operation::RecordedOperationOutput<MinecraftLiveClickOutput>,
+  String,
+> {
+  run_minecraft_live_click_with_dispatch(
+    runtime,
+    telemetry_sample,
+    post_telemetry_sample,
+    screenshot,
+    target_block,
+    target_app,
+    target_title,
+    capture_skew_ms,
+    screenshot_is_minecraft_window,
+    dispatch_minecraft_live_click,
+  )
+}
+
+fn dispatch_minecraft_live_click(
+  runtime: &auv_cli::runtime::Runtime,
+  context: &mut auv_tracing_driver::recorded_operation::RecordedOperationContext<'_>,
+  target_app: &str,
+  target_title: &str,
+  window_point: auv_driver::geometry::WindowPoint,
+) -> Result<String, String> {
+  auv_cli::minecraft_query_live_action::invoke_click_at_window_point(
+    runtime.recording(),
+    context,
+    target_app,
+    target_title,
+    window_point,
+  )
+}
+
+fn run_minecraft_live_click_with_dispatch(
+  runtime: &auv_cli::runtime::Runtime,
+  telemetry_sample: PathBuf,
+  post_telemetry_sample: Option<PathBuf>,
+  screenshot: PathBuf,
+  target_block: &str,
+  target_app: &str,
+  target_title: &str,
+  capture_skew_ms: Option<i64>,
+  screenshot_is_minecraft_window: bool,
+  dispatch_click: MinecraftLiveClickDispatch,
 ) -> Result<
   auv_tracing_driver::recorded_operation::RecordedOperationOutput<MinecraftLiveClickOutput>,
   String,
@@ -1599,13 +1652,7 @@ fn run_minecraft_live_click(
         .ok_or_else(|| "projected minecraft point is not window-clickable".to_string())?;
 
       let invoke_result_output_summary =
-        auv_cli::minecraft_query_live_action::invoke_click_at_window_point(
-          runtime.recording(),
-          context,
-          target_app,
-          target_title,
-          window_point,
-        )?;
+        dispatch_click(runtime, context, target_app, target_title, window_point)?;
       let post_frame = auv_game_minecraft::read_latest_spatial_frame_newer_than(
         &post_sample_path,
         pre_frame.monotonic_timestamp_ms,
@@ -3049,7 +3096,7 @@ mod tests {
 
     let runtime = build_runtime_with_store_root(project_root.clone(), store_root.clone())
       .expect("runtime should build");
-    let output = run_minecraft_live_click(
+    let output = run_minecraft_live_click_with_dispatch(
       &runtime,
       telemetry_path,
       Some(post_telemetry_path),
@@ -3059,6 +3106,7 @@ mod tests {
       "Fixture Window",
       Some(0),
       true,
+      fixture_minecraft_live_click_dispatch,
     )
     .expect("live click should record");
 
@@ -3086,7 +3134,7 @@ mod tests {
 
     let runtime = build_runtime_with_store_root(project_root.clone(), store_root.clone())
       .expect("runtime should build");
-    let output = run_minecraft_live_click(
+    let output = run_minecraft_live_click_with_dispatch(
       &runtime,
       telemetry_path,
       Some(post_telemetry_path),
@@ -3096,6 +3144,7 @@ mod tests {
       "Fixture Window",
       Some(0),
       true,
+      fixture_minecraft_live_click_dispatch,
     )
     .expect("live click should record");
 
@@ -3126,6 +3175,22 @@ mod tests {
 
     let _ = fs::remove_dir_all(project_root);
     let _ = fs::remove_dir_all(store_root);
+  }
+
+  fn fixture_minecraft_live_click_dispatch(
+    _runtime: &auv_cli::runtime::Runtime,
+    _context: &mut auv_tracing_driver::recorded_operation::RecordedOperationContext<'_>,
+    target_app: &str,
+    target_title: &str,
+    window_point: auv_driver::geometry::WindowPoint,
+  ) -> Result<String, String> {
+    assert_eq!(target_app, "FixtureApp");
+    assert_eq!(target_title, "Fixture Window");
+    Ok(format!(
+      "fixture clicked at ({:.3},{:.3})",
+      window_point.point().x,
+      window_point.point().y
+    ))
   }
 
   #[test]

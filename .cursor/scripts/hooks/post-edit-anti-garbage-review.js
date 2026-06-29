@@ -1,9 +1,10 @@
 'use strict';
 
+const crypto = require('crypto');
 const path = require('path');
-const { reviewEditedFile } = require('../lib/anti-garbage-heuristics');
+const { reviewEditedFile, readFileSafe } = require('../lib/anti-garbage-heuristics');
 const {
-  appendReviewEntry,
+  upsertReviewEntry,
   readQueue,
 } = require('../lib/session-edit-review-queue');
 
@@ -44,7 +45,13 @@ function shouldReview(filePath) {
   return /\.(rs|toml|js|jsx|ts|tsx|md|proto)$/.test(rel) || rel.startsWith('src/') || rel.startsWith('crates/');
 }
 
-function run(rawInput) {
+function contentFingerprint(filePath, edits) {
+  const content = readFileSafe(filePath);
+  const editBlob = JSON.stringify(edits || []);
+  return crypto.createHash('sha1').update(content).update(editBlob).digest('hex').slice(0, 12);
+}
+
+function run(rawInput, hookMeta = {}) {
   let input = {};
   try {
     input = typeof rawInput === 'string' ? JSON.parse(rawInput || '{}') : rawInput || {};
@@ -68,7 +75,11 @@ function run(rawInput) {
       edits,
       sessionPaths,
     });
-    appendReviewEntry(review);
+    upsertReviewEntry(review, {
+      source: hookMeta.source || '',
+      toolUseId: hookMeta.toolUseId || input.tool_use_id || '',
+      contentHash: contentFingerprint(filePath, edits),
+    });
 
     if (review.findings.length > 0) {
       stderrLines.push(`[AUV anti-garbage] ${filePath}`);

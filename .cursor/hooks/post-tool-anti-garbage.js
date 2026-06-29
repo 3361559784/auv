@@ -25,17 +25,15 @@ readStdin()
         file_path: input.tool_input?.path || input.tool_input?.file_path || '',
         edits: input.tool_input?.edits || [],
       },
+      tool_use_id: input.tool_use_id || '',
     });
 
-    const review = runAntiGarbageReview(claudeInput);
+    const review = runAntiGarbageReview(claudeInput, {
+      source: 'postToolUse',
+      toolUseId: input.tool_use_id || '',
+    });
     if (review.stderr) {
       process.stderr.write(`${review.stderr}\n`);
-    }
-
-    const queueContext = review.pendingContext;
-    if (queueContext) {
-      process.stdout.write(`${JSON.stringify({ additional_context: queueContext })}\n`);
-      return;
     }
 
     process.stdout.write(raw);

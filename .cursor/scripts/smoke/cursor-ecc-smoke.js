@@ -245,10 +245,35 @@ fn reads_foreground() {
   assert.ok(findings.some(f => f.code === 'env-coupled-test'), JSON.stringify(findings));
 });
 
-check('anti-garbage flags cross-layer session mix', () => {
+check('anti-garbage flags high cross-layer session mix', () => {
+  const { analyzeCrossLayer } = require('../lib/anti-garbage-heuristics');
+  const findings = analyzeCrossLayer(['src/runtime.rs', 'proto/auv/api/v1/session.proto']);
+  const hit = findings.find(f => f.code === 'cross-layer-mix');
+  assert.ok(hit, JSON.stringify(findings));
+  assert.equal(hit.severity, 'high');
+});
+
+check('anti-garbage docs-closeout mix is medium not high', () => {
   const { analyzeCrossLayer } = require('../lib/anti-garbage-heuristics');
   const findings = analyzeCrossLayer(['src/runtime.rs', 'docs/ai/references/note.md']);
-  assert.ok(findings.some(f => f.code === 'cross-layer-mix'), JSON.stringify(findings));
+  const hit = findings.find(f => f.code === 'cross-layer-docs-mix');
+  assert.ok(hit, JSON.stringify(findings));
+  assert.equal(hit.severity, 'medium');
+});
+
+check('anti-garbage queue dedups same file fingerprint', () => {
+  const queue = require('../lib/session-edit-review-queue');
+  queue.clearQueue();
+  const entry = {
+    filePath: 'src/runtime.rs',
+    layers: ['runtime'],
+    findings: [{ code: 'fake-refactor-suspect', severity: 'low', message: 'check behavior' }],
+  };
+  queue.upsertReviewEntry(entry, { contentHash: 'abc123', source: 'afterFileEdit' });
+  queue.upsertReviewEntry(entry, { contentHash: 'abc123', source: 'postToolUse' });
+  const state = queue.readQueue();
+  assert.equal(state.entries.length, 1, JSON.stringify(state.entries));
+  queue.clearQueue();
 });
 
 check('inject-pending-edit-review emits queue context', () => {

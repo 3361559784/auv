@@ -19,7 +19,7 @@ readStdin().then(raw => {
       runExistingHook('design-quality-check.js', claudeStr);
     }
 
-    const review = runAntiGarbageReview(claudeStr);
+    const review = runAntiGarbageReview(claudeStr, { source: 'afterFileEdit' });
     if (review.stderr) {
       process.stderr.write(`${review.stderr}\n`);
     }

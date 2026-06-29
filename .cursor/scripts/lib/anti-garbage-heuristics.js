@@ -52,17 +52,20 @@ function analyzeCrossLayer(sessionPaths) {
     }
   }
 
-  const riskyPairs = [
-    ['runtime', 'docs'],
+  const highRiskPairs = [
     ['runtime', 'proto'],
-    ['read', 'docs'],
     ['cli', 'proto'],
     ['paused', 'runtime'],
+  ];
+
+  const docsAdjacentPairs = [
+    ['runtime', 'docs'],
+    ['read', 'docs'],
     ['driver', 'docs'],
   ];
 
   const violations = [];
-  for (const [a, b] of riskyPairs) {
+  for (const [a, b] of highRiskPairs) {
     if (layers.has(a) && layers.has(b)) {
       violations.push({
         code: 'cross-layer-mix',
@@ -71,6 +74,20 @@ function analyzeCrossLayer(sessionPaths) {
         detail: `layers: ${[...layers].join(', ')}`,
       });
       break;
+    }
+  }
+
+  if (violations.length === 0) {
+    for (const [a, b] of docsAdjacentPairs) {
+      if (layers.has(a) && layers.has(b)) {
+        violations.push({
+          code: 'cross-layer-docs-mix',
+          severity: 'medium',
+          message: `Session edits span ${a} and ${b}. OK for docs-closeout; split if behavior changed in the same commit.`,
+          detail: `layers: ${[...layers].join(', ')}`,
+        });
+        break;
+      }
     }
   }
 

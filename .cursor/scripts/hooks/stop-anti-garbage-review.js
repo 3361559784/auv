@@ -57,7 +57,7 @@ function run(rawInput) {
     loopCount,
   });
 
-  if (followup_message && loopCount < 1) {
+  if (summary.entryCount > 0) {
     clearQueue();
   }
 

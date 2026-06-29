@@ -46,10 +46,38 @@ function writeQueue(queue) {
   fs.writeFileSync(file, JSON.stringify({ entries, allPaths }, null, 2), 'utf8');
 }
 
-function appendReviewEntry(entry) {
+function findingCodes(entry) {
+  return (entry.findings || [])
+    .map(finding => String(finding.code || ''))
+    .filter(Boolean)
+    .sort()
+    .join(',');
+}
+
+function reviewFingerprint(entry, meta = {}) {
+  const payload = [
+    String(entry.filePath || ''),
+    findingCodes(entry),
+    String(meta.contentHash || ''),
+    String(meta.toolUseId || ''),
+  ].join('|');
+  return crypto.createHash('sha1').update(payload).digest('hex').slice(0, 16);
+}
+
+function upsertReviewEntry(entry, meta = {}) {
   const queue = readQueue();
+  const fingerprint = reviewFingerprint(entry, meta);
+  const duplicate = queue.entries.some(
+    existing => existing.filePath === entry.filePath && existing.fingerprint === fingerprint,
+  );
+  if (duplicate) {
+    return queue;
+  }
+
   queue.entries.push({
     ...entry,
+    fingerprint,
+    source: meta.source || '',
     timestamp: new Date().toISOString(),
   });
   if (entry.filePath) {
@@ -57,6 +85,10 @@ function appendReviewEntry(entry) {
   }
   writeQueue(queue);
   return queue;
+}
+
+function appendReviewEntry(entry) {
+  return upsertReviewEntry(entry, {});
 }
 
 function consumePendingContext(maxChars = 2800) {
@@ -84,7 +116,7 @@ function consumePendingContext(maxChars = 2800) {
       lines.push(`  layers touched this session: ${entry.layers.join(', ')}`);
     }
     for (const finding of entry.findings || []) {
-      lines.push(`  - [${finding.code}] ${finding.message}`);
+      lines.push(`  - [${finding.severity || 'info'}] ${finding.code}: ${finding.message}`);
     }
     lines.push('');
   }
@@ -113,7 +145,9 @@ function summarizeForStop(queue = readQueue()) {
 }
 
 module.exports = {
+  upsertReviewEntry,
   appendReviewEntry,
+  reviewFingerprint,
   consumePendingContext,
   clearQueue,
   readQueue,

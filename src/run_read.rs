@@ -11648,6 +11648,40 @@ mod tests {
       None,
     );
     assert_eq!(passed.verification_outcome, "passed");
+    let mut unreliable_operation_result = mc19_operation_result(
+      &run_id,
+      "artifact_query",
+      OperationStatus::Completed,
+      "dispatched",
+    );
+    unreliable_operation_result
+      .verifications
+      .push(VerificationResult {
+        api_version: VERIFICATION_RESULT_API_VERSION.to_string(),
+        method: VerificationMethod::SemanticMatch,
+        executed: true,
+        state_changed: false,
+        semantic_matched: None,
+        failure_layer: Some(crate::contract::FailureLayer::VerificationUnreliable),
+        evidence: Vec::new(),
+        consumed_candidate_ref: None,
+        consumed_node_ref: None,
+        consumed_recognition_artifact_ref: None,
+        consumed_recognition_id: None,
+        consumed_recognized_item_id: None,
+        observed_label: None,
+      });
+    unreliable_operation_result.known_limits =
+      vec![auv_game_minecraft::MC20_V1_QUERY_WIRED_WITNESS_ABSENT_KNOWN_LIMIT.to_string()];
+    let unreliable = super::resolve_query_wired_live_action_verification_projection(
+      true,
+      Some("artifact_op"),
+      Some(&unreliable_operation_result),
+      run_id.as_str(),
+      None,
+    );
+    assert_eq!(unreliable.verification_outcome, "unreliable");
+
     assert_eq!(
       passed.verification_reason.as_deref(),
       Some("world diff matched")

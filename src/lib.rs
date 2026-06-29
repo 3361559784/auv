@@ -15,6 +15,7 @@ pub mod mcp;
 pub mod minecraft;
 pub mod minecraft_query_live_action;
 pub mod minecraft_session;
+pub mod minecraft_verification;
 pub mod model;
 pub mod osu;
 pub mod osu_query_live_action;

@@ -2,7 +2,10 @@ use std::env;
 use std::path::PathBuf;
 
 use auv_cli::build_runtime_with_store_root;
-use auv_cli::minecraft::{QueryWiredLiveActionInputs, run_minecraft_query_wired_live_action};
+use auv_cli::minecraft::{
+  QueryWiredLiveActionInputs, QueryWiredLiveActionTelemetryWitness,
+  run_minecraft_query_wired_live_action,
+};
 use auv_game_minecraft::{BlockFace, BlockPosition, MinecraftTargetSemantics};
 
 struct Args {
@@ -14,6 +17,8 @@ struct Args {
   output_dir: PathBuf,
   target_app: String,
   target_title: String,
+  pre_telemetry: Option<PathBuf>,
+  post_telemetry: Option<PathBuf>,
   store_root: Option<PathBuf>,
 }
 
@@ -40,6 +45,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
       output_dir: args.output_dir,
       target_app: args.target_app,
       target_title: args.target_title,
+      telemetry_witness: args.pre_telemetry.map(|pre_telemetry_sample| {
+        QueryWiredLiveActionTelemetryWitness {
+          pre_telemetry_sample,
+          post_telemetry_sample: args.post_telemetry,
+        }
+      }),
     },
   )?;
 
@@ -72,6 +83,8 @@ fn parse_args(args: Vec<String>) -> Result<Args, String> {
   let mut output_dir = None;
   let mut target_app = None;
   let mut target_title = None;
+  let mut pre_telemetry = None;
+  let mut post_telemetry = None;
   let mut store_root = None;
 
   let mut iter = args.into_iter();
@@ -88,6 +101,8 @@ fn parse_args(args: Vec<String>) -> Result<Args, String> {
       "--output-dir" => output_dir = Some(PathBuf::from(value)),
       "--target-app" => target_app = Some(value),
       "--target-title" => target_title = Some(value),
+      "--pre-telemetry" => pre_telemetry = Some(PathBuf::from(value)),
+      "--post-telemetry" => post_telemetry = Some(PathBuf::from(value)),
       "--store-root" => store_root = Some(PathBuf::from(value)),
       other => return Err(format!("unknown argument: {other}")),
     }
@@ -102,6 +117,8 @@ fn parse_args(args: Vec<String>) -> Result<Args, String> {
     output_dir: output_dir.ok_or("--output-dir is required")?,
     target_app: target_app.ok_or("--target-app is required")?,
     target_title: target_title.ok_or("--target-title is required")?,
+    pre_telemetry,
+    post_telemetry,
     store_root,
   })
 }

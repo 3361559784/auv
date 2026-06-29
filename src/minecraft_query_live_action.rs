@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use crate::contract::{
   ArtifactRef, FreshnessBasis, OPERATION_RESULT_API_VERSION, OperationOutput, OperationResult,
-  OperationStatus,
+  OperationStatus, VerificationResult,
 };
 use crate::model::InvokeRequest;
 use auv_driver::geometry::WindowPoint;
@@ -18,8 +18,9 @@ use auv_tracing_driver::trace::RunId;
 pub const QUERY_WIRED_LIVE_ACTION_OPERATION_ID: &str = "auv.minecraft.query_wired_live_action";
 
 // NOTICE(mc19-d4-known-limit): D4 closes non-stub `input.clickWindowPoint`
-// dispatch for MC-19 wired live action; gameplay verification remains out of
-// scope for this slice.
+// dispatch for MC-19 wired live action. MC-20 D1 adds post-action verification
+// in glue and removes this limit when verification claims are recorded; see
+// `docs/ai/references/2026-06-30-minecraft-mc20-d1-query-wired-post-action-verification-design.md`.
 
 pub fn invoke_click_at_window_point(
   recording: &RunRecordingBackend,
@@ -127,6 +128,8 @@ pub fn build_query_wired_live_action_operation_result(
   run_id: &RunId,
   wiring: &QueryActionWiringOutcome,
   query_manifest_ref: Option<ArtifactRef>,
+  verifications: Vec<VerificationResult>,
+  witness_present: bool,
 ) -> OperationResult {
   let (status, message) = operation_status_and_message_from_wiring(wiring);
   let freshness_basis = query_manifest_ref
@@ -136,6 +139,8 @@ pub fn build_query_wired_live_action_operation_result(
       source_operation_id: Some("auv.minecraft.query_3dgs_training_result".to_string()),
       notes: vec!["MC-12 spatial query manifest staged in the same run".to_string()],
     });
+  let known_limits =
+    resolve_query_wired_live_action_known_limits(wiring, &verifications, witness_present);
 
   OperationResult {
     api_version: OPERATION_RESULT_API_VERSION.to_string(),
@@ -146,10 +151,34 @@ pub fn build_query_wired_live_action_operation_result(
     output: OperationOutput::Acknowledged {
       message: Some(message),
     },
-    verifications: Vec::new(),
+    verifications,
     freshness_basis,
-    known_limits: wiring.known_limits.clone(),
+    known_limits,
   }
+}
+
+fn resolve_query_wired_live_action_known_limits(
+  wiring: &QueryActionWiringOutcome,
+  verifications: &[VerificationResult],
+  witness_present: bool,
+) -> Vec<String> {
+  if !wiring.attempted || verifications.is_empty() {
+    return wiring.known_limits.clone();
+  }
+
+  let mut known_limits = wiring
+    .known_limits
+    .iter()
+    .filter(|limit| **limit != auv_game_minecraft::MC19_V1_D4_QUERY_WIRED_LIVE_ACTION_KNOWN_LIMIT)
+    .cloned()
+    .collect::<Vec<_>>();
+
+  if !witness_present {
+    known_limits
+      .push(auv_game_minecraft::MC20_V1_QUERY_WIRED_WITNESS_ABSENT_KNOWN_LIMIT.to_string());
+  }
+
+  known_limits
 }
 
 pub fn stage_query_wired_live_action_operation_result(

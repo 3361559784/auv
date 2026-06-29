@@ -159,8 +159,9 @@ pub use types::{
   ProjectionVisibility, RaycastHit, Vec3, Viewport, mc6_projection_target_for_frame,
 };
 pub use verify::{
-  MismatchRefusal, MismatchRefusalReason, WorldDiffFailure, WorldDiffRequest, WorldDiffVerdict,
-  evaluate_mismatch_refusal, evaluate_world_diff,
+  MC20_V1_QUERY_WIRED_WITNESS_ABSENT_KNOWN_LIMIT, MismatchRefusal, MismatchRefusalReason,
+  QueryWiredPostActionWitness, WorldDiffFailure, WorldDiffRequest, WorldDiffVerdict,
+  evaluate_mismatch_refusal, evaluate_world_diff, verify_query_wired_live_action_semantic,
 };
 
 // NOTICE(mc4-live-refusal): MC-4 refusal logic now closes crate-local mismatch cases that can be

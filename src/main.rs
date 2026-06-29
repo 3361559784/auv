@@ -1397,44 +1397,6 @@ struct MinecraftProjectionCalibrationArtifact {
   known_limits: Vec<String>,
 }
 
-fn build_minecraft_world_diff_verification(
-  verdict: &auv_game_minecraft::verify::WorldDiffVerdict,
-  evidence: Vec<auv_cli::contract::ArtifactRef>,
-) -> auv_cli::contract::VerificationResult {
-  use auv_cli::contract::{
-    FailureLayer, VERIFICATION_RESULT_API_VERSION, VerificationMethod, VerificationResult,
-  };
-
-  let failure_layer = match verdict.failure {
-    None => None,
-    Some(auv_game_minecraft::verify::WorldDiffFailure::VerificationUnreliable) => {
-      Some(FailureLayer::VerificationUnreliable)
-    }
-    Some(auv_game_minecraft::verify::WorldDiffFailure::StateChangedNoMatch) => {
-      Some(FailureLayer::StateChangedNoMatch)
-    }
-    Some(auv_game_minecraft::verify::WorldDiffFailure::SemanticMismatch) => {
-      Some(FailureLayer::SemanticMismatch)
-    }
-  };
-
-  VerificationResult {
-    api_version: VERIFICATION_RESULT_API_VERSION.to_string(),
-    method: VerificationMethod::SemanticMatch,
-    executed: verdict.executed,
-    state_changed: verdict.state_changed,
-    semantic_matched: verdict.semantic_matched,
-    failure_layer,
-    evidence,
-    consumed_candidate_ref: None,
-    consumed_node_ref: None,
-    consumed_recognition_artifact_ref: None,
-    consumed_recognition_id: None,
-    consumed_recognized_item_id: None,
-    observed_label: verdict.observed_block_id.clone(),
-  }
-}
-
 fn build_minecraft_operation_result(
   run_id: &auv_tracing_driver::trace::RunId,
   verification: VerificationResult,
@@ -1477,33 +1439,6 @@ fn stage_operation_result_artifact(
     &artifact_path,
     "operation-result.json",
     Some("minecraft live-click operation result with world diff verification".to_string()),
-  );
-  let _ = fs::remove_file(&artifact_path);
-  staged.map_err(|error| error.to_string())
-}
-
-fn stage_minecraft_spatial_frame_artifact(
-  context: &mut auv_tracing_driver::recorded_operation::RecordedOperationContext<'_>,
-  frame: &auv_game_minecraft::MinecraftSpatialFrame,
-) -> Result<(PathBuf, auv_cli::contract::ArtifactRef), String> {
-  let artifact_json = serde_json::to_string_pretty(frame)
-    .map(|mut json| {
-      json.push('\n');
-      json
-    })
-    .map_err(|error| format!("failed to serialize minecraft spatial frame: {error}"))?;
-  let artifact_path = std::env::temp_dir().join(format!(
-    "auv-minecraft-spatial-frame-{}-{}.json",
-    context.run_id(),
-    auv_cli::model::now_millis()
-  ));
-  fs::write(&artifact_path, artifact_json.as_bytes())
-    .map_err(|error| format!("failed to write minecraft spatial frame artifact: {error}"))?;
-  let staged = context.stage_artifact_file_with_ref(
-    auv_cli::minecraft::MINECRAFT_SPATIAL_FRAME_ARTIFACT_ROLE,
-    &artifact_path,
-    "minecraft-spatial-frame.json",
-    Some("durable minecraft spatial frame with pose, matrices, and raycast truth".to_string()),
   );
   let _ = fs::remove_file(&artifact_path);
   staged.map_err(|error| error.to_string())
@@ -1552,7 +1487,9 @@ fn run_minecraft_live_click(
       )?;
       let screenshot_artifact_id = screenshot_ref.artifact_id.as_str().to_string();
       let (staged_frame_path, _frame_ref) =
-        stage_minecraft_spatial_frame_artifact(context, &pre_frame)?;
+        auv_cli::minecraft_verification::stage_minecraft_spatial_frame_artifact(
+          context, &pre_frame,
+        )?;
       let capture_timestamp_ms = if let Some(skew) = capture_skew_ms {
         if skew >= 0 {
           pre_frame.monotonic_timestamp_ms.saturating_sub(skew as u64)
@@ -1627,14 +1564,15 @@ fn run_minecraft_live_click(
         auv_game_minecraft::MinecraftBlockTarget::new(target_block),
       )
       .allow_same_block_state_change();
-      let verification = build_minecraft_world_diff_verification(
-        &auv_game_minecraft::verify::evaluate_world_diff(
-          &pre_frame,
-          &post_frame,
-          &world_diff_request,
-        ),
-        vec![screenshot_ref.clone(), projection_ref.clone()],
-      );
+      let verification =
+        auv_cli::minecraft_verification::map_world_diff_verdict_to_verification_result(
+          &auv_game_minecraft::verify::evaluate_world_diff(
+            &pre_frame,
+            &post_frame,
+            &world_diff_request,
+          ),
+          vec![screenshot_ref.clone(), projection_ref.clone()],
+        );
       let operation_result = build_minecraft_operation_result(context.run_id(), verification);
       let (staged_operation_result_path, operation_result_ref) =
         stage_operation_result_artifact(context, &operation_result)?;
@@ -1712,7 +1650,10 @@ fn run_minecraft_projection_bridge(
         capture_timestamp_ms,
       );
       let (staged_frame_path, _frame_ref) =
-        stage_minecraft_spatial_frame_artifact(context, &bound.frame)?;
+        auv_cli::minecraft_verification::stage_minecraft_spatial_frame_artifact(
+          context,
+          &bound.frame,
+        )?;
 
       let assessment = auv_game_minecraft::evidence::assess_bound_projection(
         bound.frame.clone(),
@@ -2007,7 +1948,10 @@ fn run_minecraft_calibrate_projection(
         frame.monotonic_timestamp_ms,
       );
       let (staged_frame_path, _frame_ref) =
-        stage_minecraft_spatial_frame_artifact(context, &bound.frame)?;
+        auv_cli::minecraft_verification::stage_minecraft_spatial_frame_artifact(
+          context,
+          &bound.frame,
+        )?;
       let target =
         auv_game_minecraft::mc6_projection_target_for_frame(target_block, &bound.frame, semantics);
       let assessment = auv_game_minecraft::evidence::assess_bound_projection(
@@ -2842,7 +2786,11 @@ mod tests {
       observed_item_delta: Some(1),
     };
 
-    let verification = build_minecraft_world_diff_verification(&verdict, Vec::new());
+    let verification =
+      auv_cli::minecraft_verification::map_world_diff_verdict_to_verification_result(
+        &verdict,
+        Vec::new(),
+      );
 
     assert_eq!(
       verification.method,
@@ -2891,7 +2839,11 @@ mod tests {
         observed_item_delta: Some(0),
       };
 
-      let verification = build_minecraft_world_diff_verification(&verdict, Vec::new());
+      let verification =
+        auv_cli::minecraft_verification::map_world_diff_verdict_to_verification_result(
+          &verdict,
+          Vec::new(),
+        );
       assert_eq!(verification.failure_layer, expected_layer);
       assert_eq!(
         verification.observed_label.as_deref(),

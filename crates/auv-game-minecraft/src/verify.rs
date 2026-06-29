@@ -169,6 +169,24 @@ pub fn evaluate_mismatch_refusal(
   }
 }
 
+pub const MC20_V1_QUERY_WIRED_WITNESS_ABSENT_KNOWN_LIMIT: &str =
+  "mc20_v1_query_wired_witness_absent_post_action_semantic_verification_unreliable";
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct QueryWiredPostActionWitness {
+  pub target_block: BlockPosition,
+  pub pre_frame: MinecraftSpatialFrame,
+  pub post_frame: MinecraftSpatialFrame,
+}
+
+pub fn verify_query_wired_live_action_semantic(
+  witness: &QueryWiredPostActionWitness,
+) -> WorldDiffVerdict {
+  let request = WorldDiffRequest::new(MinecraftBlockTarget::new(witness.target_block))
+    .allow_same_block_state_change();
+  evaluate_world_diff(&witness.pre_frame, &witness.post_frame, &request)
+}
+
 pub fn evaluate_world_diff(
   pre: &MinecraftSpatialFrame,
   post: &MinecraftSpatialFrame,
@@ -802,5 +820,74 @@ mod tests {
 
     assert!(verdict.state_changed);
     assert_eq!(verdict.failure, None);
+  }
+
+  #[test]
+  fn verify_query_wired_live_action_semantic_passes_on_allowed_same_block_tick_advance() {
+    let target_block = target().block_pos;
+    let pre = frame_at(10, 1_000, Some(witnessed_stone()), vec![], vec![]);
+    let post = frame_at(11, 1_050, Some(witnessed_stone()), vec![], vec![]);
+    let verdict = verify_query_wired_live_action_semantic(&QueryWiredPostActionWitness {
+      target_block,
+      pre_frame: pre,
+      post_frame: post,
+    });
+
+    assert!(verdict.state_changed);
+    assert_eq!(verdict.failure, None);
+    assert_eq!(verdict.semantic_matched, None);
+  }
+
+  #[test]
+  fn verify_query_wired_live_action_semantic_reports_unreliable_without_pre_witness() {
+    let target_block = target().block_pos;
+    let pre = frame_at(10, 1_000, None, vec![], vec![]);
+    let post = frame_at(11, 1_050, None, vec![], vec![]);
+    let verdict = verify_query_wired_live_action_semantic(&QueryWiredPostActionWitness {
+      target_block,
+      pre_frame: pre,
+      post_frame: post,
+    });
+
+    assert_eq!(
+      verdict.failure,
+      Some(WorldDiffFailure::VerificationUnreliable)
+    );
+    assert!(!verdict.state_changed);
+  }
+
+  #[test]
+  fn verify_query_wired_live_action_semantic_detects_block_removal() {
+    let target_block = target().block_pos;
+    let pre = frame_at(
+      10,
+      1_000,
+      Some(witnessed_stone()),
+      vec![NearbyBlock {
+        block_pos: target_block,
+        block_id: "minecraft:stone".to_string(),
+      }],
+      vec![],
+    );
+    let post = frame_at(
+      11,
+      1_050,
+      Some(RaycastHit {
+        block_pos: target_block,
+        face: BlockFace::North,
+        block_id: "minecraft:air".to_string(),
+      }),
+      vec![],
+      vec![],
+    );
+    let verdict = verify_query_wired_live_action_semantic(&QueryWiredPostActionWitness {
+      target_block,
+      pre_frame: pre,
+      post_frame: post,
+    });
+
+    assert!(verdict.state_changed);
+    assert_eq!(verdict.failure, None);
+    assert_eq!(verdict.observed_block_id.as_deref(), Some("minecraft:air"));
   }
 }

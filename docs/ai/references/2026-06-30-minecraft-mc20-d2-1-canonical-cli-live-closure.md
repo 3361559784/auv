@@ -342,3 +342,5 @@ MC-19 Query Wired Live Action:
 D2.1 ceiling was `inconclusive` for tick-advance witnesses (G5). MC-20 D3 closes
 `passed`/`failed` with block-removal + inventory witnesses — see
 [`2026-06-30-minecraft-mc20-d3-semantic-pass-fail-live-closure.md`](2026-06-30-minecraft-mc20-d3-semantic-pass-fail-live-closure.md).
+MC-20 D4 graduates the full G0–G8 matrix including G8 `absent` — see
+[`2026-06-30-minecraft-mc20-d4-live-evidence-closeout.md`](2026-06-30-minecraft-mc20-d4-live-evidence-closeout.md).

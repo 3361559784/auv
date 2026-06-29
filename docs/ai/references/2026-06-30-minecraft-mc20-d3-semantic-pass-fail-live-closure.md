@@ -24,7 +24,7 @@ Prior matrix (D2.1 G0–G5):
 | Semantic fail | **G7** | block removed + inv flat | `minecraft:stone` | `semantic_matched: false`, `failure_layer: state_changed_no_match` | `failed` |
 
 G0 parse guards (including `--verification-expected-item-id requires --sample`) are
-covered by `cargo test parse_minecraft_query_wired_live_click` (11/11 on 2026-06-30).
+covered by `cargo test parse_minecraft_query_wired_live_click` (11/11; includes `--post-sample requires --sample`).
 
 ## Preconditions
 
@@ -187,7 +187,7 @@ MC-19 Query Wired Live Action:
 ## Honest limits / follow-ups
 
 - This closure still uses synthetic witness shaping; D3.1 separately hardens the live telemetry seam with bounded wait for a newer post frame, but does not by itself prove full gameplay harvest success.
-- `dispatch_outcome=failed` → `verification_outcome=absent` gate remains unchanged
-  (not re-tested here).
+- G8 `absent` (dispatch failed) closed in **D4** — see
+  [`2026-06-30-minecraft-mc20-d4-live-evidence-closeout.md`](2026-06-30-minecraft-mc20-d4-live-evidence-closeout.md).
 - D3 does **not** edit `run_read.rs`; projection reuses Core-C3 D2 mapper.
 - MC-20 controller / planner lane remains paused.

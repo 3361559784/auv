@@ -3,8 +3,9 @@
 Date: 2026-06-30
 
 Status: **D2 implemented** — stable vertical CLI for the MC-19+MC-20 D1 library chain.
-**D2.1 live closure recorded**; **D2.2 inspect/store-root closure**; **D3 semantic pass/fail closure** (2026-06-30) — see
-[`2026-06-30-minecraft-mc20-d2-1-canonical-cli-live-closure.md`](2026-06-30-minecraft-mc20-d2-1-canonical-cli-live-closure.md).
+**D2.1 live closure recorded**; **D2.2 inspect/store-root closure**; **D3 semantic pass/fail closure**; **D4 live evidence closeout (G0–G8) closed** (2026-06-30) — see
+[`2026-06-30-minecraft-mc20-d2-1-canonical-cli-live-closure.md`](2026-06-30-minecraft-mc20-d2-1-canonical-cli-live-closure.md),
+[`2026-06-30-minecraft-mc20-d4-live-evidence-closeout.md`](2026-06-30-minecraft-mc20-d4-live-evidence-closeout.md).
 MC-20 controller / planner lane remains **paused** after this slice.
 
 ## One-line summary
@@ -132,10 +133,16 @@ src/cli.rs + src/main.rs (parse + thin dispatch)
 
 - `auv inspect <run-id> [--store-root <path>]` reads the same store used by
   `--store-root` on producer commands.
-- `inspectHint` prints only when dispatch succeeded (`click_summary` present)
-  **and** local inspect write is enabled, i.e. when MC-20 verification was
-  evaluated into a locally readable store (including `unreliable` without
-  witness). Custom store roots are echoed in the hint.
+- **`inspectHint` gate (D2.2):** prints only when **both** conditions hold in
+  `main.rs`:
+  1. `query_wired_verification_readable(&wiring)` — `attempted=true` and
+     `click_summary.is_some()` (dispatch succeeded; MC-20 Layer-3 was eligible to
+     run, including `unreliable` without witness).
+  2. `should_write_local(&inspect)` — `--inspect-local-write` is not `false`
+     (default: local write enabled).
+- When dispatch fails (`click_summary` absent, G8 `absent` path), **no**
+  `inspectHint` is printed; use explicit `auv inspect <runId> --store-root`.
+- Custom store roots are echoed in the hint when printed.
 
 ## Paused after D2 — reopen triggers (observation only)
 
@@ -155,3 +162,8 @@ src/cli.rs + src/main.rs (parse + thin dispatch)
 
 - Design: [`2026-06-30-minecraft-mc20-d3-semantic-pass-fail-closure-design.md`](2026-06-30-minecraft-mc20-d3-semantic-pass-fail-closure-design.md)
 - Live G6/G7: [`2026-06-30-minecraft-mc20-d3-semantic-pass-fail-live-closure.md`](2026-06-30-minecraft-mc20-d3-semantic-pass-fail-live-closure.md)
+
+## D4 live evidence closeout (closed 2026-06-30)
+
+- Design: [`2026-06-30-minecraft-mc20-d4-live-evidence-closeout-design.md`](2026-06-30-minecraft-mc20-d4-live-evidence-closeout-design.md)
+- Graduation G0–G8: [`2026-06-30-minecraft-mc20-d4-live-evidence-closeout.md`](2026-06-30-minecraft-mc20-d4-live-evidence-closeout.md)

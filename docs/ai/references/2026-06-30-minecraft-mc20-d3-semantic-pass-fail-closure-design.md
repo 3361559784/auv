@@ -6,7 +6,8 @@ Status: **D3 implemented** — producer chain wires `expected_item_id` through
 `QueryWiredPostActionWitness` so live `query-wired-live-click` can emit honest
 Layer-3 `VerificationResult` claims with `semantic_matched: Some(true/false)` and
 read-side `verification_outcome` `passed` / `failed`. Synthetic witness fixtures
-close G6/G7; no `run_read` mapper changes.
+close G6/G7; no `run_read` mapper changes. **D4 graduated** full G0–G8 matrix — see
+[`2026-06-30-minecraft-mc20-d4-live-evidence-closeout.md`](2026-06-30-minecraft-mc20-d4-live-evidence-closeout.md).
 
 ## One-line summary
 
@@ -24,6 +25,7 @@ through glue into `verify_query_wired_live_action_semantic`, reusing
 | D2 canonical CLI entry | [`2026-06-30-minecraft-mc20-d2-query-wired-live-click-cli-design.md`](2026-06-30-minecraft-mc20-d2-query-wired-live-click-cli-design.md) |
 | D2.1 G0–G5 live closure | [`2026-06-30-minecraft-mc20-d2-1-canonical-cli-live-closure.md`](2026-06-30-minecraft-mc20-d2-1-canonical-cli-live-closure.md) |
 | D3 G6/G7 live closure | [`2026-06-30-minecraft-mc20-d3-semantic-pass-fail-live-closure.md`](2026-06-30-minecraft-mc20-d3-semantic-pass-fail-live-closure.md) |
+| D4 G0–G8 graduation | [`2026-06-30-minecraft-mc20-d4-live-evidence-closeout.md`](2026-06-30-minecraft-mc20-d4-live-evidence-closeout.md) |
 
 ## Owner boundary
 

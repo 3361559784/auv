@@ -184,3 +184,11 @@ MC-20 D3 closed Layer-3 `passed`/`failed` producer evidence — see
 [`2026-06-30-minecraft-mc20-d3-semantic-pass-fail-closure-design.md`](2026-06-30-minecraft-mc20-d3-semantic-pass-fail-closure-design.md)
 and live closure
 [`2026-06-30-minecraft-mc20-d3-semantic-pass-fail-live-closure.md`](2026-06-30-minecraft-mc20-d3-semantic-pass-fail-live-closure.md).
+
+## D4 follow-on (closed)
+
+MC-20 D4 graduated canonical CLI operator evidence G0–G8 including G8
+`absent` (dispatch failed) — see
+[`2026-06-30-minecraft-mc20-d4-live-evidence-closeout-design.md`](2026-06-30-minecraft-mc20-d4-live-evidence-closeout-design.md)
+and live closeout
+[`2026-06-30-minecraft-mc20-d4-live-evidence-closeout.md`](2026-06-30-minecraft-mc20-d4-live-evidence-closeout.md).

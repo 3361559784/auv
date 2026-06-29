@@ -18,21 +18,12 @@ P12 locked wire `operation_id` = invoke `command_id`. P13 validates that
 contract from the client perspective without widening into runtime persistence
 work.
 
-## Root cause: Invoke → GetOperation precondition gap
+## Historical gap (closed by API-R2)
 
-```text
-CreateSession → Invoke(fixture.observe)
-  → handler records run + operation-summary (P11)
-  → NO operation-result artifact written
-
-GetOperation(same OperationRef)
-  → run_read::read_operation_result returns None
-  → PersistedOperationRequired → gRPC FAILED_PRECONDITION
-```
-
-This is a **design deferral**, not a P12 regression. See handler NOTICE in
-`src/api/session_service/handler.rs` and internal proof in
-`transport.rs::grpc_invoke_and_get_operation_failed_precondition`.
+Before [API-R2](2026-06-30-auv-api-r2-invoke-operation-result-handoff.md), fresh
+`Invoke` wrote `operation-summary` (P11) but not `operation-result`, so
+`GetOperation` returned `PersistedOperationRequired`. Journey B originally documented
+that deferral; it now asserts the happy-path round-trip after R2 landed.
 
 ## Smoke journeys
 
@@ -47,14 +38,15 @@ All journeys live in `src/api/session_service/client_smoke.rs` and use a real
 3. `Invoke(session, "fixture.observe", empty json_payload)`
 4. Assert: `status == "completed"`, non-empty `run_id`, `operation_id == "fixture.observe"`
 
-### Journey B — Honest precondition gap (required)
+### Journey B — Invoke → GetOperation round-trip (green, post-R2)
 
 1. Continue Journey A with same client and `OperationRef` from invoke
 2. `GetOperation(operation)`
-3. Assert: `Code::FailedPrecondition`, message contains `no persisted operation result`
+3. Assert: `status == "completed"`, `output_summary == "fixture observed"`,
+   `operation.operation_id == "fixture.observe"`, and
+   `known_limits` includes `auv.api.session.invoke_synthetic_operation_result`
 
-**Purpose:** external client documents the known deferral so future failures are
-not mistaken for transport or identity regressions.
+**Purpose:** external client proves the API-R2 happy path end-to-end over loopback TCP.
 
 ### Journey C — P12 wire identity on GetOperation (green)
 
@@ -114,7 +106,7 @@ transport internals.
 
 - Not refactoring or deduplicating `transport.rs` gRPC tests
 - Not asserting `ArtifactRef.role` in smoke journeys
-- Not persisting `OperationResult` on `Invoke` (future owner-named slice)
+- Not persisting typed `OperationResult` on non-session invoke paths (API-R2b)
 - Not adding tonic gRPC reflection
 - Not subprocess / `auv session serve` CI smoke
 - Not `StreamSessionEvents` (P10)
@@ -124,7 +116,7 @@ transport internals.
 
 | Item | Trigger |
 | --- | --- |
-| Journey D: fresh-store Invoke → GetOperation green | Owner slice wires `operation-result` on Invoke |
+| Journey D: fresh-store Invoke → GetOperation green | **landed in API-R2** |
 | Subprocess `auv session serve` smoke | P13b or manual-only until port discovery is stable |
 | Optional 10–20 line server-boot helper share | Only if byte-identical duplication remains after smoke lands |
 

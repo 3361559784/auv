@@ -35,7 +35,8 @@ pub use dataset::{
   SpatialBundleOutput, SpatialBundleSourceArtifact, export_spatial_bundle,
 };
 pub use ingest::{
-  LatestFrameScan, read_latest_spatial_frame, read_latest_spatial_frame_from_tail,
+  LatestFrameScan, TailFrameWaitConfig, read_latest_spatial_frame,
+  read_latest_spatial_frame_from_tail, read_latest_spatial_frame_newer_than,
   scan_latest_spatial_frame,
 };
 pub use input_target::projected_window_point;

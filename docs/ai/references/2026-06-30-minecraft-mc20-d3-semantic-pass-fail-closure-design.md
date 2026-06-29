@@ -32,7 +32,7 @@ through glue into `verify_query_wired_live_action_semantic`, reusing
 | Producer: `expected_item_id` → `evaluate_world_diff` → real `VerificationResult` | `run_read` / inspect mapper edits |
 | CLI `--verification-expected-item-id` + library input pass-through | Core-C3 D2 read-side vocabulary patches |
 | G6 `passed` / G7 `failed` synthetic witness closure | MC-20 controller / planner |
-| Domain + glue + integration regression tests | Real Minecraft break/harvest gameplay (D3.1 candidate) |
+| Domain + glue + integration regression tests | Full gameplay success proof beyond post-frame freshness |
 
 ## Domain contract (`auv-game-minecraft`)
 
@@ -124,3 +124,11 @@ cargo test parse_minecraft_query_wired_live_click
 cargo test verify_query_wired_live_action_semantic
 git diff --check
 ```
+
+
+## D3.1 follow-on (implemented)
+
+D3.1 closes the real-telemetry freshness seam without changing semantics: post-action
+verification now performs a bounded wait for a **newer** post frame before evaluating
+`evaluate_world_diff`. This keeps synthetic D3 semantics unchanged while making live
+telemetry less brittle when the sidecar flush lands slightly after dispatch.

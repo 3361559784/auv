@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use auv_game_minecraft::verify::{QueryWiredPostActionWitness, WorldDiffFailure, WorldDiffVerdict};
 use auv_game_minecraft::{
-  BlockPosition, MinecraftSpatialFrame, QueryActionWiringOutcome,
+  BlockPosition, MinecraftSpatialFrame, QueryActionWiringOutcome, TailFrameWaitConfig,
   verify_query_wired_live_action_semantic,
 };
 use auv_tracing_driver::recorded_operation::RecordedOperationContext;
@@ -12,6 +12,8 @@ use crate::contract::{
   ArtifactRef, FailureLayer, VERIFICATION_RESULT_API_VERSION, VerificationMethod,
   VerificationResult,
 };
+
+const MC20_POST_FRAME_WAIT: TailFrameWaitConfig = TailFrameWaitConfig::new(750, 25);
 
 pub fn map_world_diff_verdict_to_verification_result(
   verdict: &WorldDiffVerdict,
@@ -126,7 +128,11 @@ pub fn build_query_wired_post_action_verifications(
     .post_telemetry_sample
     .as_ref()
     .unwrap_or(&witness.pre_telemetry_sample);
-  let post = match auv_game_minecraft::read_latest_spatial_frame_from_tail(post_sample_path) {
+  let post = match auv_game_minecraft::read_latest_spatial_frame_newer_than(
+    post_sample_path,
+    pre.monotonic_timestamp_ms,
+    MC20_POST_FRAME_WAIT,
+  ) {
     Ok(Some(frame)) => frame,
     Ok(None) => {
       return (

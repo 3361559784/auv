@@ -3351,6 +3351,78 @@ mod tests {
   }
 
   #[test]
+  fn query_wired_live_action_waits_for_fresher_post_frame() {
+    let temp = temp_dir("mc20-d3-1-fresher-post");
+    let store = LocalStore::new(temp.join("store")).expect("store");
+    let recording = RunRecordingBackend::new(store.clone(), Arc::new(NoopRunRecorder)).handle();
+    let target_block = auv_game_minecraft::BlockPosition::new(511, 73, 728);
+    let semantic_manifest_path =
+      write_mc18_semantic_fixture(&temp, target_block, mc18_target_frame(target_block));
+    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+      .join("crates/auv-game-minecraft/tests/fixtures/mc18/visible.json");
+    let pre_frame = mc20_semantic_pre_frame(target_block);
+    let stale_post = pre_frame.clone();
+    let fresher_post = mc20_semantic_pass_post_frame(target_block, &pre_frame);
+    let pre_telemetry = temp.join("pre.jsonl");
+    let post_telemetry = temp.join("post.jsonl");
+    write_telemetry_jsonl(&pre_telemetry, &pre_frame);
+    write_telemetry_jsonl(&post_telemetry, &stale_post);
+    let writer_path = post_telemetry.clone();
+    let writer_frame = fresher_post.clone();
+    let writer = std::thread::spawn(move || {
+      std::thread::sleep(std::time::Duration::from_millis(25));
+      let body = serde_json::to_string(&writer_frame).expect("frame should serialize");
+      let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&writer_path)
+        .expect("telemetry sample should open for append");
+      use std::io::Write as _;
+      writeln!(file, "{body}").expect("telemetry sample should append");
+    });
+    let executor = CountingQueryLiveClickExecutor::success("mock live click dispatched");
+
+    let output = run_minecraft_query_wired_live_action_with_executor(
+      &recording,
+      QueryWiredLiveActionInputs {
+        training_result_semantic_manifest_path: semantic_manifest_path,
+        target_block,
+        target_face: Some(auv_game_minecraft::BlockFace::North),
+        target_semantics: auv_game_minecraft::MinecraftTargetSemantics::HitFaceCenter,
+        query_command: None,
+        use_checkpoint_native_provider: false,
+        use_closed_scene_toy_provider: true,
+        closed_scene_fixture_path: Some(fixture_path),
+        output_dir: temp.join("query-output"),
+        target_app: "net.minecraft.client".to_string(),
+        target_title: "Minecraft".to_string(),
+        telemetry_witness: Some(QueryWiredLiveActionTelemetryWitness {
+          pre_telemetry_sample: pre_telemetry,
+          post_telemetry_sample: Some(post_telemetry),
+        }),
+        verification_expected_item_id: Some("minecraft:stone".to_string()),
+      },
+      &executor,
+    )
+    .expect("fresher post witness should succeed");
+
+    writer.join().expect("writer thread should join");
+    let run = recording
+      .read_run(output.run_id.as_str())
+      .expect("wired live action run should persist");
+    let operation_result = read_operation_result_artifact(&store, &run);
+    assert_eq!(operation_result.verifications.len(), 1);
+    assert_eq!(
+      operation_result.verifications[0].semantic_matched,
+      Some(true)
+    );
+    let summary = crate::run_read::derive_minecraft_query_wired_live_action_summary(&store, &run)
+      .expect("summary should derive");
+    assert_eq!(summary.verification_outcome, "passed");
+
+    let _ = fs::remove_dir_all(temp);
+  }
+
+  #[test]
   fn query_wired_live_action_witness_post_missing_still_stages_operation_result() {
     let temp = temp_dir("mc20-d1-post-missing");
     let store = LocalStore::new(temp.join("store")).expect("store");

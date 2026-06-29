@@ -186,7 +186,7 @@ MC-19 Query Wired Live Action:
 
 ## Honest limits / follow-ups
 
-- Synthetic witness only; real gameplay telemetry is a **D3.1** candidate slice.
+- This closure still uses synthetic witness shaping; D3.1 separately hardens the live telemetry seam with bounded wait for a newer post frame, but does not by itself prove full gameplay harvest success.
 - `dispatch_outcome=failed` → `verification_outcome=absent` gate remains unchanged
   (not re-tested here).
 - D3 does **not** edit `run_read.rs`; projection reuses Core-C3 D2 mapper.

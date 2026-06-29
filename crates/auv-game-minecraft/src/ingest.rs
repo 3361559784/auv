@@ -1,5 +1,7 @@
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
+use std::thread::sleep;
+use std::time::{Duration, Instant};
 
 use crate::types::MinecraftSpatialFrame;
 
@@ -64,6 +66,50 @@ pub fn read_latest_spatial_frame_from_tail(
     )
   })?;
   scan_latest_spatial_frame_from_tail(&mut file)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TailFrameWaitConfig {
+  pub wait_budget_ms: u64,
+  pub poll_interval_ms: u64,
+}
+
+impl TailFrameWaitConfig {
+  pub const fn new(wait_budget_ms: u64, poll_interval_ms: u64) -> Self {
+    Self {
+      wait_budget_ms,
+      poll_interval_ms,
+    }
+  }
+}
+
+pub fn read_latest_spatial_frame_newer_than(
+  path: &Path,
+  min_monotonic_timestamp_ms: u64,
+  wait: TailFrameWaitConfig,
+) -> Result<Option<MinecraftSpatialFrame>, String> {
+  let deadline = Instant::now()
+    .checked_add(Duration::from_millis(wait.wait_budget_ms))
+    .unwrap_or_else(Instant::now);
+
+  loop {
+    let frame = read_latest_spatial_frame_from_tail(path)?;
+    if frame
+      .as_ref()
+      .is_some_and(|frame| frame.monotonic_timestamp_ms > min_monotonic_timestamp_ms)
+    {
+      return Ok(frame);
+    }
+
+    let now = Instant::now();
+    if now >= deadline {
+      return Ok(frame);
+    }
+
+    let remaining = deadline.saturating_duration_since(now);
+    let sleep_for = remaining.min(Duration::from_millis(wait.poll_interval_ms.max(1)));
+    sleep(sleep_for);
+  }
 }
 
 /// Core scan over any byte reader. Separated from file opening so the binding
@@ -163,6 +209,8 @@ fn parse_frame_line(bytes: &[u8]) -> Result<Option<MinecraftSpatialFrame>, Strin
 #[cfg(test)]
 mod tests {
   use std::io::Cursor;
+  use std::thread;
+  use std::time::Duration;
 
   use super::*;
   use crate::types::{BlockPosition, NearbyBlock, PlayerPose, Vec3, Viewport};
@@ -378,5 +426,67 @@ mod tests {
     let frame = scan.frame.expect("frame should parse");
     assert_eq!(frame.spatial_frame_id, "frame-session");
     assert_eq!(frame.telemetry_session_id.as_deref(), Some("session-123"));
+  }
+
+  #[test]
+  fn waits_until_newer_tail_frame_appears() {
+    let temp = std::env::temp_dir().join(format!(
+      "auv-minecraft-ingest-wait-{}",
+      std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("unix epoch")
+        .as_nanos()
+    ));
+    std::fs::create_dir_all(&temp).expect("temp dir should create");
+    let path = temp.join("telemetry.jsonl");
+    std::fs::write(&path, format!("{}\n", frame_line("frame-1", 1, 1000)))
+      .expect("telemetry should write");
+
+    let writer_path = path.clone();
+    let handle = thread::spawn(move || {
+      thread::sleep(Duration::from_millis(25));
+      std::fs::write(
+        &writer_path,
+        format!(
+          "{}\n{}\n",
+          frame_line("frame-1", 1, 1000),
+          frame_line("frame-2", 2, 1100)
+        ),
+      )
+      .expect("telemetry append should write");
+    });
+
+    let frame =
+      read_latest_spatial_frame_newer_than(&path, 1000, TailFrameWaitConfig::new(200, 10))
+        .expect("wait should succeed")
+        .expect("newer frame should appear");
+
+    handle.join().expect("writer thread should join");
+    assert_eq!(frame.spatial_frame_id, "frame-2");
+    assert_eq!(frame.monotonic_timestamp_ms, 1100);
+    let _ = std::fs::remove_dir_all(temp);
+  }
+
+  #[test]
+  fn returns_stale_tail_frame_when_wait_budget_expires() {
+    let temp = std::env::temp_dir().join(format!(
+      "auv-minecraft-ingest-stale-{}",
+      std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("unix epoch")
+        .as_nanos()
+    ));
+    std::fs::create_dir_all(&temp).expect("temp dir should create");
+    let path = temp.join("telemetry.jsonl");
+    std::fs::write(&path, format!("{}\n", frame_line("frame-1", 1, 1000)))
+      .expect("telemetry should write");
+
+    let frame = read_latest_spatial_frame_newer_than(&path, 1000, TailFrameWaitConfig::new(20, 5))
+      .expect("wait should succeed")
+      .expect("stale frame should still be returned");
+
+    assert_eq!(frame.spatial_frame_id, "frame-1");
+    assert_eq!(frame.monotonic_timestamp_ms, 1000);
+    let _ = std::fs::remove_dir_all(temp);
   }
 }

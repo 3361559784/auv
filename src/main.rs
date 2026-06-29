@@ -1408,6 +1408,9 @@ struct MinecraftCalibrationOutput {
   artifact_paths: Vec<PathBuf>,
 }
 
+const MINECRAFT_LIVE_CLICK_POST_FRAME_WAIT: auv_game_minecraft::TailFrameWaitConfig =
+  auv_game_minecraft::TailFrameWaitConfig::new(750, 25);
+
 #[derive(Debug)]
 struct MinecraftLiveClickOutput {
   screenshot_artifact_id: String,
@@ -1584,13 +1587,17 @@ fn run_minecraft_live_click(
           target_title,
           window_point,
         )?;
-      let post_frame = auv_game_minecraft::read_latest_spatial_frame_from_tail(&post_sample_path)?
-        .ok_or_else(|| {
-          format!(
-            "no valid minecraft post frame found in {}",
-            post_sample_path.display()
-          )
-        })?;
+      let post_frame = auv_game_minecraft::read_latest_spatial_frame_newer_than(
+        &post_sample_path,
+        pre_frame.monotonic_timestamp_ms,
+        MINECRAFT_LIVE_CLICK_POST_FRAME_WAIT,
+      )?
+      .ok_or_else(|| {
+        format!(
+          "no valid minecraft post frame found in {}",
+          post_sample_path.display()
+        )
+      })?;
 
       let world_diff_request = auv_game_minecraft::verify::WorldDiffRequest::new(
         auv_game_minecraft::MinecraftBlockTarget::new(target_block),
@@ -2874,6 +2881,21 @@ mod tests {
     fs::write(path, format!("{body}\n")).expect("telemetry sample should write");
   }
 
+  fn append_mc2_test_telemetry(path: &Path, frame: &auv_game_minecraft::MinecraftSpatialFrame) {
+    use std::io::Write as _;
+
+    let mut file = fs::OpenOptions::new()
+      .append(true)
+      .open(path)
+      .expect("telemetry sample should open for append");
+    writeln!(
+      file,
+      "{}",
+      serde_json::to_string(frame).expect("frame should serialize")
+    )
+    .expect("telemetry sample should append");
+  }
+
   fn write_mc2_test_screenshot(path: &Path) {
     RgbImage::from_pixel(64, 64, Rgb([0, 0, 0]))
       .save(path)
@@ -2955,6 +2977,81 @@ mod tests {
         Some("minecraft:stone")
       );
     }
+  }
+
+  #[test]
+  fn minecraft_live_click_waits_for_fresher_post_frame() {
+    let project_root = mc2_temp_dir("mc20-d3-1-live-click-project");
+    let store_root = mc2_temp_dir("mc20-d3-1-live-click-store");
+    let telemetry_path = project_root.join("pre.jsonl");
+    let post_telemetry_path = project_root.join("post.jsonl");
+    let screenshot_path = project_root.join("frame.png");
+    write_mc2_test_telemetry(&telemetry_path);
+    write_mc2_test_telemetry(&post_telemetry_path);
+    write_mc2_test_screenshot(&screenshot_path);
+
+    let appended_post = auv_game_minecraft::MinecraftSpatialFrame {
+      spatial_frame_id: "frame-mc2-post".to_string(),
+      world_tick: 43,
+      monotonic_timestamp_ms: 5_050,
+      telemetry_session_id: None,
+      viewport: auv_game_minecraft::types::Viewport::new(64, 64),
+      view_matrix: [
+        1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+      ],
+      projection_matrix: [
+        1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+      ],
+      player_pose: auv_game_minecraft::types::PlayerPose {
+        eye_position: auv_game_minecraft::types::Vec3::new(0.0, 0.0, 0.0),
+        yaw: 0.0,
+        pitch: 0.0,
+      },
+      raycast_hit: Some(auv_game_minecraft::types::RaycastHit {
+        block_pos: auv_game_minecraft::BlockPosition::new(0, 0, 0),
+        face: auv_game_minecraft::types::BlockFace::North,
+        block_id: "minecraft:stone".to_string(),
+      }),
+      nearby_blocks: Vec::new(),
+      nearby_entities: Vec::new(),
+      inventory_summary: Vec::new(),
+      screenshot_artifact_ref: None,
+      mc_capture_skew_ms: None,
+      screen_state: None,
+      resource_pack_ids: Vec::new(),
+    };
+
+    let writer_path = post_telemetry_path.clone();
+    let writer_frame = appended_post.clone();
+    let writer = std::thread::spawn(move || {
+      std::thread::sleep(std::time::Duration::from_millis(25));
+      append_mc2_test_telemetry(&writer_path, &writer_frame);
+    });
+
+    let runtime = build_runtime_with_store_root(project_root.clone(), store_root.clone())
+      .expect("runtime should build");
+    let output = run_minecraft_live_click(
+      &runtime,
+      telemetry_path,
+      Some(post_telemetry_path),
+      screenshot_path,
+      "0,0,0",
+      "FixtureApp",
+      "Fixture Window",
+      Some(0),
+      true,
+    )
+    .expect("live click should record");
+
+    writer.join().expect("writer thread should join");
+    let verifications =
+      auv_cli::inspect::list_verifications(runtime.recording().store(), output.run_id.as_str())
+        .expect("verifications should list");
+    assert_eq!(verifications.len(), 1);
+    assert_eq!(verifications[0].failure_layer, None);
+
+    let _ = fs::remove_dir_all(project_root);
+    let _ = fs::remove_dir_all(store_root);
   }
 
   #[test]

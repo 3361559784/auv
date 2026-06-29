@@ -208,6 +208,22 @@ pub enum CliCommand {
     output_dir: String,
     inspect: InspectClientOptions,
   },
+  MinecraftQueryWiredLiveClick {
+    training_result_semantic_manifest_path: String,
+    target_block: String,
+    target_face: Option<String>,
+    target_semantics: String,
+    query_command: Option<String>,
+    use_checkpoint_native_provider: bool,
+    use_closed_scene_toy_provider: bool,
+    closed_scene_fixture_path: Option<String>,
+    output_dir: String,
+    target_app: String,
+    target_title: String,
+    telemetry_sample: Option<String>,
+    post_telemetry_sample: Option<String>,
+    inspect: InspectClientOptions,
+  },
   MinecraftPrepareTextureSweep {
     sidecar_run_dir: String,
     output_dir: String,
@@ -1103,7 +1119,7 @@ fn parse_invoke(arguments: &[String]) -> AuvResult<CliCommand> {
 fn parse_minecraft(arguments: &[String]) -> AuvResult<CliCommand> {
   if arguments.len() < 2 {
     return Err(
-      "usage: auv minecraft <bridge|calibrate-projection|live-click|export-spatial-bundle|export-3dgs-scene-packet|export-3dgs-training-package|prepare-3dgs-training|launch-3dgs-training-job|collect-3dgs-training-job-result|fetch-3dgs-training-result-artifacts|validate-3dgs-training-result|query-3dgs-training-result|inspect-3dgs-training-result-holdout|measure-3dgs-holdout-render-quality|prepare-texture-sweep|build-texture-sweep-samples|eval-texture-sweep> ..."
+      "usage: auv minecraft <bridge|calibrate-projection|live-click|query-wired-live-click|export-spatial-bundle|export-3dgs-scene-packet|export-3dgs-training-package|prepare-3dgs-training|launch-3dgs-training-job|collect-3dgs-training-job-result|fetch-3dgs-training-result-artifacts|validate-3dgs-training-result|query-3dgs-training-result|inspect-3dgs-training-result-holdout|measure-3dgs-holdout-render-quality|prepare-texture-sweep|build-texture-sweep-samples|eval-texture-sweep> ..."
         .to_string(),
     );
   }
@@ -1112,6 +1128,7 @@ fn parse_minecraft(arguments: &[String]) -> AuvResult<CliCommand> {
     "bridge" => parse_minecraft_bridge(arguments),
     "calibrate-projection" => parse_minecraft_calibrate_projection(arguments),
     "live-click" => parse_minecraft_live_click(arguments),
+    "query-wired-live-click" => parse_minecraft_query_wired_live_click(arguments),
     "export-spatial-bundle" => parse_minecraft_export_spatial_bundle(arguments),
     "export-3dgs-scene-packet" => parse_minecraft_export_3dgs_scene_packet(arguments),
     "export-3dgs-training-package" => parse_minecraft_export_3dgs_training_package(arguments),
@@ -1135,7 +1152,7 @@ fn parse_minecraft(arguments: &[String]) -> AuvResult<CliCommand> {
     "build-texture-sweep-samples" => parse_minecraft_build_texture_sweep_samples(arguments),
     "eval-texture-sweep" => parse_minecraft_eval_texture_sweep(arguments),
     other => Err(format!(
-      "unknown minecraft subcommand {other}; expected bridge, calibrate-projection, live-click, export-spatial-bundle, export-3dgs-scene-packet, export-3dgs-training-package, prepare-3dgs-training, launch-3dgs-training-job, collect-3dgs-training-job-result, fetch-3dgs-training-result-artifacts, validate-3dgs-training-result, query-3dgs-training-result, inspect-3dgs-training-result-holdout, measure-3dgs-holdout-render-quality, prepare-texture-sweep, build-texture-sweep-samples, or eval-texture-sweep"
+      "unknown minecraft subcommand {other}; expected bridge, calibrate-projection, live-click, query-wired-live-click, export-spatial-bundle, export-3dgs-scene-packet, export-3dgs-training-package, prepare-3dgs-training, launch-3dgs-training-job, collect-3dgs-training-job-result, fetch-3dgs-training-result-artifacts, validate-3dgs-training-result, query-3dgs-training-result, inspect-3dgs-training-result-holdout, measure-3dgs-holdout-render-quality, prepare-texture-sweep, build-texture-sweep-samples, or eval-texture-sweep"
     )),
   }
 }
@@ -1463,6 +1480,176 @@ fn parse_minecraft_query_3dgs_training_result(arguments: &[String]) -> AuvResult
   })
 }
 
+fn parse_minecraft_query_wired_live_click(arguments: &[String]) -> AuvResult<CliCommand> {
+  let mut training_result_semantic_manifest_path = None;
+  let mut target_block = None;
+  let mut target_face = None;
+  let mut target_semantics = "hit_face_center".to_string();
+  let mut query_command = None;
+  let mut use_checkpoint_native_provider = false;
+  let mut use_closed_scene_toy_provider = false;
+  let mut closed_scene_fixture_path = None;
+  let mut output_dir = None;
+  let mut target_app = None;
+  let mut target_title = None;
+  let mut telemetry_sample = None;
+  let mut post_telemetry_sample = None;
+  let mut inspect = InspectClientOptions::default();
+  let mut index = 2;
+  while index < arguments.len() {
+    if let Some(consumed) = parse_inspect_client_option(
+      arguments[index].as_str(),
+      arguments.get(index + 1),
+      &mut inspect,
+    )? {
+      index += consumed;
+      continue;
+    }
+
+    match arguments[index].as_str() {
+      "--training-result-semantic-manifest" => {
+        training_result_semantic_manifest_path = Some(required_flag_value(
+          arguments,
+          index,
+          "--training-result-semantic-manifest",
+        )?);
+        index += 2;
+      }
+      "--target-block" => {
+        target_block = Some(required_flag_value(arguments, index, "--target-block")?);
+        index += 2;
+      }
+      "--target-face" => {
+        let value = required_flag_value(arguments, index, "--target-face")?;
+        match value.as_str() {
+          "up" | "down" | "north" | "south" | "east" | "west" => target_face = Some(value),
+          other => {
+            return Err(format!(
+              "invalid --target-face {other:?}; expected up, down, north, south, east, or west"
+            ));
+          }
+        }
+        index += 2;
+      }
+      "--target-semantics" => {
+        let value = required_flag_value(arguments, index, "--target-semantics")?;
+        match value.as_str() {
+          "hit_face_center" | "block_center" => target_semantics = value,
+          other => {
+            return Err(format!(
+              "invalid --target-semantics {other:?}; expected hit_face_center or block_center"
+            ));
+          }
+        }
+        index += 2;
+      }
+      "--query-provider" => {
+        let value = required_flag_value(arguments, index, "--query-provider")?;
+        match value.as_str() {
+          "checkpoint-native" => use_checkpoint_native_provider = true,
+          "closed-scene-toy" => use_closed_scene_toy_provider = true,
+          other => {
+            return Err(format!(
+              "invalid --query-provider {other:?}; expected checkpoint-native or closed-scene-toy"
+            ));
+          }
+        }
+        index += 2;
+      }
+      "--closed-scene-fixture" => {
+        closed_scene_fixture_path = Some(required_flag_value(
+          arguments,
+          index,
+          "--closed-scene-fixture",
+        )?);
+        index += 2;
+      }
+      "--query-command" => {
+        query_command = Some(required_flag_value(arguments, index, "--query-command")?);
+        index += 2;
+      }
+      "--output-dir" => {
+        output_dir = Some(required_flag_value(arguments, index, "--output-dir")?);
+        index += 2;
+      }
+      "--target-app" => {
+        target_app = Some(required_flag_value(arguments, index, "--target-app")?);
+        index += 2;
+      }
+      "--target-title" => {
+        target_title = Some(required_flag_value(arguments, index, "--target-title")?);
+        index += 2;
+      }
+      "--sample" => {
+        telemetry_sample = Some(required_flag_value(arguments, index, "--sample")?);
+        index += 2;
+      }
+      "--post-sample" => {
+        post_telemetry_sample = Some(required_flag_value(arguments, index, "--post-sample")?);
+        index += 2;
+      }
+      other => {
+        return Err(format!(
+          "unexpected minecraft query-wired-live-click argument {other}"
+        ));
+      }
+    }
+  }
+
+  let target_block = target_block.ok_or_else(|| "--target-block is required".to_string())?;
+  validate_target_block_coordinates(&target_block)?;
+
+  if use_checkpoint_native_provider && use_closed_scene_toy_provider {
+    return Err(
+      "--query-provider checkpoint-native and --query-provider closed-scene-toy are mutually exclusive"
+        .to_string(),
+    );
+  }
+
+  if use_checkpoint_native_provider && query_command.is_some() {
+    return Err(
+      "--query-provider checkpoint-native and --query-command are mutually exclusive".to_string(),
+    );
+  }
+
+  if use_closed_scene_toy_provider && query_command.is_some() {
+    return Err(
+      "--query-provider closed-scene-toy and --query-command are mutually exclusive".to_string(),
+    );
+  }
+
+  if use_closed_scene_toy_provider && closed_scene_fixture_path.is_none() {
+    return Err(
+      "--closed-scene-fixture is required when --query-provider closed-scene-toy".to_string(),
+    );
+  }
+
+  if closed_scene_fixture_path.is_some() && !use_closed_scene_toy_provider {
+    return Err("--closed-scene-fixture requires --query-provider closed-scene-toy".to_string());
+  }
+
+  if post_telemetry_sample.is_some() && telemetry_sample.is_none() {
+    return Err("--post-sample requires --sample".to_string());
+  }
+
+  Ok(CliCommand::MinecraftQueryWiredLiveClick {
+    training_result_semantic_manifest_path: training_result_semantic_manifest_path
+      .ok_or_else(|| "--training-result-semantic-manifest is required".to_string())?,
+    target_block,
+    target_face,
+    target_semantics,
+    query_command,
+    use_checkpoint_native_provider,
+    use_closed_scene_toy_provider,
+    closed_scene_fixture_path,
+    output_dir: output_dir.ok_or_else(|| "--output-dir is required".to_string())?,
+    target_app: target_app.ok_or_else(|| "--target-app is required".to_string())?,
+    target_title: target_title.ok_or_else(|| "--target-title is required".to_string())?,
+    telemetry_sample,
+    post_telemetry_sample,
+    inspect,
+  })
+}
 fn parse_minecraft_inspect_3dgs_training_result_holdout(
   arguments: &[String],
 ) -> AuvResult<CliCommand> {
@@ -3044,6 +3231,259 @@ mod tests {
       }
       other => panic!("unexpected command: {other:?}"),
     }
+  }
+
+  #[test]
+  fn parse_minecraft_query_wired_live_click_command() {
+    let command = parse_cli(&[
+      "minecraft".to_string(),
+      "query-wired-live-click".to_string(),
+      "--training-result-semantic-manifest".to_string(),
+      "/tmp/semantic.json".to_string(),
+      "--target-block".to_string(),
+      "1,2,3".to_string(),
+      "--target-face".to_string(),
+      "north".to_string(),
+      "--target-semantics".to_string(),
+      "block_center".to_string(),
+      "--query-provider".to_string(),
+      "closed-scene-toy".to_string(),
+      "--closed-scene-fixture".to_string(),
+      "/tmp/fixture.json".to_string(),
+      "--output-dir".to_string(),
+      "/tmp/query".to_string(),
+      "--target-app".to_string(),
+      "com.mojang.minecraft".to_string(),
+      "--target-title".to_string(),
+      "Minecraft".to_string(),
+      "--sample".to_string(),
+      "/tmp/pre.jsonl".to_string(),
+      "--post-sample".to_string(),
+      "/tmp/post.jsonl".to_string(),
+    ])
+    .expect("query-wired-live-click should parse");
+
+    match command {
+      CliCommand::MinecraftQueryWiredLiveClick {
+        training_result_semantic_manifest_path,
+        target_block,
+        target_face,
+        target_semantics,
+        use_closed_scene_toy_provider,
+        closed_scene_fixture_path,
+        output_dir,
+        target_app,
+        target_title,
+        telemetry_sample,
+        post_telemetry_sample,
+        query_command,
+        ..
+      } => {
+        assert_eq!(training_result_semantic_manifest_path, "/tmp/semantic.json");
+        assert_eq!(target_block, "1,2,3");
+        assert_eq!(target_face.as_deref(), Some("north"));
+        assert_eq!(target_semantics, "block_center");
+        assert!(use_closed_scene_toy_provider);
+        assert_eq!(
+          closed_scene_fixture_path.as_deref(),
+          Some("/tmp/fixture.json")
+        );
+        assert_eq!(output_dir, "/tmp/query");
+        assert_eq!(target_app, "com.mojang.minecraft");
+        assert_eq!(target_title, "Minecraft");
+        assert_eq!(telemetry_sample.as_deref(), Some("/tmp/pre.jsonl"));
+        assert_eq!(post_telemetry_sample.as_deref(), Some("/tmp/post.jsonl"));
+        assert!(query_command.is_none());
+      }
+      other => panic!("unexpected command: {other:?}"),
+    }
+  }
+
+  #[test]
+  fn parse_minecraft_query_wired_live_click_command_requires_target_app() {
+    let error = parse_cli(&[
+      "minecraft".to_string(),
+      "query-wired-live-click".to_string(),
+      "--training-result-semantic-manifest".to_string(),
+      "/tmp/semantic.json".to_string(),
+      "--target-block".to_string(),
+      "1,2,3".to_string(),
+      "--output-dir".to_string(),
+      "/tmp/query".to_string(),
+      "--target-title".to_string(),
+      "Minecraft".to_string(),
+    ])
+    .expect_err("target-app should be required");
+
+    assert!(error.contains("--target-app is required"));
+  }
+
+  #[test]
+  fn parse_minecraft_query_wired_live_click_command_rejects_post_sample_without_sample() {
+    let error = parse_cli(&[
+      "minecraft".to_string(),
+      "query-wired-live-click".to_string(),
+      "--training-result-semantic-manifest".to_string(),
+      "/tmp/semantic.json".to_string(),
+      "--target-block".to_string(),
+      "1,2,3".to_string(),
+      "--output-dir".to_string(),
+      "/tmp/query".to_string(),
+      "--target-app".to_string(),
+      "com.mojang.minecraft".to_string(),
+      "--target-title".to_string(),
+      "Minecraft".to_string(),
+      "--post-sample".to_string(),
+      "/tmp/post.jsonl".to_string(),
+    ])
+    .expect_err("post-sample without sample should fail");
+
+    assert!(error.contains("--post-sample requires --sample"));
+  }
+
+  #[test]
+  fn parse_minecraft_query_wired_live_click_command_rejects_unexpected_argument() {
+    let error = parse_cli(&[
+      "minecraft".to_string(),
+      "query-wired-live-click".to_string(),
+      "--training-result-semantic-manifest".to_string(),
+      "/tmp/semantic.json".to_string(),
+      "--target-block".to_string(),
+      "1,2,3".to_string(),
+      "--output-dir".to_string(),
+      "/tmp/query".to_string(),
+      "--target-app".to_string(),
+      "com.mojang.minecraft".to_string(),
+      "--target-title".to_string(),
+      "Minecraft".to_string(),
+      "--extra".to_string(),
+    ])
+    .expect_err("unexpected flag should fail");
+
+    assert!(error.contains("unexpected minecraft query-wired-live-click argument --extra"));
+  }
+
+  #[test]
+  fn parse_minecraft_query_wired_live_click_command_rejects_conflicting_provider_flags() {
+    let error = parse_cli(&[
+      "minecraft".to_string(),
+      "query-wired-live-click".to_string(),
+      "--training-result-semantic-manifest".to_string(),
+      "/tmp/semantic.json".to_string(),
+      "--target-block".to_string(),
+      "1,2,3".to_string(),
+      "--query-provider".to_string(),
+      "checkpoint-native".to_string(),
+      "--query-command".to_string(),
+      "python3 query.py".to_string(),
+      "--output-dir".to_string(),
+      "/tmp/query".to_string(),
+      "--target-app".to_string(),
+      "com.mojang.minecraft".to_string(),
+      "--target-title".to_string(),
+      "Minecraft".to_string(),
+    ])
+    .expect_err("conflicting provider flags should fail");
+
+    assert!(error.contains("mutually exclusive"));
+  }
+
+  #[test]
+  fn parse_minecraft_query_wired_live_click_command_rejects_orphan_closed_scene_fixture() {
+    let error = parse_cli(&[
+      "minecraft".to_string(),
+      "query-wired-live-click".to_string(),
+      "--training-result-semantic-manifest".to_string(),
+      "/tmp/semantic.json".to_string(),
+      "--target-block".to_string(),
+      "1,2,3".to_string(),
+      "--closed-scene-fixture".to_string(),
+      "/tmp/mc18-fixture.json".to_string(),
+      "--output-dir".to_string(),
+      "/tmp/query".to_string(),
+      "--target-app".to_string(),
+      "com.mojang.minecraft".to_string(),
+      "--target-title".to_string(),
+      "Minecraft".to_string(),
+    ])
+    .expect_err("orphan closed-scene fixture should fail");
+
+    assert!(error.contains("--closed-scene-fixture requires --query-provider closed-scene-toy"));
+  }
+
+  #[test]
+  fn parse_minecraft_query_wired_live_click_command_rejects_closed_scene_toy_without_fixture() {
+    let error = parse_cli(&[
+      "minecraft".to_string(),
+      "query-wired-live-click".to_string(),
+      "--training-result-semantic-manifest".to_string(),
+      "/tmp/semantic.json".to_string(),
+      "--target-block".to_string(),
+      "1,2,3".to_string(),
+      "--query-provider".to_string(),
+      "closed-scene-toy".to_string(),
+      "--output-dir".to_string(),
+      "/tmp/query".to_string(),
+      "--target-app".to_string(),
+      "com.mojang.minecraft".to_string(),
+      "--target-title".to_string(),
+      "Minecraft".to_string(),
+    ])
+    .expect_err("closed-scene-toy without fixture should fail");
+
+    assert!(error.contains("--closed-scene-fixture is required"));
+  }
+
+  #[test]
+  fn parse_minecraft_query_wired_live_click_command_rejects_dual_query_providers() {
+    let error = parse_cli(&[
+      "minecraft".to_string(),
+      "query-wired-live-click".to_string(),
+      "--training-result-semantic-manifest".to_string(),
+      "/tmp/semantic.json".to_string(),
+      "--target-block".to_string(),
+      "1,2,3".to_string(),
+      "--query-provider".to_string(),
+      "checkpoint-native".to_string(),
+      "--query-provider".to_string(),
+      "closed-scene-toy".to_string(),
+      "--closed-scene-fixture".to_string(),
+      "/tmp/mc18-fixture.json".to_string(),
+      "--output-dir".to_string(),
+      "/tmp/query".to_string(),
+      "--target-app".to_string(),
+      "com.mojang.minecraft".to_string(),
+      "--target-title".to_string(),
+      "Minecraft".to_string(),
+    ])
+    .expect_err("dual providers should fail");
+
+    assert!(error.contains("mutually exclusive"));
+  }
+
+  #[test]
+  fn parse_minecraft_query_wired_live_click_command_rejects_checkpoint_native_with_fixture() {
+    let error = parse_cli(&[
+      "minecraft".to_string(),
+      "query-wired-live-click".to_string(),
+      "--training-result-semantic-manifest".to_string(),
+      "/tmp/semantic.json".to_string(),
+      "--target-block".to_string(),
+      "1,2,3".to_string(),
+      "--query-provider".to_string(),
+      "checkpoint-native".to_string(),
+      "--closed-scene-fixture".to_string(),
+      "/tmp/mc18-fixture.json".to_string(),
+      "--output-dir".to_string(),
+      "/tmp/query".to_string(),
+      "--target-app".to_string(),
+      "com.mojang.minecraft".to_string(),
+      "--target-title".to_string(),
+      "Minecraft".to_string(),
+    ])
+    .expect_err("checkpoint-native with fixture should fail");
+
+    assert!(error.contains("--closed-scene-fixture requires --query-provider closed-scene-toy"));
   }
 
   #[test]

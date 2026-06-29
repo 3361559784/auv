@@ -15,6 +15,10 @@ use auv_cli::contract::{
   OPERATION_RESULT_API_VERSION, OperationOutput, OperationResult, OperationStatus,
   VerificationResult,
 };
+use auv_cli::minecraft::{
+  QueryWiredLiveActionInputs, QueryWiredLiveActionTelemetryWitness,
+  run_minecraft_query_wired_live_action,
+};
 use auv_cli::model::{InvokeRequest, RunStatus};
 use auv_cli::{build_default_runtime, build_runtime_with_store_root};
 use auv_tracing_driver::run_builder::RunSpec;
@@ -895,6 +899,70 @@ async fn run() -> Result<(), String> {
         "inspectReport: {}",
         output.value.inspect_report_path.display()
       );
+    }
+    CliCommand::MinecraftQueryWiredLiveClick {
+      training_result_semantic_manifest_path,
+      target_block,
+      target_face,
+      target_semantics,
+      query_command,
+      use_checkpoint_native_provider,
+      use_closed_scene_toy_provider,
+      closed_scene_fixture_path,
+      output_dir,
+      target_app,
+      target_title,
+      telemetry_sample,
+      post_telemetry_sample,
+      inspect,
+    } => {
+      let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
+      let target_block = parse_block_position(&target_block)?;
+      let target_face = target_face.as_deref().map(parse_block_face).transpose()?;
+      let target_semantics = parse_target_semantics(&target_semantics)?;
+      let has_telemetry_witness = telemetry_sample.is_some();
+      let telemetry_witness =
+        telemetry_sample.map(|pre_sample| QueryWiredLiveActionTelemetryWitness {
+          pre_telemetry_sample: PathBuf::from(pre_sample),
+          post_telemetry_sample: post_telemetry_sample.map(PathBuf::from),
+        });
+      let inputs = QueryWiredLiveActionInputs {
+        training_result_semantic_manifest_path: PathBuf::from(
+          training_result_semantic_manifest_path,
+        ),
+        target_block,
+        target_face,
+        target_semantics,
+        query_command,
+        use_checkpoint_native_provider,
+        use_closed_scene_toy_provider,
+        closed_scene_fixture_path: closed_scene_fixture_path.map(PathBuf::from),
+        output_dir: PathBuf::from(output_dir),
+        target_app,
+        target_title,
+        telemetry_witness,
+      };
+      let output = run_minecraft_query_wired_live_action(&runtime.recording().handle(), inputs)?;
+      println!("runId: {}", output.run_id);
+      println!(
+        "queryStatus: {}",
+        output.value.query.manifest.status.as_str()
+      );
+      println!("wiringAttempted: {}", output.value.wiring.attempted);
+      println!(
+        "actionEligibility: {}",
+        output.value.wiring.action_eligibility.as_str()
+      );
+      println!(
+        "operationResultArtifact: {}",
+        output.value.operation_result_artifact_id
+      );
+      if has_telemetry_witness && output.value.wiring.attempted {
+        println!(
+          "inspectHint: run `auv inspect {}` to view verification_outcome",
+          output.run_id
+        );
+      }
     }
     CliCommand::MinecraftValidate3dgsTrainingResult {
       training_result_artifact_manifest_path,

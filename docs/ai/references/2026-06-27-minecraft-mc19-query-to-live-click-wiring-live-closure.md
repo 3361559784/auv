@@ -16,10 +16,28 @@ run-store completeness only — not Minecraft gameplay success.
 - MC-18 closed-scene fixtures (committed):
   - `crates/auv-game-minecraft/tests/fixtures/mc18/visible.json`
   - `crates/auv-game-minecraft/tests/fixtures/mc18/outside_window.json`
-- Live gate harness: `examples/mc19_query_wired_live_action.rs`
+- **Canonical CLI (MC-20 D2):** `auv minecraft query-wired-live-click` — see [`2026-06-30-minecraft-mc20-d2-query-wired-live-click-cli-design.md`](2026-06-30-minecraft-mc20-d2-query-wired-live-click-cli-design.md)
+- Historical live gate harness: `examples/mc19_query_wired_live_action.rs` (thin wrapper when present)
 - Dedicated store for closure runs: `.tmp/mc19-live/store`
 
 ## Harness command shape
+
+Preferred (MC-20 D2):
+
+```sh
+auv minecraft query-wired-live-click \
+  --training-result-semantic-manifest .tmp/mc18-live/setup/semantic.json \
+  --target-block <x,y,z> \
+  [--target-face north] \
+  --target-semantics hit_face_center \
+  [--query-provider closed-scene-toy --closed-scene-fixture <fixture.json>] \
+  --output-dir <dir> \
+  --target-app <bundle-id> \
+  --target-title <window-title-substring> \
+  [--store-root .tmp/mc19-live/store]
+```
+
+Historical example wrapper:
 
 ```sh
 cargo run --quiet --example mc19_query_wired_live_action -- \
@@ -27,7 +45,7 @@ cargo run --quiet --example mc19_query_wired_live_action -- \
   --target-block <x,y,z> \
   [--target-face north] \
   --target-semantics hit_face_center \
-  [--closed-scene-fixture <fixture.json>] \
+  [--query-provider closed-scene-toy --closed-scene-fixture <fixture.json>] \
   --output-dir <dir> \
   --target-app <bundle-id> \
   --target-title <window-title-substring> \
@@ -55,6 +73,7 @@ cargo run --quiet --example mc19_query_wired_live_action -- \
   --target-block 511,73,728 \
   --target-face north \
   --target-semantics hit_face_center \
+  --query-provider closed-scene-toy \
   --closed-scene-fixture crates/auv-game-minecraft/tests/fixtures/mc18/visible.json \
   --output-dir .tmp/mc19-live/click-ready/query-output \
   --target-app com.todesktop.230313mzl4w4u92 \
@@ -87,6 +106,7 @@ cargo run --quiet --example mc19_query_wired_live_action -- \
   --target-block 511,73,728 \
   --target-face north \
   --target-semantics hit_face_center \
+  --query-provider closed-scene-toy \
   --closed-scene-fixture crates/auv-game-minecraft/tests/fixtures/mc18/outside_window.json \
   --output-dir .tmp/mc19-live/answer-non-clickable/query-output \
   --target-app com.todesktop.230313mzl4w4u92 \

@@ -1,5 +1,6 @@
 // File: src/lib.rs
 mod action_resolver_decision;
+pub mod api;
 pub mod app;
 pub mod ax_recognition;
 pub mod candidate_action_command;

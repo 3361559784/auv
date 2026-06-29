@@ -1327,6 +1327,31 @@ pub(crate) fn extract_verifications(
   Ok(verifications)
 }
 
+/// Read the persisted `OperationResult` for a run, if one was recorded.
+///
+/// Scans the run's artifacts for the first `operation-result` JSON record,
+/// mirroring the role/mime filter used by [`extract_verifications`]. Returns
+/// `Ok(None)` when the run exists but recorded no operation result.
+///
+/// This is the storage-side half of the API-P4 `GetOperation` read path; the
+/// two-source join with the runtime summary lives in
+/// `crate::api::session_service::summary`.
+pub fn read_operation_result(
+  store: &LocalStore,
+  run_id: &str,
+) -> AuvResult<Option<OperationResult>> {
+  let run = store.read_run(run_id)?;
+  for artifact in &run.artifacts {
+    if artifact.role != "operation-result" || !is_json_mime(&artifact.mime_type) {
+      continue;
+    }
+    let operation_result: OperationResult =
+      read_artifact_json(store, run.run.run_id.as_str(), artifact, "operation-result")?;
+    return Ok(Some(operation_result));
+  }
+  Ok(None)
+}
+
 pub(crate) fn list_observation_snapshots(
   store: &LocalStore,
   run_id: &str,

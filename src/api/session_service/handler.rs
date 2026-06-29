@@ -4,15 +4,15 @@
 //! service trait. API-P4 defers the tonic/axum transport decision; this skeleton
 //! only wires the proto request/response shapes to the internal seams:
 //! session-aware invoke (API-P5), the operation summary cache (API-P6), the
-//! persisted operation-summary artifact (API-P11), and the two-source
-//! `GetOperation` join (API-P7). Binding a transport is a later owner-named
-//! slice (see the `mod.rs` TODO).
+//! persisted operation-summary artifact (API-P11), synthetic operation-result
+//! artifact (API-R2), and the two-source `GetOperation` join (API-P7). Binding a
+//! transport is a later owner-named slice (see the `mod.rs` TODO).
 //!
-//! NOTICE(api-p5-invoke-persist): `Invoke` records a run, caches the runtime
-//! summary (API-P6), and persists the runtime summary artifact (API-P11) but does
-//! not yet persist an `OperationResult` artifact. That write path belongs to `Runtime::record_operation`; until it is wired
-//! through this handler, `GetOperation` returns `PersistedOperationRequired`
-//! for runs created only via `Invoke`.
+//! NOTICE(api-r2-invoke-persist): `Invoke` records a run, caches the runtime
+//! summary (API-P6), persists the runtime summary artifact (API-P11), and writes
+//! a synthetic `operation-result` skeleton (API-R2) so fresh `GetOperation` joins
+//! succeed on the happy path. Typed producers may still record richer domain
+//! `operation_id` labels outside this session invoke write path.
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -24,6 +24,7 @@ use auv_tracing_driver::{MemoryRunRecorder, RunRecordingBackend, SessionId};
 
 use crate::api::session_service::SessionApiError;
 use crate::api::session_service::mapper;
+use crate::api::session_service::operation_result_store::record_invoke_operation_result;
 use crate::api::session_service::registry::SessionRegistry;
 use crate::api::session_service::summary::{
   JoinedOperationSummaryLoad, load_joined_operation_summary,
@@ -131,8 +132,13 @@ impl SessionApiHandler {
     // NOTICE(api-p11-invoke-partial-success): invoke already finished; summary
     // persistence failure must not surface as an invoke error (clients must not
     // blind-retry non-idempotent commands). Durability gaps go to known_limits.
-    let durability_limits = record_invoke_summary(recording.store(), result, &summary);
-    // Process-local cache is populated only when API-P11 persist succeeded.
+    let mut durability_limits = record_invoke_summary(recording.store(), result, &summary);
+    durability_limits.extend(record_invoke_operation_result(
+      recording.store(),
+      command_id,
+      result,
+    ));
+    // Process-local cache is populated only when both summary and operation-result persist succeed.
     if durability_limits.is_empty() {
       self
         .summaries
@@ -228,13 +234,21 @@ impl SessionApiHandler {
 
 #[cfg(test)]
 mod tests {
+  use std::sync::Arc;
   use std::sync::atomic::{AtomicU64, Ordering};
 
   use auv_api_proto::v1::session as proto;
-  use auv_tracing_driver::now_millis;
+  use auv_cli_invoke::default_registry;
+  use auv_tracing_driver::{MemoryRunRecorder, RunRecordingBackend, SessionId, now_millis};
 
   use super::SessionApiHandler;
   use crate::api::session_service::SessionApiError;
+  use crate::api::session_service::mapper;
+  use crate::api::session_service::operation_result_store::{
+    INVOKE_SYNTHETIC_OPERATION_RESULT_KNOWN_LIMIT, OPERATION_RESULT_PERSIST_FAILED_KNOWN_LIMIT,
+  };
+  use crate::api::session_service::summary_store::OPERATION_SUMMARY_PERSIST_FAILED_KNOWN_LIMIT;
+  use crate::api::session_service::test_fixtures::unique_temp_dir;
 
   static DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -321,12 +335,7 @@ mod tests {
   }
 
   #[test]
-  fn get_operation_without_persisted_record_requires_persisted_operation_result() {
-    // The invoke path records a run and caches the runtime summary (API-P6) but
-    // does NOT write a persisted OperationResult (that is a higher-level
-    // Runtime::record_operation concern). API-P7's join requires the persisted
-    // skeleton, so GetOperation reports PersistedOperationRequired even though
-    // the runtime summary is cached for this run.
+  fn invoke_then_get_operation_round_trips() {
     let handler = handler();
     let session = handler
       .create_session(proto::CreateSessionRequest {
@@ -344,18 +353,26 @@ mod tests {
       .expect("invoke fixture.observe");
     let run_id = invoked.operation.expect("operation ref").run_id;
 
-    let error = handler
+    let response = handler
       .get_operation(proto::GetOperationRequest {
         operation: Some(proto::OperationRef {
-          run_id,
+          run_id: run_id.clone(),
           operation_id: String::new(),
         }),
       })
-      .expect_err("missing persisted operation result should fail");
-    assert!(matches!(
-      error,
-      SessionApiError::PersistedOperationRequired(_)
-    ));
+      .expect("get_operation should succeed after invoke");
+
+    assert_eq!(response.status, "completed");
+    assert_eq!(response.output_summary, "fixture observed");
+    let operation_ref = response.operation.expect("operation ref");
+    assert_eq!(operation_ref.run_id, run_id);
+    assert_eq!(operation_ref.operation_id, "fixture.observe");
+    assert!(
+      response
+        .known_limits
+        .iter()
+        .any(|limit| limit == INVOKE_SYNTHETIC_OPERATION_RESULT_KNOWN_LIMIT)
+    );
   }
 
   #[test]
@@ -390,10 +407,6 @@ mod tests {
   #[test]
   fn get_operation_after_new_handler_reads_store_not_cache() {
     // New-handler path: empty cache; runtime half comes from persisted operation-summary.
-    use crate::api::session_service::test_fixtures::{
-      append_operation_result_artifact, fixture_observe_operation, unique_temp_dir,
-    };
-
     let root = unique_temp_dir("session-api-restart");
     let handler1 = SessionApiHandler::new(root.clone());
     let session = handler1
@@ -412,9 +425,6 @@ mod tests {
       .expect("invoke fixture.observe");
     let run_id = invoked.operation.expect("operation ref").run_id;
 
-    let store = handler1.open_store().expect("open store");
-    append_operation_result_artifact(&store, &root, &run_id, &fixture_observe_operation(&run_id));
-
     let handler2 = SessionApiHandler::new(root.clone());
     assert!(handler2.summaries.lock().unwrap().is_empty());
 
@@ -430,21 +440,23 @@ mod tests {
     assert_eq!(response.status, "completed");
     assert_eq!(response.output_summary, "fixture observed");
     assert_eq!(response.operation.expect("operation ref").run_id, run_id);
+    assert!(
+      response
+        .known_limits
+        .iter()
+        .any(|limit| limit == INVOKE_SYNTHETIC_OPERATION_RESULT_KNOWN_LIMIT)
+    );
 
     let _ = std::fs::remove_dir_all(root);
   }
 
   #[cfg(unix)]
   #[test]
-  fn get_operation_reports_runtime_summary_unavailable_after_summary_persist_failure() {
+  fn get_operation_reads_preseeded_skeleton_when_invoke_durability_writes_fail() {
     use std::os::unix::fs::PermissionsExt;
-    use std::sync::Arc;
-
-    use auv_tracing_driver::{MemoryRunRecorder, RunRecordingBackend};
 
     use crate::api::session_service::test_fixtures::{
       fixture_observe_invoke_result, music_search_operation, persist_operation_result_on_store,
-      unique_temp_dir,
     };
 
     let root = unique_temp_dir("session-api-persist-fail");
@@ -469,7 +481,13 @@ mod tests {
       response
         .known_limits
         .iter()
-        .any(|limit| limit == "auv.api.session.operation_summary_persist_failed")
+        .any(|limit| limit == OPERATION_SUMMARY_PERSIST_FAILED_KNOWN_LIMIT)
+    );
+    assert!(
+      response
+        .known_limits
+        .iter()
+        .any(|limit| limit == OPERATION_RESULT_PERSIST_FAILED_KNOWN_LIMIT)
     );
     assert!(
       handler
@@ -497,6 +515,146 @@ mod tests {
         .any(|limit| limit == "auv.api.session.runtime_summary_unavailable")
     );
 
+    let mut cleanup_permissions = std::fs::metadata(&run_dir)
+      .expect("run dir metadata after test")
+      .permissions();
+    cleanup_permissions.set_mode(0o700);
+    let _ = std::fs::set_permissions(&run_dir, cleanup_permissions);
+    let _ = std::fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn finish_invoke_response_persists_failed_skeleton_and_get_operation_reads_it() {
+    use crate::api::session_service::test_fixtures::{
+      fixture_observe_invoke_result, write_minimal_run,
+    };
+    use auv_cli_invoke::RunStatus;
+
+    let root = unique_temp_dir("session-api-failed-invoke");
+    let handler = SessionApiHandler::new(root.clone());
+    let store = handler.open_store().expect("open store");
+    write_minimal_run(&store, "run-failed-invoke");
+    let recording = RunRecordingBackend::new(
+      auv_tracing_driver::store::LocalStore::new(root.clone()).expect("recording store"),
+      Arc::new(MemoryRunRecorder::new()),
+    );
+    let mut result = fixture_observe_invoke_result("run-failed-invoke");
+    result.status = RunStatus::Failed;
+    result.output_summary = "fixture failed".to_string();
+    result.failure_message = Some("boom".to_string());
+
+    let response = handler.finish_invoke_response("fixture.observe", &result, &recording);
+    assert_eq!(response.status, "failed");
+    assert!(
+      handler
+        .summaries
+        .lock()
+        .expect("summary cache mutex poisoned")
+        .get("run-failed-invoke")
+        .is_some()
+    );
+
+    let response = handler
+      .get_operation(proto::GetOperationRequest {
+        operation: Some(proto::OperationRef {
+          run_id: "run-failed-invoke".to_string(),
+          operation_id: String::new(),
+        }),
+      })
+      .expect("get_operation should succeed for failed synthetic skeleton");
+
+    assert_eq!(response.status, "failed");
+    assert_eq!(response.output_summary, "fixture failed");
+    assert_eq!(response.failure_message, "boom");
+    assert!(
+      response
+        .known_limits
+        .iter()
+        .any(|limit| limit == INVOKE_SYNTHETIC_OPERATION_RESULT_KNOWN_LIMIT)
+    );
+
+    let _ = std::fs::remove_dir_all(root);
+  }
+
+  #[cfg(unix)]
+  #[test]
+  fn invoke_durability_failure_keeps_cache_empty_and_get_operation_preconditions() {
+    use std::os::unix::fs::PermissionsExt;
+
+    // NOTICE(api-r2-test-gap): without a store fault-injection seam, this test can
+    // only exercise the current "both write-through persists fail" path. That is
+    // enough to lock the cache gate and precondition behavior without widening
+    // API-R2 into injectable storage abstractions.
+    let root = unique_temp_dir("session-api-op-result-persist-fail");
+    let handler = SessionApiHandler::new(root.clone());
+    let session = handler
+      .create_session(proto::CreateSessionRequest {
+        client_label: String::new(),
+      })
+      .expect("create_session")
+      .session
+      .expect("session ref");
+    let run_id = {
+      let store = handler.open_store().expect("open store");
+      let recording = RunRecordingBackend::new(
+        auv_tracing_driver::store::LocalStore::new(root.clone()).expect("recording store"),
+        Arc::new(MemoryRunRecorder::new()),
+      );
+      let result = auv_cli_invoke::invoke_recorded_with_session(
+        &recording,
+        &default_registry(),
+        mapper::decode_invoke_payload("fixture.observe".to_string(), &Vec::new()).expect("decode"),
+        SessionId::new(session.session_id.clone()),
+      )
+      .expect("invoke fixture.observe");
+      let run_dir = store.run_dir(result.run_id.as_str()).expect("run dir");
+      let mut permissions = std::fs::metadata(&run_dir)
+        .expect("run dir metadata")
+        .permissions();
+      permissions.set_mode(0o500);
+      std::fs::set_permissions(&run_dir, permissions).expect("run dir should be read-only");
+      let response = handler.finish_invoke_response("fixture.observe", &result, &recording);
+      assert!(
+        response
+          .known_limits
+          .iter()
+          .any(|limit| limit == OPERATION_SUMMARY_PERSIST_FAILED_KNOWN_LIMIT)
+      );
+      assert!(
+        response
+          .known_limits
+          .iter()
+          .any(|limit| limit == OPERATION_RESULT_PERSIST_FAILED_KNOWN_LIMIT)
+      );
+      assert!(
+        handler
+          .summaries
+          .lock()
+          .expect("summary cache mutex poisoned")
+          .get(result.run_id.as_str())
+          .is_none()
+      );
+      result.run_id
+    };
+
+    let error = handler
+      .get_operation(proto::GetOperationRequest {
+        operation: Some(proto::OperationRef {
+          run_id: run_id.clone(),
+          operation_id: String::new(),
+        }),
+      })
+      .expect_err("missing synthetic operation-result should preserve precondition");
+    assert!(matches!(
+      error,
+      SessionApiError::PersistedOperationRequired(_)
+    ));
+
+    let run_dir = handler
+      .open_store()
+      .expect("open store")
+      .run_dir(run_id.as_str())
+      .expect("run dir");
     let mut cleanup_permissions = std::fs::metadata(&run_dir)
       .expect("run dir metadata after test")
       .permissions();

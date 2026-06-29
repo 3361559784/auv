@@ -3,8 +3,8 @@
 //! NOTICE(api-p9-non-goals):
 //! - No TLS and no non-loopback bind; remote access is out of scope.
 //! - `StreamSessionEvents` is not wired (event projector, API-P4 responsibility D).
-//! - `Invoke` still does not persist `OperationResult`; `GetOperation` requires a
-//!   persisted skeleton (see handler NOTICE).
+//! - `Invoke` persists synthetic `operation-result` on the happy path (API-R2).
+//!   `GetOperation` still requires a persisted skeleton when that write fails.
 //! - `spawn_blocking` work is not forcibly interrupted mid-flight; RPC cancellation
 //!   returns `CANCELLED` to the server and aborts the join handle, but an in-flight
 //!   `Invoke` may still complete recorded command execution until cooperative
@@ -257,6 +257,7 @@ mod tests {
   use auv_api_proto::v1::session::session_service_client::SessionServiceClient;
   use tonic::Code;
 
+  use crate::api::session_service::operation_result_store::INVOKE_SYNTHETIC_OPERATION_RESULT_KNOWN_LIMIT;
   use crate::api::session_service::test_fixtures::session_api_temp_store_root;
 
   use super::*;
@@ -350,7 +351,7 @@ mod tests {
   }
 
   #[tokio::test]
-  async fn grpc_invoke_and_get_operation_failed_precondition() {
+  async fn grpc_invoke_and_get_operation_round_trips() {
     let store_root = session_api_temp_store_root("transport");
     let config = SessionApiServeConfig {
       host: DEFAULT_SESSION_API_HOST.to_string(),
@@ -387,13 +388,22 @@ mod tests {
     assert_eq!(invoke_response.status, "completed");
     let operation = invoke_response.operation.expect("operation ref");
 
-    let status = client
+    let get_response = client
       .get_operation(proto::GetOperationRequest {
         operation: Some(operation),
       })
       .await
-      .expect_err("get_operation should fail without persisted operation result");
-    assert_eq!(status.code(), Code::FailedPrecondition);
+      .expect("get_operation should succeed after invoke")
+      .into_inner();
+
+    assert_eq!(get_response.status, "completed");
+    assert_eq!(get_response.output_summary, "fixture observed");
+    assert!(
+      get_response
+        .known_limits
+        .iter()
+        .any(|limit| limit == INVOKE_SYNTHETIC_OPERATION_RESULT_KNOWN_LIMIT)
+    );
 
     server.abort();
     let _ = server.await;

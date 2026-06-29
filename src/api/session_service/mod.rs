@@ -8,6 +8,7 @@
 //! - `mapper`: proto <-> host mapping, isolated from handler code (API-P4 checklist).
 //! - `summary`: two-source `GetOperation` read path + join policy (API-P7/P12).
 //! - `summary_store`: persisted `operation-summary` write path (API-P11).
+//! - `operation_result_store`: persisted `operation-result` write path (API-R2).
 //! - `handler`: transport-agnostic handler skeleton wiring proto RPCs to the
 //!   internal seams (API-P8).
 //! - `transport`: loopback-only tonic gRPC adapter (API-P9).
@@ -19,6 +20,7 @@
 
 pub mod handler;
 pub mod mapper;
+pub(crate) mod operation_result_store;
 pub mod registry;
 pub mod summary;
 pub mod summary_store;

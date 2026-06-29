@@ -143,20 +143,6 @@ pub fn music_search_operation(run_id: &str) -> OperationResult {
   }
 }
 
-pub fn fixture_observe_operation(run_id: &str) -> OperationResult {
-  OperationResult {
-    api_version: OPERATION_RESULT_API_VERSION.to_string(),
-    run_id: RunId::new(run_id),
-    status: OperationStatus::Completed,
-    operation_id: "fixture.observe".to_string(),
-    evidence_artifacts: Vec::new(),
-    output: OperationOutput::Acknowledged { message: None },
-    verifications: Vec::new(),
-    freshness_basis: None,
-    known_limits: Vec::new(),
-  }
-}
-
 pub fn music_runtime_summary(run_id: &str) -> OperationSummary {
   let mut signals = std::collections::BTreeMap::new();
   signals.insert("now_playing".to_string(), "track-x".to_string());
@@ -245,30 +231,6 @@ pub fn persist_operation_result_on_store(
       artifacts: vec![artifact],
     })
     .expect("run snapshot should persist");
-}
-
-pub fn append_operation_result_artifact(
-  store: &LocalStore,
-  root: &Path,
-  run_id: &str,
-  operation: &OperationResult,
-) {
-  let mut canonical = store.read_run(run_id).expect("run should exist");
-  let span_id = canonical.run.root_span_id.clone();
-  let artifact = stage_json_artifact(
-    store,
-    root,
-    &canonical.run.run_id,
-    &span_id,
-    canonical.artifacts.len(),
-    "operation-result",
-    "operation-result.json",
-    operation,
-  );
-  canonical.artifacts.push(artifact);
-  store
-    .replace_run_snapshot(&canonical)
-    .expect("run snapshot should update");
 }
 
 pub fn persist_operation_result_run(

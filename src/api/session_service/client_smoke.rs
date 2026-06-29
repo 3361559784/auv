@@ -7,9 +7,9 @@ use std::path::PathBuf;
 
 use auv_api_proto::v1::session as proto;
 use auv_api_proto::v1::session::session_service_client::SessionServiceClient;
-use tonic::Code;
 use tonic::transport::Channel;
 
+use crate::api::session_service::operation_result_store::INVOKE_SYNTHETIC_OPERATION_RESULT_KNOWN_LIMIT;
 use crate::api::session_service::test_fixtures::session_api_temp_store_root;
 use crate::api::session_service::transport::{
   DEFAULT_SESSION_API_HOST, SessionApiServeConfig, bind_session_api, serve_on_listener,
@@ -86,7 +86,7 @@ async fn session_api_smoke_external_client_invoke_fixture_observe() {
 }
 
 #[tokio::test]
-async fn session_api_smoke_get_operation_requires_persisted_operation_result() {
+async fn session_api_smoke_invoke_then_get_operation_round_trips() {
   let store_root = session_api_temp_store_root("client-smoke");
   with_smoke_server(store_root, |mut client| async move {
     let session = create_session(&mut client).await;
@@ -94,18 +94,25 @@ async fn session_api_smoke_get_operation_requires_persisted_operation_result() {
     assert_eq!(invoke_response.status, "completed");
     let operation = invoke_response.operation.expect("operation ref");
 
-    let status = client
+    let response = client
       .get_operation(proto::GetOperationRequest {
         operation: Some(operation),
       })
       .await
-      .expect_err("get_operation should fail without persisted operation result");
+      .expect("get_operation should succeed after invoke")
+      .into_inner();
 
-    assert_eq!(status.code(), Code::FailedPrecondition);
+    assert_eq!(response.status, "completed");
+    assert_eq!(response.output_summary, "fixture observed");
+    assert_eq!(
+      response.operation.expect("operation ref").operation_id,
+      "fixture.observe"
+    );
     assert!(
-      status.message().contains("no persisted operation result"),
-      "unexpected message: {}",
-      status.message()
+      response
+        .known_limits
+        .iter()
+        .any(|limit| limit == INVOKE_SYNTHETIC_OPERATION_RESULT_KNOWN_LIMIT)
     );
   })
   .await;

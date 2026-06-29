@@ -255,6 +255,11 @@ pub enum CliCommand {
     store_root: Option<String>,
     write: InspectServeWriteOptions,
   },
+  SessionServe {
+    host: String,
+    port: u16,
+    store_root: Option<String>,
+  },
   McpServe,
   XtaskGenerateSwiftBridge,
 }
@@ -303,6 +308,7 @@ pub fn parse_cli(arguments: &[String]) -> AuvResult<CliCommand> {
     "app" => parse_app(arguments),
     "osu" => parse_osu(arguments),
     "inspect" => parse_inspect(arguments),
+    "session" => parse_session(arguments),
     "mcp" => parse_mcp(arguments),
     "invoke" => parse_invoke(arguments),
     "minecraft" => parse_minecraft(arguments),
@@ -341,6 +347,7 @@ USAGE
   auv invoke <command-id> [--dry-run] [--target <application-id>] [--label <text>] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
   auv inspect <run-id> [--store-root <path>]
   auv inspect serve [--host <host>] [--port <port>] [--store-root <path>] [--enable-write] [--write-token <token>] [--write-token-file <path>] [--no-write-token]
+  auv session serve [--host <host>] [--port <port>] [--store-root <path>]
   auv mcp serve
 
 REFERENCE VERTICALS
@@ -2453,6 +2460,63 @@ fn parse_mcp(arguments: &[String]) -> AuvResult<CliCommand> {
   Ok(CliCommand::McpServe)
 }
 
+fn parse_session(arguments: &[String]) -> AuvResult<CliCommand> {
+  if arguments.len() < 2 {
+    return Err(
+      "usage: auv session serve [--host <host>] [--port <port>] [--store-root <path>]".to_string(),
+    );
+  }
+  if arguments[1].as_str() != "serve" {
+    return Err(
+      "usage: auv session serve [--host <host>] [--port <port>] [--store-root <path>]".to_string(),
+    );
+  }
+  parse_session_serve(arguments)
+}
+
+fn parse_session_serve(arguments: &[String]) -> AuvResult<CliCommand> {
+  let mut host = auv_cli::api::session_service::transport::DEFAULT_SESSION_API_HOST.to_string();
+  let mut port = auv_cli::api::session_service::transport::DEFAULT_SESSION_API_PORT;
+  let mut store_root = None;
+  let mut index = 2;
+  while index < arguments.len() {
+    match arguments[index].as_str() {
+      "--host" => {
+        if index + 1 >= arguments.len() {
+          return Err("--host requires a value".to_string());
+        }
+        host = arguments[index + 1].clone();
+        index += 2;
+      }
+      "--port" => {
+        if index + 1 >= arguments.len() {
+          return Err("--port requires a value".to_string());
+        }
+        port = arguments[index + 1]
+          .parse::<u16>()
+          .map_err(|error| format!("invalid --port value: {error}"))?;
+        index += 2;
+      }
+      "--store-root" => {
+        if index + 1 >= arguments.len() {
+          return Err("--store-root requires a value".to_string());
+        }
+        store_root = Some(arguments[index + 1].clone());
+        index += 2;
+      }
+      other => {
+        return Err(format!("unexpected session-serve argument {other}"));
+      }
+    }
+  }
+
+  Ok(CliCommand::SessionServe {
+    host,
+    port,
+    store_root,
+  })
+}
+
 fn required_flag_value(arguments: &[String], index: usize, flag: &str) -> AuvResult<String> {
   arguments
     .get(index + 1)
@@ -2532,6 +2596,7 @@ mod tests {
       "auv invoke <command-id>",
       "auv inspect <run-id> [--store-root <path>]",
       "auv inspect serve [--host <host>] [--port <port>] [--store-root <path>] [--enable-write] [--write-token <token>] [--write-token-file <path>] [--no-write-token]",
+      "auv session serve [--host <host>] [--port <port>] [--store-root <path>]",
       "auv mcp serve",
     ] {
       assert!(
@@ -4051,6 +4116,74 @@ mod tests {
       } => assert!(require_real_source),
       other => panic!("unexpected command: {other:?}"),
     }
+  }
+
+  #[test]
+  fn parse_session_serve_command() {
+    let command = parse_cli(&[
+      "session".to_string(),
+      "serve".to_string(),
+      "--host".to_string(),
+      "127.0.0.1".to_string(),
+      "--port".to_string(),
+      "9847".to_string(),
+    ])
+    .expect("session serve command should parse");
+
+    match command {
+      CliCommand::SessionServe {
+        host,
+        port,
+        store_root,
+      } => {
+        assert_eq!(host, "127.0.0.1");
+        assert_eq!(port, 9847);
+        assert_eq!(store_root, None);
+      }
+      other => panic!("unexpected command: {other:?}"),
+    }
+  }
+
+  #[test]
+  fn parse_session_serve_store_root_option() {
+    let command = parse_cli(&[
+      "session".to_string(),
+      "serve".to_string(),
+      "--store-root".to_string(),
+      "/tmp/auv-session-store".to_string(),
+    ])
+    .expect("session serve options should parse");
+
+    match command {
+      CliCommand::SessionServe {
+        host,
+        port,
+        store_root,
+      } => {
+        assert_eq!(
+          host,
+          auv_cli::api::session_service::transport::DEFAULT_SESSION_API_HOST
+        );
+        assert_eq!(
+          port,
+          auv_cli::api::session_service::transport::DEFAULT_SESSION_API_PORT
+        );
+        assert_eq!(store_root.as_deref(), Some("/tmp/auv-session-store"));
+      }
+      other => panic!("unexpected command: {other:?}"),
+    }
+  }
+
+  #[test]
+  fn parse_session_serve_rejects_unknown_argument() {
+    let error = parse_cli(&[
+      "session".to_string(),
+      "serve".to_string(),
+      "--enable-write".to_string(),
+    ])
+    .expect_err("unexpected session serve flag should fail");
+
+    assert!(error.contains("unexpected session-serve argument --enable-write"));
   }
 
   #[test]

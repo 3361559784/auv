@@ -81,6 +81,22 @@ async fn run() -> Result<(), String> {
     return Ok(());
   }
 
+  if let CliCommand::SessionServe {
+    host,
+    port,
+    store_root,
+  } = &command
+  {
+    let store_root = resolve_store_root(&project_root, store_root.as_ref());
+    let config = auv_cli::api::session_service::transport::SessionApiServeConfig {
+      host: host.clone(),
+      port: *port,
+      store_root,
+    };
+    auv_cli::api::session_service::transport::serve(config).await?;
+    return Ok(());
+  }
+
   match command {
     CliCommand::Help => {
       print!("{}", help_text());
@@ -1383,6 +1399,9 @@ async fn run() -> Result<(), String> {
     }
     CliCommand::McpServe => {
       unreachable!("mcp serve is handled before runtime setup")
+    }
+    CliCommand::SessionServe { .. } => {
+      unreachable!("session serve is handled before runtime setup")
     }
   }
 

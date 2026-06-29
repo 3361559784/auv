@@ -1,9 +1,7 @@
 //! Session API service seam (API-P4 boundary).
 //!
 //! Owns the execute-facing `SessionService` surface separately from the
-//! viewer-facing `inspect_server` and the tool-facing `mcp`. This is NOT a
-//! transport/gRPC server: API-P4 explicitly defers the tonic/axum/daemon choice
-//! and this module impls no tonic service trait.
+//! viewer-facing `inspect_server` and the tool-facing `mcp`.
 //!
 //! Modules:
 //! - `registry`: lightweight in-memory session registry (API-P4 responsibility A).
@@ -11,16 +9,17 @@
 //! - `summary`: two-source `GetOperation` read path + join policy (API-P7).
 //! - `handler`: transport-agnostic handler skeleton wiring proto RPCs to the
 //!   internal seams (API-P8).
+//! - `transport`: loopback-only tonic gRPC adapter (API-P9).
 //!
-//! TODO(api-transport): binding these handlers to a real transport (a tonic
-//! `SessionServiceServer` over a chosen async runtime) is an explicit API-P4
-//! non-goal and a later owner-named slice. See
-//! docs/ai/references/2026-06-30-auv-api-p4-session-proto-server-seam-design.md.
+//! TODO(api-p4-stream-events): `StreamSessionEvents` remains deferred to the
+//! event projector (API-P4 responsibility D); the transport returns
+//! `UNIMPLEMENTED` until that seam is wired.
 
 pub mod handler;
 pub mod mapper;
 pub mod registry;
 pub mod summary;
+pub mod transport;
 
 use std::fmt;
 

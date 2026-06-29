@@ -2,7 +2,12 @@
 
 [![License](https://badgen.net/github/license/moeru-ai/auv)](LICENSE.md)
 
-AUV means **Application Use Via**.
+
+> [!NOTE]
+>
+> This project is part of the [Project AIRI](https://github.com/moeru-ai/airi) ecosystem.
+
+AUV means **Application Use Via ...**.
 
 - Apple Music Application Use Via [`auv-apple-music`](https://github.com/moeru-ai/auv/tree/main/crates/auv-apple-music)...
 - macOS Media Control Use Via [`auv-media-macos`](https://github.com/moeru-ai/auv/tree/main/crates/auv-media-macos)...
@@ -11,20 +16,52 @@ AUV means **Application Use Via**.
 
 > Think of it as a programmable computer use, without agents.
 
-Current fact sources live in:
+## Install
 
-- `src/runtime.rs`
-- `src/verticals/` — CLI / inspect / run-record wiring glue for reference game verticals
-- `crates/auv-game-*` — donor/domain logic for those verticals (not CLI glue)
-- `crates/auv-cli-invoke/`
-- `crates/auv-driver/`
-- `crates/auv-driver-macos/`
-- `docs/ai/references/`
+Install Rust first. This workspace uses Rust 2024 and currently requires the
+toolchain declared in `Cargo.toml`.
 
-For [Cua](https://github.com/trycua/cua) and similar computer-use projects, it
-is common to execute `screenshot`, `read image`, `click`, `type`, `wait`, and
-follow-up verification steps in sequence, then ask LLMs or agents to judge the
-next move.
+Install directly from GitHub:
+
+```sh
+cargo install --git https://github.com/moeru-ai/auv auv-cli
+auv --help
+```
+
+After installation, use the `auv` CLI directly:
+
+```sh
+auv --help
+auv invoke --help
+```
+
+## Setup
+
+### macOS Permissions
+
+macOS automation needs OS permissions granted to the process that launches AUV,
+usually your terminal app.
+
+Open **System Settings -> Privacy & Security** and enable:
+
+| Permission | Needed for |
+| --- | --- |
+| Accessibility | AX tree reads, focused element control, keyboard/pointer automation. |
+| Screen Recording | Screenshots, OCR, visual inspection, and evidence capture. |
+| Automation | AppleScript/System Events activation flows used by app probes and some drivers. |
+
+After changing permissions, restart the terminal process and rerun:
+
+```sh
+auv permissions check
+auv app probe com.apple.TextEdit
+```
+
+## Understand AUV
+
+For [Cua](https://github.com/trycua/cua), [`agent-browser`](https://github.com/vercel/agent-browser), and
+similar computer-use projects, it is common to execute `screenshot`, `read image`, `click`, `type`,
+`wait`, and follow-up verification steps in sequence, then ask LLMs or agents to judge the next move.
 
 ```mermaid
 flowchart LR
@@ -167,22 +204,24 @@ That means:
   planned after the contracts settle. Once a GUI flow is finalized as a command,
   repeated execution can approach zero reasoning-token cost.
 
-## Why It Exists
+## Why even build AUV?
 
-Most GUI automation prototypes stop at "click this thing on screen." AUV keeps
-the evidence that made an action possible and the evidence that proves what
-happened after it:
+AUV born from the grounding knowledge of building general gaming agents for [Project AIRI](https://github.com/moeru-ai/airi), since 2024, we tried to build agents to allow LLMs to play the following games, you can find how we implement the agents in the following repos:
 
-- typed runtime calls instead of one-off scripts
-- driver results with disturbance and fallback metadata
-- durable run records and artifacts
-- inspection APIs that read those records after the fact
-- app-local Rust commands for workflows worth reusing
+- [Balatro](https://github.com/proj-airi/game-playing-ai-balatro)
+- [Kerbal Space Program](https://github.com/proj-airi/game-playing-ai-kerbal-space-program)
+- [Factorio](https://github.com/moeru-ai/airi-factorio)
+- [Dome Keeper](https://github.com/proj-airi/game-playing-ai-dome-keeper)
 
-The active lane is the AUV core: invoke, run recording, artifacts, inspection,
-app-local commands, and shared runtime reuse across frontends.
+> There are more games we implemented where you can find in [Project AIRI](https://github.com/moeru-ai/airi) organization, but these four requires YOLO, OCR, screen understanding, and computer-use capabilities.
+>
+> Now you have the framework to build for any applications, games.
+
+Since Vercel published the [`agent-browser`](https://github.com/vercel/agent-browser), we fell in love with it and have it assisted agents to build many web projects, but we found that the loop it requires for agents to call `agent-browser` CLI to execute the commands is too slow and inefficient, while in computer use world, many operations can be repeated thousands of times, just like how Playwright/Vitest would allow us to write E2E test for applications, why don't we expand this idea of writing code to control application to computer use world?
 
 ## Capability Matrix
+
+> What AUV can do, compared to other computer-use projects.
 
 | Capability | AUV | [Cua](https://github.com/trycua/cua) | [OpenBridge](https://github.com/AFK-surf/OpenBridge) / [KWWKComputerUseCore](https://github.com/EYHN/kwwk-computer-use-core) | Playwright |
 | --- | --- | --- | --- | --- |
@@ -218,47 +257,6 @@ clear.
 attempt: what input path was used, what changed, what artifacts were captured,
 whether verification passed, and why an operation should retry, stop, or fail.
 
-## Install
-
-Install Rust first. This workspace uses Rust 2024 and currently requires the
-toolchain declared in `Cargo.toml`.
-
-Install directly from GitHub:
-
-```sh
-cargo install --git https://github.com/moeru-ai/auv auv-cli
-auv --help
-```
-
-After installation, use the `auv` CLI directly:
-
-```sh
-auv --help
-auv invoke --help
-```
-
-## Setup
-
-### macOS Permissions
-
-macOS automation needs OS permissions granted to the process that launches AUV,
-usually your terminal app.
-
-Open **System Settings -> Privacy & Security** and enable:
-
-| Permission | Needed for |
-| --- | --- |
-| Accessibility | AX tree reads, focused element control, keyboard/pointer automation. |
-| Screen Recording | Screenshots, OCR, visual inspection, and evidence capture. |
-| Automation | AppleScript/System Events activation flows used by app probes and some drivers. |
-
-After changing permissions, restart the terminal process and rerun:
-
-```sh
-auv permissions check
-auv app probe com.apple.TextEdit
-```
-
 ## Development
 
 ```sh
@@ -281,6 +279,16 @@ auv inspect <run-id>
 
 Use `docs/TERMS_AND_CONCEPTS.md` for shared vocabulary. Durable design and
 evidence notes live under `docs/ai/references/`.
+
+## Acknowledgements
+
+- [MaaFramework](https://github.com/MaaXYZ/MaaFramework)
+- [CUA](https://github.com/trycua/cua)
+- [KWWKComputerUseCore](https://github.com/EYHN/kwwk-computer-use-core)
+- [Playwright](https://github.com/microsoft/playwright)
+- [WebDriver](https://developer.mozilla.org/en-US/docs/Web/WebDriver)
+- [Appium](https://github.com/appium/appium-mac2-driver)
+- [OpenBridge](https://github.com/AFK-surf/OpenBridge)
 
 ## License
 

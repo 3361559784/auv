@@ -161,11 +161,13 @@ session API、proto、MCP 前端
 
 - [`2026-06-11-mcp-read-chain-evidence-pack.md`](2026-06-11-mcp-read-chain-evidence-pack.md)
 
-#### handoff (3)
+#### handoff (5)
 
 - [`2026-06-14-c4-mcp-frontend-handoff.md`](2026-06-14-c4-mcp-frontend-handoff.md)
 - [`2026-06-30-auv-api-p11-summary-durability-handoff.md`](2026-06-30-auv-api-p11-summary-durability-handoff.md)
 - [`2026-06-30-auv-api-p3-session-proto-mapper-boundary-handoff.md`](2026-06-30-auv-api-p3-session-proto-mapper-boundary-handoff.md)
+- [`2026-06-30-auv-api-p13-external-client-smoke-handoff.md`](2026-06-30-auv-api-p13-external-client-smoke-handoff.md)
+- [`2026-06-30-auv-api-p14-api-line-closeout-pause-decision.md`](2026-06-30-auv-api-p14-api-line-closeout-pause-decision.md)
 
 #### note (3)
 
@@ -173,9 +175,10 @@ session API、proto、MCP 前端
 - [`2026-06-11-mcp-frontend-surface-v0.md`](2026-06-11-mcp-frontend-surface-v0.md)
 - [`2026-06-18-core-realtime-session-substrate-v0.md`](2026-06-18-core-realtime-session-substrate-v0.md)
 
-#### review (1)
+#### review (2)
 
 - [`2026-06-30-auv-api-p1-session-proto-boundary-review.md`](2026-06-30-auv-api-p1-session-proto-boundary-review.md)
+- [`2026-06-30-auv-api-p12-identity-role-semantics-closeout.md`](2026-06-30-auv-api-p12-identity-role-semantics-closeout.md)
 
 ### `core/inspect-trace` — Active
 

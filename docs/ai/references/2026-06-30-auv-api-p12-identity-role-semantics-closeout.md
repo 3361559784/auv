@@ -84,9 +84,9 @@ when the catalog has no matching `artifact_id`.
 
 ## Deferred (not this slice)
 
-- `OperationResult` persistence on session `Invoke`
-- `StreamSessionEvents` (P10)
-- External client smoke (P13)
+- `OperationResult` persistence on session `Invoke` — **known gap**; API line pause: see [P14](2026-06-30-auv-api-p14-api-line-closeout-pause-decision.md)
+- `StreamSessionEvents` (P10) — **deferred**; API line pause: see [P14](2026-06-30-auv-api-p14-api-line-closeout-pause-decision.md)
+- External client smoke — **landed in P13**; API line pause: see [P14](2026-06-30-auv-api-p14-api-line-closeout-pause-decision.md)
 - `json_payload` envelope (API-P3 OD5)
 - First-artifact-wins stale `command_id` on invoke retry (documented; same as P11 summary read policy)
 - `contract::ArtifactRef` shape change

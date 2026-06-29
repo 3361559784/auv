@@ -401,10 +401,9 @@ function evaluate(rawInput) {
       if (errorCount > 0) {
         console.error('\n[Hook] ERROR: Commit blocked due to critical issues. Fix them before committing.');
         return { output: rawInput, exitCode: 2 };
-      } else {
-        console.error('\n[Hook] WARNING: Warnings found. Consider fixing them, but commit is allowed.');
-        console.error('[Hook] To bypass these checks, use: git commit --no-verify');
       }
+      console.error('\n[Hook] WARNING: Warnings found. Fix them before committing.');
+      return { output: rawInput, exitCode: 2 };
     } else {
       console.error('\n[Hook] PASS: All checks passed!');
     }
@@ -418,11 +417,22 @@ function evaluate(rawInput) {
 }
 
 function run(rawInput) {
-  const result = evaluate(rawInput);
-  return {
-    stdout: result.output,
-    exitCode: result.exitCode,
+  const log = [];
+  const originalError = console.error;
+  console.error = (...args) => {
+    log.push(args.map(arg => String(arg)).join(' '));
+    originalError(...args);
   };
+  try {
+    const result = evaluate(rawInput);
+    return {
+      stdout: result.output,
+      stderr: log.join('\n'),
+      exitCode: result.exitCode,
+    };
+  } finally {
+    console.error = originalError;
+  }
 }
 
 // ── stdin entry point ────────────────────────────────────────────

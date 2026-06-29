@@ -144,6 +144,13 @@ check('buildProjectContext includes AGENTS.md and excludes codex.md', () => {
   assert.ok(!context.includes('Codex — AUV review'), context);
 });
 
+
+check('buildProjectContext stays within Cursor inline hook cap', () => {
+  const { buildProjectContext, INLINE_CONTEXT_MAX_CHARS } = require(path.join(repoRoot, '.cursor', 'scripts', 'lib', 'read-project-context'));
+  const context = buildProjectContext({ extraStarts: [repoRoot] });
+  assert.ok(context.length <= INLINE_CONTEXT_MAX_CHARS, `length ${context.length} > ${INLINE_CONTEXT_MAX_CHARS}`);
+});
+
 check('inject-project-context emits docs on beforeSubmitPrompt', () => {
   const tmpContributing = path.join(os.tmpdir(), `ecc-smoke-contrib-${process.pid}.md`);
   const tmpCursor = path.join(os.tmpdir(), `ecc-smoke-cursor-${process.pid}.md`);
@@ -195,6 +202,35 @@ check('pre-compact hook re-injects project context', () => {
   const payload = JSON.parse(result.stdout.trim());
   assert.ok(String(payload.additional_context).includes('[AGENTS.md'), payload.additional_context?.slice(0, 200));
   assert.ok(String(payload.user_message).includes('compacted'), payload.user_message);
+});
+
+
+check('analyzeStagedSlice blocks paused lane mixed with core', () => {
+  const { analyzeStagedSlice } = require('../hooks/pre-bash-staged-slice-veto');
+  const violations = analyzeStagedSlice({
+    stagedFiles: ['src/candidate_action_decision.rs', 'src/runtime.rs'],
+    subject: 'feat(runtime): widen invoke',
+  });
+  assert.ok(violations.some(v => v.code === 'paused-lane-mix'), JSON.stringify(violations));
+});
+
+check('analyzeStagedSlice blocks docs+code without docs subject', () => {
+  const { analyzeStagedSlice } = require('../hooks/pre-bash-staged-slice-veto');
+  const violations = analyzeStagedSlice({
+    stagedFiles: ['docs/ai/references/note.md', 'src/catalog.rs'],
+    subject: 'feat(catalog): add command',
+  });
+  assert.ok(violations.some(v => v.code === 'docs-code-mix'), JSON.stringify(violations));
+});
+
+check('commit-gate passes non-commit shell commands', () => {
+  const result = spawnSync('node', [path.join(repoRoot, '.cursor', 'hooks', 'before-shell-execution-commit-gate.js')], {
+    input: JSON.stringify({ command: 'cargo check' }),
+    encoding: 'utf8',
+    cwd: repoRoot,
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout.trim(), JSON.stringify({ command: 'cargo check' }));
 });
 
 console.log(`cursor-ecc-smoke: ${passed} passed, ${failed} failed`);

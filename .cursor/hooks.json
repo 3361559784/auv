@@ -22,6 +22,16 @@
         "description": "Block git hook-bypass flag to protect pre-commit, commit-msg, and pre-push hooks from being skipped"
       },
       {
+        "command": "node .cursor/hooks/before-shell-execution-commit-gate.js",
+        "event": "beforeShellExecution",
+        "description": "Hard AUV commit gate: staged slice veto, Rust validation floor, staged quality checks"
+      },
+      {
+        "command": "node .cursor/hooks/before-shell-execution-push-gate.js",
+        "event": "beforeShellExecution",
+        "description": "Hard AUV push gate: cargo fmt/check/test when outgoing commits touch Rust"
+      },
+      {
         "command": "node .cursor/hooks/before-shell-execution.js",
         "event": "beforeShellExecution",
         "description": "Tmux dev server blocker, tmux reminder, git push review"

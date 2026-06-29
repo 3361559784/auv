@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-const { readStdin, runExistingHook, transformToClaude, hookEnabled } = require('./adapter');
+const { readStdin, runExistingHook, transformToClaude } = require('./adapter');
 const { buildProjectContext, workspaceRootsFromInput } = require('../scripts/lib/read-project-context');
 
 readStdin()
@@ -13,11 +13,6 @@ readStdin()
 
     const claudeInput = transformToClaude(input);
     runExistingHook('pre-compact.js', claudeInput);
-
-    if (!hookEnabled('pre:compact:inject-project-context', ['minimal', 'standard', 'strict'])) {
-      process.stdout.write(raw);
-      return;
-    }
 
     const additionalContext = buildProjectContext({
       extraStarts: workspaceRootsFromInput(input),

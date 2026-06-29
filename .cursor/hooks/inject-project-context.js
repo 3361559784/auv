@@ -1,14 +1,12 @@
 #!/usr/bin/env node
 /**
- * Inject project context documents each turn and after compaction.
- *
- * Injected: CONTRIBUTING.local.md, cursor.md, AGENTS.md
- * Never injected: codex.md
+ * beforeSubmitPrompt: inject CONTRIBUTING.local.md, cursor.md, AGENTS.md each turn.
+ * Never injects codex.md. Always runs when registered in hooks.json (no disable switch).
  */
 
 'use strict';
 
-const { readStdin, hookEnabled } = require('./adapter');
+const { readStdin } = require('./adapter');
 const { buildProjectContext, workspaceRootsFromInput } = require('../scripts/lib/read-project-context');
 
 const MAX_STDIN = 1024 * 1024;
@@ -17,13 +15,6 @@ function hookEventName(input) {
   return String(
     input.hook_event_name || input.hookEventName || input._cursor?.hook_event_name || ''
   ).trim();
-}
-
-function hookIdForEvent(eventName) {
-  if (eventName === 'preCompact') {
-    return 'pre:compact:inject-project-context';
-  }
-  return 'pre:prompt:inject-project-context';
 }
 
 readStdin()
@@ -36,13 +27,6 @@ readStdin()
     }
 
     const eventName = hookEventName(input);
-    const hookId = hookIdForEvent(eventName);
-
-    if (!hookEnabled(hookId, ['minimal', 'standard', 'strict'])) {
-      process.stdout.write(raw);
-      return;
-    }
-
     const additionalContext = buildProjectContext({
       extraStarts: workspaceRootsFromInput(input),
     });

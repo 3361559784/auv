@@ -12,6 +12,9 @@ const { run: runAutoTmuxDev } = require('./auto-tmux-dev');
 const { run: runTmuxReminder } = require('./pre-bash-tmux-reminder');
 const { run: runGitPushReminder } = require('./pre-bash-git-push-reminder');
 const { run: runCommitQuality } = require('./pre-bash-commit-quality');
+const { run: runStagedSliceVeto } = require('./pre-bash-staged-slice-veto');
+const { run: runAuvRustCommit } = require('./pre-bash-auv-rust-commit');
+const { run: runAuvRustPush } = require('./pre-bash-auv-rust-push');
 const { run: runGateGuard } = require('./gateguard-fact-force');
 const { run: runCommandLog } = require('./post-bash-command-log');
 const { run: runPrCreated } = require('./post-bash-pr-created');
@@ -40,9 +43,24 @@ const PRE_BASH_HOOKS = [
     run: rawInput => runGitPushReminder(rawInput),
   },
   {
+    id: 'pre:bash:staged-slice-veto',
+    profiles: 'minimal,standard,strict',
+    run: rawInput => runStagedSliceVeto(rawInput),
+  },
+  {
+    id: 'pre:bash:auv-rust-commit',
+    profiles: 'minimal,standard,strict',
+    run: rawInput => runAuvRustCommit(rawInput),
+  },
+  {
     id: 'pre:bash:commit-quality',
-    profiles: 'strict',
+    profiles: 'minimal,standard,strict',
     run: rawInput => runCommitQuality(rawInput),
+  },
+  {
+    id: 'pre:bash:auv-rust-push',
+    profiles: 'minimal,standard,strict',
+    run: rawInput => runAuvRustPush(rawInput),
   },
   {
     id: 'pre:bash:gateguard-fact-force',

@@ -10,26 +10,21 @@ const INJECTED_DOCS = [
     filename: 'CONTRIBUTING.local.md',
     envPath: 'CONTRIBUTING_LOCAL_PATH',
     maxCharsEnv: 'CONTRIBUTING_LOCAL_MAX_CHARS',
-    defaultMaxChars: 16_000,
+    defaultMaxChars: 3_500,
   },
   {
     filename: 'cursor.md',
     envPath: 'CURSOR_MD_PATH',
     maxCharsEnv: 'CURSOR_MD_MAX_CHARS',
-    defaultMaxChars: 12_000,
+    defaultMaxChars: 2_500,
   },
   {
     filename: 'AGENTS.md',
     envPath: 'AGENTS_MD_PATH',
     maxCharsEnv: 'AGENTS_MD_MAX_CHARS',
-    defaultMaxChars: 32_000,
+    defaultMaxChars: 3_000,
   },
 ];
-
-function isGloballyDisabled() {
-  const raw = String(process.env.ECC_PROJECT_CONTEXT_INJECT || 'on').trim().toLowerCase();
-  return raw === 'off' || raw === '0' || raw === 'false';
-}
 
 function collectSearchRoots(extraStarts = []) {
   const roots = [];
@@ -92,7 +87,7 @@ function limitContent(filename, content, maxChars) {
   if (text.length <= maxChars) {
     return text;
   }
-  const marker = `\n\n[${filename} truncated — raise ${maxChars} cap or shorten the file]`;
+  const marker = `\n\n[${filename} truncated for hook inline cap]`;
   const prefixLength = Math.max(0, maxChars - marker.length);
   return `${text.slice(0, prefixLength).trimEnd()}${marker}`;
 }
@@ -124,11 +119,20 @@ function formatDocSection({ filename, path: filePath, content }) {
   return `${header}${body}`;
 }
 
-function buildProjectContext(options = {}) {
-  if (isGloballyDisabled()) {
-    return '';
-  }
+const INLINE_CONTEXT_MAX_CHARS = 9_500;
+const TOTAL_TRUNC_MARKER =
+  '\n\n[project context truncated — fits Cursor 10k inline hook cap; read full files in repo]';
 
+function limitTotalContext(context) {
+  const text = String(context || '');
+  if (text.length <= INLINE_CONTEXT_MAX_CHARS) {
+    return text;
+  }
+  const prefixLength = Math.max(0, INLINE_CONTEXT_MAX_CHARS - TOTAL_TRUNC_MARKER.length);
+  return `${text.slice(0, prefixLength).trimEnd()}${TOTAL_TRUNC_MARKER}`;
+}
+
+function buildProjectContext(options = {}) {
   const extraStarts = options.extraStarts || [];
   const sections = [];
 
@@ -139,7 +143,7 @@ function buildProjectContext(options = {}) {
     }
   }
 
-  return sections.join('\n\n---\n\n');
+  return limitTotalContext(sections.join('\n\n---\n\n'));
 }
 
 function workspaceRootsFromInput(input) {
@@ -170,6 +174,8 @@ module.exports = {
   resolveDocPath,
   readDoc,
   formatDocSection,
+  limitTotalContext,
+  INLINE_CONTEXT_MAX_CHARS,
   buildProjectContext,
   workspaceRootsFromInput,
 };

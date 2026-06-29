@@ -5,9 +5,9 @@
  * then delegates to existing scripts/hooks/*.js
  */
 
+const fs = require('fs');
 const { execFileSync } = require('child_process');
 const path = require('path');
-const { isProjectGateGuardDisabled } = require('../scripts/lib/gateguard-project-disable');
 
 const MAX_STDIN = 1024 * 1024;
 
@@ -23,6 +23,13 @@ function readStdin() {
 }
 
 function getPluginRoot() {
+  const cursorRoot = path.resolve(__dirname, '..');
+  // NOTICE(auv-ecc-layout): AUV vendors ECC scripts under `.cursor/scripts/`.
+  // Upstream ECC `.cursor/hooks/adapter.js` resolves the host repo root for
+  // monorepo `scripts/`; prefer the vendored layout when present.
+  if (fs.existsSync(path.join(cursorRoot, 'scripts', 'hooks'))) {
+    return cursorRoot;
+  }
   return path.resolve(__dirname, '..', '..');
 }
 
@@ -73,14 +80,6 @@ function hookEnabled(hookId, allowedProfiles = ['standard', 'strict']) {
   );
 
   if (disabled.has(String(hookId || '').toLowerCase())) {
-    return false;
-  }
-
-  const gateIds = new Set([
-    'pre:edit-write:gateguard-fact-force',
-    'pre:bash:gateguard-fact-force',
-  ]);
-  if (gateIds.has(String(hookId || '').toLowerCase()) && isProjectGateGuardDisabled()) {
     return false;
   }
 

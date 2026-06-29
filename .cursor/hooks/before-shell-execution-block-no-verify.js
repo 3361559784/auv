@@ -21,7 +21,7 @@
 'use strict';
 
 const { readStdin, hookEnabled } = require('./adapter');
-const { run } = require('../../scripts/hooks/block-no-verify');
+const { run } = require('../scripts/hooks/block-no-verify');
 
 readStdin()
   .then(raw => {

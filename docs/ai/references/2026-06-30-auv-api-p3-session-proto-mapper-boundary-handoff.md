@@ -289,6 +289,8 @@ Docs-only:
 
 - API-P1 boundary review:
   [`2026-06-30-auv-api-p1-session-proto-boundary-review.md`](2026-06-30-auv-api-p1-session-proto-boundary-review.md)
+- API-P4 server seam design:
+  [`2026-06-30-auv-api-p4-session-proto-server-seam-design.md`](2026-06-30-auv-api-p4-session-proto-server-seam-design.md)
 - Proto surface: `proto/auv/api/v1/session.proto` (API-P2, commit `758fa21`)
 - Proto crate + tests: `crates/auv-api-proto/src/lib.rs`
 - Invoke host types: `crates/auv-cli-invoke/src/model.rs`

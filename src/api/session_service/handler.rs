@@ -32,9 +32,15 @@ use crate::api::session_service::summary_store::record_invoke_summary;
 
 /// Process-local session API handler over one store path.
 ///
-/// Holds the lightweight session registry (API-P4 responsibility A) and the
-/// in-memory summary cache (API-P6). Each invoke opens a fresh recording backend
-/// over the store path, mirroring the existing `mcp` invoke surface.
+/// **Not** a long-lived `Runtime`, `RunRecordingBackend`, or shared invoke executor.
+/// **Is** a process-local façade over:
+/// - `store_root` — durable runs and artifacts live here
+/// - `SessionRegistry` — lightweight session id registry (API-P4)
+/// - `OperationSummaryCache` — InvokeResult-sourced summary cache (API-P6)
+///
+/// Each `invoke` opens a fresh `LocalStore` + `RunRecordingBackend` (see
+/// `NOTICE(api-p8-ephemeral-recording)`); recording is discarded when the call
+/// returns. Durability is store-backed artifacts, not handler fields.
 pub struct SessionApiHandler {
   store_root: PathBuf,
   registry: Mutex<SessionRegistry>,
@@ -77,6 +83,10 @@ impl SessionApiHandler {
 
   /// `Invoke`: validate the session, decode the payload, run the session-aware
   /// recorded invoke (API-P5), record the summary (API-P6), and map the result.
+  ///
+  /// NOTICE(api-p8-ephemeral-recording): each call opens a new `LocalStore` and
+  /// `RunRecordingBackend`; nothing session-scoped survives the return. This
+  /// mirrors the MCP invoke surface and is not a session-bound runtime.
   pub fn invoke(
     &self,
     request: proto::InvokeRequest,
@@ -122,6 +132,7 @@ impl SessionApiHandler {
     // persistence failure must not surface as an invoke error (clients must not
     // blind-retry non-idempotent commands). Durability gaps go to known_limits.
     let durability_limits = record_invoke_summary(recording.store(), result, &summary);
+    // Process-local cache is populated only when API-P11 persist succeeded.
     if durability_limits.is_empty() {
       self
         .summaries
@@ -133,8 +144,13 @@ impl SessionApiHandler {
     mapper::invoke_result_to_response(command_id, result, &known_limits)
   }
 
-  /// `GetOperation`: read the persisted record + runtime summary (cache or
-  /// store-backed artifact) and return the explicit two-source join (API-P7).
+  /// `GetOperation`: read the persisted record + runtime summary and return the
+  /// explicit two-source join (API-P7).
+  ///
+  /// On this handler instance, a process-local cache hit becomes
+  /// `process_local_runtime_override` for the join. A new handler or cache miss
+  /// falls back to the persisted `operation-summary` artifact (API-P11). A
+  /// persisted `OperationResult` skeleton is still required.
   pub fn get_operation(
     &self,
     request: proto::GetOperationRequest,
@@ -306,7 +322,8 @@ mod tests {
   }
 
   #[test]
-  fn get_operation_returns_joined_response_when_persisted_and_cached() {
+  fn get_operation_on_same_handler_uses_process_local_cache_path() {
+    // Same-handler path: process-local cache supplies the runtime half of the join.
     use crate::api::session_service::test_fixtures::{
       music_runtime_summary, music_search_operation, persist_operation_result_on_store,
       unique_temp_dir,
@@ -347,7 +364,8 @@ mod tests {
   }
 
   #[test]
-  fn get_operation_survives_handler_restart_via_persisted_summary_artifact() {
+  fn get_operation_after_new_handler_reads_store_not_cache() {
+    // New-handler path: empty cache; runtime half comes from persisted operation-summary.
     use crate::api::session_service::test_fixtures::{
       append_operation_result_artifact, fixture_observe_operation, unique_temp_dir,
     };

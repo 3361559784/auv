@@ -11,6 +11,17 @@
 //! on when available. When the runtime summary is absent, the join records it as
 //! `None` rather than fabricating empty strings as authoritative data (API-P4:
 //! "It must not silently fabricate empty strings").
+//!
+//! ## Runtime summary resolution
+//!
+//! [`load_joined_operation_summary`] picks the InvokeResult-sourced half in this
+//! order (see also API-P11 handoff in
+//! `docs/ai/references/2026-06-30-auv-api-p11-summary-durability-handoff.md`):
+//!
+//! 1. `process_local_runtime_override` — same-process cache hit from
+//!    [`SessionApiHandler`](super::handler::SessionApiHandler) (API-P6).
+//! 2. Persisted `operation-summary` artifact on the run (API-P11, store read).
+//! 3. `None` — join leaves `runtime` absent; callers must not treat that as empty output.
 
 use std::collections::BTreeMap;
 
@@ -33,7 +44,7 @@ pub enum JoinedOperationSummaryLoad {
 }
 
 /// The `InvokeResult`-sourced half of the summary projection, captured as owned
-/// data for one operation.
+/// data for one operation. This is a read-side view only, not durable session state.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RuntimeOperationSummary {
   pub output_summary: String,
@@ -53,9 +64,10 @@ impl RuntimeOperationSummary {
 
 /// Explicit two-source join of a `GetOperation` summary view.
 ///
+/// Projection only: durability lives in store artifacts, not in this struct.
 /// `runtime` is `None` when no `InvokeResult`-sourced summary was available for
-/// the run (for example, not cached). Callers must treat that as "runtime
-/// summary unknown", not as empty output.
+/// the run (for example, not cached and no store artifact). Callers must treat
+/// that as "runtime summary unknown", not as empty output.
 #[derive(Clone, Debug, PartialEq)]
 pub struct JoinedOperationSummary {
   // OperationResult-sourced (persisted, required skeleton).
@@ -112,13 +124,13 @@ pub fn join_operation_summary(
 ///
 /// Reads the persisted `OperationResult` (storage-side read path via
 /// [`run_read::read_operation_result`]) and joins it with the runtime summary
-/// source. When `runtime_override` is absent, falls back to the persisted
-/// `operation-summary` artifact (API-P11). Distinguishes a missing run from a
-/// run that exists but recorded no `OperationResult`.
+/// source. When `process_local_runtime_override` is absent, falls back to the
+/// persisted `operation-summary` artifact (API-P11). Distinguishes a missing run
+/// from a run that exists but recorded no `OperationResult`.
 pub fn load_joined_operation_summary(
   store: &LocalStore,
   run_id: &str,
-  runtime_override: Option<&dyn OperationSummarySource>,
+  process_local_runtime_override: Option<&dyn OperationSummarySource>,
 ) -> AuvResult<JoinedOperationSummaryLoad> {
   let run_dir = store.run_dir(run_id)?;
   if !run_dir.join("run.json").exists() {
@@ -127,12 +139,12 @@ pub fn load_joined_operation_summary(
   let Some(operation) = run_read::read_operation_result(store, run_id)? else {
     return Ok(JoinedOperationSummaryLoad::NoPersistedOperationResult);
   };
-  let stored_summary = if runtime_override.is_none() {
+  let stored_summary = if process_local_runtime_override.is_none() {
     run_read::read_operation_summary(store, run_id)?
   } else {
     None
   };
-  let runtime: Option<&dyn OperationSummarySource> = match runtime_override {
+  let runtime: Option<&dyn OperationSummarySource> = match process_local_runtime_override {
     Some(source) => Some(source),
     None => stored_summary
       .as_ref()
@@ -322,6 +334,39 @@ mod tests {
       runtime.signals.get("now_playing").map(String::as_str),
       Some("track-x")
     );
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn load_joined_operation_summary_prefers_process_local_override_over_stored_summary() {
+    let operation = sample_operation("run-override");
+    let stored_summary = runtime_summary("run-override");
+    let SessionRunFixture { root, store } = persist_operation_result_and_summary_run(
+      "session-summary-override",
+      "run-override",
+      &operation,
+      &stored_summary,
+    );
+    let override_summary = OperationSummary::capture(&InvokeResult {
+      run_id: "run-override".to_string(),
+      producer_span_id: SpanId::new("0000000000000001"),
+      status: RunStatus::Completed,
+      output_summary: "process-local override wins".to_string(),
+      signals: BTreeMap::new(),
+      artifacts: Vec::new(),
+      artifact_paths: Vec::new(),
+      failure_message: None,
+    });
+
+    let loaded = load_joined_operation_summary(&store, "run-override", Some(&override_summary))
+      .expect("load should succeed");
+    let JoinedOperationSummaryLoad::Found(joined) = loaded else {
+      panic!("expected joined summary, got {loaded:?}");
+    };
+
+    let runtime = joined.runtime.expect("runtime summary should be present");
+    assert_eq!(runtime.output_summary, "process-local override wins");
 
     let _ = fs::remove_dir_all(root);
   }

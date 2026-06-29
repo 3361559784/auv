@@ -3408,6 +3408,8 @@ mod tests {
 
     assert!(error.contains("--verification-expected-item-id requires --sample"));
   }
+
+  #[test]
   fn parse_minecraft_query_wired_live_click_command_rejects_post_sample_without_sample() {
     let error = parse_cli(&[
       "minecraft".to_string(),

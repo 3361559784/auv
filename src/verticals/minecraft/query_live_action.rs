@@ -6,7 +6,7 @@ use crate::contract::{
   ArtifactRef, FreshnessBasis, OPERATION_RESULT_API_VERSION, OperationOutput, OperationResult,
   OperationStatus, VerificationResult,
 };
-use crate::model::InvokeRequest;
+use crate::model::{InvokeRequest, RunStatus};
 use auv_driver::geometry::WindowPoint;
 use auv_game_minecraft::{
   QueryActionWiringLineage, QueryActionWiringOutcome, QueryLiveClickExecutor,
@@ -55,7 +55,23 @@ pub fn invoke_click_at_window_point(
     },
   )
   .map_err(|error| error.to_string())?;
-  Ok(invoke_result.output_summary)
+  click_summary_from_invoke_result(&invoke_result)
+}
+
+/// Maps a recorded `input.clickWindowPoint` invoke into the MC-19 click summary
+/// string, or an operator-facing error when invoke finished as `Failed`.
+pub(crate) fn click_summary_from_invoke_result(
+  invoke_result: &auv_cli_invoke::InvokeResult,
+) -> Result<String, String> {
+  if invoke_result.status == RunStatus::Failed {
+    return Err(
+      invoke_result
+        .failure_message
+        .clone()
+        .unwrap_or_else(|| invoke_result.output_summary.clone()),
+    );
+  }
+  Ok(invoke_result.output_summary.clone())
 }
 
 pub struct InvokeWindowPointClickExecutor<'ctx> {
@@ -212,4 +228,54 @@ pub fn stage_query_wired_live_action_operation_result(
   );
   let _ = fs::remove_file(&artifact_path);
   staged.map_err(|error| error.to_string())
+}
+
+#[cfg(test)]
+mod click_summary_tests {
+  use super::*;
+  use auv_cli_invoke::InvokeResult;
+  use auv_tracing_driver::trace::SpanId;
+  use std::collections::BTreeMap;
+
+  fn sample_invoke(
+    status: RunStatus,
+    output_summary: &str,
+    failure_message: Option<&str>,
+  ) -> InvokeResult {
+    InvokeResult {
+      run_id: "run_test".to_string(),
+      producer_span_id: SpanId::new("0000000000000001"),
+      status,
+      output_summary: output_summary.to_string(),
+      signals: BTreeMap::new(),
+      artifacts: Vec::new(),
+      artifact_paths: Vec::new(),
+      failure_message: failure_message.map(str::to_string),
+    }
+  }
+
+  #[test]
+  fn click_summary_from_failed_invoke_result_returns_failure_message() {
+    let invoke = sample_invoke(
+      RunStatus::Failed,
+      "dispatch failed summary",
+      Some("window not found"),
+    );
+    let error = click_summary_from_invoke_result(&invoke).expect_err("failed invoke");
+    assert_eq!(error, "window not found");
+  }
+
+  #[test]
+  fn click_summary_from_failed_invoke_result_falls_back_to_output_summary() {
+    let invoke = sample_invoke(RunStatus::Failed, "dispatch failed summary", None);
+    let error = click_summary_from_invoke_result(&invoke).expect_err("failed invoke");
+    assert_eq!(error, "dispatch failed summary");
+  }
+
+  #[test]
+  fn click_summary_from_completed_invoke_result_returns_output_summary() {
+    let invoke = sample_invoke(RunStatus::Completed, "clicked at (1,2)", None);
+    let summary = click_summary_from_invoke_result(&invoke).expect("completed invoke");
+    assert_eq!(summary, "clicked at (1,2)");
+  }
 }

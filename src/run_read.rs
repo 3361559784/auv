@@ -11687,6 +11687,42 @@ mod tests {
       Some("world diff matched")
     );
 
+    let mut inconclusive_operation_result = mc19_operation_result(
+      &run_id,
+      "artifact_query",
+      OperationStatus::Completed,
+      "dispatched",
+    );
+    inconclusive_operation_result
+      .verifications
+      .push(VerificationResult {
+        api_version: VERIFICATION_RESULT_API_VERSION.to_string(),
+        method: VerificationMethod::SemanticMatch,
+        executed: true,
+        state_changed: true,
+        semantic_matched: None,
+        failure_layer: None,
+        evidence: Vec::new(),
+        consumed_candidate_ref: None,
+        consumed_node_ref: None,
+        consumed_recognition_artifact_ref: None,
+        consumed_recognition_id: None,
+        consumed_recognized_item_id: None,
+        observed_label: Some("tick advanced".to_string()),
+      });
+    let inconclusive = super::resolve_query_wired_live_action_verification_projection(
+      true,
+      Some("artifact_op"),
+      Some(&inconclusive_operation_result),
+      run_id.as_str(),
+      None,
+    );
+    assert_eq!(inconclusive.verification_outcome, "inconclusive");
+    assert_eq!(
+      inconclusive.verification_reason.as_deref(),
+      Some("tick advanced")
+    );
+
     let not_attempted = super::resolve_query_wired_live_action_verification_projection(
       false,
       None,

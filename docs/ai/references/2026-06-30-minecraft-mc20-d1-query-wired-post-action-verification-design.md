@@ -2,9 +2,9 @@
 
 Date: 2026-06-30
 
-Status: **D1 implemented** — closes minimal Layer 3 post-action semantic verification on the
-MC-19 `query-wired live click` chain. MC-20 orchestration/controller lane remains **paused**
-after this slice.
+Status: **D1 implemented; D1.1 hardening landed** — closes minimal Layer 3 post-action
+semantic verification on the MC-19 `query-wired live click` chain. MC-20 orchestration/controller
+lane remains **paused** after this slice.
 
 ## One-line summary
 
@@ -84,25 +84,32 @@ pub struct QueryWiredLiveActionTelemetryWitness {
 | Witness | Behavior |
 | --- | --- |
 | `None` | `attempted=true` → one `VerificationUnreliable` claim + `MC20_V1_…_witness_absent` limit |
-| `Some` | Read pre frame **before** wiring; read post frame **after** wiring; world-diff verdict → `VerificationResult`; stage pre/post spatial-frame artifacts as evidence |
+| `Some` | Read pre frame **before** wiring; read post frame **after** wiring; world-diff verdict → `VerificationResult`; stage pre/post spatial-frame artifacts as evidence. If post read/staging fails, still stage `operation-result` with one `VerificationUnreliable` claim and `observed_label` reason. |
 
 ## Producer branch table (implementation contract)
 
 | Condition | `operation_result.verifications` | read-side `verification_outcome` |
 | --- | --- | --- |
 | `attempted=false` | empty | `not_attempted` (unchanged) |
-| `attempted=true`, no witness | 1× `VerificationUnreliable` | `unreliable` |
-| `attempted=true`, witness, world-diff semantic success | 1× `SemanticMatch`, `semantic_matched: Some(true)` | `passed` |
-| `attempted=true`, witness, semantic failure | `semantic_mismatch` / `state_changed_no_match` | `failed` |
-| `attempted=true`, witness, state changed but no semantic assertion | `state_changed=true`, `semantic_matched: None` | `inconclusive` |
+| `attempted=true`, dispatch failed (`click_summary` absent) | empty | `absent` (MC-19 D4 limit may remain) |
+| `attempted=true`, dispatch succeeded, no witness | 1× `VerificationUnreliable` | `unreliable` |
+| `attempted=true`, dispatch succeeded, witness capture/world-diff staging failed | 1× `VerificationUnreliable` + `observed_label` | `unreliable` |
+| `attempted=true`, dispatch succeeded, witness, `semantic_matched: Some(true)` | 1× `SemanticMatch` | `passed` |
+| `attempted=true`, dispatch succeeded, witness, semantic failure | `semantic_mismatch` / `state_changed_no_match` | `failed` |
+| `attempted=true`, dispatch succeeded, witness, tick advance / block removal without `expected_item_id` | `state_changed=true`, `semantic_matched: None` | `inconclusive` |
 
 Discipline:
 
 - **`dispatch_outcome=failed` does not map to verification failed** (Core-C1 unchanged).
+- **Post-action verification runs only when dispatch succeeded** (`click_summary` present).
 - When verification runs (`attempted=true` and verifications non-empty), **remove**
   `MC19_V1_D4_QUERY_WIRED_LIVE_ACTION_KNOWN_LIMIT` from `operation_result.known_limits`.
 - No-witness unreliable path uses **`MC20_V1_QUERY_WIRED_WITNESS_ABSENT_KNOWN_LIMIT`** instead of
   MC-19 D4.
+- World-diff uses `allow_same_block_state_change()` only; it does **not** assert
+  `semantic_matched: Some(true)` unless a future slice adds `expected_item_id` or richer semantics.
+- Same-coordinate **block_id replacement without tick advance** is not detected; read-side may
+  still show `absent` for unmappable claims — document as honest world-diff boundary.
 
 ## Glue orchestration flow
 
@@ -110,7 +117,7 @@ Discipline:
 query + stage manifest
 → (optional) read pre_frame from telemetry witness
 → wiring = wire_spatial_query_manifest_to_action(...)
-→ if attempted:
+→ if attempted && dispatch succeeded:
       build verifications per branch table
       stage pre/post spatial-frame artifacts → evidence refs (witness path)
 → build_query_wired_live_action_operation_result(..., verifications, witness_present)
@@ -119,6 +126,9 @@ query + stage manifest
 
 Verification stays in glue **after** wiring; `wire_query_manifest_to_action` admission semantics
 are unchanged.
+
+Glue entry: `build_query_wired_post_action_verifications` in `src/minecraft_verification.rs`.
+Verification target block comes from **query manifest** `target_block` (cross-checked against input).
 
 ## Dependency direction
 

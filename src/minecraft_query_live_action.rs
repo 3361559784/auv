@@ -129,7 +129,7 @@ pub fn build_query_wired_live_action_operation_result(
   wiring: &QueryActionWiringOutcome,
   query_manifest_ref: Option<ArtifactRef>,
   verifications: Vec<VerificationResult>,
-  witness_present: bool,
+  witness_absent_limit_needed: bool,
 ) -> OperationResult {
   let (status, message) = operation_status_and_message_from_wiring(wiring);
   let freshness_basis = query_manifest_ref
@@ -139,8 +139,11 @@ pub fn build_query_wired_live_action_operation_result(
       source_operation_id: Some("auv.minecraft.query_3dgs_training_result".to_string()),
       notes: vec!["MC-12 spatial query manifest staged in the same run".to_string()],
     });
-  let known_limits =
-    resolve_query_wired_live_action_known_limits(wiring, &verifications, witness_present);
+  let known_limits = resolve_query_wired_live_action_known_limits(
+    wiring,
+    &verifications,
+    witness_absent_limit_needed,
+  );
 
   OperationResult {
     api_version: OPERATION_RESULT_API_VERSION.to_string(),
@@ -160,7 +163,7 @@ pub fn build_query_wired_live_action_operation_result(
 fn resolve_query_wired_live_action_known_limits(
   wiring: &QueryActionWiringOutcome,
   verifications: &[VerificationResult],
-  witness_present: bool,
+  witness_absent_limit_needed: bool,
 ) -> Vec<String> {
   if !wiring.attempted || verifications.is_empty() {
     return wiring.known_limits.clone();
@@ -173,7 +176,7 @@ fn resolve_query_wired_live_action_known_limits(
     .cloned()
     .collect::<Vec<_>>();
 
-  if !witness_present {
+  if witness_absent_limit_needed {
     known_limits
       .push(auv_game_minecraft::MC20_V1_QUERY_WIRED_WITNESS_ABSENT_KNOWN_LIMIT.to_string());
   }

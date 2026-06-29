@@ -36,10 +36,6 @@ use crate::minecraft_query_live_action::{
   InvokeWindowPointClickExecutor, QUERY_WIRED_LIVE_ACTION_OPERATION_ID,
   build_query_wired_live_action_operation_result, stage_query_wired_live_action_operation_result,
 };
-use crate::minecraft_verification::{
-  build_query_wired_witness_absent_verification, map_world_diff_verdict_to_verification_result,
-  stage_minecraft_spatial_frame_artifact,
-};
 
 use crate::model::AuvResult;
 
@@ -909,43 +905,24 @@ fn run_query_wired_live_action_core<E: QueryLiveClickExecutor>(
   let wiring =
     wire_spatial_query_manifest_to_action(&query.manifest, &query.manifest_path, executor);
 
-  let (verifications, witness_present) = if !wiring.attempted {
-    (Vec::new(), false)
-  } else if let Some(witness) = inputs.telemetry_witness.as_ref() {
-    let pre = pre_frame.expect("pre frame should be loaded when telemetry witness is present");
-    let post_sample_path = witness
-      .post_telemetry_sample
-      .as_ref()
-      .unwrap_or(&witness.pre_telemetry_sample);
-    let post = auv_game_minecraft::read_latest_spatial_frame_from_tail(post_sample_path)?
-      .ok_or_else(|| {
-        format!(
-          "no valid minecraft post frame found in {}",
-          post_sample_path.display()
-        )
-      })?;
-    let verdict = auv_game_minecraft::verify_query_wired_live_action_semantic(
-      &auv_game_minecraft::QueryWiredPostActionWitness {
-        target_block: inputs.target_block,
-        pre_frame: pre.clone(),
-        post_frame: post.clone(),
+  let (verifications, witness_absent_limit_needed) =
+    crate::minecraft_verification::build_query_wired_post_action_verifications(
+      context,
+      &wiring,
+      crate::minecraft_verification::QueryWiredPostActionVerificationInput {
+        telemetry_witness: inputs.telemetry_witness.as_ref(),
+        input_target_block: inputs.target_block,
+        manifest_target_block: query.manifest.target_block,
+        pre_frame,
       },
     );
-    let (_, pre_ref) = stage_minecraft_spatial_frame_artifact(context, &pre)?;
-    let (_, post_ref) = stage_minecraft_spatial_frame_artifact(context, &post)?;
-    let verification =
-      map_world_diff_verdict_to_verification_result(&verdict, vec![pre_ref, post_ref]);
-    (vec![verification], true)
-  } else {
-    (vec![build_query_wired_witness_absent_verification()], false)
-  };
 
   let operation_result = build_query_wired_live_action_operation_result(
     context.run_id(),
     &wiring,
     Some(query_manifest_ref.clone()),
     verifications,
-    witness_present,
+    witness_absent_limit_needed,
   );
   let (_staged_operation_result_path, operation_result_ref) =
     stage_query_wired_live_action_operation_result(context, &operation_result)?;
@@ -2642,6 +2619,7 @@ mod tests {
   struct CountingQueryLiveClickExecutor {
     calls: std::cell::Cell<usize>,
     summary: Option<String>,
+    dispatch_error: Option<String>,
   }
 
   impl CountingQueryLiveClickExecutor {
@@ -2649,6 +2627,15 @@ mod tests {
       Self {
         calls: std::cell::Cell::new(0),
         summary: Some(summary.into()),
+        dispatch_error: None,
+      }
+    }
+
+    fn dispatch_error(message: impl Into<String>) -> Self {
+      Self {
+        calls: std::cell::Cell::new(0),
+        summary: None,
+        dispatch_error: Some(message.into()),
       }
     }
   }
@@ -2660,6 +2647,9 @@ mod tests {
       _lineage: &auv_game_minecraft::QueryActionWiringLineage,
     ) -> Result<String, String> {
       self.calls.set(self.calls.get() + 1);
+      if let Some(message) = &self.dispatch_error {
+        return Err(message.clone());
+      }
       Ok(
         self
           .summary
@@ -2671,7 +2661,7 @@ mod tests {
 
   fn write_mc18_semantic_fixture(
     temp: &std::path::Path,
-    target_block: auv_game_minecraft::BlockPosition,
+    _target_block: auv_game_minecraft::BlockPosition,
     frame: auv_game_minecraft::MinecraftSpatialFrame,
   ) -> PathBuf {
     let scene_packet_dir = temp.join("scene-packet");
@@ -2949,7 +2939,7 @@ mod tests {
   }
 
   #[test]
-  fn query_wired_live_action_with_witness_telemetry_semantic_passes() {
+  fn query_wired_live_action_with_witness_telemetry_tick_advance_projects_inconclusive() {
     let temp = temp_dir("mc20-d1-witness-pass");
     let store = LocalStore::new(temp.join("store")).expect("store");
     let recording = RunRecordingBackend::new(store.clone(), Arc::new(NoopRunRecorder)).handle();
@@ -3024,6 +3014,119 @@ mod tests {
         .as_str()
       )
     );
+
+    let _ = fs::remove_dir_all(temp);
+  }
+
+  #[test]
+  fn query_wired_live_action_dispatch_failed_skips_post_action_verification() {
+    let temp = temp_dir("mc20-d1-dispatch-failed");
+    let store = LocalStore::new(temp.join("store")).expect("store");
+    let recording = RunRecordingBackend::new(store.clone(), Arc::new(NoopRunRecorder)).handle();
+    let target_block = auv_game_minecraft::BlockPosition::new(511, 73, 728);
+    let semantic_manifest_path =
+      write_mc18_semantic_fixture(&temp, target_block, mc18_target_frame(target_block));
+    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+      .join("crates/auv-game-minecraft/tests/fixtures/mc18/visible.json");
+    let executor = CountingQueryLiveClickExecutor::dispatch_error("click invoke failed");
+
+    let output = run_minecraft_query_wired_live_action_with_executor(
+      &recording,
+      QueryWiredLiveActionInputs {
+        training_result_semantic_manifest_path: semantic_manifest_path,
+        target_block,
+        target_face: Some(auv_game_minecraft::BlockFace::North),
+        target_semantics: auv_game_minecraft::MinecraftTargetSemantics::HitFaceCenter,
+        query_command: None,
+        use_checkpoint_native_provider: false,
+        use_closed_scene_toy_provider: true,
+        closed_scene_fixture_path: Some(fixture_path),
+        output_dir: temp.join("query-output"),
+        target_app: "net.minecraft.client".to_string(),
+        target_title: "Minecraft".to_string(),
+        telemetry_witness: None,
+      },
+      &executor,
+    )
+    .expect("dispatch-failed wired live action should still record");
+
+    assert!(output.value.wiring.attempted);
+    assert!(output.value.wiring.click_summary.is_none());
+    let run = recording
+      .read_run(output.run_id.as_str())
+      .expect("wired live action run should persist");
+    let operation_result = read_operation_result_artifact(&store, &run);
+    assert!(operation_result.verifications.is_empty());
+    assert_eq!(
+      operation_result.status,
+      crate::contract::OperationStatus::Failed
+    );
+    assert!(operation_result.known_limits.iter().any(|limit| {
+      limit == auv_game_minecraft::MC19_V1_D4_QUERY_WIRED_LIVE_ACTION_KNOWN_LIMIT
+    }));
+    let summary = crate::run_read::derive_minecraft_query_wired_live_action_summary(&store, &run)
+      .expect("summary should derive");
+    assert_eq!(summary.verification_outcome, "absent");
+
+    let _ = fs::remove_dir_all(temp);
+  }
+
+  #[test]
+  fn query_wired_live_action_witness_post_missing_still_stages_operation_result() {
+    let temp = temp_dir("mc20-d1-post-missing");
+    let store = LocalStore::new(temp.join("store")).expect("store");
+    let recording = RunRecordingBackend::new(store.clone(), Arc::new(NoopRunRecorder)).handle();
+    let target_block = auv_game_minecraft::BlockPosition::new(511, 73, 728);
+    let semantic_manifest_path =
+      write_mc18_semantic_fixture(&temp, target_block, mc18_target_frame(target_block));
+    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+      .join("crates/auv-game-minecraft/tests/fixtures/mc18/visible.json");
+    let pre_frame = mc18_target_frame(target_block);
+    let pre_telemetry = temp.join("pre.jsonl");
+    write_telemetry_jsonl(&pre_telemetry, &pre_frame);
+    let executor = CountingQueryLiveClickExecutor::success("mock live click dispatched");
+
+    let output = run_minecraft_query_wired_live_action_with_executor(
+      &recording,
+      QueryWiredLiveActionInputs {
+        training_result_semantic_manifest_path: semantic_manifest_path,
+        target_block,
+        target_face: Some(auv_game_minecraft::BlockFace::North),
+        target_semantics: auv_game_minecraft::MinecraftTargetSemantics::HitFaceCenter,
+        query_command: None,
+        use_checkpoint_native_provider: false,
+        use_closed_scene_toy_provider: true,
+        closed_scene_fixture_path: Some(fixture_path),
+        output_dir: temp.join("query-output"),
+        target_app: "net.minecraft.client".to_string(),
+        target_title: "Minecraft".to_string(),
+        telemetry_witness: Some(QueryWiredLiveActionTelemetryWitness {
+          pre_telemetry_sample: pre_telemetry,
+          post_telemetry_sample: Some(temp.join("missing-post.jsonl")),
+        }),
+      },
+      &executor,
+    )
+    .expect("post-missing witness should still complete operation");
+
+    let run = recording
+      .read_run(output.run_id.as_str())
+      .expect("wired live action run should persist");
+    let operation_result = read_operation_result_artifact(&store, &run);
+    assert_eq!(operation_result.verifications.len(), 1);
+    assert_eq!(
+      operation_result.verifications[0].failure_layer,
+      Some(crate::contract::FailureLayer::VerificationUnreliable)
+    );
+    assert!(
+      operation_result.verifications[0]
+        .observed_label
+        .as_deref()
+        .is_some_and(|label| label.contains("missing-post.jsonl"))
+    );
+    let summary = crate::run_read::derive_minecraft_query_wired_live_action_summary(&store, &run)
+      .expect("summary should derive");
+    assert_eq!(summary.verification_outcome, "unreliable");
 
     let _ = fs::remove_dir_all(temp);
   }

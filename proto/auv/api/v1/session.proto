@@ -1,27 +1,95 @@
+// EXPERIMENTAL / UNSTABLE
+// auv.api.session.v1 is a naming and surface-convergence draft.
+// It is not a long-term public compatibility promise.
+//
+// NOTICE: This file lives under auv/api/v1/ while package is auv.api.session.v1
+// (intentional; buf excepts PACKAGE_DIRECTORY_MATCH).
 syntax = "proto3";
 
 package auv.api.session.v1;
 
+// SessionService exposes synchronous invoke and read-back over a session scope.
 service SessionService {
-  rpc DoExample(DoExampleRequest) returns (DoExampleResponse);
-  rpc DoExampleStream(stream DoExampleStreamRequest)
-      returns (stream DoExampleStreamResponse);
+  rpc CreateSession(CreateSessionRequest) returns (CreateSessionResponse);
+  // Blocking terminal invoke: the RPC does not return until the command finishes
+  // or fails on the synchronous path (not a fire-and-forget job submit).
+  rpc Invoke(InvokeRequest) returns (InvokeResponse);
+  // Idempotent read-back summary for a prior invoke result (not an async polling
+  // model unless status or transport docs say otherwise).
+  rpc GetOperation(GetOperationRequest) returns (GetOperationResponse);
+  rpc StreamSessionEvents(StreamSessionEventsRequest)
+      returns (stream SessionEvent);
 }
 
-message DoExampleRequest {
-  string input = 1;
+message SessionRef {
+  string session_id = 1;
 }
 
-message DoExampleResponse {
-  string output = 1;
+message OperationRef {
+  string run_id = 1;
+  // v1 maps operation_id to command_id from the InvokeRequest (not span_id).
+  string operation_id = 2;
 }
 
-message DoExampleStreamRequest {
-  uint64 sequence = 1;
-  string input = 2;
+message ArtifactRef {
+  string run_id = 1;
+  string artifact_id = 2;
+  string role = 3;
 }
 
-message DoExampleStreamResponse {
-  uint64 sequence = 1;
-  string output = 2;
+message CreateSessionRequest {
+  string client_label = 1; // optional caller hint; may be empty
+}
+
+message CreateSessionResponse {
+  SessionRef session = 1;
+}
+
+message InvokeRequest {
+  SessionRef session = 1;
+  string command_id = 2;
+  // When non-empty, must be a UTF-8 JSON object; size limits deferred to transport/server.
+  bytes json_payload = 3;
+}
+
+message InvokeResponse {
+  OperationRef operation = 1;
+  string status = 2; // "completed" | "failed" (string, not enum — experimental)
+  repeated ArtifactRef artifacts = 3;
+  repeated string known_limits = 4;
+  string failure_message = 5; // empty when absent; failure detail on sync path
+}
+
+message GetOperationRequest {
+  OperationRef operation = 1;
+}
+
+message GetOperationResponse {
+  OperationRef operation = 1;
+  string status = 2; // same vocabulary as InvokeResponse: "completed" | "failed"
+  string output_summary = 3;
+  map<string, string> signals = 4;
+  repeated ArtifactRef artifacts = 5;
+  string failure_message = 6; // empty when absent
+  repeated string known_limits = 7; // aligns with InvokeResponse / internal OperationResult
+}
+
+message StreamSessionEventsRequest {
+  SessionRef session = 1;
+}
+
+// Stream events are typed by event_type; only the nested refs listed per type are
+// valid (others must be empty/default). No oneof or sequence field in v1 — clients
+// must not infer ordering guarantees beyond transport delivery.
+message SessionEvent {
+  string event_type = 1;
+  // session_created: session set; operation, artifact empty.
+  // invoke_started: session + operation set; artifact empty.
+  // invoke_completed: session + operation set; artifact empty; summary optional.
+  // invoke_failed: session + operation set; artifact empty; summary may hold failure detail.
+  // artifact_recorded: session + operation + artifact set.
+  SessionRef session = 2;
+  OperationRef operation = 3;
+  ArtifactRef artifact = 4;
+  string summary = 5;
 }

@@ -12,7 +12,34 @@
 
 use std::collections::{BTreeMap, HashMap};
 
+use serde::{Deserialize, Serialize};
+
 use crate::{InvokeResult, RunStatus};
+
+/// Wire-shape JSON record for a persisted `operation-summary` artifact (API-P11).
+///
+/// Deserialize default only: writers stamp `auv::contract::OPERATION_SUMMARY_API_VERSION`.
+/// NOTICE(api-p11-version-ownership): this literal must stay aligned with the main
+/// crate constant; `auv-cli-invoke` cannot depend on `contract.rs`.
+pub const OPERATION_SUMMARY_RECORD_API_VERSION: &str = "auv.operation_summary.v1alpha1";
+
+fn default_operation_summary_record_api_version() -> String {
+  OPERATION_SUMMARY_RECORD_API_VERSION.to_string()
+}
+
+/// Serializable persisted projection of [`OperationSummary`].
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct OperationSummaryRecord {
+  /// Wire-shape version. Defaults so historical artifacts without the field
+  /// still parse as the current shape.
+  #[serde(default = "default_operation_summary_record_api_version")]
+  pub api_version: String,
+  pub run_id: String,
+  pub status: RunStatus,
+  pub output_summary: String,
+  pub signals: BTreeMap<String, String>,
+  pub failure_message: Option<String>,
+}
 
 /// Read access to an operation's summary view: the `InvokeResult`-sourced half
 /// of the API-P3 two-source `GetOperation` projection.
@@ -97,6 +124,29 @@ impl OperationSummary {
   /// Run id this summary was captured for.
   pub fn run_id(&self) -> &str {
     &self.run_id
+  }
+
+  /// Build a versioned wire record for persistence.
+  pub fn to_record(&self, api_version: &str) -> OperationSummaryRecord {
+    OperationSummaryRecord {
+      api_version: api_version.to_string(),
+      run_id: self.run_id.clone(),
+      status: self.status.clone(),
+      output_summary: self.output_summary.clone(),
+      signals: self.signals.clone(),
+      failure_message: self.failure_message.clone(),
+    }
+  }
+
+  /// Restore a summary snapshot from a persisted wire record.
+  pub fn from_record(record: OperationSummaryRecord) -> Self {
+    Self {
+      run_id: record.run_id,
+      status: record.status,
+      output_summary: record.output_summary,
+      signals: record.signals,
+      failure_message: record.failure_message,
+    }
   }
 }
 

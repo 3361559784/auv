@@ -412,6 +412,7 @@ dependencies = [
  "auv-driver",
  "auv-driver-macos",
  "auv-tracing-driver",
+ "serde",
  "serde_json",
 ]
 

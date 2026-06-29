@@ -17,7 +17,8 @@ pub struct InvokeRequest {
   pub dry_run: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum RunStatus {
   Completed,
   Failed,

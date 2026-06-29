@@ -61,6 +61,15 @@ use auv_tracing_driver::trace::{ArtifactId, RunId, SpanId};
 /// version because the shape was already `v1alpha1` before the field existed.
 pub const OPERATION_RESULT_API_VERSION: &str = "auv.operation_result.v1alpha1";
 
+/// Wire-shape version of persisted `operation-summary` JSON artifacts (API-P11).
+///
+/// Covers the `InvokeResult`-sourced half of the `GetOperation` projection:
+/// `status`, `output_summary`, `signals`, and `failure_message`.
+pub const OPERATION_SUMMARY_API_VERSION: &str = "auv.operation_summary.v1alpha1";
+
+/// Artifact role for persisted operation summary projections (API-P11).
+pub const OPERATION_SUMMARY_ARTIFACT_ROLE: &str = "operation-summary";
+
 /// Wire-shape version of [`VerificationResult`] JSON artifacts. Same semantics
 /// as [`OPERATION_RESULT_API_VERSION`].
 pub const VERIFICATION_RESULT_API_VERSION: &str = "auv.verification_result.v1alpha1";

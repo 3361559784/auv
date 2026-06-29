@@ -7,9 +7,11 @@
 //! - `registry`: lightweight in-memory session registry (API-P4 responsibility A).
 //! - `mapper`: proto <-> host mapping, isolated from handler code (API-P4 checklist).
 //! - `summary`: two-source `GetOperation` read path + join policy (API-P7).
+//! - `summary_store`: persisted `operation-summary` write path (API-P11).
 //! - `handler`: transport-agnostic handler skeleton wiring proto RPCs to the
 //!   internal seams (API-P8).
 //! - `transport`: loopback-only tonic gRPC adapter (API-P9).
+//! - `test_fixtures` (tests only): shared run/artifact staging helpers.
 //!
 //! TODO(api-p4-stream-events): `StreamSessionEvents` remains deferred to the
 //! event projector (API-P4 responsibility D); the transport returns
@@ -19,7 +21,11 @@ pub mod handler;
 pub mod mapper;
 pub mod registry;
 pub mod summary;
+pub mod summary_store;
 pub mod transport;
+
+#[cfg(test)]
+pub(crate) mod test_fixtures;
 
 use std::fmt;
 

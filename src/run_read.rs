@@ -1352,6 +1352,35 @@ pub fn read_operation_result(
   Ok(None)
 }
 
+/// Read the persisted `OperationSummary` for a run, if one was recorded (API-P11).
+///
+/// Scans the run's artifacts for the first `operation-summary` JSON record,
+/// mirroring [`read_operation_result`]. Returns `Ok(None)` when the run exists
+/// but recorded no operation summary artifact.
+pub fn read_operation_summary(
+  store: &LocalStore,
+  run_id: &str,
+) -> AuvResult<Option<auv_cli_invoke::OperationSummary>> {
+  use auv_cli_invoke::OperationSummaryRecord;
+
+  let run = store.read_run(run_id)?;
+  for artifact in &run.artifacts {
+    if artifact.role != crate::contract::OPERATION_SUMMARY_ARTIFACT_ROLE
+      || !is_json_mime(&artifact.mime_type)
+    {
+      continue;
+    }
+    let record: OperationSummaryRecord = read_artifact_json(
+      store,
+      run.run.run_id.as_str(),
+      artifact,
+      "operation-summary",
+    )?;
+    return Ok(Some(auv_cli_invoke::OperationSummary::from_record(record)));
+  }
+  Ok(None)
+}
+
 pub(crate) fn list_observation_snapshots(
   store: &LocalStore,
   run_id: &str,

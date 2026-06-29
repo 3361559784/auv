@@ -111,13 +111,14 @@ pub fn join_operation_summary(
 /// Load and join the `GetOperation` summary for a run.
 ///
 /// Reads the persisted `OperationResult` (storage-side read path via
-/// [`run_read::read_operation_result`]) and joins it with the supplied runtime
-/// summary source. Distinguishes a missing run from a run that exists but
-/// recorded no `OperationResult`.
+/// [`run_read::read_operation_result`]) and joins it with the runtime summary
+/// source. When `runtime_override` is absent, falls back to the persisted
+/// `operation-summary` artifact (API-P11). Distinguishes a missing run from a
+/// run that exists but recorded no `OperationResult`.
 pub fn load_joined_operation_summary(
   store: &LocalStore,
   run_id: &str,
-  runtime: Option<&dyn OperationSummarySource>,
+  runtime_override: Option<&dyn OperationSummarySource>,
 ) -> AuvResult<JoinedOperationSummaryLoad> {
   let run_dir = store.run_dir(run_id)?;
   if !run_dir.join("run.json").exists() {
@@ -125,6 +126,17 @@ pub fn load_joined_operation_summary(
   }
   let Some(operation) = run_read::read_operation_result(store, run_id)? else {
     return Ok(JoinedOperationSummaryLoad::NoPersistedOperationResult);
+  };
+  let stored_summary = if runtime_override.is_none() {
+    run_read::read_operation_summary(store, run_id)?
+  } else {
+    None
+  };
+  let runtime: Option<&dyn OperationSummarySource> = match runtime_override {
+    Some(source) => Some(source),
+    None => stored_summary
+      .as_ref()
+      .map(|summary| summary as &dyn OperationSummarySource),
   };
   Ok(JoinedOperationSummaryLoad::Found(join_operation_summary(
     &operation, runtime,
@@ -135,152 +147,30 @@ pub fn load_joined_operation_summary(
 mod tests {
   use std::collections::BTreeMap;
   use std::fs;
-  use std::path::{Path, PathBuf};
 
-  use auv_cli_invoke::{InvokeResult, OperationSummary, RunStatus};
-  use auv_tracing_driver::artifact::ArtifactFileSource;
-  use auv_tracing_driver::store::{CanonicalRun, LocalStore};
-  use auv_tracing_driver::trace::{
-    RUN_API_VERSION, RunId, RunRecordV1Alpha1, RunType, SPAN_API_VERSION, SpanId,
-    SpanRecordV1Alpha1, TraceId, TraceState, TraceStatusCode,
+  use auv_cli_invoke::{
+    InvokeResult, OperationSummary, OperationSummaryRecord, OperationSummarySource, RunStatus,
   };
-  use serde::Serialize;
+  use auv_tracing_driver::store::LocalStore;
+  use auv_tracing_driver::trace::SpanId;
 
   use super::{
     JoinedOperationSummary, JoinedOperationSummaryLoad, join_operation_summary,
     load_joined_operation_summary,
   };
-  use crate::contract::{
-    OPERATION_RESULT_API_VERSION, OperationOutput, OperationResult, OperationStatus,
+  use crate::api::session_service::test_fixtures::{
+    SessionRunFixture, music_runtime_summary, music_search_operation,
+    persist_operation_result_and_summary_run, persist_operation_result_run, unique_temp_dir,
+    write_minimal_run,
   };
+  use crate::contract::{OPERATION_SUMMARY_API_VERSION, OperationStatus};
 
-  fn sample_operation(run_id: &str) -> OperationResult {
-    OperationResult {
-      api_version: OPERATION_RESULT_API_VERSION.to_string(),
-      run_id: RunId::new(run_id),
-      status: OperationStatus::Completed,
-      operation_id: "music.search.results".to_string(),
-      evidence_artifacts: Vec::new(),
-      output: OperationOutput::Acknowledged { message: None },
-      verifications: Vec::new(),
-      freshness_basis: None,
-      known_limits: vec!["semantic_shaping_synthetic".to_string()],
-    }
+  fn sample_operation(run_id: &str) -> crate::contract::OperationResult {
+    music_search_operation(run_id)
   }
 
   fn runtime_summary(run_id: &str) -> OperationSummary {
-    let mut signals = BTreeMap::new();
-    signals.insert("now_playing".to_string(), "track-x".to_string());
-    OperationSummary::capture(&InvokeResult {
-      run_id: run_id.to_string(),
-      producer_span_id: SpanId::new("0000000000000001"),
-      status: RunStatus::Completed,
-      output_summary: "did the thing".to_string(),
-      signals,
-      artifacts: Vec::new(),
-      artifact_paths: Vec::new(),
-      failure_message: None,
-    })
-  }
-
-  fn temp_dir(label: &str) -> PathBuf {
-    let path = std::env::temp_dir().join(format!("auv-{label}-{}", crate::model::now_millis()));
-    let _ = fs::remove_dir_all(&path);
-    fs::create_dir_all(&path).expect("temp dir should be creatable");
-    path
-  }
-
-  fn dummy_run(run_id: &str) -> RunRecordV1Alpha1 {
-    let root_span_id = SpanId::new("0000000000000001");
-    RunRecordV1Alpha1 {
-      api_version: RUN_API_VERSION.to_string(),
-      run_id: RunId::new(run_id),
-      trace_id: TraceId::new("00000000000000000000000000000001"),
-      run_type: RunType::Execute,
-      state: TraceState::Ended,
-      status_code: TraceStatusCode::Ok,
-      started_at_millis: 100,
-      finished_at_millis: Some(200),
-      root_span_id,
-      attributes: BTreeMap::new(),
-      summary: Some("done".to_string()),
-      failure: None,
-    }
-  }
-
-  fn dummy_span(span_id: &SpanId) -> SpanRecordV1Alpha1 {
-    SpanRecordV1Alpha1 {
-      api_version: SPAN_API_VERSION.to_string(),
-      span_id: span_id.clone(),
-      parent_span_id: None,
-      name: "auv.run.read".to_string(),
-      state: TraceState::Ended,
-      status_code: TraceStatusCode::Ok,
-      started_at_millis: 100,
-      finished_at_millis: Some(200),
-      attributes: BTreeMap::new(),
-      summary: None,
-      failure: None,
-    }
-  }
-
-  fn stage_json_artifact<T: Serialize>(
-    store: &LocalStore,
-    root: &Path,
-    run_id: &RunId,
-    span_id: &SpanId,
-    index: usize,
-    role: &str,
-    preferred_name: &str,
-    value: &T,
-  ) -> auv_tracing_driver::trace::ArtifactRecordV1Alpha1 {
-    let source_path = root.join(format!("source-{index}-{preferred_name}"));
-    let rendered =
-      serde_json::to_string_pretty(value).expect("artifact json should serialize") + "\n";
-    fs::write(&source_path, rendered).expect("artifact source should write");
-    store
-      .stage_artifact_file(
-        run_id,
-        index,
-        span_id,
-        None,
-        ArtifactFileSource {
-          role: role.to_string(),
-          source_path,
-          preferred_name: preferred_name.to_string(),
-          summary: None,
-        },
-      )
-      .expect("artifact should stage")
-  }
-
-  fn persist_run_with_operation_result(
-    run_id: &str,
-    operation: &OperationResult,
-  ) -> (PathBuf, LocalStore) {
-    let root = temp_dir("session-summary-load");
-    let store = LocalStore::new(root.clone()).expect("store should initialize");
-    let run = dummy_run(run_id);
-    let span = dummy_span(&run.root_span_id);
-    let artifact = stage_json_artifact(
-      &store,
-      &root,
-      &run.run_id,
-      &span.span_id,
-      0,
-      "operation-result",
-      "operation-result.json",
-      operation,
-    );
-    store
-      .write_run_snapshot(&CanonicalRun {
-        run,
-        spans: vec![span],
-        events: Vec::new(),
-        artifacts: vec![artifact],
-      })
-      .expect("run snapshot should persist");
-    (root, store)
+    music_runtime_summary(run_id)
   }
 
   #[test]
@@ -357,7 +247,7 @@ mod tests {
 
   #[test]
   fn load_joined_operation_summary_returns_run_not_found_for_missing_run() {
-    let root = temp_dir("session-summary-missing-run");
+    let root = unique_temp_dir("session-summary-missing-run");
     let store = LocalStore::new(root.clone()).expect("store should initialize");
 
     let loaded =
@@ -369,18 +259,9 @@ mod tests {
 
   #[test]
   fn load_joined_operation_summary_returns_no_persisted_result_when_run_lacks_artifact() {
-    let root = temp_dir("session-summary-no-op-result");
+    let root = unique_temp_dir("session-summary-no-op-result");
     let store = LocalStore::new(root.clone()).expect("store should initialize");
-    let run = dummy_run("run-no-op-result");
-    let span = dummy_span(&run.root_span_id);
-    store
-      .write_run_snapshot(&CanonicalRun {
-        run,
-        spans: vec![span],
-        events: Vec::new(),
-        artifacts: Vec::new(),
-      })
-      .expect("run snapshot should persist");
+    write_minimal_run(&store, "run-no-op-result");
 
     let loaded =
       load_joined_operation_summary(&store, "run-no-op-result", None).expect("load should succeed");
@@ -395,7 +276,8 @@ mod tests {
   #[test]
   fn load_joined_operation_summary_joins_persisted_and_runtime_halves() {
     let operation = sample_operation("run-happy");
-    let (_root, store) = persist_run_with_operation_result("run-happy", &operation);
+    let SessionRunFixture { root, store } =
+      persist_operation_result_run("session-summary-load", "run-happy", &operation);
     let summary = runtime_summary("run-happy");
 
     let loaded = load_joined_operation_summary(&store, "run-happy", Some(&summary))
@@ -414,7 +296,51 @@ mod tests {
       Some("track-x")
     );
 
-    let _ = fs::remove_dir_all(_root);
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn load_joined_operation_summary_loads_persisted_runtime_when_cache_absent() {
+    let operation = sample_operation("run-stored-runtime");
+    let summary = runtime_summary("run-stored-runtime");
+    let SessionRunFixture { root, store } = persist_operation_result_and_summary_run(
+      "session-summary-stored-runtime",
+      "run-stored-runtime",
+      &operation,
+      &summary,
+    );
+
+    let loaded = load_joined_operation_summary(&store, "run-stored-runtime", None)
+      .expect("load should succeed");
+    let JoinedOperationSummaryLoad::Found(joined) = loaded else {
+      panic!("expected joined summary, got {loaded:?}");
+    };
+
+    let runtime = joined.runtime.expect("runtime summary should be present");
+    assert_eq!(runtime.output_summary, "did the thing");
+    assert_eq!(
+      runtime.signals.get("now_playing").map(String::as_str),
+      Some("track-x")
+    );
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn operation_summary_record_deserializes_without_api_version_field() {
+    let json = r#"{
+      "run_id": "run-legacy",
+      "status": "completed",
+      "output_summary": "legacy",
+      "signals": {},
+      "failure_message": null
+    }"#;
+    let record: OperationSummaryRecord = serde_json::from_str(json).expect("deserialize");
+    assert_eq!(record.api_version, OPERATION_SUMMARY_API_VERSION);
+    assert_eq!(record.run_id, "run-legacy");
+    assert_eq!(record.output_summary, "legacy");
+    let restored = OperationSummary::from_record(record);
+    assert_eq!(restored.output_summary(), "legacy");
   }
 
   fn _assert_send_sync<T: Send + Sync>() {}

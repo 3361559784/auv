@@ -96,8 +96,13 @@ fn artifact_ref_from_contract(artifact: &ContractArtifactRef) -> proto::Artifact
 }
 
 /// Map an `InvokeResult` (plus the request `command_id`) to a proto
-/// `InvokeResponse`.
-pub fn invoke_result_to_response(command_id: &str, result: &InvokeResult) -> proto::InvokeResponse {
+/// `InvokeResponse`. `extra_known_limits` surfaces invoke-path durability gaps
+/// without changing execution status (see API-P11 partial-success policy).
+pub fn invoke_result_to_response(
+  command_id: &str,
+  result: &InvokeResult,
+  extra_known_limits: &[&str],
+) -> proto::InvokeResponse {
   // NOTICE(api-p3-od2): operation_id on the invoke path is the request
   // command_id (per the API-P2 proto comment). GetOperation instead returns the
   // persisted OperationResult.operation_id (a domain label). These can diverge
@@ -117,8 +122,12 @@ pub fn invoke_result_to_response(command_id: &str, result: &InvokeResult) -> pro
     artifacts,
     // NOTICE(api-p3-od1): known_limits is OperationResult-sourced and is not on
     // the InvokeResult return value; empty on the invoke path until the summary
-    // source is joined with the persisted record.
-    known_limits: Vec::new(),
+    // source is joined with the persisted record. API-P11 may append durability
+    // limits when summary persistence fails after a successful command.
+    known_limits: extra_known_limits
+      .iter()
+      .map(|limit| (*limit).to_string())
+      .collect(),
     failure_message: result.failure_message.clone().unwrap_or_default(),
   }
 }
@@ -216,13 +225,37 @@ mod tests {
       artifact_paths: Vec::new(),
       failure_message: Some("boom".to_string()),
     };
-    let response = invoke_result_to_response("input.key", &result);
+    let response = invoke_result_to_response("input.key", &result, &[]);
     assert_eq!(response.status, "failed");
     assert_eq!(response.failure_message, "boom");
     assert!(response.known_limits.is_empty());
     let operation = response.operation.expect("operation ref");
     assert_eq!(operation.run_id, "run-1");
     assert_eq!(operation.operation_id, "input.key");
+  }
+
+  #[test]
+  fn invoke_result_propagates_extra_known_limits() {
+    let result = InvokeResult {
+      run_id: "run-limits".to_string(),
+      producer_span_id: SpanId::new("0000000000000001"),
+      status: RunStatus::Completed,
+      output_summary: "ok".to_string(),
+      signals: BTreeMap::new(),
+      artifacts: Vec::new(),
+      artifact_paths: Vec::new(),
+      failure_message: None,
+    };
+    let response = invoke_result_to_response(
+      "fixture.observe",
+      &result,
+      &["auv.api.session.operation_summary_persist_failed"],
+    );
+    assert_eq!(response.status, "completed");
+    assert_eq!(
+      response.known_limits,
+      vec!["auv.api.session.operation_summary_persist_failed".to_string()]
+    );
   }
 
   #[test]

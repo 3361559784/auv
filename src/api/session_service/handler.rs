@@ -3,13 +3,14 @@
 //! Transport-agnostic: this is NOT a gRPC server and implements no tonic
 //! service trait. API-P4 defers the tonic/axum transport decision; this skeleton
 //! only wires the proto request/response shapes to the internal seams:
-//! session-aware invoke (API-P5), the operation summary cache (API-P6), and the
-//! two-source `GetOperation` join (API-P7). Binding a transport is a later
-//! owner-named slice (see the `mod.rs` TODO).
+//! session-aware invoke (API-P5), the operation summary cache (API-P6), the
+//! persisted operation-summary artifact (API-P11), and the two-source
+//! `GetOperation` join (API-P7). Binding a transport is a later owner-named
+//! slice (see the `mod.rs` TODO).
 //!
-//! NOTICE(api-p5-invoke-persist): `Invoke` records a run and caches the runtime
-//! summary (API-P6) but does not yet persist an `OperationResult` artifact.
-//! That write path belongs to `Runtime::record_operation`; until it is wired
+//! NOTICE(api-p5-invoke-persist): `Invoke` records a run, caches the runtime
+//! summary (API-P6), and persists the runtime summary artifact (API-P11) but does
+//! not yet persist an `OperationResult` artifact. That write path belongs to `Runtime::record_operation`; until it is wired
 //! through this handler, `GetOperation` returns `PersistedOperationRequired`
 //! for runs created only via `Invoke`.
 
@@ -27,6 +28,7 @@ use crate::api::session_service::registry::SessionRegistry;
 use crate::api::session_service::summary::{
   JoinedOperationSummaryLoad, load_joined_operation_summary,
 };
+use crate::api::session_service::summary_store::record_invoke_summary;
 
 /// Process-local session API handler over one store path.
 ///
@@ -106,17 +108,33 @@ impl SessionApiHandler {
     )
     .map_err(SessionApiError::InvokeExecution)?;
 
-    self
-      .summaries
-      .lock()
-      .expect("summary cache mutex poisoned")
-      .record(OperationSummary::capture(&result));
-
-    Ok(mapper::invoke_result_to_response(&command_id, &result))
+    Ok(self.finish_invoke_response(&command_id, &result, &recording))
   }
 
-  /// `GetOperation`: read the persisted record + cached runtime summary and
-  /// return the explicit two-source join (API-P7).
+  fn finish_invoke_response(
+    &self,
+    command_id: &str,
+    result: &auv_cli_invoke::InvokeResult,
+    recording: &RunRecordingBackend,
+  ) -> proto::InvokeResponse {
+    let summary = OperationSummary::capture(result);
+    // NOTICE(api-p11-invoke-partial-success): invoke already finished; summary
+    // persistence failure must not surface as an invoke error (clients must not
+    // blind-retry non-idempotent commands). Durability gaps go to known_limits.
+    let durability_limits = record_invoke_summary(recording.store(), result, &summary);
+    if durability_limits.is_empty() {
+      self
+        .summaries
+        .lock()
+        .expect("summary cache mutex poisoned")
+        .record(summary.clone());
+    }
+    let known_limits: Vec<&str> = durability_limits.iter().map(String::as_str).collect();
+    mapper::invoke_result_to_response(command_id, result, &known_limits)
+  }
+
+  /// `GetOperation`: read the persisted record + runtime summary (cache or
+  /// store-backed artifact) and return the explicit two-source join (API-P7).
   pub fn get_operation(
     &self,
     request: proto::GetOperationRequest,
@@ -289,111 +307,22 @@ mod tests {
 
   #[test]
   fn get_operation_returns_joined_response_when_persisted_and_cached() {
-    use std::collections::BTreeMap;
-    use std::fs;
-
-    use crate::contract::{
-      OPERATION_RESULT_API_VERSION, OperationOutput, OperationResult, OperationStatus,
-    };
-    use auv_cli_invoke::{InvokeResult, OperationSummary, RunStatus};
-    use auv_tracing_driver::artifact::ArtifactFileSource;
-    use auv_tracing_driver::store::CanonicalRun;
-    use auv_tracing_driver::trace::{
-      RUN_API_VERSION, RunId, RunRecordV1Alpha1, RunType, SPAN_API_VERSION, SpanId,
-      SpanRecordV1Alpha1, TraceId, TraceState, TraceStatusCode,
+    use crate::api::session_service::test_fixtures::{
+      music_runtime_summary, music_search_operation, persist_operation_result_on_store,
+      unique_temp_dir,
     };
 
-    let unique = DIR_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let root = std::env::temp_dir().join(format!(
-      "auv-session-api-joined-{}-{}",
-      now_millis(),
-      unique
-    ));
+    let root = unique_temp_dir("session-api-joined");
     let handler = SessionApiHandler::new(root.clone());
-
     let run_id = "run-get-op-happy";
     let store = handler.open_store().expect("open store");
-    let root_span_id = SpanId::new("0000000000000001");
-    let run = RunRecordV1Alpha1 {
-      api_version: RUN_API_VERSION.to_string(),
-      run_id: RunId::new(run_id),
-      trace_id: TraceId::new("00000000000000000000000000000001"),
-      run_type: RunType::Execute,
-      state: TraceState::Ended,
-      status_code: TraceStatusCode::Ok,
-      started_at_millis: 100,
-      finished_at_millis: Some(200),
-      root_span_id: root_span_id.clone(),
-      attributes: BTreeMap::new(),
-      summary: Some("done".to_string()),
-      failure: None,
-    };
-    let span = SpanRecordV1Alpha1 {
-      api_version: SPAN_API_VERSION.to_string(),
-      span_id: root_span_id.clone(),
-      parent_span_id: None,
-      name: "auv.run.read".to_string(),
-      state: TraceState::Ended,
-      status_code: TraceStatusCode::Ok,
-      started_at_millis: 100,
-      finished_at_millis: Some(200),
-      attributes: BTreeMap::new(),
-      summary: None,
-      failure: None,
-    };
-    let operation = OperationResult {
-      api_version: OPERATION_RESULT_API_VERSION.to_string(),
-      run_id: RunId::new(run_id),
-      status: OperationStatus::Completed,
-      operation_id: "music.search.results".to_string(),
-      evidence_artifacts: Vec::new(),
-      output: OperationOutput::Acknowledged { message: None },
-      verifications: Vec::new(),
-      freshness_basis: None,
-      known_limits: Vec::new(),
-    };
-    let source_path = root.join("source-operation-result.json");
-    let rendered = serde_json::to_string_pretty(&operation).expect("serialize") + "\n";
-    fs::write(&source_path, rendered).expect("write artifact source");
-    let artifact = store
-      .stage_artifact_file(
-        &run.run_id,
-        0,
-        &span.span_id,
-        None,
-        ArtifactFileSource {
-          role: "operation-result".to_string(),
-          source_path,
-          preferred_name: "operation-result.json".to_string(),
-          summary: None,
-        },
-      )
-      .expect("stage artifact");
-    store
-      .write_run_snapshot(&CanonicalRun {
-        run,
-        spans: vec![span],
-        events: Vec::new(),
-        artifacts: vec![artifact],
-      })
-      .expect("persist run");
+    persist_operation_result_on_store(&store, &root, run_id, &music_search_operation(run_id));
 
-    let mut signals = BTreeMap::new();
-    signals.insert("now_playing".to_string(), "track-x".to_string());
     handler
       .summaries
       .lock()
       .expect("summary cache mutex poisoned")
-      .record(OperationSummary::capture(&InvokeResult {
-        run_id: run_id.to_string(),
-        producer_span_id: SpanId::new("0000000000000001"),
-        status: RunStatus::Completed,
-        output_summary: "did the thing".to_string(),
-        signals,
-        artifacts: Vec::new(),
-        artifact_paths: Vec::new(),
-        failure_message: None,
-      }));
+      .record(music_runtime_summary(run_id));
 
     let response = handler
       .get_operation(proto::GetOperationRequest {
@@ -414,7 +343,124 @@ mod tests {
     assert_eq!(operation_ref.run_id, run_id);
     assert_eq!(operation_ref.operation_id, "music.search.results");
 
-    let _ = fs::remove_dir_all(root);
+    let _ = std::fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn get_operation_survives_handler_restart_via_persisted_summary_artifact() {
+    use crate::api::session_service::test_fixtures::{
+      append_operation_result_artifact, fixture_observe_operation, unique_temp_dir,
+    };
+
+    let root = unique_temp_dir("session-api-restart");
+    let handler1 = SessionApiHandler::new(root.clone());
+    let session = handler1
+      .create_session(proto::CreateSessionRequest {
+        client_label: String::new(),
+      })
+      .expect("create_session")
+      .session
+      .expect("session ref");
+    let invoked = handler1
+      .invoke(proto::InvokeRequest {
+        session: Some(session),
+        command_id: "fixture.observe".to_string(),
+        json_payload: Vec::new(),
+      })
+      .expect("invoke fixture.observe");
+    let run_id = invoked.operation.expect("operation ref").run_id;
+
+    let store = handler1.open_store().expect("open store");
+    append_operation_result_artifact(&store, &root, &run_id, &fixture_observe_operation(&run_id));
+
+    let handler2 = SessionApiHandler::new(root.clone());
+    assert!(handler2.summaries.lock().unwrap().is_empty());
+
+    let response = handler2
+      .get_operation(proto::GetOperationRequest {
+        operation: Some(proto::OperationRef {
+          run_id: run_id.clone(),
+          operation_id: String::new(),
+        }),
+      })
+      .expect("get_operation should succeed after restart");
+
+    assert_eq!(response.status, "completed");
+    assert_eq!(response.output_summary, "fixture observed");
+    assert_eq!(response.operation.expect("operation ref").run_id, run_id);
+
+    let _ = std::fs::remove_dir_all(root);
+  }
+
+  #[cfg(unix)]
+  #[test]
+  fn get_operation_reports_runtime_summary_unavailable_after_summary_persist_failure() {
+    use std::os::unix::fs::PermissionsExt;
+    use std::sync::Arc;
+
+    use auv_tracing_driver::{MemoryRunRecorder, RunRecordingBackend};
+
+    use crate::api::session_service::test_fixtures::{
+      fixture_observe_invoke_result, music_search_operation, persist_operation_result_on_store,
+      unique_temp_dir,
+    };
+
+    let root = unique_temp_dir("session-api-persist-fail");
+    let handler = SessionApiHandler::new(root.clone());
+    let store = handler.open_store().expect("open store");
+    let run_id = "run-summary-persist-fail";
+    persist_operation_result_on_store(&store, &root, run_id, &music_search_operation(run_id));
+    let run_dir = store.run_dir(run_id).expect("run dir");
+    let mut permissions = std::fs::metadata(&run_dir)
+      .expect("run dir metadata")
+      .permissions();
+    permissions.set_mode(0o500);
+    std::fs::set_permissions(&run_dir, permissions).expect("run dir should be read-only");
+
+    let recording = RunRecordingBackend::new(
+      auv_tracing_driver::store::LocalStore::new(root.clone()).expect("recording store"),
+      Arc::new(MemoryRunRecorder::new()),
+    );
+    let result = fixture_observe_invoke_result(run_id);
+    let response = handler.finish_invoke_response("fixture.observe", &result, &recording);
+    assert!(
+      response
+        .known_limits
+        .iter()
+        .any(|limit| limit == "auv.api.session.operation_summary_persist_failed")
+    );
+    assert!(
+      handler
+        .summaries
+        .lock()
+        .expect("summary cache mutex poisoned")
+        .get(run_id)
+        .is_none()
+    );
+
+    let persisted_failure_response = handler
+      .get_operation(proto::GetOperationRequest {
+        operation: Some(proto::OperationRef {
+          run_id: run_id.to_string(),
+          operation_id: String::new(),
+        }),
+      })
+      .expect("get_operation should succeed with persisted result");
+
+    assert!(persisted_failure_response.output_summary.is_empty());
+    assert!(
+      persisted_failure_response
+        .known_limits
+        .iter()
+        .any(|limit| limit == "auv.api.session.runtime_summary_unavailable")
+    );
+
+    let mut cleanup_permissions = std::fs::metadata(&run_dir)
+      .expect("run dir metadata after test")
+      .permissions();
+    cleanup_permissions.set_mode(0o700);
+    let _ = std::fs::set_permissions(&run_dir, cleanup_permissions);
+    let _ = std::fs::remove_dir_all(root);
   }
 
   #[test]

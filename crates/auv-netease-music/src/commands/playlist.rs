@@ -360,7 +360,7 @@ fn run_playlist_select_resolved(
   let mut click_bounds = target_bounds;
 
   if crate::view_memory::enabled() {
-    if let Some(memory) = crate::view_memory::load_for_sidebar(inputs, sidebar_baseline_width) {
+    if let Some(memory) = crate::view_memory::load_memory_raw(inputs) {
       let reacquire_bounds = memory
         .scope_snapshot
         .region_bounds_window_local
@@ -372,6 +372,10 @@ fn run_playlist_select_resolved(
         reacquire_bounds.x + reacquire_bounds.width * 0.5,
         reacquire_bounds.y + reacquire_bounds.height * 0.45,
       );
+      let read_config = auv_view::memory::MemoryReadConfig {
+        now_millis: crate::view_memory::system_time_millis(),
+        ..Default::default()
+      };
       match crate::view_parsers::sidebar::reacquire::try_reacquire_for_target(
         inputs,
         &session,
@@ -380,8 +384,10 @@ fn run_playlist_select_resolved(
         reacquire_anchor,
         &memory,
         &target,
+        &read_config,
+        sidebar_baseline_width,
       ) {
-        Some((bounds, summary)) => {
+        crate::view_memory::PlaylistReacquireAttempt::Hit { bounds, summary } => {
           click_bounds = bounds;
           skip_rescan_replay = true;
           reacquire_summary = Some(summary);
@@ -392,14 +398,22 @@ fn run_playlist_select_resolved(
             fallback_reason: None,
           });
         }
-        None => known_limits
-          .push("view-memory reacquire missed target — falling back to rescan replay".to_string()),
+        crate::view_memory::PlaylistReacquireAttempt::Stale { summary } => {
+          let stale_reason = summary.stale_reason.as_deref().unwrap_or("unknown");
+          known_limits.push(format!(
+            "view-memory stale at reacquire ({stale_reason}) — falling back to rescan replay",
+          ));
+          reacquire_summary = Some(summary);
+        }
+        crate::view_memory::PlaylistReacquireAttempt::Miss { summary } => {
+          known_limits.push(
+            "view-memory reacquire missed target — falling back to rescan replay".to_string(),
+          );
+          reacquire_summary = Some(summary);
+        }
       }
     } else {
-      known_limits.push(
-        "view-memory not loaded (missing, stale, or baseline mismatch) — using rescan replay"
-          .to_string(),
-      );
+      known_limits.push("view-memory file missing or unreadable — using rescan replay".to_string());
     }
   }
 

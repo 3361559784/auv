@@ -5,12 +5,11 @@
 use auv_driver::{InputPolicy, Scroll, ScrollOptions, Window};
 use auv_driver_macos::MacosDriverSession;
 use auv_view::memory::{
-  ReacquireConfig, ReacquireDriverAdapter, ReacquireObservation, ReacquireOutcome, ReacquireTarget,
-  ViewMemory, outcome_label, reacquire, strategy_name,
+  MemoryReadConfig, ReacquireDriverAdapter, ReacquireObservation, ViewMemory,
 };
 use auv_view::{ParserDiagnostic, ViewBounds};
 
-use crate::view_memory::PlaylistReacquireSummary;
+use crate::view_memory::{PlaylistReacquireAttempt, try_reacquire_playlist_target};
 use crate::{Inputs, PlaylistSelectTarget, SidebarCandidateKind, SidebarSectionKind};
 
 pub struct LiveSidebarReacquireAdapter<'a> {
@@ -157,35 +156,16 @@ pub fn try_reacquire_for_target(
   sidebar_anchor: auv_driver::WindowPoint,
   memory: &ViewMemory,
   target: &PlaylistSelectTarget,
-) -> Option<(ViewBounds, PlaylistReacquireSummary)> {
+  read_config: &MemoryReadConfig,
+  current_baseline_width: Option<u32>,
+) -> PlaylistReacquireAttempt {
   let mut adapter =
     LiveSidebarReacquireAdapter::new(session, window, sidebar_bounds, inputs, sidebar_anchor);
-  let reacquire_target = ReacquireTarget::LabelWithSection {
-    label: target.label.clone(),
-    section_hint: Some(target.section_kind.domain_kind().to_string()),
-  };
-  let outcome = reacquire(
+  try_reacquire_playlist_target(
     memory,
-    reacquire_target,
+    target,
     &mut adapter,
-    &ReacquireConfig::default(),
-  );
-  let outcome_label_str = outcome_label(&outcome).to_string();
-  match outcome {
-    ReacquireOutcome::Reacquired {
-      node,
-      strategy_used,
-      observation_count,
-      ..
-    } => Some((
-      node.bounds,
-      PlaylistReacquireSummary {
-        outcome: outcome_label_str,
-        strategy_used: Some(strategy_name(strategy_used).to_string()),
-        observation_count,
-        skipped_rescan_replay: true,
-      },
-    )),
-    ReacquireOutcome::Stale { .. } | ReacquireOutcome::NotFound { .. } => None,
-  }
+    read_config,
+    current_baseline_width,
+  )
 }

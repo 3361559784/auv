@@ -6,7 +6,7 @@ use auv_view::memory::{
   ViewMemoryScopeSnapshot, memory_file_path, outcome_label, parse_memory_file, reacquire,
   strategy_name, try_build_memory, write_memory_file,
 };
-use auv_view::{VIEW_IR_SCHEMA_VERSION, ViewBounds};
+use auv_view::{ParserDiagnostic, VIEW_IR_SCHEMA_VERSION, ViewBounds};
 use serde::{Deserialize, Serialize};
 
 use crate::{PlaylistSelectTarget, PlaylistSidebarScan};
@@ -54,8 +54,22 @@ pub fn system_time_millis() -> u64 {
     .unwrap_or(0)
 }
 
-pub fn write_from_scan(inputs: &crate::Inputs, scan: &PlaylistSidebarScan) -> Result<(), String> {
-  if !enabled() {
+// NOTICE: NetEase ViewMemory write treats `deduplicated_item` as non-blocking
+// (dedup-only scans are writable). Any other diagnostic code still blocks write.
+// Relaxing additional codes requires an owner-approved slice.
+fn diagnostics_allow_memory_write(diagnostics: &[ParserDiagnostic]) -> bool {
+  diagnostics.is_empty()
+    || diagnostics
+      .iter()
+      .all(|diagnostic| diagnostic.code == "deduplicated_item")
+}
+
+fn write_from_scan_when_enabled(
+  enabled: bool,
+  inputs: &crate::Inputs,
+  scan: &PlaylistSidebarScan,
+) -> Result<(), String> {
+  if !enabled {
     return Ok(());
   }
 
@@ -79,7 +93,7 @@ pub fn write_from_scan(inputs: &crate::Inputs, scan: &PlaylistSidebarScan) -> Re
       source_reconstruction_ref: PLAYLIST_SCAN_CACHE_FILE_NAME.to_string(),
       source_run_id: ARTIFACT_DIR_BRIDGE_RUN_ID.to_string(),
       last_reconstructed_at_millis: system_time_millis(),
-      clean: scan.diagnostics().is_empty(),
+      clean: diagnostics_allow_memory_write(scan.diagnostics()),
     },
     reconstruction,
   )
@@ -87,6 +101,10 @@ pub fn write_from_scan(inputs: &crate::Inputs, scan: &PlaylistSidebarScan) -> Re
 
   let path = memory_file_path(&inputs.artifact_dir, PLAYLIST_SIDEBAR_SCOPE_ID);
   write_memory_file(&path, &memory)
+}
+
+pub fn write_from_scan(inputs: &crate::Inputs, scan: &PlaylistSidebarScan) -> Result<(), String> {
+  write_from_scan_when_enabled(enabled(), inputs, scan)
 }
 
 pub fn load_memory_raw(inputs: &crate::Inputs) -> Option<ViewMemory> {
@@ -180,6 +198,9 @@ fn stale_reason_wire(reason: StaleReason) -> &'static str {
 mod tests {
   use super::*;
   use crate::SidebarSectionKind;
+  use crate::view_parsers::sidebar::reconstruct::reconstruct_playlist_sidebar;
+  use crate::view_parsers::sidebar::test_support::fake_recognition;
+  use crate::{ScanAppContext, ScanWindowContext, ViewRegionRecord, parse_sidebar_viewport};
   use auv_view::memory::{
     ReacquireCandidate, ReacquireObservation, VIEW_MEMORY_SCHEMA_VERSION, ViewMemoryScopeSnapshot,
   };
@@ -249,6 +270,240 @@ mod tests {
       observation_index: Some(0),
       bounds: Some(ViewBounds::new(32.0, 106.0, 120.0, 20.0)),
     }
+  }
+
+  #[test]
+  fn diagnostics_allow_memory_write_cases() {
+    let cases = [
+      (vec![], true),
+      (
+        vec![ParserDiagnostic {
+          code: "deduplicated_item".into(),
+          message: "dedup".into(),
+          node_id: Some("item.test".into()),
+        }],
+        true,
+      ),
+      (
+        vec![
+          ParserDiagnostic {
+            code: "deduplicated_item".into(),
+            message: "dedup a".into(),
+            node_id: None,
+          },
+          ParserDiagnostic {
+            code: "deduplicated_item".into(),
+            message: "dedup b".into(),
+            node_id: None,
+          },
+        ],
+        true,
+      ),
+      (
+        vec![
+          ParserDiagnostic {
+            code: "deduplicated_item".into(),
+            message: "dedup".into(),
+            node_id: None,
+          },
+          ParserDiagnostic {
+            code: "parser_no_reliable_candidates".into(),
+            message: "mixed".into(),
+            node_id: None,
+          },
+        ],
+        false,
+      ),
+      (
+        vec![ParserDiagnostic {
+          code: "sidebar_region_not_found".into(),
+          message: "blocking".into(),
+          node_id: None,
+        }],
+        false,
+      ),
+    ];
+
+    for (diagnostics, expected) in cases {
+      assert_eq!(
+        diagnostics_allow_memory_write(&diagnostics),
+        expected,
+        "diagnostics={diagnostics:?}"
+      );
+    }
+  }
+
+  fn minimal_writable_scan_json(diagnostics: serde_json::Value) -> String {
+    serde_json::json!({
+      "schema_version": VIEW_IR_SCHEMA_VERSION,
+      "app": {},
+      "window": {},
+      "sidebar_region": {
+        "bounds": {"x": 0.0, "y": 220.0, "width": 240.0, "height": 400.0}
+      },
+      "observations": [],
+      "reconstruction": {
+        "root": {
+          "id": "root.sidebar",
+          "kind": "collection",
+          "bounds": {"x": 0.0, "y": 0.0, "width": 240.0, "height": 400.0},
+          "anchors": [],
+          "landmarks": [],
+          "actions": [],
+          "evidence": [],
+          "children": [{
+            "id": "item.test",
+            "kind": "item",
+            "label": "Test Playlist",
+            "bounds": {"x": 32.0, "y": 74.0, "width": 120.0, "height": 20.0},
+            "anchors": [{
+              "id": "anchor.test",
+              "label": "Test Playlist",
+              "strength": "strong",
+              "bounds": {"x": 32.0, "y": 74.0, "width": 120.0, "height": 20.0},
+              "evidence_ids": []
+            }],
+            "landmarks": [],
+            "actions": [],
+            "evidence": [],
+            "children": []
+          }]
+        },
+        "anchor_index": [{
+          "id": "anchor.test",
+          "label": "Test Playlist",
+          "strength": "strong",
+          "bounds": {"x": 32.0, "y": 74.0, "width": 120.0, "height": 20.0},
+          "evidence_ids": []
+        }],
+        "landmark_index": []
+      },
+      "projection": {"sections": []},
+      "boundary": {
+        "top": "unknown",
+        "bottom": "unknown",
+        "left": "unknown",
+        "right": "unknown"
+      },
+      "diagnostics": diagnostics,
+      "known_limits": []
+    })
+    .to_string()
+  }
+
+  fn decode_minimal_scan(diagnostics: serde_json::Value) -> PlaylistSidebarScan {
+    crate::decode_playlist_sidebar_scan_json(&minimal_writable_scan_json(diagnostics))
+      .expect("minimal synthetic scan should decode")
+  }
+
+  fn reconstructed_dedup_only_scan() -> PlaylistSidebarScan {
+    let page0 = parse_sidebar_viewport(
+      0,
+      ViewBounds::new(0.0, 0.0, 240.0, 400.0),
+      &fake_recognition(vec![
+        ("创建的歌单", 8.0, 42.0, 110.0, 20.0),
+        ("Coding BGM", 32.0, 74.0, 120.0, 20.0),
+      ]),
+    );
+    let page1 = parse_sidebar_viewport(
+      1,
+      ViewBounds::new(0.0, 0.0, 240.0, 400.0),
+      &fake_recognition(vec![("Coding BGM", 32.0, 42.0, 120.0, 20.0)]),
+    );
+
+    reconstruct_playlist_sidebar(
+      ScanAppContext::default(),
+      ScanWindowContext::default(),
+      ViewRegionRecord::default(),
+      vec![page0, page1],
+    )
+  }
+
+  #[test]
+  fn write_from_scan_when_enabled_allows_reconstructed_dedup_only_scan() {
+    let scan = reconstructed_dedup_only_scan();
+    assert!(
+      scan
+        .diagnostics()
+        .iter()
+        .any(|diagnostic| diagnostic.code == "deduplicated_item")
+    );
+    assert!(diagnostics_allow_memory_write(scan.diagnostics()));
+
+    let artifact_dir = std::env::temp_dir().join(format!(
+      "auv-netease-view-memory-reconstruct-test-{}",
+      std::process::id()
+    ));
+    std::fs::create_dir_all(&artifact_dir).expect("artifact dir");
+    let inputs = crate::Inputs {
+      artifact_dir,
+      ..crate::Inputs::with_defaults()
+    };
+
+    write_from_scan_when_enabled(true, &inputs, &scan)
+      .expect("reconstructed dedup-only scan should write");
+
+    let path = memory_file_path(&inputs.artifact_dir, PLAYLIST_SIDEBAR_SCOPE_ID);
+    let memory = parse_memory_file(&path).expect("memory file should parse");
+    assert!(memory.diagnostics.is_empty());
+    assert_eq!(memory.app_bundle_id, inputs.app_id);
+    assert_eq!(memory.scope_id, PLAYLIST_SIDEBAR_SCOPE_ID);
+    let _ = std::fs::remove_dir_all(&inputs.artifact_dir);
+  }
+
+  #[test]
+  fn write_from_scan_when_enabled_no_op_when_disabled() {
+    let scan = reconstructed_dedup_only_scan();
+    let artifact_dir = std::env::temp_dir().join(format!(
+      "auv-netease-view-memory-disabled-test-{}",
+      std::process::id()
+    ));
+    std::fs::create_dir_all(&artifact_dir).expect("artifact dir");
+    let inputs = crate::Inputs {
+      artifact_dir: artifact_dir.clone(),
+      ..crate::Inputs::with_defaults()
+    };
+
+    write_from_scan_when_enabled(false, &inputs, &scan).expect("disabled write is no-op");
+
+    let path = memory_file_path(&artifact_dir, PLAYLIST_SIDEBAR_SCOPE_ID);
+    assert!(!path.exists());
+    let _ = std::fs::remove_dir_all(&artifact_dir);
+  }
+
+  #[test]
+  fn write_from_scan_when_enabled_rejects_mixed_diagnostics() {
+    let diagnostics = serde_json::json!([
+      {
+        "code": "deduplicated_item",
+        "message": "dedup",
+        "node_id": "item.test"
+      },
+      {
+        "code": "parser_no_reliable_candidates",
+        "message": "blocking",
+        "node_id": null
+      }
+    ]);
+    let scan = decode_minimal_scan(diagnostics);
+    assert!(!diagnostics_allow_memory_write(scan.diagnostics()));
+
+    let artifact_dir = std::env::temp_dir().join(format!(
+      "auv-netease-view-memory-mixed-test-{}",
+      std::process::id()
+    ));
+    std::fs::create_dir_all(&artifact_dir).expect("artifact dir");
+    let inputs = crate::Inputs {
+      artifact_dir,
+      ..crate::Inputs::with_defaults()
+    };
+
+    let error = write_from_scan_when_enabled(true, &inputs, &scan)
+      .expect_err("mixed diagnostics should not write");
+    assert!(error.contains("scan did not produce writable ViewMemory"));
+    let path = memory_file_path(&inputs.artifact_dir, PLAYLIST_SIDEBAR_SCOPE_ID);
+    assert!(!path.exists());
+    let _ = std::fs::remove_dir_all(&inputs.artifact_dir);
   }
 
   #[test]

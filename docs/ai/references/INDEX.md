@@ -176,11 +176,12 @@ session API、proto、MCP 前端
 - [`2026-06-11-mcp-frontend-surface-v0.md`](2026-06-11-mcp-frontend-surface-v0.md)
 - [`2026-06-18-core-realtime-session-substrate-v0.md`](2026-06-18-core-realtime-session-substrate-v0.md)
 
-#### review (3)
+#### review (4)
 
 - [`2026-06-30-auv-api-p1-session-proto-boundary-review.md`](2026-06-30-auv-api-p1-session-proto-boundary-review.md)
 - [`2026-06-30-auv-api-p12-identity-role-semantics-closeout.md`](2026-06-30-auv-api-p12-identity-role-semantics-closeout.md)
 - [`2026-06-30-auv-api-r1-invoke-operation-result-persistence-decision-review.md`](2026-06-30-auv-api-r1-invoke-operation-result-persistence-decision-review.md)
+- [`2026-06-30-auv-api-r2b-invoke-surface-parity-decision-review.md`](2026-06-30-auv-api-r2b-invoke-surface-parity-decision-review.md)
 
 ### `core/inspect-trace` — Active
 

@@ -33,6 +33,8 @@ use serde::{Deserialize, Serialize};
 /// readers can reject unknown shapes before interpreting app-specific fields.
 pub const VIEW_IR_SCHEMA_VERSION: &str = "view-ir-v0";
 
+pub mod memory;
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ScanAppContext {
   pub app_id: Option<String>,

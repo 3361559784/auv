@@ -227,8 +227,8 @@ future owner reopen only.
 
 - **R1** decided the write-through split and left D4-B open until R2c.
 - **R2** landed the synthetic session path only (marker + durability on invoke).
-- **R2b** decides whether non-session invoke surfaces should mirror R2
-  durability shape — **independent** of this R2c freeze.
+- **R2b** Package A frozen session-only invoke-surface parity — **independent**
+  of this R2c freeze.
 - **P14** still pauses the line; R2c Package A freeze does not reopen P10 or
   MCP merge.
 

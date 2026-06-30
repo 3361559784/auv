@@ -181,8 +181,8 @@ session API、proto、MCP 前端
 - [`2026-06-30-auv-api-p1-session-proto-boundary-review.md`](2026-06-30-auv-api-p1-session-proto-boundary-review.md)
 - [`2026-06-30-auv-api-p12-identity-role-semantics-closeout.md`](2026-06-30-auv-api-p12-identity-role-semantics-closeout.md)
 - [`2026-06-30-auv-api-r1-invoke-operation-result-persistence-decision-review.md`](2026-06-30-auv-api-r1-invoke-operation-result-persistence-decision-review.md)
-- [`2026-06-30-auv-api-r2b-invoke-surface-parity-decision-review.md`](2026-06-30-auv-api-r2b-invoke-surface-parity-decision-review.md)
-- [`2026-06-30-auv-api-r2c-known-limits-plumbing-decision-review.md`](2026-06-30-auv-api-r2c-known-limits-plumbing-decision-review.md)
+- [`2026-06-30-auv-api-r2b-invoke-surface-parity-decision-review.md`](2026-06-30-auv-api-r2b-invoke-surface-parity-decision-review.md) <!-- review + freeze -->
+- [`2026-06-30-auv-api-r2c-known-limits-plumbing-decision-review.md`](2026-06-30-auv-api-r2c-known-limits-plumbing-decision-review.md) <!-- review + freeze -->
 
 ### `core/inspect-trace` — Active
 

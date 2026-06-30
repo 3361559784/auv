@@ -11,9 +11,10 @@ note.**
 
 The session API **unary** surface (`CreateSession` / `Invoke` / `GetOperation`) and
 **P13 external client smoke** are landed and test-backed. **`StreamSessionEvents`**
-remains unwired (P10 deferred). **Invoke → `OperationResult` persistence** remains a
-**known gap** — not a P12 regression. Further API lane work requires an explicit
-owner-named slice; pause does not imply P10 or operation-result wiring is "next."
+remains unwired (P10 deferred). Session **Invoke → `OperationResult` persistence**
+is **closed by API-R2**; MCP/CLI catalog invoke join-artifact divergence is
+**frozen session-only by API-R2b-A**. Further API lane work requires an explicit
+owner-named slice; pause does not imply P10 or R2b-impl is "next."
 
 ## Owner freeze block
 
@@ -21,8 +22,22 @@ owner-named slice; pause does not imply P10 or operation-result wiring is "next.
 unary 已有：CreateSession / Invoke / GetOperation
 external smoke 已有：P13
 stream 仍未启用：P10 defer
-Invoke -> OperationResult 仍未打通：known gap
+session Invoke -> OperationResult：closed by API-R2
+MCP/CLI invoke -> join artifacts：frozen open by API-R2b-A
 ```
+
+## Post-R2 errata (2026-06-30)
+
+```text
+session Invoke -> GetOperation happy path：closed by API-R2
+MCP/CLI invoke -> join artifacts：intentional boundary, frozen by API-R2b-A
+known_limits plumbing：frozen by API-R2c Package A
+P14 pause boundary unchanged
+```
+
+Pointers: [R2 handoff](2026-06-30-auv-api-r2-invoke-operation-result-handoff.md),
+[R2b review](2026-06-30-auv-api-r2b-invoke-surface-parity-decision-review.md),
+[R2c review](2026-06-30-auv-api-r2c-known-limits-plumbing-decision-review.md).
 
 ### English expansion (for reviewers)
 
@@ -31,7 +46,7 @@ Invoke -> OperationResult 仍未打通：known gap
 | Unary landed | All three unary RPCs wired through handler + loopback gRPC transport | [`handler.rs`](../../src/api/session_service/handler.rs), [`transport.rs`](../../src/api/session_service/transport.rs) |
 | External smoke landed | Real `SessionServiceClient` over loopback TCP | [P13 handoff](2026-06-30-auv-api-p13-external-client-smoke-handoff.md), [`client_smoke.rs`](../../src/api/session_service/client_smoke.rs) |
 | Stream not enabled | `StreamSessionEvents` returns `UNIMPLEMENTED` / `NotWired` | [`transport.rs` L206–212](../../src/api/session_service/transport.rs), [`handler.rs` L208–225](../../src/api/session_service/handler.rs) |
-| Invoke → OperationResult gap | Fresh `Invoke` writes `operation-summary` only; `GetOperation` needs persisted `operation-result` | Handler NOTICE L11–15; P13 Journey B `FailedPrecondition` |
+| Session Invoke → OperationResult | Happy path persists synthetic `operation-result` on session `Invoke` (API-R2) | [R2 handoff](2026-06-30-auv-api-r2-invoke-operation-result-handoff.md), [`client_smoke.rs`](../../src/api/session_service/client_smoke.rs) `session_api_smoke_invoke_then_get_operation_round_trips` |
 
 ## Scope boundary
 
@@ -39,14 +54,14 @@ Invoke -> OperationResult 仍未打通：known gap
 
 - Inventory of P1–P13 landings
 - Frozen capability matrix and anti-misread rules
-- Pause boundary before P10 / operation-result / MCP merge
+- Pause boundary before P10 / R2b-impl / MCP merge
 - Reopen triggers for future owner-named slices
 
 **Out of scope:**
 
 - New Rust, proto, or transport code
 - Implementing P10 `StreamSessionEvents`
-- Wiring `OperationResult` on `Invoke`
+- Reopening session `Invoke` operation-result wiring (landed in API-R2)
 - MCP / inspect-server unification
 - Controller / planner / lease / archived AX copilot lanes
 
@@ -70,16 +85,16 @@ not mean every proto RPC is fully featured.
 | **P9** | Loopback gRPC | `transport.rs` | `CreateSession`, `Invoke`, `GetOperation` over tonic |
 | **P11** | Summary durability | [`2026-06-30-auv-api-p11-summary-durability-handoff.md`](2026-06-30-auv-api-p11-summary-durability-handoff.md) | `operation-summary` artifact persisted on `Invoke` |
 | **P12** | Identity / role closeout | [`2026-06-30-auv-api-p12-identity-role-semantics-closeout.md`](2026-06-30-auv-api-p12-identity-role-semantics-closeout.md) | Wire `operation_id` = `command_id`; `ArtifactRef.role` from catalog |
-| **P13** | External client smoke | [`2026-06-30-auv-api-p13-external-client-smoke-handoff.md`](2026-06-30-auv-api-p13-external-client-smoke-handoff.md) | Three gRPC smoke journeys including honest GetOperation precondition gap |
+| **P13** | External client smoke | [`2026-06-30-auv-api-p13-external-client-smoke-handoff.md`](2026-06-30-auv-api-p13-external-client-smoke-handoff.md) | Three gRPC smoke journeys; Journey B green post-R2 invoke→GetOperation round-trip |
 
 ## Frozen capability matrix
 
 | Capability | Status | Notes |
 | --- | --- | --- |
 | `CreateSession` | **landed** | Lightweight registry; no `SessionRuntime` materialization |
-| `Invoke` (blocking unary) | **landed** | Records run + `operation-summary`; returns `InvokeResponse` |
+| `Invoke` (blocking unary) | **landed** | Records run + `operation-summary` + synthetic `operation-result` (R2); returns `InvokeResponse` |
 | `GetOperation` (with persisted skeleton) | **landed** | Two-source join when `operation-result` artifact exists |
-| `GetOperation` after fresh `Invoke` only | **known gap** | `FAILED_PRECONDITION` / `PersistedOperationRequired` — by design until operation-result slice |
+| `GetOperation` after fresh `Invoke` (happy path) | **landed (R2)** | Round-trip succeeds when persist succeeds; `PersistedOperationRequired` on durability failure / missing skeleton |
 | External client smoke (P13) | **landed** | `cargo test session_api_smoke` |
 | `StreamSessionEvents` (P10) | **deferred** | Transport `UNIMPLEMENTED`; handler `NotWired` |
 | `json_payload` envelope (P3 OD5) | **deferred** | Provisional decoder only; owner-named envelope slice required |
@@ -88,22 +103,24 @@ not mean every proto RPC is fully featured.
 
 ```text
 CreateSession → register session_id
-Invoke(session, command_id) → recorded run + operation-summary artifact + InvokeResponse
-GetOperation(run_id) → join operation-result + summary when skeleton exists
+Invoke(session, command_id) → recorded run + operation-summary + operation-result (R2) + InvokeResponse
+GetOperation(run_id) → join operation-result + summary when skeleton exists (happy path)
 ```
 
-`GetOperation` after `Invoke` alone is **not** part of this invariant until an
-owner-named **operation-result on Invoke** slice lands.
+`GetOperation` after `Invoke` is part of the happy-path invariant post-R2.
+`PersistedOperationRequired` remains for durability-write failure or when no
+skeleton exists (no prior invoke / pre-seeded fixture only).
 
 ## Anti-misread rules
 
 These rules are part of the pause boundary.
 
-### 1. Fresh Invoke → GetOperation failure is expected
+### 1. Invoke → GetOperation happy path is landed; edge failures are not regressions
 
-`Invoke` does not persist `OperationResult`. `GetOperation` requires it. P13
-Journey B documents this from the external client view. Treating it as a P12
-identity regression is **wrong**.
+Session `Invoke` persists synthetic `OperationResult` on the happy path (API-R2).
+P13 Journey B asserts invoke→GetOperation round-trip success post-R2.
+`PersistedOperationRequired` still applies when durability writes fail or no
+skeleton exists. Treating those edge cases as P12 identity regressions is **wrong**.
 
 ### 2. Stream UNIMPLEMENTED is not a transport regression
 
@@ -130,13 +147,13 @@ merger, controller, planner, or action lease work.
 
 > **API-P14 closeout means "the approved unary session API lane + P13 smoke are
 > done for their named scope."** It does **not** mean "P10 stream or
-> operation-result wiring is the obvious next implementation."
+> R2b-impl is the obvious next implementation."
 
 ### Forbidden misreads
 
-- "P13 smoke is green, so Invoke → GetOperation must work without fixtures."
+- "P13 smoke is green, so every GetOperation path must work without invoke or fixtures." (Happy path works post-R2; Journey C pre-seeded fixtures remain valid.)
 - "Stream is in the proto, so unary closeout should have included P10."
-- "P12 fixed identity, so GetOperation precondition failures are bugs."
+- "P12 fixed identity, so all GetOperation precondition failures are bugs." (Durability-failure and missing-skeleton preconditions remain intentional.)
 - "Session API pause means we should merge execute API into inspect_server or MCP."
 
 ## Explicit non-goals (P14)
@@ -144,7 +161,7 @@ merger, controller, planner, or action lease work.
 API-P14 does **not** approve:
 
 - implementing P10 `StreamSessionEvents` in this slice
-- persisting `OperationResult` on session `Invoke`
+- re-landing session `Invoke` synthetic `OperationResult` persist (API-R2)
 - expanding `session.proto` or adding gRPC reflection
 - subprocess / grpcurl CI gates for session API
 - MCP / inspect-server route unification
@@ -159,7 +176,7 @@ owner names the trigger **and** the exact slice.
 | Trigger | Unlocks (candidate only) | Does **not** auto-unlock |
 | --- | --- | --- |
 | Owner names **P10** | `StreamSessionEvents` v0 (handler-emitted hub) | RunUpdate projector, `invoke_started`, proto expansion |
-| Owner names **operation-result on Invoke** | Fresh-store Invoke → GetOperation without fixture | Stream, MCP merge |
+| Owner names **API-R2b-impl** (Package B) | MCP/CLI catalog invoke join-artifact parity on shared `store_root` | Stream, MCP merge, R2c-impl |
 | Owner names **P3 OD5 envelope** | Versioned `json_payload` decoder | Stream, operation-result |
 | Owner names **P13b** | Subprocess `auv session serve` smoke | Unary semantics change |
 | Owner names **P10b** | RunUpdate / BroadcastRunRecorder projection | Unary changes |
@@ -197,4 +214,10 @@ Expected: `session_service` includes handler, mapper, summary, transport, and
 - MC-20 pause template (pattern reference):
   [`2026-06-30-minecraft-mc20-final-closeout-pause-decision.md`](2026-06-30-minecraft-mc20-final-closeout-pause-decision.md)
 - Proto: `proto/auv/api/v1/session.proto`
+- API-R2 invoke operation-result handoff:
+  [`2026-06-30-auv-api-r2-invoke-operation-result-handoff.md`](2026-06-30-auv-api-r2-invoke-operation-result-handoff.md)
+- API-R2b invoke-surface parity freeze:
+  [`2026-06-30-auv-api-r2b-invoke-surface-parity-decision-review.md`](2026-06-30-auv-api-r2b-invoke-surface-parity-decision-review.md)
+- API-R2c known_limits freeze:
+  [`2026-06-30-auv-api-r2c-known-limits-plumbing-decision-review.md`](2026-06-30-auv-api-r2c-known-limits-plumbing-decision-review.md)
 - Implementation: `src/api/session_service/`

@@ -1,10 +1,8 @@
 # API-R2b: Invoke-Surface Parity Decision Review
 
 **Date:** 2026-06-30  
-**Status:** **docs-only decision review** — records post-R2 surface divergence,
-evidence, and owner decision packages. **Does not approve implementation.**
-P14 API lane pause remains in force until owner accepts a package and names an
-**API-R2b-impl** slice (if Package B).
+**Status:** **owner accepted Package A (session-only freeze)** — final decision record.
+Does not approve **API-R2b-impl**. P14 pause boundary unchanged.
 
 **Prior work:** [API-R1](2026-06-30-auv-api-r1-invoke-operation-result-persistence-decision-review.md)
 (decision review) → [API-R2](2026-06-30-auv-api-r2-invoke-operation-result-handoff.md)
@@ -17,6 +15,25 @@ Shared `auv-cli-invoke::recorded` (CLI, MCP, in-span callers) still does not
 persist synthetic `operation-result` (or `operation-summary`) artifacts. This
 review decides whether that divergence is an **intentional boundary** to freeze,
 or whether **invoke-surface parity** should be planned — before any Rust changes.
+**Owner answer: yes — intentional session boundary** (Package A).
+
+## Owner freeze block
+
+```text
+synthetic operation-result write-through：session_service-only
+synthetic operation-summary write-through：session_service-only（P11+R2b-A）
+MCP/CLI catalog invoke：trace + inspect only（no join artifacts）
+R2b-impl：frozen unless owner reopens with Package B + named consumer
+```
+
+### English expansion (for reviewers)
+
+| Statement | Meaning | Evidence |
+| --- | --- | --- |
+| Operation-result session-only | Synthetic `operation-result` write-through lives in `session_service` only | [`handler.rs`](../../src/api/session_service/handler.rs) `finish_invoke_response`, [`operation_result_store.rs`](../../src/api/session_service/operation_result_store.rs) |
+| Summary session-only | `operation-summary` persist remains `session_service`-only (P11 + R2b-A) | [`summary_store.rs`](../../src/api/session_service/summary_store.rs) |
+| MCP/CLI trace-only | Catalog invoke through shared `invoke_recorded` leaves trace + inspect only | [`recorded.rs`](../../crates/auv-cli-invoke/src/recorded.rs), [`mcp.rs`](../../src/mcp.rs), [`main.rs`](../../src/main.rs) |
+| R2b-impl frozen | No cross-frontend persist module unless owner signs Package B | This note |
 
 ## Slice classification
 
@@ -197,8 +214,8 @@ Plus narrow new tests for shared module and one frontend wiring path.
 4. **P11 partial-success policy applies** — persist failure after successful
    invoke must not fail invoke execution (non-idempotent blind-retry risk).
 
-5. **P11 + R2 session-only is the current default** — until owner signs Package
-   B, assume GetOperation durability is **session boundary** responsibility.
+5. **P11 + R2 session-only frozen by owner Package A** — GetOperation durability
+   is **session boundary** responsibility; MCP/CLI catalog invoke stays trace-only.
 
 6. **Three tiers:** typed `run_recorded_operation` > session synthetic >
    catalog invoke trace-only. Do not collapse tiers.
@@ -209,6 +226,12 @@ Plus narrow new tests for shared module and one frontend wiring path.
 8. **This review does not unlock P10 or MCP merge** — see
    [P14](2026-06-30-auv-api-p14-api-line-closeout-pause-decision.md).
 
+9. **R2b freeze ≠ R2c freeze** — limits plumbing decision remains separate
+   ([R2c review](2026-06-30-auv-api-r2c-known-limits-plumbing-decision-review.md)).
+
+10. **Signing R2b Package A does not sign R2c Package A** — independent owner
+    decisions.
+
 ## Explicit non-goals (API-R2b review)
 
 This note does **not** approve:
@@ -218,13 +241,14 @@ This note does **not** approve:
 - MCP / inspect-server unification
 - D4-A `InvokeCommandOutput.known_limits` plumbing (**API-R2c**)
 - Reopening controller / planner / lease / archived AX copilot lanes
-- P14 errata edit (optional follow-up noted below)
 
 ## Owner decision packages
 
 Answer **before** any API-R2b-impl work.
 
-### Package A — Keep session-only (**recommended default**)
+### Package A — Keep session-only (**accepted**)
+
+**Accepted: 2026-06-30, Package A** — matches reviewer recommendation.
 
 ```text
 R2b-A  Freeze: synthetic operation-result write-through remains session_service-only
@@ -237,7 +261,7 @@ R2b-D  Optional: P14 errata — note R2 closed session Invoke→GetOperation hap
 continue to use trace + inspect; no product path requires catalog invoke runs to
 carry join artifacts.
 
-### Package B — Approve API-R2b-impl
+### Package B — Approve API-R2b-impl — **not accepted**
 
 ```text
 R2b-A  Accept parity for top-level CLI + MCP invoke (paired summary + operation-result)
@@ -251,35 +275,28 @@ R2b-E  No auv-cli-invoke → contract dependency in v1
 shared `store_root` to expose `read_operation_result` (and summary) without
 session `Invoke`.
 
-## Open questions for owner (blocking)
+## Open questions — resolved (Package A)
 
-1. **P11 freeze together?** Should this review explicitly freeze **both**
-   `operation-summary` and `operation-result` as session-only (Package A), rather
-   than treating operation-result parity as a standalone question?
+| # | Question | Package A resolution |
+| --- | --- | --- |
+| 1 | P11 freeze together? | **Yes** — both `operation-summary` and `operation-result` frozen session-only |
+| 2 | Package B marker policy | **N/A** — Package B not accepted |
+| 3 | Package B partial-success surface | **N/A** — defer to R2c if R2b ever reopens |
+| 4 | P14 staleness | **Resolved** — companion P14 errata in this slice |
 
-2. **Package B marker policy:** Reuse `auv.api.session.invoke_synthetic_operation_result`
-   on MCP/CLI runs, or introduce `auv.invoke.synthetic_operation_result` (or
-   similar) for non-session paths?
+## Reopen triggers
 
-3. **Package B partial-success surface:** MCP JSON and CLI stdout have no
-   `InvokeResponse.known_limits`. How should durability failures be surfaced?
-   **Reviewer default:** defer to **API-R2c** with code-site NOTICE; do not block
-   R2b-impl on D4-A.
+| Trigger | Unlocks | Does **not** auto-unlock |
+| --- | --- | --- |
+| Owner names **Package B** + concrete MCP/CLI catalog consumer on shared `store_root` | API-R2b-impl candidate only | R2c-impl, P10, MCP merge |
+| Owner names **R2c-impl** | Command-limit plumbing only | R2b-impl |
 
-4. **P14 staleness:** [P14](2026-06-30-auv-api-p14-api-line-closeout-pause-decision.md)
-   still lists Invoke→OperationResult as a known gap (written pre-R2). Accept
-   optional one-paragraph P14 errata in a separate docs-only slice, or leave until
-   next pause refresh?
+## Relationship to R1 / R2 / R2c / P14 pause
 
-## P14 errata note (optional, not part of R2b approval)
-
-P14 freeze block (2026-06-30) predates API-R2. Readers should treat:
-
-- Session `Invoke → GetOperation` happy path: **closed by R2**
-- MCP/CLI catalog invoke → join artifacts: **intentionally open until R2b decision**
-
-A short P14 tombstone update is recommended for INDEX accuracy but is **out of
-scope** for this review unless owner names it.
+- **R1** decided the write-through split; R2b closes the non-session parity question.
+- **R2** landed session synthetic write-through only.
+- **R2c** froze command `known_limits` plumbing — **independent** of this R2b freeze.
+- **P14** pause boundary unchanged; companion errata records post-R2/R2b/R2c state.
 
 ## Validation (readers re-checking evidence)
 

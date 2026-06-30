@@ -44,7 +44,7 @@ YYYY-MM-DD-<topic-slug>-<doc-type>.md
 |---|---|---|---:|
 | `core/runtime` | Active | AUV core runtime、contract、graduation、query-readiness | 30 |
 | `core/invoke-cli` | Active | invoke 路由、CLI handler、catalog | 12 |
-| `core/api-mcp` | Active | session API、proto、MCP 前端 | 10 |
+| `core/api-mcp` | Active | session API、proto、MCP 前端 | 11 |
 | `core/inspect-trace` | Active | run 录制、inspect viewer、trace | 6 |
 | `core/driver-macos` | Active | auv-driver、macOS 输入/窗口/权限 | 20 |
 | `core/view-parser` | Active | view-parser IR 与 inspect 消费 | 14 |
@@ -176,12 +176,13 @@ session API、proto、MCP 前端
 - [`2026-06-11-mcp-frontend-surface-v0.md`](2026-06-11-mcp-frontend-surface-v0.md)
 - [`2026-06-18-core-realtime-session-substrate-v0.md`](2026-06-18-core-realtime-session-substrate-v0.md)
 
-#### review (4)
+#### review (5)
 
 - [`2026-06-30-auv-api-p1-session-proto-boundary-review.md`](2026-06-30-auv-api-p1-session-proto-boundary-review.md)
 - [`2026-06-30-auv-api-p12-identity-role-semantics-closeout.md`](2026-06-30-auv-api-p12-identity-role-semantics-closeout.md)
 - [`2026-06-30-auv-api-r1-invoke-operation-result-persistence-decision-review.md`](2026-06-30-auv-api-r1-invoke-operation-result-persistence-decision-review.md)
 - [`2026-06-30-auv-api-r2b-invoke-surface-parity-decision-review.md`](2026-06-30-auv-api-r2b-invoke-surface-parity-decision-review.md)
+- [`2026-06-30-auv-api-r2c-known-limits-plumbing-decision-review.md`](2026-06-30-auv-api-r2c-known-limits-plumbing-decision-review.md)
 
 ### `core/inspect-trace` — Active
 

@@ -27,6 +27,11 @@ const fs = require('fs');
 const path = require('path');
 const { extractCommandSubstitutions, extractSubshellGroups, extractBraceGroups } = require('../lib/shell-substitution');
 const { isProjectGateGuardDisabled, isGateGuardEnforced } = require('../lib/gateguard-project-disable');
+const {
+  buildEditGateMessage,
+  buildWriteGateMessage,
+  buildCondensedGateMessage,
+} = require('../lib/pre-edit-slice-gate');
 
 // Session state — scoped per session to avoid cross-session races.
 const STATE_DIR = process.env.GATEGUARD_STATE_DIR || path.join(process.env.HOME || process.env.USERPROFILE || '/tmp', '.gateguard');
@@ -1014,35 +1019,11 @@ function isReadOnlyGitIntrospection(command) {
 // --- Gate messages ---
 
 function editGateMsg(filePath) {
-  const safe = sanitizePath(filePath);
-  return [
-    '[Fact-Forcing Gate]',
-    '',
-    `Before editing ${safe}, present these facts:`,
-    '',
-    '1. List ALL files that import/require this file (use Grep)',
-    '2. List the public functions/classes affected by this change',
-    '3. If this file reads/writes data files, show field names, structure, and date format (use redacted or synthetic values, not raw production data)',
-    "4. Quote the user's current instruction verbatim",
-    '',
-    'Present the facts, then retry the same operation.'
-  ].join('\n');
+  return buildEditGateMessage(sanitizePath(filePath));
 }
 
 function writeGateMsg(filePath) {
-  const safe = sanitizePath(filePath);
-  return [
-    '[Fact-Forcing Gate]',
-    '',
-    `Before creating ${safe}, present these facts:`,
-    '',
-    '1. Name the file(s) and line(s) that will call this new file',
-    '2. Confirm no existing file serves the same purpose (search the tree — Glob/Grep, or find/grep via Bash)',
-    '3. If this file reads/writes data files, show field names, structure, and date format (use redacted or synthetic values, not raw production data)',
-    "4. Quote the user's current instruction verbatim",
-    '',
-    'Present the facts, then retry the same operation.'
-  ].join('\n');
+  return buildWriteGateMessage(sanitizePath(filePath));
 }
 
 /**
@@ -1051,11 +1032,7 @@ function writeGateMsg(filePath) {
  * textually, and a one-line recovery hint instead of the multi-line block.
  */
 function condensedGateMsg(action, filePath, ordinal) {
-  const safe = sanitizePath(filePath);
-  return (
-    `[Fact-Forcing Gate] (denial #${ordinal} this session) First ${action} of ${safe}: ` +
-    "briefly state importers/callers, affected API, data schemas if any, and the user's verbatim instruction, then retry."
-  );
+  return buildCondensedGateMessage(action, sanitizePath(filePath), ordinal);
 }
 
 function destructiveBashMsg() {

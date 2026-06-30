@@ -297,6 +297,30 @@ check('inject-pending-edit-review emits queue context', () => {
 });
 
 
+
+check('pre-edit slice gate message includes classification and veto', () => {
+  const { buildEditGateMessage } = require('../lib/pre-edit-slice-gate');
+  const msg = buildEditGateMessage('src/example.rs');
+  assert.ok(msg.includes('Classification'), msg);
+  assert.ok(msg.includes('Non-goals'), msg);
+  assert.ok(msg.includes('Regression'), msg);
+  assert.ok(msg.includes('Validation'), msg);
+  assert.ok(msg.includes('GateGuard bypass'), msg);
+});
+
+check('block-gateguard-bypass rejects ECC_GATEGUARD=off when enforced', () => {
+  const { analyzeCommand } = require('../hooks/block-gateguard-bypass');
+  const analysis = analyzeCommand('ECC_GATEGUARD=off python3 -c "print(1)"');
+  assert.equal(analysis.blocked, true, JSON.stringify(analysis));
+  assert.ok(analysis.violations.some(v => v.code === 'ecc-gateguard-off'), JSON.stringify(analysis));
+});
+
+check('block-gateguard-bypass allows normal cargo test', () => {
+  const { analyzeCommand } = require('../hooks/block-gateguard-bypass');
+  const analysis = analyzeCommand('cargo test --test session_api_subprocess_smoke');
+  assert.equal(analysis.blocked, false, JSON.stringify(analysis));
+});
+
 check('gateguard enforced marker is present in workspace', () => {
   const { isGateGuardEnforced } = require('../lib/gateguard-project-disable');
   assert.equal(isGateGuardEnforced([repoRoot]), true);

@@ -22,6 +22,11 @@
         "description": "Block git hook-bypass flag to protect pre-commit, commit-msg, and pre-push hooks from being skipped"
       },
       {
+        "command": "node .cursor/hooks/before-shell-execution-block-gateguard-bypass.js",
+        "event": "beforeShellExecution",
+        "description": "Block ECC_GATEGUARD=off and other GateGuard bypass env vars when gateguard-enforced"
+      },
+      {
         "command": "node .cursor/hooks/before-shell-execution-commit-gate.js",
         "event": "beforeShellExecution",
         "description": "Hard AUV commit gate: staged slice veto, Rust validation floor, staged quality checks"

@@ -105,7 +105,8 @@ the **first** match, mirroring `read_operation_result` and P11 summary behavior.
 ## Non-goals (R2)
 
 - `auv-cli-invoke::recorded` / MCP / CLI parity (API-R2b)
-- P10 proto changes / D4-A `InvokeCommandOutput.known_limits` plumbing (API-R2c)
+- P10 proto changes / D4-A `InvokeCommandOutput.known_limits` plumbing — frozen
+  at [API-R2c Package A](2026-06-30-auv-api-r2c-known-limits-plumbing-decision-review.md)
 - `run_read` / inspect behavior changes
 - Combined summary+operation policy module beyond separate store peers
 

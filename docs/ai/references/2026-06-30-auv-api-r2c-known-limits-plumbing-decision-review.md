@@ -1,17 +1,35 @@
 # API-R2c: known_limits Plumbing Decision Review
 
 **Date:** 2026-06-30  
-**Status:** **docs-only decision review** — records post-R2 surface divergence,
-evidence, and owner decision packages. **Does not approve implementation.**  
-P14 API lane pause remains in force until owner accepts a package and names an
-**API-R2c-impl** slice (if Package B).
+**Status:** **owner accepted Package A (D4-B freeze)** — final decision record.
+Does not approve **API-R2c-impl**. P14 pause boundary unchanged.
 
 ## One-line summary
 
 API-R2c decides one narrow question: should command-emitted
 `InvokeCommandOutput.known_limits` flow into persisted synthetic
 `OperationResult.known_limits` on the session invoke synthetic path?  
-This is smaller than API-R2b and independent of invoke-surface parity.
+**Owner answer: no** — command limits remain trace-only; synthetic artifact
+keeps honesty marker only. This is smaller than API-R2b and independent of
+invoke-surface parity.
+
+## Owner freeze block
+
+```text
+command known_limits：trace-only（command.known_limit span events）
+persisted OperationResult.known_limits：synthetic marker only（durability 不上 artifact）
+InvokeResponse.known_limits：durability-only
+R2c-impl：frozen unless owner reopens with Package B + named consumer
+```
+
+### English expansion (for reviewers)
+
+| Statement | Meaning | Evidence |
+| --- | --- | --- |
+| Command limits trace-only | `InvokeCommandOutput.known_limits` land as span events only; not merged into persisted `OperationResult` | [`recorded.rs`](../../crates/auv-cli-invoke/src/recorded.rs) |
+| Artifact marker only | Session synthetic `OperationResult.known_limits` carries `invoke_synthetic_operation_result` only | [`operation_result_store.rs`](../../src/api/session_service/operation_result_store.rs) |
+| Invoke durability-only | `InvokeResponse.known_limits` surfaces persist failures only, not command honesty | [`mapper.rs`](../../src/api/session_service/mapper.rs), [`handler.rs`](../../src/api/session_service/handler.rs) |
+| R2c-impl frozen | No `InvokeResult` field change or merge plumbing unless owner signs Package B | This note |
 
 ## Slice classification
 
@@ -151,16 +169,24 @@ command limit string in `known_limits` (if D4-A).
 1. **R2c ≠ R2b** — limits plumbing does not require MCP/CLI persist parity.
 2. **Durability limits ≠ command limits** — `operation_*_persist_failed` are
    invoke-path partial-success signals, not command honesty.
-3. **Synthetic marker stays** — D4-A merges command limits **with** marker, not
-   instead of it.
-4. **Trace still authoritative for deep inspect** — artifact plumbing does not
-   delete span events.
-5. **R2c review ≠ R2c-impl auto-start** — owner must name impl after sign-off.
-6. **Does not unlock P10 / MCP merge** — P14 pause boundary unchanged.
+3. **Synthetic marker stays** — Package A keeps marker only; no command merge
+   into artifact.
+4. **Trace still authoritative for deep inspect** — artifact plumbing was
+   rejected; span events remain the command-limit read path.
+5. **R2c freeze ≠ R2b freeze** — R2b parity decision remains separate
+   ([R2b review](2026-06-30-auv-api-r2b-invoke-surface-parity-decision-review.md)).
+6. **Signing R2c Package A does not sign R2b Package A** — independent owner
+   decisions.
+7. **R2c freeze ≠ R2c-impl auto-start** — Package B + named consumer required
+   to reopen.
+8. **Does not unlock P10 / MCP merge** — P14 pause boundary unchanged.
 
 ## Owner decision packages
 
-### Package A — Keep D4-B freeze (**recommended**)
+### Package A — Keep D4-B freeze (**accepted**)
+
+**Accepted: 2026-06-30, Package A** — matches reviewer recommendation (D4-B
+freeze).
 
 ```text
 R2c-A  Freeze: command known_limits remain trace-only for catalog invoke
@@ -169,7 +195,7 @@ R2c-C  InvokeResponse.known_limits remains durability-only
 R2c-D  Document trace read path for command limits (command.known_limit events)
 ```
 
-### Package B — Approve API-R2c-impl (D4-A)
+### Package B — Approve API-R2c-impl (D4-A) — **not accepted**
 
 ```text
 R2c-A  Merge InvokeCommandOutput.known_limits into persisted OperationResult
@@ -178,23 +204,33 @@ R2c-C  Merge policy: marker + command limits; dedupe; durability stays on Invoke
 R2c-D  Session invoke path only (same boundary as R2 D2-A)
 ```
 
-## Open questions
+Candidate implementation remains in **Candidate API-R2c-impl slice** above for
+future owner reopen only.
 
-1. Should command limits also appear on **`InvokeResponse.known_limits`** at
-   invoke time, or only on **GetOperation** after persist?
-2. Merge order and dedup rules when command limit duplicates synthetic marker
-   text?
-3. Empty `known_limits` on commands — artifact still carries marker only?
-4. Does any inspect consumer **today** require artifact limits vs span events?
+## Open questions — resolved (Package A)
+
+| # | Question | Package A resolution |
+| --- | --- | --- |
+| 1 | Command limits on `InvokeResponse` at invoke time? | **No** — durability-only on invoke RPC; command limits trace-only |
+| 2 | Merge order and dedup when limit duplicates marker? | **N/A** — no command merge into artifact |
+| 3 | Empty command `known_limits`? | **Yes** — artifact carries synthetic marker only |
+| 4 | Inspect consumer requires artifact limits vs span events? | **No evidence today** — trace path sufficient; reopen if named |
+
+## Reopen triggers
+
+| Trigger | Unlocks | Does **not** auto-unlock |
+| --- | --- | --- |
+| Owner names **Package B** + concrete GetOperation/inspect consumer | API-R2c-impl candidate only | R2b-impl, P10, MCP merge |
+| Owner names **R2b-impl** | Invoke-surface parity only | R2c-impl, command-limit plumbing |
 
 ## Relationship to R1 / R2 / R2b / P14 pause
 
-- **R1** decided the write-through split and left D4-B open.
-- **R2** landed the synthetic session path only.
+- **R1** decided the write-through split and left D4-B open until R2c.
+- **R2** landed the synthetic session path only (marker + durability on invoke).
 - **R2b** decides whether non-session invoke surfaces should mirror R2
-  durability shape.
-- **P14** still pauses the line; R2c is a decision review, not an implementation
-  unlock.
+  durability shape — **independent** of this R2c freeze.
+- **P14** still pauses the line; R2c Package A freeze does not reopen P10 or
+  MCP merge.
 
 ## Reader validation commands
 

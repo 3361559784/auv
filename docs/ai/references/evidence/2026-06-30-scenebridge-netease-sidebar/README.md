@@ -39,8 +39,8 @@ directory and contains **no production screenshots**.
   the canonical hermetic fixture.
 - `MatchRef` field names are the de facto scene-target vocabulary for the product
   CLI today.
-- ViewMemory and reacquire are **spec'd but not implemented**; playlist select
-  still replays scan pages.
+- ViewMemory and reacquire ship in A3-min behind `AUV_NETEASE_VIEW_MEMORY=1`;
+  playlist select falls back to rescan replay when the gate is off or reacquire misses.
 
 ## What this folder does not prove
 

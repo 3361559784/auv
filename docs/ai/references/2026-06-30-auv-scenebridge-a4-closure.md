@@ -6,7 +6,8 @@ does **not** open run-storage migration, `ViewNodeId`, AX stages 2/6, or trait
 extraction.
 
 **Prior work:** [A3 implementation handoff](2026-06-30-auv-scenebridge-a3-implementation-handoff.md)
-(landed) → this note locks the smallest follow-up before A5-scale work.
+(landed) → [A5 inspect identity proof charter](2026-06-30-auv-scenebridge-a5-inspect-identity-proof-charter.md)
+freezes field tiers for shipped JSON surfaces.
 
 ## One-line summary
 
@@ -84,6 +85,7 @@ deferred：run-storage bridge, stages 2/6, ViewNodeId, RegionParser trait
 
 ## Related
 
+- [A5 inspect identity proof charter](2026-06-30-auv-scenebridge-a5-inspect-identity-proof-charter.md)
 - [A3 boundary review](2026-06-30-auv-scenebridge-a3-prototype-boundary-review.md)
 - [A3 implementation handoff](2026-06-30-auv-scenebridge-a3-implementation-handoff.md)
 - [anchor-reacquisition-v0](2026-05-29-view-parser-anchor-reacquisition-v0.md)

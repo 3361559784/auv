@@ -84,7 +84,7 @@ Do not import AIRI orchestration shells into AUV core as part of this lane.
 
 | # | Question | A3 resolution (Package A3-min) |
 | --- | --- | --- |
-| 4 | Inspect contract — artifacts/trace for identity? | **Partial:** `PlaylistSelectResult` reacquire JSON; run trace → A4 |
+| 4 | Inspect contract — artifacts/trace for identity? | **Partial → A5 freeze:** [A5 inspect identity proof charter](2026-06-30-auv-scenebridge-a5-inspect-identity-proof-charter.md); trace/inspect API impl → future slice |
 | 5 | Cross-app scope? | **Deferred** — NetEase `playlist_sidebar` only |
 
 ## Reopen triggers (candidate only)

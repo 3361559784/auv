@@ -147,7 +147,9 @@ Without an A3 boundary, implementation risks:
 | --- | --- |
 | **`PlaylistSelectResult`** JSON fields | `view.reacquire.*` spans + `list_view_memory_writes` |
 
-**Reviewer recommendation:** A3-min.
+**Reviewer recommendation:** A3-min. Deferred A3-full surfaces and proof tiers →
+[A5 inspect identity proof charter](2026-06-30-auv-scenebridge-a5-inspect-identity-proof-charter.md)
+(docs freeze; not implementation).
 
 ### P8 Proof class
 
@@ -230,7 +232,7 @@ This note does **not** approve:
 
 | # | Question (A1) | A3 resolution |
 | --- | --- | --- |
-| 4 | Inspect contract — artifacts/trace for identity decisions? | **Partial:** `PlaylistSelectResult` carries reacquire diagnostics; run trace + inspect API → A4 |
+| 4 | Inspect contract — artifacts/trace for identity decisions? | **Partial → A5 freeze:** [A5 charter](2026-06-30-auv-scenebridge-a5-inspect-identity-proof-charter.md); trace/inspect API impl → future slice |
 | 5 | Cross-app scope? | **Deferred** — NetEase `playlist_sidebar` namespace only |
 
 ## Relationship to A2 / view-parser / API pause

@@ -33,6 +33,8 @@ directory and contains **no production screenshots**.
 **A3 docs:** [prototype boundary review](../../2026-06-30-auv-scenebridge-a3-prototype-boundary-review.md),
 [implementation handoff](../../2026-06-30-auv-scenebridge-a3-implementation-handoff.md)
 
+**A5 field tiers:** [inspect identity proof charter](../../2026-06-30-auv-scenebridge-a5-inspect-identity-proof-charter.md)
+
 ## What this folder proves
 
 - Two-viewport sidebar reconstruction yields 2 sections and 3 playlist items in

@@ -85,6 +85,7 @@ deferred：run-storage bridge, stages 2/6, ViewNodeId, RegionParser trait
 
 ## Related
 
+- [A6 live evidence closure](2026-06-30-auv-scenebridge-a6-live-evidence-closure.md)
 - [A5 inspect identity proof charter](2026-06-30-auv-scenebridge-a5-inspect-identity-proof-charter.md)
 - [A3 boundary review](2026-06-30-auv-scenebridge-a3-prototype-boundary-review.md)
 - [A3 implementation handoff](2026-06-30-auv-scenebridge-a3-implementation-handoff.md)

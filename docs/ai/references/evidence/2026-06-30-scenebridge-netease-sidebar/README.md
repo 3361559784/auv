@@ -27,13 +27,16 @@ directory and contains **no production screenshots**.
   - Example `ViewMemory` JSON for hermetic serde / round-trip tests
 - `reacquire-target-fixtures.json`
   - Target cases for A3c reacquire cascade tests
-- `live/README.md` (optional)
-  - Template for owner-labeled live desktop proof (`proof_class: live`)
+- `live/` (`proof_class: live`)
+  - [A6 sign-off protocol](live/README.md), [`SIGNOFF.md`](live/SIGNOFF.md), [`transcript.txt`](live/transcript.txt)
+  - Live case JSON pending owner execution; [`examples/`](live/examples/) are structure exemplars only
 
 **A3 docs:** [prototype boundary review](../../2026-06-30-auv-scenebridge-a3-prototype-boundary-review.md),
 [implementation handoff](../../2026-06-30-auv-scenebridge-a3-implementation-handoff.md)
 
 **A5 field tiers:** [inspect identity proof charter](../../2026-06-30-auv-scenebridge-a5-inspect-identity-proof-charter.md)
+
+**A6 live closure:** [live evidence closure](../../2026-06-30-auv-scenebridge-a6-live-evidence-closure.md) (**PARTIAL**)
 
 ## What this folder proves
 

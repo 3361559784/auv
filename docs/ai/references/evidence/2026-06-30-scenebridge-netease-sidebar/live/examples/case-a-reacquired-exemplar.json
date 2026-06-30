@@ -1,0 +1,32 @@
+{
+  "_meta": {
+    "description": "Structure exemplar for Case A (reacquired) — NOT live proof",
+    "proof_class": "structure_exemplar",
+    "derived_from": "playlist_select_uses_reacquire_when_memory_hit (FakeAdapter)",
+    "date": "2026-06-30",
+    "wire_note": "reacquire.outcome must be reacquired, not hit"
+  },
+  "command": "playlist.select",
+  "query": "Road Trip",
+  "target": {
+    "label": "Road Trip",
+    "section_kind": "favorite_playlists"
+  },
+  "reacquire": {
+    "outcome": "reacquired",
+    "strategy_used": "label_current_viewport",
+    "observation_count": 1,
+    "skipped_rescan_replay": true
+  },
+  "steps": [
+    {
+      "name": "reacquire-target",
+      "target_bounds": { "x": 32.0, "y": 106.0, "width": 120.0, "height": 20.0 }
+    },
+    {
+      "name": "click-playlist-window-targeted",
+      "delivery_path": "window_targeted_mouse"
+    }
+  ],
+  "known_limits": []
+}

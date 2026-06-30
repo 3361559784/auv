@@ -124,7 +124,7 @@ Source: [`crates/auv-netease-music/src/view_memory.rs`](../../crates/auv-netease
 
 | Field | Tier | Identity proof? | Notes |
 | --- | --- | --- | --- |
-| `outcome` | II–III | **Resolution proof** | `hit` / `stale` / `not_found` — freshness + resolution state, not “who” |
+| `outcome` | II–III | **Resolution proof** | `reacquired` / `stale` / `not_found` — freshness + resolution state, not “who” |
 | `stale_reason` | II | **Resolution proof** | e.g. `RegionGoneAtReacquisition`, `ObservationFailed` (A4 wire) |
 | `strategy_used` | III | **Resolution proof** | Cascade stage label when hit |
 | `observation_count` | III | **Resolution proof** | Live observes during reacquire |
@@ -234,6 +234,7 @@ Source: [`crates/auv-view/src/memory/mod.rs`](../../crates/auv-view/src/memory/m
 
 ## Related
 
+- [A6 live evidence closure](2026-06-30-auv-scenebridge-a6-live-evidence-closure.md)
 - [A1 design charter](2026-06-30-auv-scenebridge-a1-design-charter.md)
 - [A2 NetEase sidebar evidence pack](2026-06-30-auv-scenebridge-a2-netease-sidebar-evidence-pack.md)
 - [A3 prototype boundary review](2026-06-30-auv-scenebridge-a3-prototype-boundary-review.md)

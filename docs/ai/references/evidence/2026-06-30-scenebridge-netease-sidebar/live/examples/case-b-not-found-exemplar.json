@@ -1,0 +1,23 @@
+{
+  "_meta": {
+    "description": "Structure exemplar for Case B (not_found miss) — NOT live proof",
+    "proof_class": "structure_exemplar",
+    "derived_from": "reacquire_not_found_when_candidates_exist_but_no_match",
+    "date": "2026-06-30"
+  },
+  "command": "playlist.select",
+  "query": "Road Trip",
+  "reacquire": {
+    "outcome": "not_found",
+    "observation_count": 3,
+    "skipped_rescan_replay": false
+  },
+  "steps": [
+    { "name": "scroll-sidebar-top-0" },
+    { "name": "scroll-sidebar-target-page-0" },
+    { "name": "click-playlist-window-targeted" }
+  ],
+  "known_limits": [
+    "view-memory reacquire missed target — falling back to rescan replay"
+  ]
+}

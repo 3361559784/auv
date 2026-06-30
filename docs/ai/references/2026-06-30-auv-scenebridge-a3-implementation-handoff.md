@@ -158,7 +158,7 @@ playlist select <label>  (or play --candidate-id → select path)
 - [x] Gate on + memory hit: reacquire path skips top-scroll replay (hermetic test)
 - [x] `git diff --check` on docs
 - [x] A2 `playlist ls --json` doc drift fixed if touched
-- [ ] Optional live evidence attached (owner request)
+- [x] Optional live evidence attached — [A6 live closure](2026-06-30-auv-scenebridge-a6-live-evidence-closure.md) (**PARTIAL**; Cases A–E pending owner execution)
 
 **A4 follow-up:** [A4 stale closure](2026-06-30-auv-scenebridge-a4-closure.md) —
 `ReacquireOutcome::Stale`, NetEase injectable test, stale vs not-found semantics.
@@ -171,6 +171,7 @@ playlist select <label>  (or play --candidate-id → select path)
 
 ## Related
 
+- [A6 live evidence closure](2026-06-30-auv-scenebridge-a6-live-evidence-closure.md)
 - [A3 boundary review](2026-06-30-auv-scenebridge-a3-prototype-boundary-review.md)
 - [A2 evidence pack](2026-06-30-auv-scenebridge-a2-netease-sidebar-evidence-pack.md)
 - [view-memory-v0](2026-05-29-view-parser-view-memory-v0.md)

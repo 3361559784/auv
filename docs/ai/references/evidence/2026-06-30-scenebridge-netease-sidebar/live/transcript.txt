@@ -1,0 +1,44 @@
+# SceneBridge A6 live transcript (redacted)
+# proof_class: live
+# Date: 2026-06-30
+# Status: PARTIAL — hermetic gate PASS; Cases A–E pending owner execution
+
+## Hermetic pre-gate
+
+$ cargo fmt --check
+# (no output — PASS)
+
+$ cargo check -p auv-view -p auv-netease-music
+# Finished `dev` profile — PASS
+
+$ cargo test -p auv-view memory
+# 16 passed — PASS
+
+$ cargo test -p auv-netease-music playlist_select
+# 7 passed — PASS
+
+$ git diff --check
+# (no output — PASS)
+
+## Live probe (incomplete — blocked on empty scan)
+
+$ export AUV_NETEASE_VIEW_MEMORY=1
+$ ARTIFACT_DIR=/tmp/auv-scenebridge-a6-live-20260630
+$ mkdir -p "$ARTIFACT_DIR"
+$ cargo run -p auv-netease-music -- playlist ls "test" --json --artifact-dir "$ARTIFACT_DIR"
+
+stderr:
+  view memory write skipped: scan did not produce writable ViewMemory
+
+stdout (excerpt):
+  "match_count": 0,
+  "matches": [],
+  "scan": { "app": { "app_id": "com.netease.163music" }, ... }
+
+# Blocker: empty sidebar scan — cannot proceed to Cases A–E without owner-visible
+# NetEase window and a query that yields matches + writable ViewMemory.
+
+## Owner execution (not yet run)
+
+# See live/README.md full bash protocol for Cases A–E.
+# After owner run, append redacted case JSON paths and key reacquire fields here.

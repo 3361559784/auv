@@ -15,7 +15,9 @@ pub use reacquire::{
 };
 pub use reacquire_adapter::{ReacquireDriverAdapter, outcome_label, strategy_name};
 pub use read::{MemoryReadConfig, MemoryReadOutcome, StaleReason, read_memory};
-pub use store::{load_memory_file, memory_file_name, memory_file_path, write_memory_file};
+pub use store::{
+  load_memory_file, memory_file_name, memory_file_path, parse_memory_file, write_memory_file,
+};
 pub use write::{ARTIFACT_DIR_BRIDGE_RUN_ID, MemoryWriteInput, build_memory_id, try_build_memory};
 
 use std::collections::BTreeMap;

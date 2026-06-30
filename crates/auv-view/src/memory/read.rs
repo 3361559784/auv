@@ -5,6 +5,9 @@ pub enum StaleReason {
   MemoryRejectedAtFreshness,
   SchemaMismatch,
   BaselineMismatchHard,
+  // NOTICE(a4-min): produced only by reacquire(), not read_memory().
+  RegionGoneAtReacquisition,
+  ObservationFailedAtReacquisition,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -125,6 +128,21 @@ mod tests {
         reason: StaleReason::SchemaMismatch,
       } => {}
       other => panic!("expected schema rejection, got {other:?}"),
+    }
+  }
+
+  #[test]
+  fn read_rejects_baseline_mismatch() {
+    let memory = sample_memory(1_000);
+    let config = MemoryReadConfig {
+      now_millis: 1_000,
+      ..Default::default()
+    };
+    match read_memory(memory, &config, Some(400)) {
+      MemoryReadOutcome::Rejected {
+        reason: StaleReason::BaselineMismatchHard,
+      } => {}
+      other => panic!("expected baseline rejection, got {other:?}"),
     }
   }
 }

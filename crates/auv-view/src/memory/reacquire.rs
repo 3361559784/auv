@@ -1,5 +1,8 @@
 use super::reacquire_adapter::ReacquireDriverAdapter;
-use super::{ViewMemory, read::StaleReason};
+use super::{
+  ViewMemory,
+  read::{MemoryReadConfig, MemoryReadOutcome, StaleReason, read_memory},
+};
 use crate::{ParserDiagnostic, ViewBounds, normalize_identity};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -53,23 +56,29 @@ pub enum ReacquireOutcome {
   },
   Stale {
     reason: StaleReason,
+    observation_count: usize,
     diagnostics: Vec<ParserDiagnostic>,
   },
   NotFound {
     attempted_strategies: Vec<ReacquireStrategy>,
+    observation_count: usize,
     diagnostics: Vec<ParserDiagnostic>,
   },
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ReacquireConfig {
   pub max_scroll_attempts: usize,
+  pub memory_read: Option<MemoryReadConfig>,
+  pub current_baseline_width: Option<u32>,
 }
 
 impl Default for ReacquireConfig {
   fn default() -> Self {
     Self {
       max_scroll_attempts: 5,
+      memory_read: None,
+      current_baseline_width: None,
     }
   }
 }
@@ -80,13 +89,41 @@ pub fn reacquire(
   adapter: &mut dyn ReacquireDriverAdapter,
   config: &ReacquireConfig,
 ) -> ReacquireOutcome {
-  let resolved = resolve_target(memory, target);
+  let checked_memory = if let Some(read_config) = &config.memory_read {
+    match read_memory(memory.clone(), read_config, config.current_baseline_width) {
+      MemoryReadOutcome::Rejected { reason } => {
+        return ReacquireOutcome::Stale {
+          reason,
+          observation_count: 0,
+          diagnostics: vec![ParserDiagnostic {
+            code: "reacquire_memory_stale".into(),
+            message: format!("view memory rejected at reacquire entry: {reason:?}"),
+            node_id: None,
+          }],
+        };
+      }
+      MemoryReadOutcome::Accepted(memory) => memory,
+    }
+  } else {
+    memory.clone()
+  };
+
+  let resolved = resolve_target(&checked_memory, target);
   let mut attempted = Vec::new();
   let mut observation_count = 0usize;
+  let mut observe_error_count = 0usize;
+  let mut observe_diagnostics = Vec::new();
+  let mut saw_any_candidates = false;
 
   if let ReacquireTarget::NodeId(node_id) = &resolved {
     attempted.push(ReacquireStrategy::DirectId);
-    if let Some(observation) = observe(adapter, &mut observation_count) {
+    if let Some(observation) = observe(
+      adapter,
+      &mut observation_count,
+      &mut observe_error_count,
+      &mut observe_diagnostics,
+      &mut saw_any_candidates,
+    ) {
       if let Some(node) = match_direct_id(node_id, &observation) {
         return ReacquireOutcome::Reacquired {
           node,
@@ -98,9 +135,15 @@ pub fn reacquire(
     }
   }
 
-  let (label, section_hint) = target_label_and_section(memory, &resolved);
+  let (label, section_hint) = target_label_and_section(&checked_memory, &resolved);
   attempted.push(ReacquireStrategy::LabelCurrentViewport);
-  if let Some(observation) = observe(adapter, &mut observation_count) {
+  if let Some(observation) = observe(
+    adapter,
+    &mut observation_count,
+    &mut observe_error_count,
+    &mut observe_diagnostics,
+    &mut saw_any_candidates,
+  ) {
     match match_label(&label, section_hint.as_deref(), &observation, false) {
       LabelMatch::Unique(node) => {
         return ReacquireOutcome::Reacquired {
@@ -116,7 +159,13 @@ pub fn reacquire(
 
   attempted.push(ReacquireStrategy::LabelPlusSection);
   for _ in 0..config.max_scroll_attempts {
-    if let Some(observation) = observe(adapter, &mut observation_count) {
+    if let Some(observation) = observe(
+      adapter,
+      &mut observation_count,
+      &mut observe_error_count,
+      &mut observe_diagnostics,
+      &mut saw_any_candidates,
+    ) {
       match match_label(&label, section_hint.as_deref(), &observation, true) {
         LabelMatch::Unique(node) => {
           return ReacquireOutcome::Reacquired {
@@ -134,8 +183,45 @@ pub fn reacquire(
     }
   }
 
+  if !saw_any_candidates {
+    let (reason, diagnostics) = if observation_count > 0 {
+      (
+        StaleReason::RegionGoneAtReacquisition,
+        vec![ParserDiagnostic {
+          code: "reacquire_region_gone".into(),
+          message: format!(
+            "no sidebar candidates observed across {observation_count} viewport(s) while reacquiring label={label:?}"
+          ),
+          node_id: None,
+        }],
+      )
+    } else if observe_error_count > 0 {
+      (
+        StaleReason::ObservationFailedAtReacquisition,
+        observe_diagnostics,
+      )
+    } else {
+      // NOTICE(a4-min): defensive fallback if cascade ends with zero observes
+      // and zero errors (should not occur after LabelCurrentViewport observe).
+      (
+        StaleReason::RegionGoneAtReacquisition,
+        vec![ParserDiagnostic {
+          code: "reacquire_region_gone".into(),
+          message: format!("no sidebar candidates observed while reacquiring label={label:?}"),
+          node_id: None,
+        }],
+      )
+    };
+    return ReacquireOutcome::Stale {
+      reason,
+      observation_count,
+      diagnostics,
+    };
+  }
+
   ReacquireOutcome::NotFound {
     attempted_strategies: attempted,
+    observation_count,
     diagnostics: vec![ParserDiagnostic {
       code: "reacquire_not_found".into(),
       message: format!("could not reacquire target label={label:?}"),
@@ -195,13 +281,23 @@ enum LabelMatch {
 fn observe(
   adapter: &mut dyn ReacquireDriverAdapter,
   observation_count: &mut usize,
+  observe_error_count: &mut usize,
+  observe_diagnostics: &mut Vec<ParserDiagnostic>,
+  saw_any_candidates: &mut bool,
 ) -> Option<ReacquireObservation> {
   match adapter.observe_viewport() {
     Ok(observation) => {
       *observation_count += 1;
+      if !observation.candidates.is_empty() {
+        *saw_any_candidates = true;
+      }
       Some(observation)
     }
-    Err(_diagnostic) => None,
+    Err(diagnostic) => {
+      *observe_error_count += 1;
+      observe_diagnostics.push(diagnostic);
+      None
+    }
   }
 }
 
@@ -431,6 +527,7 @@ mod tests {
       &mut adapter,
       &ReacquireConfig {
         max_scroll_attempts: 1,
+        ..Default::default()
       },
     );
     assert!(matches!(outcome, ReacquireOutcome::NotFound { .. }));
@@ -473,6 +570,7 @@ mod tests {
       &mut adapter,
       &ReacquireConfig {
         max_scroll_attempts: 2,
+        ..Default::default()
       },
     );
     match outcome {
@@ -492,6 +590,81 @@ mod tests {
     let memory = empty_memory();
     let mut adapter = FakeAdapter {
       observations: vec![ReacquireObservation {
+        fingerprint: "other".into(),
+        candidates: vec![ReacquireCandidate {
+          node_id: None,
+          label: "Other Playlist".into(),
+          section_hint: None,
+          bounds: ViewBounds::default(),
+        }],
+      }],
+      cursor: 0,
+      scrolls: 0,
+    };
+
+    let outcome = reacquire(
+      &memory,
+      ReacquireTarget::LabelWithSection {
+        label: "Missing".into(),
+        section_hint: None,
+      },
+      &mut adapter,
+      &ReacquireConfig {
+        max_scroll_attempts: 0,
+        ..Default::default()
+      },
+    );
+    match outcome {
+      ReacquireOutcome::NotFound {
+        attempted_strategies,
+        ..
+      } => {
+        assert!(attempted_strategies.contains(&ReacquireStrategy::LabelCurrentViewport));
+      }
+      other => panic!("expected not found, got {other:?}"),
+    }
+  }
+
+  #[test]
+  fn reacquire_stale_on_freshness_rejection() {
+    let mut memory = empty_memory();
+    memory.last_reconstructed_at_millis = 1_000;
+    let mut adapter = FakeAdapter {
+      observations: vec![],
+      cursor: 0,
+      scrolls: 0,
+    };
+
+    let outcome = reacquire(
+      &memory,
+      ReacquireTarget::LabelWithSection {
+        label: "Road Trip".into(),
+        section_hint: None,
+      },
+      &mut adapter,
+      &ReacquireConfig {
+        max_scroll_attempts: 0,
+        memory_read: Some(MemoryReadConfig {
+          now_millis: 1_000 + super::super::DEFAULT_MEMORY_TTL_MILLIS + 1,
+          ..Default::default()
+        }),
+        current_baseline_width: None,
+      },
+    );
+    match outcome {
+      ReacquireOutcome::Stale {
+        reason: StaleReason::MemoryRejectedAtFreshness,
+        ..
+      } => {}
+      other => panic!("expected freshness stale, got {other:?}"),
+    }
+  }
+
+  #[test]
+  fn reacquire_stale_when_region_gone() {
+    let memory = empty_memory();
+    let mut adapter = FakeAdapter {
+      observations: vec![ReacquireObservation {
         fingerprint: "empty".into(),
         candidates: vec![],
       }],
@@ -508,16 +681,96 @@ mod tests {
       &mut adapter,
       &ReacquireConfig {
         max_scroll_attempts: 0,
+        ..Default::default()
       },
     );
     match outcome {
-      ReacquireOutcome::NotFound {
-        attempted_strategies,
+      ReacquireOutcome::Stale {
+        reason: StaleReason::RegionGoneAtReacquisition,
         ..
+      } => {}
+      other => panic!("expected region gone stale, got {other:?}"),
+    }
+  }
+
+  #[test]
+  fn reacquire_not_found_when_candidates_exist_but_no_match() {
+    let memory = empty_memory();
+    let mut adapter = FakeAdapter {
+      observations: vec![ReacquireObservation {
+        fingerprint: "other".into(),
+        candidates: vec![ReacquireCandidate {
+          node_id: None,
+          label: "Visible Row".into(),
+          section_hint: None,
+          bounds: ViewBounds::default(),
+        }],
+      }],
+      cursor: 0,
+      scrolls: 0,
+    };
+
+    let outcome = reacquire(
+      &memory,
+      ReacquireTarget::LabelWithSection {
+        label: "Missing".into(),
+        section_hint: None,
+      },
+      &mut adapter,
+      &ReacquireConfig {
+        max_scroll_attempts: 0,
+        ..Default::default()
+      },
+    );
+    assert!(matches!(outcome, ReacquireOutcome::NotFound { .. }));
+  }
+
+  struct AlwaysErrAdapter;
+
+  impl ReacquireDriverAdapter for AlwaysErrAdapter {
+    fn observe_viewport(&mut self) -> Result<ReacquireObservation, ParserDiagnostic> {
+      Err(ParserDiagnostic {
+        code: "capture_failed".into(),
+        message: "simulated observe failure".into(),
+        node_id: None,
+      })
+    }
+
+    fn scroll_down(&mut self) -> Result<(), ParserDiagnostic> {
+      Ok(())
+    }
+
+    fn scroll_up(&mut self) -> Result<(), ParserDiagnostic> {
+      Ok(())
+    }
+  }
+
+  #[test]
+  fn reacquire_stale_when_all_observes_fail() {
+    let memory = empty_memory();
+    let mut adapter = AlwaysErrAdapter;
+
+    let outcome = reacquire(
+      &memory,
+      ReacquireTarget::LabelWithSection {
+        label: "Missing".into(),
+        section_hint: None,
+      },
+      &mut adapter,
+      &ReacquireConfig {
+        max_scroll_attempts: 0,
+        ..Default::default()
+      },
+    );
+    match outcome {
+      ReacquireOutcome::Stale {
+        reason: StaleReason::ObservationFailedAtReacquisition,
+        observation_count: 0,
+        diagnostics,
       } => {
-        assert!(attempted_strategies.contains(&ReacquireStrategy::LabelCurrentViewport));
+        assert!(!diagnostics.is_empty());
       }
-      other => panic!("expected not found, got {other:?}"),
+      other => panic!("expected observation-failed stale, got {other:?}"),
     }
   }
 }

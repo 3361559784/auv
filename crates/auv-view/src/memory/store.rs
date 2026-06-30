@@ -20,6 +20,11 @@ pub fn write_memory_file(path: &Path, memory: &ViewMemory) -> Result<(), String>
   std::fs::write(path, json).map_err(|error| format!("failed to write {}: {error}", path.display()))
 }
 
+pub fn parse_memory_file(path: &Path) -> Option<ViewMemory> {
+  let json = std::fs::read_to_string(path).ok()?;
+  serde_json::from_str(&json).ok()
+}
+
 pub fn load_memory_file(
   path: &Path,
   config: &MemoryReadConfig,

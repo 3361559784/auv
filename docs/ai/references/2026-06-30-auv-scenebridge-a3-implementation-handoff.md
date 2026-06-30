@@ -151,14 +151,17 @@ playlist select <label>  (or play --candidate-id → select path)
 
 ## Done checklist (A3-min)
 
-- [ ] `cargo test -p auv-view memory` green
-- [ ] `cargo test -p auv-netease-music view_parsers::sidebar` green
-- [ ] `cargo fmt --check` / `cargo check -p auv-view -p auv-netease-music`
-- [ ] Gate off: playlist select behavior matches pre-A3 rescan path
-- [ ] Gate on + memory hit: reacquire path skips top-scroll replay (hermetic test)
-- [ ] `git diff --check` on docs
-- [ ] A2 `playlist ls --json` doc drift fixed if touched
+- [x] `cargo test -p auv-view memory` green
+- [x] `cargo test -p auv-netease-music view_parsers::sidebar` green
+- [x] `cargo fmt --check` / `cargo check -p auv-view -p auv-netease-music`
+- [x] Gate off: playlist select behavior matches pre-A3 rescan path
+- [x] Gate on + memory hit: reacquire path skips top-scroll replay (hermetic test)
+- [x] `git diff --check` on docs
+- [x] A2 `playlist ls --json` doc drift fixed if touched
 - [ ] Optional live evidence attached (owner request)
+
+**A4 follow-up:** [A4 stale closure](2026-06-30-auv-scenebridge-a4-closure.md) —
+`ReacquireOutcome::Stale`, NetEase injectable test, stale vs not-found semantics.
 
 ## Rollback
 

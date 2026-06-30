@@ -1,9 +1,10 @@
+use crate::view_parsers::sidebar::parse::parse_sidebar_viewport;
 use crate::view_parsers::sidebar::region::{
   DefaultScreenRestoreReason, broad_sidebar_probe_bounds, detect_blocking_modal,
   detect_default_screen_restore, detect_sidebar_region, fallback_playlist_sidebar_region,
 };
 use crate::view_parsers::sidebar::test_support::fake_recognition;
-use crate::{RatioRect, ViewBounds};
+use crate::{RatioRect, SidebarCandidateKind, ViewBounds};
 
 #[test]
 fn detect_sidebar_region_uses_manual_region_when_provided() {
@@ -207,4 +208,177 @@ fn detect_blocking_modal_reports_cancel_or_open_dialog_markers() {
   .expect("open dialog markers should be reported as blocking modal");
 
   assert_eq!(diagnostic.code, "blocking_modal_dialog");
+}
+
+#[test]
+fn detect_sidebar_region_expands_short_body_at_default_window() {
+  let region = detect_sidebar_region(
+    None,
+    auv_driver::Size::new(1057.0, 752.0),
+    &fake_recognition(vec![
+      ("推荐", 8.0, 20.0, 40.0, 20.0),
+      ("创建的歌单", 8.0, 534.0, 110.0, 20.0),
+    ]),
+  )
+  .expect("default-window playlist marker should expand the sidebar body");
+
+  let bounds = region.bounds.expect("expanded region should carry bounds");
+  assert!(bounds.y.is_finite());
+  assert!(bounds.height.is_finite());
+  assert!(
+    bounds.y < 534.0,
+    "expanded top should sit above marker, got y={}",
+    bounds.y
+  );
+  assert!(
+    bounds.height >= 285.0,
+    "expanded body should meet SIGNOFF min height, got {}",
+    bounds.height
+  );
+}
+
+#[test]
+fn detect_sidebar_region_preserves_tall_body_when_marker_high() {
+  let region = detect_sidebar_region(
+    None,
+    auv_driver::Size::new(1646.0, 1053.0),
+    &fake_recognition(vec![
+      ("推荐", 8.0, 20.0, 40.0, 20.0),
+      ("创建的歌单", 8.0, 443.0, 110.0, 20.0),
+      ("Coding BGM", 32.0, 485.0, 120.0, 20.0),
+    ]),
+  )
+  .expect("tall playlist body should keep marker-aligned top");
+
+  assert_eq!(
+    region.bounds,
+    Some(ViewBounds::new(0.0, 443.0, 344.28, 528.0))
+  );
+}
+
+#[test]
+fn detect_sidebar_region_short_body_respects_fallback_floor() {
+  let floor_region = detect_sidebar_region(
+    None,
+    auv_driver::Size::new(600.0, 500.0),
+    &fake_recognition(vec![
+      ("推荐", 8.0, 20.0, 40.0, 20.0),
+      ("创建的歌单", 8.0, 400.0, 110.0, 20.0),
+    ]),
+  )
+  .expect("short body should clamp to fallback floor when bottom allows");
+  let floor_bounds = floor_region
+    .bounds
+    .expect("floor branch should carry bounds");
+  let fallback_y = fallback_playlist_sidebar_region(auv_driver::Size::new(600.0, 500.0))
+    .bounds
+    .expect("fallback region should carry bounds")
+    .y;
+  assert_eq!(floor_bounds.y, fallback_y);
+
+  let tiny_region = detect_sidebar_region(
+    None,
+    auv_driver::Size::new(400.0, 100.0),
+    &fake_recognition(vec![
+      ("推荐", 8.0, 10.0, 40.0, 20.0),
+      ("创建的歌单", 8.0, 12.0, 110.0, 20.0),
+    ]),
+  )
+  .expect("tiny window should still return finite sidebar bounds");
+  let tiny_bounds = tiny_region.bounds.expect("tiny branch should carry bounds");
+  assert!(tiny_bounds.y.is_finite());
+  assert!(tiny_bounds.height.is_finite());
+  assert!(tiny_bounds.y >= 0.0);
+  assert!(tiny_bounds.height >= 0.0);
+  assert_ne!(
+    tiny_bounds.y,
+    fallback_playlist_sidebar_region(auv_driver::Size::new(400.0, 100.0))
+      .bounds
+      .expect("fallback region should carry bounds")
+      .y,
+    "bottom below fallback_y must not force y onto the fallback floor"
+  );
+}
+
+#[test]
+fn detect_sidebar_region_resized_window_item_stays_in_viewport() {
+  let region = detect_sidebar_region(
+    None,
+    auv_driver::Size::new(1200.0, 820.0),
+    &fake_recognition(vec![
+      ("推荐", 8.0, 20.0, 40.0, 20.0),
+      ("创建的歌单", 8.0, 536.0, 110.0, 20.0),
+      ("VIP黑胶专属歌单", 32.0, 676.0, 150.0, 20.0),
+    ]),
+  )
+  .expect("resized window should expand short playlist body");
+
+  let bounds = region.bounds.expect("resized region should carry bounds");
+  let item_center_y = 676.0 + 10.0;
+  assert!(
+    item_center_y >= bounds.y && item_center_y <= bounds.y + bounds.height,
+    "playlist item center {:?} should stay inside {:?}",
+    item_center_y,
+    bounds
+  );
+}
+
+#[test]
+fn detect_sidebar_region_expanded_bounds_parse_playlist_item() {
+  let window_size = auv_driver::Size::new(1057.0, 752.0);
+  let recognition = fake_recognition(vec![
+    ("推荐", 8.0, 20.0, 40.0, 20.0),
+    ("创建的歌单", 8.0, 534.0, 110.0, 20.0),
+    ("VIP黑胶专属歌单", 32.0, 580.0, 150.0, 20.0),
+  ]);
+  let region = detect_sidebar_region(None, window_size, &recognition)
+    .expect("expanded default window should detect sidebar region");
+  let bounds = region.bounds.expect("expanded region should carry bounds");
+  let observation = parse_sidebar_viewport(0, bounds, &recognition);
+
+  assert!(
+    observation
+      .candidates
+      .iter()
+      .any(|candidate| candidate.kind == SidebarCandidateKind::PlaylistItem),
+    "expanded viewport should still classify playlist rows as PlaylistItem"
+  );
+}
+
+#[test]
+fn detect_sidebar_region_expanded_bounds_rejects_library_nav_rows() {
+  let window_size = auv_driver::Size::new(1057.0, 752.0);
+  let recognition = fake_recognition(vec![
+    ("推荐", 8.0, 400.0, 40.0, 20.0),
+    ("发现音乐", 8.0, 430.0, 60.0, 20.0),
+    ("创建的歌单", 8.0, 534.0, 110.0, 20.0),
+    ("VIP黑胶专属歌单", 32.0, 580.0, 150.0, 20.0),
+  ]);
+  let region = detect_sidebar_region(None, window_size, &recognition)
+    .expect("expanded default window should detect sidebar region");
+  let bounds = region.bounds.expect("expanded region should carry bounds");
+  let observation = parse_sidebar_viewport(0, bounds, &recognition);
+
+  assert!(
+    observation
+      .candidates
+      .iter()
+      .any(|candidate| candidate.kind == SidebarCandidateKind::PlaylistItem),
+    "playlist row should still parse after expansion"
+  );
+  assert!(
+    observation.candidates.iter().all(|candidate| candidate.kind
+      != SidebarCandidateKind::PlaylistItem
+      || candidate.label.as_deref() == Some("VIP黑胶专属歌单")),
+    "library/nav rows inside expanded viewport must not become PlaylistItem candidates"
+  );
+  assert!(
+    observation.candidates.iter().any(|candidate| {
+      matches!(
+        candidate.kind,
+        SidebarCandidateKind::NavigationItem | SidebarCandidateKind::SectionHeader
+      ) && matches!(candidate.label.as_deref(), Some("推荐") | Some("发现音乐"))
+    }),
+    "library/nav rows should remain navigation or section headers"
+  );
 }

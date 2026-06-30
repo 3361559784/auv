@@ -54,20 +54,55 @@ pub(crate) fn detect_sidebar_region(
   // bound. `f64::clamp(0.0, h)` panics on `min > max` when `h < 0`, the
   // same shape fixed in `playlist_sidebar_bottom` for this module.
   let usable_height = window_size.height.max(0.0);
-  let y = markers
+  let y_marker = markers
     .iter()
     .filter(|marker| is_playlist_section_marker(marker.2))
     .map(|marker| marker.1)
     .min_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal))
     .unwrap_or(0.0)
     .clamp(0.0, usable_height);
+  let bottom = playlist_sidebar_bottom(window_size);
+  let y = expand_sidebar_playlist_body_top(y_marker, window_size);
 
   Ok(sidebar_region_record(ViewBounds::new(
     0.0,
     y,
     max_x + 48.0,
-    playlist_sidebar_bottom(window_size) - y,
+    bottom - y,
   )))
+}
+
+fn min_playlist_sidebar_body_height(window_size: auv_driver::Size) -> f64 {
+  // NOTICE: Heuristic minimum playlist sidebar body height for logged-in layouts.
+  // This is not a stable contract; tune against live SIGNOFF probes when the client
+  // layout shifts.
+  // REVIEW(netease-sidebar-min-body-height): revisit ratio/floor after owner live
+  // re-probe on the default 1057×752 window.
+  let usable_height = window_size.height.max(0.0);
+  let ratio = 0.38 * usable_height;
+  let floor = 240.0;
+  let fallback_y = fallback_playlist_sidebar_region(window_size)
+    .bounds
+    .map(|bounds| bounds.y)
+    .unwrap_or(0.0);
+  let bottom = playlist_sidebar_bottom(window_size);
+  let cap = (bottom - fallback_y).max(0.0);
+  ratio.max(floor).min(cap)
+}
+
+fn expand_sidebar_playlist_body_top(y_marker: f64, window_size: auv_driver::Size) -> f64 {
+  let bottom = playlist_sidebar_bottom(window_size);
+  let fallback_y = fallback_playlist_sidebar_region(window_size)
+    .bounds
+    .map(|bounds| bounds.y)
+    .unwrap_or(0.0);
+  let min_body = min_playlist_sidebar_body_height(window_size);
+
+  if bottom - y_marker < min_body {
+    (bottom - min_body).max(fallback_y)
+  } else {
+    y_marker
+  }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -10,20 +10,19 @@ does **not** flip `AUV_NETEASE_VIEW_MEMORY`, remove NOTICE, or change Rust/proto
 
 ## One-line summary
 
-**PARTIAL** — hermetic gate green and live protocol/sign-off are ready, but Cases A–E
-were **not** executed on a successful desktop scan in this session; owner must run the
-matrix on a visible NetEase sidebar before PASS.
+**PARTIAL** — hermetic gate green; A6b used AUV computer use (`open-window`, sidebar
+scan) but Cases A–E remain **blocked** on `item_count=0` (未登录 / 创建的歌单 0).
 
 Question: does `AUV_NETEASE_VIEW_MEMORY=1` make real `playlist ls → select` use
 ViewMemory reacquire and honestly fall back on stale/miss/missing/gate-off?
 
-Answer: **PARTIAL** (protocol ready; live matrix pending owner execution).
+Answer: **PARTIAL** (A6b probe: computer use OK; matrix blocked on account state).
 
 ## Owner freeze block
 
 ```text
-hermetic：fmt/check + auv-view memory (16) + playlist_select (7) — PASS @ 374c0210
-live probe：playlist ls returned match_count=0; ViewMemory write skipped — Cases A–E blocked
+hermetic：fmt/check + auv-view memory (16) + playlist_select (7) — PASS @ f0b04e0
+live A6b：computer use ran; item_count=0; projection items empty — Cases A–E blocked
 hit signal：reacquire.outcome=reacquired + skipped_rescan_replay=true + no scroll-sidebar-top-*
 fallback：stale/not_found/missing/gate-off → known_limits + rescan replay steps
 wire：reacquired / stale / not_found (not hit)
@@ -34,14 +33,15 @@ gate：remains default-off; A3e NOTICE removal deferred
 
 | Case | Expected | Result (2026-06-30 session) |
 | --- | --- | --- |
-| **A Hit** | `reacquired`, skip top-scroll replay | **pending owner execution** |
-| **B Miss** | `not_found`, rescan replay | **pending owner execution** |
-| **C Stale** | `stale` + wire `stale_reason` | **pending owner execution** |
-| **D Memory missing** | `reacquire=null`, missing limit | **pending owner execution** |
-| **E Gate off** | `reacquire=null`, legacy replay | **pending owner execution** |
+| **A Hit** | `reacquired`, skip top-scroll replay | **blocked** (no playlist items) |
+| **B Miss** | `not_found`, rescan replay | **blocked** |
+| **C Stale** | `stale` + wire `stale_reason` | **blocked** |
+| **D Memory missing** | `reacquire=null`, missing limit | **blocked** |
+| **E Gate off** | `reacquire=null`, legacy replay | **blocked** |
 
-Live probe blocker: empty sidebar scan (`view memory write skipped: scan did not produce
-writable ViewMemory`). Agent session could not fabricate PASS live JSON.
+A6b blocker: guest account / zero sidebar playlists → `item_count=0`,
+`projection.sections[].items` empty. ViewMemory file may still write; `playlist select`
+cannot match. See `case-ls-probe.json`.
 
 ## Slice classification
 
@@ -59,10 +59,12 @@ writable ViewMemory`). Agent session could not fabricate PASS live JSON.
 | [`live/README.md`](evidence/2026-06-30-scenebridge-netease-sidebar/live/README.md) | Protocol + matrix + recipes |
 | [`live/SIGNOFF.md`](evidence/2026-06-30-scenebridge-netease-sidebar/live/SIGNOFF.md) | Matrix checkboxes + env |
 | [`live/transcript.txt`](evidence/2026-06-30-scenebridge-netease-sidebar/live/transcript.txt) | Redacted hermetic + partial probe |
-| `live/case-*.json` | **Not attached** — pending owner live run |
+| `live/case-*.json` | **Not attached** — Cases A–E blocked |
+| [`live/case-ls-probe.json`](evidence/2026-06-30-scenebridge-netease-sidebar/live/case-ls-probe.json) | A6b blocker probe |
+| [`live/view-memory-playlist_sidebar-probe.json`](evidence/2026-06-30-scenebridge-netease-sidebar/live/view-memory-playlist_sidebar-probe.json) | A6b probe snapshot |
 | [`live/examples/`](evidence/2026-06-30-scenebridge-netease-sidebar/live/examples/) | Structure exemplars only (`structure_exemplar`) |
 
-**Git rev (hermetic gate):** `374c0210acc9a20808316dcc725de3e7b7f6a748`
+**Git rev (hermetic gate):** `f0b04e0cdb674e7b79be6ed496c13294a59a66ac`
 
 ## Anti-misread rules (A6)
 
@@ -90,15 +92,15 @@ Gate: remains default-off; A3e NOTICE removal deferred to future owner slice
 
 ## Open items (PARTIAL only)
 
-- Owner executes Cases A–E per [`live/README.md`](evidence/2026-06-30-scenebridge-netease-sidebar/live/README.md)
-  with NetEase foreground and a query yielding non-empty matches + writable ViewMemory.
-- Attach redacted `case-a-hit-select.json` (and B/C as recommended) after owner run.
+- Owner logs in; ensure at least one named sidebar playlist (not `创建的歌单 0` only).
+- Re-run Cases A–E per [`live/README.md`](evidence/2026-06-30-scenebridge-netease-sidebar/live/README.md).
+- Attach `case-a-hit-select.json` (and B–E) after successful matrix.
 - If live Hit fails after owner run, open a **separate bug-fix slice** — not in A6.
 
 ## Done checklist (A6 docs-only)
 
 - [x] Extended live README (Cases A–E, recipes, redaction, bash protocol)
-- [x] `SIGNOFF.md` + `transcript.txt` (PARTIAL / pending)
+- [x] A6b computer-use probe + blocker artifacts (`case-ls-probe.json`)
 - [x] Structure exemplars under `live/examples/` (labeled, not live proof)
 - [x] Hermetic pre-gate PASS
 - [ ] Cases A–E live PASS on owner Mac

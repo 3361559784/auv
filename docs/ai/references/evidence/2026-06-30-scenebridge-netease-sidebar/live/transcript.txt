@@ -1,44 +1,52 @@
-# SceneBridge A6 live transcript (redacted)
+# SceneBridge A6b live transcript (redacted paths)
 # proof_class: live
-# Date: 2026-06-30
-# Status: PARTIAL — hermetic gate PASS; Cases A–E pending owner execution
+# Date: 2026-06-30 (A6b session)
+# Status: PARTIAL — computer-use probe; Cases A–E blocked on item_count=0
 
-## Hermetic pre-gate
+## Hermetic pre-gate @ f0b04e0cdb674e7b79be6ed496c13294a59a66ac
 
 $ cargo fmt --check
-# (no output — PASS)
-
 $ cargo check -p auv-view -p auv-netease-music
-# Finished `dev` profile — PASS
-
 $ cargo test -p auv-view memory
-# 16 passed — PASS
-
+# 16 passed
 $ cargo test -p auv-netease-music playlist_select
-# 7 passed — PASS
-
+# 7 passed
 $ git diff --check
-# (no output — PASS)
 
-## Live probe (incomplete — blocked on empty scan)
+## A6b computer-use probe (auv-netease-music / MacosDriver)
+
+Prerequisites observed on desktop: NetEase on 精选 tab, 未登录, 创建的歌单 0.
 
 $ export AUV_NETEASE_VIEW_MEMORY=1
-$ ARTIFACT_DIR=/tmp/auv-scenebridge-a6-live-20260630
+$ ARTIFACT_DIR=/tmp/auv-scenebridge-a6b-cu
 $ mkdir -p "$ARTIFACT_DIR"
-$ cargo run -p auv-netease-music -- playlist ls "test" --json --artifact-dir "$ARTIFACT_DIR"
+$ auv-netease-music open-window --json --artifact-dir "$ARTIFACT_DIR"
+$ auv-netease-music playlist ls --category all --max-scrolls 30 --json --artifact-dir "$ARTIFACT_DIR"
 
-stderr:
-  view memory write skipped: scan did not produce writable ViewMemory
-
-stdout (excerpt):
+stdout (excerpt from case-ls-probe.json):
+  "item_count": 0,
   "match_count": 0,
-  "matches": [],
-  "scan": { "app": { "app_id": "com.netease.163music" }, ... }
+  "scan.projection.sections": [
+    { "kind": "my_playlists", "label": "创建的歌单0", "items": [] }
+  ],
+  "scan.diagnostics": []
 
-# Blocker: empty sidebar scan — cannot proceed to Cases A–E without owner-visible
-# NetEase window and a query that yields matches + writable ViewMemory.
+view-memory-playlist_sidebar.json: written (2 node_snapshots) but no selectable playlist items.
 
-## Owner execution (not yet run)
+$ auv-netease-music playlist ls --category favorite --max-scrolls 40 --json --artifact-dir /tmp/auv-scenebridge-a6b-cu-fav
+# item_count=0, projection.sections=[]
 
-# See live/README.md full bash protocol for Cases A–E.
-# After owner run, append redacted case JSON paths and key reacquire fields here.
+$ auv-netease-music playlist select "创建的歌单0" --json --artifact-dir "$ARTIFACT_DIR"
+stderr: playlist select failed: no playlist matched "创建的歌单0"
+
+## Blocker (root cause)
+
+A6 Cases A–E require match_count > 0 (a real sidebar playlist label for select).
+Guest / zero-playlist sidebar state yields empty projection.items — reacquire path
+cannot be exercised end-to-end even though ViewMemory file is written.
+
+## Owner unblock checklist
+
+1. Log in to NetEase (or use account with sidebar playlists).
+2. Ensure at least one named playlist appears under 创建的歌单 or 收藏的歌单.
+3. Re-run Cases A–E per live/README.md; attach case-a-hit-select.json etc.

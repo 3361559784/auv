@@ -14,6 +14,9 @@ matrix (Cases A–E) and redacted attachments.
 - macOS with driver permissions (Accessibility, Screen Recording as required)
 - `AUV_NETEASE_VIEW_MEMORY=1` for reacquire path (Cases A–D)
 - Sidebar must produce a writable `ViewMemory` on `playlist ls` (non-empty scan)
+- **Logged-in account** with at least one **named playlist** in the sidebar
+  (`创建的歌单` / `收藏的歌单` items). Guest / `创建的歌单 0` yields `item_count=0`
+  and blocks Cases A–E (A6b probe: `case-ls-probe.json`).
 
 ## Hermetic pre-gate (run before live)
 
@@ -120,7 +123,11 @@ Copy redacted artifacts into this folder after owner review:
 | `case-a-hit-select.json` | Case A full `PlaylistSelectResult` |
 | `case-b-miss-select.json` | Case B (recommended) |
 | `case-c-stale-select.json` | Case C |
-| `view-memory-playlist_sidebar.json` | Post-`ls` snapshot (labels may be redacted) |
+| `case-d-missing-select.json` | Case D |
+| `case-e-gate-off-select.json` | Case E |
+| `case-ls-probe.json` | A6b blocker probe (`item_count=0`) |
+| `view-memory-playlist_sidebar.json` | Post-`ls` snapshot |
+| `view-memory-playlist_sidebar-probe.json` | A6b probe snapshot |
 | `SIGNOFF.md` | Matrix checkboxes + environment |
 
 `examples/` — optional **structure exemplars** only (`proof_class: structure_exemplar`).

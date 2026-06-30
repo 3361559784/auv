@@ -1,0 +1,89 @@
+{
+  "schema_version": "view-memory-v0",
+  "memory_id": "com.netease.163music:playlist_sidebar",
+  "app_bundle_id": "com.netease.163music",
+  "scope_id": "playlist_sidebar",
+  "last_reconstructed_at_millis": 1782832688421,
+  "source_run_id": "artifact-dir-bridge-a3",
+  "source_reconstruction_ref": "playlist-scan-cache.json",
+  "anchors": [
+    {
+      "id": "anchor.section.obs0.obs0.candidate.ocr0._____0._____0",
+      "label": "创建的歌单0",
+      "strength": "medium",
+      "bounds": {
+        "x": 34.0,
+        "y": 387.0,
+        "width": 74.0,
+        "height": 15.0
+      },
+      "evidence_ids": [
+        "obs0.ocr0"
+      ]
+    }
+  ],
+  "landmarks": [
+    {
+      "id": "landmark.section.obs0.obs0.candidate.ocr0._____0._____0",
+      "label": "创建的歌单0",
+      "use": "section_assignment",
+      "bounds": {
+        "x": 34.0,
+        "y": 387.0,
+        "width": 74.0,
+        "height": 15.0
+      },
+      "evidence_ids": [
+        "obs0.ocr0"
+      ]
+    }
+  ],
+  "node_snapshots": {
+    "root.sidebar": {
+      "node_id": "root.sidebar",
+      "kind": "collection",
+      "domain_kind": "netease.sidebar_playlist_collection",
+      "label": null,
+      "parent": null,
+      "section_hint": null,
+      "bounds_window_local": {
+        "x": 0.0,
+        "y": 387.0,
+        "width": 238.26,
+        "height": 283.0
+      },
+      "viewport_fingerprint_hint": null,
+      "last_seen_observation_index": 0,
+      "confidence": "medium"
+    },
+    "section.obs0.obs0.candidate.ocr0._____0._____0": {
+      "node_id": "section.obs0.obs0.candidate.ocr0._____0._____0",
+      "kind": "section",
+      "domain_kind": "netease.my_playlists",
+      "label": "创建的歌单0",
+      "parent": "root.sidebar",
+      "section_hint": "netease.my_playlists",
+      "bounds_window_local": {
+        "x": 34.0,
+        "y": 387.0,
+        "width": 74.0,
+        "height": 15.0
+      },
+      "viewport_fingerprint_hint": "创建的歌单0",
+      "last_seen_observation_index": 0,
+      "confidence": "medium"
+    }
+  },
+  "scope_snapshot": {
+    "region_id": "playlist_sidebar",
+    "region_bounds_window_local": {
+      "x": 0.0,
+      "y": 387.0,
+      "width": 238.26,
+      "height": 283.0
+    },
+    "baseline_width": 238,
+    "schema_version_view_ir": "view-ir-v0"
+  },
+  "diagnostics": []
+}

@@ -2,9 +2,9 @@
 
 `proof_class: live`
 
-**Date:** 2026-06-30
-**Git rev (hermetic gate):** `374c0210acc9a20808316dcc725de3e7b7f6a748`
-**Environment:** macOS 27.0 (arm64); agent session attempted live probe
+**Date:** 2026-06-30 (A6b computer-use session)
+**Git rev (hermetic gate):** `f0b04e0cdb674e7b79be6ed496c13294a59a66ac`
+**Environment:** macOS 27.0 (arm64); NetEase foreground; **未登录**; 创建的歌单 0
 **Closure:** [A6 live evidence closure](../../2026-06-30-auv-scenebridge-a6-live-evidence-closure.md)
 
 ## Hermetic pre-gate
@@ -21,22 +21,33 @@
 
 | Case | Status | Notes |
 | --- | --- | --- |
-| **A Hit** | **pending owner execution** | Requires writable view-memory + stable viewport |
-| **B Miss** | **pending owner execution** | Manual scroll-away recipe |
-| **C Stale** | **pending owner execution** | TTL or baseline drift edit |
-| **D Memory missing** | **pending owner execution** | Delete view-memory after `ls` |
-| **E Gate off** | **pending owner execution** | `AUV_NETEASE_VIEW_MEMORY` unset |
+| **A Hit** | **blocked** | `item_count=0`; no playlist label for select |
+| **B Miss** | **blocked** | Depends on Case A baseline |
+| **C Stale** | **blocked** | Depends on Case A baseline |
+| **D Memory missing** | **blocked** | Depends on Case A baseline |
+| **E Gate off** | **blocked** | Depends on Case A baseline |
 
-## Live probe (agent session, 2026-06-30)
+## A6b computer-use probe
 
-Partial attempt: `playlist ls "test"` with gate=1 returned `match_count: 0` and
-`view memory write skipped: scan did not produce writable ViewMemory`. Cases A–E
-were **not** executable in this session (empty sidebar scan).
+Commands: `open-window`, `playlist ls --category all|favorite` (MacosDriver scroll + OCR).
+
+| Signal | Observed |
+| --- | --- |
+| `item_count` / `match_count` | 0 / 0 |
+| `view-memory-playlist_sidebar.json` | Written (probe attached) |
+| `projection.sections[].items` | Empty (`创建的歌单0` header only) |
+| `playlist select` | `no playlist matched` |
+
+Probe attachments (blocker evidence, not Case PASS):
+
+- [`case-ls-probe.json`](case-ls-probe.json)
+- [`view-memory-playlist_sidebar-probe.json`](view-memory-playlist_sidebar-probe.json)
 
 ## Conclusion
 
-**PARTIAL** — protocol, redaction rules, and sign-off template are ready; live
-matrix cases remain **pending owner execution** on a Mac with NetEase visible and
-a non-empty sidebar scan.
+**PARTIAL** — AUV computer use ran; hermetic gate green. Cases A–E **not executed**
+because sidebar has no playlist items (guest / zero-playlist account state).
 
-Gate remains default-off; NOTICE removal deferred to a future owner slice.
+**Owner unblock:** log in + at least one sidebar playlist name, then re-run matrix.
+
+Gate remains default-off; NOTICE removal deferred.

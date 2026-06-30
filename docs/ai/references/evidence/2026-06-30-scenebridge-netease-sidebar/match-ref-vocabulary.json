@@ -1,0 +1,66 @@
+{
+  "_meta": {
+    "description": "Agent-facing MatchRef vocabulary for NetEase playlist sidebar",
+    "source": "crates/auv-netease-music/src/output.rs",
+    "proof_class": "hermetic",
+    "date": "2026-06-30",
+    "note": "MatchRef is product CLI JSON — not contract::CandidateRef"
+  },
+  "example_match_ref": {
+    "section_id": "sec-my-playlists-synth",
+    "section_kind": "my_playlists",
+    "item_id": "item-coding-bgm-synth",
+    "label": "Coding BGM",
+    "candidate_id": "obs0.candidate.coding-bgm-synth",
+    "anchor_id": "anchor.coding-bgm-synth"
+  },
+  "field_glossary": [
+    {
+      "field": "section_id",
+      "stable": "mostly",
+      "role": "Projection section identifier within one scan",
+      "maps_to": "ViewMemory scope partition (future)"
+    },
+    {
+      "field": "section_kind",
+      "stable": "yes",
+      "role": "Semantic section class (my_playlists, favorite_playlists, …)",
+      "maps_to": "SidebarSectionKind domain_kind"
+    },
+    {
+      "field": "item_id",
+      "stable": "mostly",
+      "role": "Playlist item identifier within projection",
+      "maps_to": "ViewNode id within parse (parse-scoped today)"
+    },
+    {
+      "field": "label",
+      "stable": "display",
+      "role": "OCR-normalized display text for keyword filter",
+      "maps_to": "ViewCandidate / node label"
+    },
+    {
+      "field": "candidate_id",
+      "stable": "parse-scoped",
+      "role": "Optional viewport-local candidate reference",
+      "maps_to": "Not durable CandidateRef until promotion gate"
+    },
+    {
+      "field": "anchor_id",
+      "stable": "target within memory scope",
+      "role": "Reacquire key for follow-up commands",
+      "maps_to": "ViewAnchor.id in reconstruction"
+    }
+  ],
+  "view_memory_keys": {
+    "app_bundle_id": "com.netease.163music",
+    "scope_id": "netease.playlist_sidebar",
+    "anchor_id": "anchor.coding-bgm-synth"
+  },
+  "not_identity_keys": [
+    "window bounds",
+    "scroll offset",
+    "viewport_fingerprint",
+    "observation_index (ephemeral for select replay today)"
+  ]
+}

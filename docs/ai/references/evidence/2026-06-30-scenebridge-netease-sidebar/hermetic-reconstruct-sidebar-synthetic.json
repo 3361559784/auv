@@ -1,0 +1,94 @@
+{
+  "_meta": {
+    "source": "synthetic — authored from reconstruct_sidebar_groups_items_under_carried_section test vectors",
+    "source_file": "crates/auv-netease-music/src/view_parsers/sidebar/tests.rs",
+    "source_lines": "7-54",
+    "proof_class": "hermetic",
+    "live": false,
+    "date": "2026-06-30"
+  },
+  "schema_version": "view-ir-v0",
+  "app": {
+    "bundle_id": "com.netease.163music",
+    "display_name": "Netease Music"
+  },
+  "scope": {
+    "scope_id": "netease.playlist_sidebar",
+    "projection_id": "netease.playlist_sidebar"
+  },
+  "fixture_summary": {
+    "viewport_pages": 2,
+    "projection_sections": 2,
+    "projection_items": 3,
+    "reconstruction_root_kind": "collection",
+    "reconstruction_child_count": 2
+  },
+  "input_pages_redacted": [
+    {
+      "page_index": 0,
+      "labels": ["创建的歌单", "Coding BGM"]
+    },
+    {
+      "page_index": 1,
+      "labels": ["Jazz", "收藏的歌单", "Road Trip"]
+    }
+  ],
+  "projection": {
+    "sections": [
+      {
+        "id": "sec-my-playlists-synth",
+        "kind": "my_playlists",
+        "label": "创建的歌单",
+        "items": [
+          {
+            "id": "item-coding-bgm-synth",
+            "label": "Coding BGM",
+            "section_hint": "my_playlists",
+            "anchor_id": "anchor.coding-bgm-synth",
+            "candidate_id": "obs0.candidate.coding-bgm-synth",
+            "confidence": "high"
+          }
+        ]
+      },
+      {
+        "id": "sec-favorite-playlists-synth",
+        "kind": "favorite_playlists",
+        "label": "收藏的歌单",
+        "items": [
+          {
+            "id": "item-jazz-synth",
+            "label": "Jazz",
+            "section_hint": "my_playlists",
+            "anchor_id": "anchor.jazz-synth",
+            "candidate_id": "obs1.candidate.jazz-synth",
+            "confidence": "high"
+          },
+          {
+            "id": "item-road-trip-synth",
+            "label": "Road Trip",
+            "section_hint": "favorite_playlists",
+            "anchor_id": "anchor.road-trip-synth",
+            "candidate_id": "obs1.candidate.road-trip-synth",
+            "confidence": "high"
+          }
+        ]
+      }
+    ]
+  },
+  "playlist_json_output_sample": {
+    "command": "playlist",
+    "query": null,
+    "item_count": 3,
+    "match_count": 3,
+    "matches": [
+      {
+        "section_id": "sec-my-playlists-synth",
+        "section_kind": "my_playlists",
+        "item_id": "item-coding-bgm-synth",
+        "label": "Coding BGM",
+        "candidate_id": "obs0.candidate.coding-bgm-synth",
+        "anchor_id": "anchor.coding-bgm-synth"
+      }
+    ]
+  }
+}

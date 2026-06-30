@@ -1,6 +1,6 @@
 # AUV Reference Index
 
-`docs/ai/references/` 下 **236** 篇 reference 的归类索引（不含本文件）。
+`docs/ai/references/` 下 **238** 篇 reference 的归类索引（不含本文件）。
 文件仍保持扁平路径（避免破坏代码与文档互链）；本索引负责导航。
 
 维护：新增 reference 时按命名规范落盘，并在本文件对应 lane 补一行。
@@ -155,6 +155,14 @@ cross-app scene identity / grounding → command targets; not session API rhythm
 #### design (1)
 
 - [`2026-06-30-auv-scenebridge-a1-design-charter.md`](2026-06-30-auv-scenebridge-a1-design-charter.md)
+
+#### review (1)
+
+- [`2026-06-30-auv-scenebridge-a2-boundary-decision-review.md`](2026-06-30-auv-scenebridge-a2-boundary-decision-review.md)
+
+#### evidence-pack (1)
+
+- [`2026-06-30-auv-scenebridge-a2-netease-sidebar-evidence-pack.md`](2026-06-30-auv-scenebridge-a2-netease-sidebar-evidence-pack.md)
 
 ### `core/api-mcp` — Active
 

@@ -72,25 +72,29 @@ checkouts** unless an owner names an explicit cross-scope slice.
 
 Do not import AIRI orchestration shells into AUV core as part of this lane.
 
-## Open questions (blocking A2)
+## Open questions — resolved by A2 (2026-06-30)
 
-| # | Question | A1 stance |
+| # | Question | A2 resolution (Package A) |
 | --- | --- | --- |
-| 1 | First evidence pack app / surface? | Owner-named — not chosen in A1 |
-| 2 | Prototype crate vs `auv-view` extension? | Deferred to A2 architecture slice |
-| 3 | Live vs hermetic proof boundary? | Must be explicit in A2; no desktop-coupled unit tests by default |
+| 1 | First evidence pack app / surface? | **NetEase Music playlist sidebar** — [A2 evidence pack](2026-06-30-auv-scenebridge-a2-netease-sidebar-evidence-pack.md) |
+| 2 | Prototype crate vs `auv-view` extension? | **`auv-view::memory` only** — [A2 boundary review](2026-06-30-auv-scenebridge-a2-boundary-decision-review.md) D2 |
+| 3 | Live vs hermetic proof boundary? | **Hermetic curated only in A2**; live deferred to A3 — boundary review D5 |
 
 ## Reopen triggers (candidate only)
 
-| Trigger | Unlocks |
-| --- | --- |
-| Owner names **SceneBridge A2** evidence pack | Grounding vocabulary + fixture scope |
-| Owner names **SceneBridge A3** prototype | Narrow read-side producer behind feature gate |
+| Trigger | Unlocks | Status |
+| --- | --- | --- |
+| Owner names **SceneBridge A2** evidence pack | Grounding vocabulary + fixture scope | **Landed 2026-06-30** — [boundary review](2026-06-30-auv-scenebridge-a2-boundary-decision-review.md), [evidence pack](2026-06-30-auv-scenebridge-a2-netease-sidebar-evidence-pack.md) |
+| Owner names **SceneBridge A3** prototype | Narrow read-side producer behind feature gate | **Frozen** until owner reopens |
 
 Signing A1 does **not** unlock session API P10, R2b-impl, or MCP merge.
 
 ## Related
 
+- [A2 boundary decision review](2026-06-30-auv-scenebridge-a2-boundary-decision-review.md) — **Owner: Package A accepted**
+- [A2 NetEase sidebar evidence pack](2026-06-30-auv-scenebridge-a2-netease-sidebar-evidence-pack.md)
+- [view-memory-v0](2026-05-29-view-parser-view-memory-v0.md)
+- [contract-bridge-v0](2026-05-29-view-parser-contract-bridge-v0.md)
 - [TERMS_AND_CONCEPTS.md](../../TERMS_AND_CONCEPTS.md)
 - [API-L1 operator guide](2026-06-30-auv-api-l1-session-api-operator-guide.md) (session lane — separate)
 - [P4 server seam](2026-06-30-auv-api-p4-session-proto-server-seam-design.md)

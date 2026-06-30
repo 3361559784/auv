@@ -1,0 +1,43 @@
+SceneBridge A2 — ViewMemory + reacquire gap card
+Date: 2026-06-30
+Proof class: curated spec + code NOTICE (hermetic)
+
+=== ViewMemory: spec'd, not implemented ===
+
+Spec: docs/ai/references/2026-05-29-view-parser-view-memory-v0.md
+  - ViewMemory lives in auv-view::memory (placement pinned)
+  - Keyed by app_bundle_id + scope_id
+  - Stores ViewAnchor, landmarks, node snapshots from ViewReconstruction
+
+Code status:
+  - No auv-view::memory Rust module shipped
+  - PlaylistSidebarScan documents parse-scoped IDs (lib.rs L317-325)
+
+Triage: docs/ai/references/2026-05-29-view-parser-spec-vs-pr9-divergence-triage.md §10
+  - "ViewMemory + reacquire: spec'd vs absent"
+  - playlist get / durable anchor requires memory layer
+
+=== playlist select: rescan replay (NOTICE) ===
+
+File: crates/auv-netease-music/src/commands/playlist.rs L353-357
+
+  // NOTICE(netease-playlist-select-reacquire): selection consumes the
+  // parse-scoped bounds from the fresh scan. It rewinds to the top and replays
+  // the scan page count instead of treating stored bounds as durable across
+  // arbitrary prior app state. Replace this with view-memory reacquire once
+  // that owner-approved slice lands.
+
+Implication: SceneBridge A2 documents the gap; A3 candidate replaces rescan with
+view-memory reacquire per Package A boundary review.
+
+=== Promotion gate: StabilityUnproven default ===
+
+File: src/candidate_promotion.rs L153-156
+  - PromotionRefusal::StabilityUnproven when stability input is Unproven
+  - View-derived candidates must pass surface-analyze single gate (contract-bridge-v0)
+  - MatchRef output does not imply CandidateRef eligibility
+
+=== A3 reopen (not auto-unlocked by A2) ===
+
+Owner must name SceneBridge A3 explicitly. See:
+  docs/ai/references/2026-06-30-auv-scenebridge-a2-boundary-decision-review.md

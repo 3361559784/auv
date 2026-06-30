@@ -29,14 +29,14 @@ directory and contains **no production screenshots**.
   - Target cases for A3c reacquire cascade tests
 - `live/` (`proof_class: live`)
   - [A6 sign-off protocol](live/README.md), [`SIGNOFF.md`](live/SIGNOFF.md), [`transcript.txt`](live/transcript.txt)
-  - Live case JSON pending owner execution; [`examples/`](live/examples/) are structure exemplars only
+  - A6c-3 live case JSON attached; [`examples/`](live/examples/) are structure exemplars only
 
 **A3 docs:** [prototype boundary review](../../2026-06-30-auv-scenebridge-a3-prototype-boundary-review.md),
 [implementation handoff](../../2026-06-30-auv-scenebridge-a3-implementation-handoff.md)
 
 **A5 field tiers:** [inspect identity proof charter](../../2026-06-30-auv-scenebridge-a5-inspect-identity-proof-charter.md)
 
-**A6 live closure:** [live evidence closure](../../2026-06-30-auv-scenebridge-a6-live-evidence-closure.md) (**PARTIAL**)
+**A6 live closure:** [live evidence closure](../../2026-06-30-auv-scenebridge-a6-live-evidence-closure.md) (**PARTIAL** @ A6c-3 — baseline unblocked; Case B open)
 
 ## What this folder proves
 

@@ -50,3 +50,23 @@ cannot be exercised end-to-end even though ViewMemory file is written.
 1. Log in to NetEase (or use account with sidebar playlists).
 2. Ensure at least one named playlist appears under 创建的歌单 or 收藏的歌单.
 3. Re-run Cases A–E per live/README.md; attach case-a-hit-select.json etc.
+
+---
+
+# A6c-3 append (2026-07-01) @ dbb7f1e
+
+## Hermetic pre-gate
+
+memory 16, playlist_select 7, region 23, write_from_scan 3 — all PASS.
+
+## Default probe (1057×752, QUERY=最近播放)
+
+sidebar_region.height=285.76, item_count=4, match_count=1, view-memory written.
+
+## Resized probe (1200×820, QUERY=VIP)
+
+match_count=1 (VIP黑胶专属歌单), dedup-only diagnostics, view-memory written.
+
+## Matrix
+
+A PASS, B FAIL (still reacquired), C/D/E PASS — see SIGNOFF.md.

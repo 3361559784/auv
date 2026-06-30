@@ -17,13 +17,10 @@ matrix (Cases A–E) and redacted attachments.
 - **Logged-in account** with at least one **named playlist** in the sidebar
   (`创建的歌单` / `收藏的歌单` items). Guest / `创建的歌单 0` yields `item_count=0`
   and blocks Cases A–E (A6b probe: `case-ls-probe.json`).
-- Current live blockers (2026-07-01 refresh):
-  - **Open:** default window geometry still yields headers-only `item_count=0`.
-  - **Resolved @ A6c-1 (hermetic):** dedup-only scans with `deduplicated_item` diagnostics
-    no longer block ViewMemory write; mixed diagnostics still block. Live confirmation
-    on resized-window probe is pending after merge (`case-ls-window-resized-probe.json`
-    documents pre-fix behavior; attachment is machine-parseable JSON — TextRecognition
-    stderr was stripped from the committed file).
+- Current live status (2026-07-01 @ A6c-3):
+  - **Closed:** default-window geometry (`case-ls-a6c3-default-probe.json`: `height≈286`, `item_count≥1`).
+  - **Closed:** dedup-only ViewMemory write (`case-ls-a6c3-resized-probe.json` + default probe).
+  - **Open:** Case B miss (`not_found`) — see [`SIGNOFF.md`](SIGNOFF.md).
 
 ## Hermetic pre-gate (run before live)
 
@@ -127,6 +124,8 @@ Copy redacted artifacts into this folder after owner review:
 | File | Purpose |
 | --- | --- |
 | `transcript.txt` | Redacted commands and key stdout |
+| `case-ls-a6c3-default-probe.json` | A6c-3 default-window post-fix probe |
+| `case-ls-a6c3-resized-probe.json` | A6c-3 resized dedup write confirmation |
 | `case-a-hit-select.json` | Case A full `PlaylistSelectResult` |
 | `case-b-miss-select.json` | Case B (recommended) |
 | `case-c-stale-select.json` | Case C |
@@ -151,6 +150,7 @@ Copy redacted artifacts into this folder after owner review:
 
 ## Sign-off checklist
 
-- [x] Hermetic matrix green (`cargo test -p auv-view memory`, `playlist_select` tests)
-- [ ] Cases A–E live matrix executed on owner Mac (see `SIGNOFF.md`)
+- [x] Hermetic matrix green (`cargo test -p auv-view memory`, `playlist_select`, `region`, `write_from_scan_when_enabled`)
+- [x] A6c-3 baseline + A/C/D/E live matrix on owner Mac (see `SIGNOFF.md`)
+- [ ] Case B miss live PASS
 - [ ] Owner approval to remove NOTICE / default-on feature gate (**not** in A6 scope)

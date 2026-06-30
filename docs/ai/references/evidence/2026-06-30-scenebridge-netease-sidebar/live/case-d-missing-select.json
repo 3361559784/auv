@@ -1,0 +1,257 @@
+{
+  "command": "playlist.select",
+  "query": "最近播放",
+  "app": {
+    "app_id": "com.netease.163music",
+    "name": "网易云音乐",
+    "version": null
+  },
+  "window": {
+    "id": "33779",
+    "title": null,
+    "bounds": {
+      "x": 0.0,
+      "y": 0.0,
+      "width": 1057.0,
+      "height": 752.0
+    }
+  },
+  "target": {
+    "label": "最近播放",
+    "section_id": "section.obs0.obs0.candidate.ocr4._____1_._____1_",
+    "section_kind": "favorite_playlists",
+    "item_id": "item.obs1.obs1.candidate.ocr0.____.____",
+    "anchor_id": "anchor.item.obs1.obs1.candidate.ocr0.____.____",
+    "candidate_id": "obs1.candidate.ocr0.____",
+    "observation_index": 1,
+    "bounds": {
+      "x": 59.0,
+      "y": 405.0,
+      "width": 58.0,
+      "height": 16.0
+    }
+  },
+  "steps": [
+    {
+      "name": "scroll-sidebar-top-0",
+      "target_bounds": {
+        "x": 0.0,
+        "y": 384.24,
+        "width": 238.26,
+        "height": 285.76
+      },
+      "delivery_path": "window_targeted_wheel",
+      "fallback_reason": "AX scroll is not implemented in this slice"
+    },
+    {
+      "name": "scroll-sidebar-top-1",
+      "target_bounds": {
+        "x": 0.0,
+        "y": 384.24,
+        "width": 238.26,
+        "height": 285.76
+      },
+      "delivery_path": "window_targeted_wheel",
+      "fallback_reason": "AX scroll is not implemented in this slice"
+    },
+    {
+      "name": "scroll-sidebar-top-2",
+      "target_bounds": {
+        "x": 0.0,
+        "y": 384.24,
+        "width": 238.26,
+        "height": 285.76
+      },
+      "delivery_path": "window_targeted_wheel",
+      "fallback_reason": "AX scroll is not implemented in this slice"
+    },
+    {
+      "name": "scroll-sidebar-top-3",
+      "target_bounds": {
+        "x": 0.0,
+        "y": 384.24,
+        "width": 238.26,
+        "height": 285.76
+      },
+      "delivery_path": "window_targeted_wheel",
+      "fallback_reason": "AX scroll is not implemented in this slice"
+    },
+    {
+      "name": "scroll-sidebar-top-4",
+      "target_bounds": {
+        "x": 0.0,
+        "y": 384.24,
+        "width": 238.26,
+        "height": 285.76
+      },
+      "delivery_path": "window_targeted_wheel",
+      "fallback_reason": "AX scroll is not implemented in this slice"
+    },
+    {
+      "name": "scroll-sidebar-top-5",
+      "target_bounds": {
+        "x": 0.0,
+        "y": 384.24,
+        "width": 238.26,
+        "height": 285.76
+      },
+      "delivery_path": "window_targeted_wheel",
+      "fallback_reason": "AX scroll is not implemented in this slice"
+    },
+    {
+      "name": "scroll-sidebar-top-6",
+      "target_bounds": {
+        "x": 0.0,
+        "y": 384.24,
+        "width": 238.26,
+        "height": 285.76
+      },
+      "delivery_path": "window_targeted_wheel",
+      "fallback_reason": "AX scroll is not implemented in this slice"
+    },
+    {
+      "name": "scroll-sidebar-top-7",
+      "target_bounds": {
+        "x": 0.0,
+        "y": 384.24,
+        "width": 238.26,
+        "height": 285.76
+      },
+      "delivery_path": "window_targeted_wheel",
+      "fallback_reason": "AX scroll is not implemented in this slice"
+    },
+    {
+      "name": "scroll-sidebar-top-8",
+      "target_bounds": {
+        "x": 0.0,
+        "y": 384.24,
+        "width": 238.26,
+        "height": 285.76
+      },
+      "delivery_path": "window_targeted_wheel",
+      "fallback_reason": "AX scroll is not implemented in this slice"
+    },
+    {
+      "name": "scroll-sidebar-top-9",
+      "target_bounds": {
+        "x": 0.0,
+        "y": 384.24,
+        "width": 238.26,
+        "height": 285.76
+      },
+      "delivery_path": "window_targeted_wheel",
+      "fallback_reason": "AX scroll is not implemented in this slice"
+    },
+    {
+      "name": "scroll-sidebar-top-10",
+      "target_bounds": {
+        "x": 0.0,
+        "y": 384.24,
+        "width": 238.26,
+        "height": 285.76
+      },
+      "delivery_path": "window_targeted_wheel",
+      "fallback_reason": "AX scroll is not implemented in this slice"
+    },
+    {
+      "name": "scroll-sidebar-top-11",
+      "target_bounds": {
+        "x": 0.0,
+        "y": 384.24,
+        "width": 238.26,
+        "height": 285.76
+      },
+      "delivery_path": "window_targeted_wheel",
+      "fallback_reason": "AX scroll is not implemented in this slice"
+    },
+    {
+      "name": "scroll-sidebar-top-12",
+      "target_bounds": {
+        "x": 0.0,
+        "y": 384.24,
+        "width": 238.26,
+        "height": 285.76
+      },
+      "delivery_path": "window_targeted_wheel",
+      "fallback_reason": "AX scroll is not implemented in this slice"
+    },
+    {
+      "name": "scroll-sidebar-top-13",
+      "target_bounds": {
+        "x": 0.0,
+        "y": 384.24,
+        "width": 238.26,
+        "height": 285.76
+      },
+      "delivery_path": "window_targeted_wheel",
+      "fallback_reason": "AX scroll is not implemented in this slice"
+    },
+    {
+      "name": "scroll-sidebar-top-14",
+      "target_bounds": {
+        "x": 0.0,
+        "y": 384.24,
+        "width": 238.26,
+        "height": 285.76
+      },
+      "delivery_path": "window_targeted_wheel",
+      "fallback_reason": "AX scroll is not implemented in this slice"
+    },
+    {
+      "name": "scroll-sidebar-top-15",
+      "target_bounds": {
+        "x": 0.0,
+        "y": 384.24,
+        "width": 238.26,
+        "height": 285.76
+      },
+      "delivery_path": "window_targeted_wheel",
+      "fallback_reason": "AX scroll is not implemented in this slice"
+    },
+    {
+      "name": "scroll-sidebar-target-page-0",
+      "target_bounds": {
+        "x": 0.0,
+        "y": 384.24,
+        "width": 238.26,
+        "height": 285.76
+      },
+      "delivery_path": "window_targeted_wheel",
+      "fallback_reason": "AX scroll is not implemented in this slice"
+    },
+    {
+      "name": "click-playlist",
+      "target_bounds": {
+        "x": 59.0,
+        "y": 405.0,
+        "width": 58.0,
+        "height": 16.0
+      },
+      "delivery_path": "window_targeted_mouse",
+      "fallback_reason": null
+    },
+    {
+      "name": "click-playlist-foreground-retry",
+      "target_bounds": {
+        "x": 59.0,
+        "y": 405.0,
+        "width": 58.0,
+        "height": 16.0
+      },
+      "delivery_path": "foreground_system_events",
+      "fallback_reason": "window-targeted click did not verify selection"
+    }
+  ],
+  "verification": {
+    "status": "failed",
+    "method": "main_title_ocr",
+    "observed_title": "曲。播客。有声书。歌单。专辑。",
+    "artifact": "/tmp/auv-scenebridge-a6c3-20260701/case-d/playlist-select-post-click.png",
+    "note": "verification checks the main content title after opening the sidebar playlist"
+  },
+  "diagnostics": [],
+  "known_limits": [
+    "view-memory file missing or unreadable — using rescan replay",
+    "background playlist row click did not verify; retried with foreground click"
+  ]
+}

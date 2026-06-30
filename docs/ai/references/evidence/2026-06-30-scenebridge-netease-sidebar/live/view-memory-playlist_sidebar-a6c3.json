@@ -1,0 +1,439 @@
+{
+  "schema_version": "view-memory-v0",
+  "memory_id": "com.netease.163music:playlist_sidebar",
+  "app_bundle_id": "com.netease.163music",
+  "scope_id": "playlist_sidebar",
+  "last_reconstructed_at_millis": 1782841107349,
+  "source_run_id": "artifact-dir-bridge-a3",
+  "source_reconstruction_ref": "playlist-scan-cache.json",
+  "anchors": [
+    {
+      "id": "anchor.item.obs0.obs0.candidate.ocr0.____.____",
+      "label": "最近播放",
+      "strength": "strong",
+      "bounds": {
+        "x": 59.0,
+        "y": 405.0,
+        "width": 58.0,
+        "height": 16.0
+      },
+      "evidence_ids": [
+        "obs0.ocr0"
+      ]
+    },
+    {
+      "id": "anchor.item.obs0.obs0.candidate.ocr1.___.___",
+      "label": "我播客",
+      "strength": "strong",
+      "bounds": {
+        "x": 59.0,
+        "y": 445.0,
+        "width": 58.0,
+        "height": 17.0
+      },
+      "evidence_ids": [
+        "obs0.ocr1"
+      ]
+    },
+    {
+      "id": "anchor.item.obs0.obs0.candidate.ocr2.__.__",
+      "label": "更發",
+      "strength": "strong",
+      "bounds": {
+        "x": 59.0,
+        "y": 481.0,
+        "width": 24.0,
+        "height": 11.0
+      },
+      "evidence_ids": [
+        "obs0.ocr2"
+      ]
+    },
+    {
+      "id": "anchor.section.obs0.obs0.candidate.ocr3._____1_._____1_",
+      "label": "创建的歌单1へ",
+      "strength": "medium",
+      "bounds": {
+        "x": 34.0,
+        "y": 535.0,
+        "width": 87.0,
+        "height": 13.0
+      },
+      "evidence_ids": [
+        "obs0.ocr3"
+      ]
+    },
+    {
+      "id": "anchor.section.obs0.obs0.candidate.ocr5._____1_._____1_",
+      "label": "收藏的歌单1へ",
+      "strength": "medium",
+      "bounds": {
+        "x": 34.0,
+        "y": 637.0,
+        "width": 88.0,
+        "height": 14.0
+      },
+      "evidence_ids": [
+        "obs0.ocr5"
+      ]
+    },
+    {
+      "id": "anchor.item.obs1.obs1.candidate.ocr0.____.____",
+      "label": "最近播放",
+      "strength": "strong",
+      "bounds": {
+        "x": 59.0,
+        "y": 405.0,
+        "width": 58.0,
+        "height": 16.0
+      },
+      "evidence_ids": [
+        "obs1.ocr0"
+      ]
+    },
+    {
+      "id": "anchor.item.obs1.obs1.candidate.ocr1.___.___",
+      "label": "我播客",
+      "strength": "strong",
+      "bounds": {
+        "x": 59.0,
+        "y": 445.0,
+        "width": 58.0,
+        "height": 17.0
+      },
+      "evidence_ids": [
+        "obs1.ocr1"
+      ]
+    },
+    {
+      "id": "anchor.item.obs1.obs1.candidate.ocr2.__.__",
+      "label": "更發",
+      "strength": "strong",
+      "bounds": {
+        "x": 59.0,
+        "y": 481.0,
+        "width": 24.0,
+        "height": 11.0
+      },
+      "evidence_ids": [
+        "obs1.ocr2"
+      ]
+    }
+  ],
+  "landmarks": [
+    {
+      "id": "landmark.section.obs0.obs0.candidate.ocr3._____1_._____1_",
+      "label": "创建的歌单1へ",
+      "use": "section_assignment",
+      "bounds": {
+        "x": 34.0,
+        "y": 535.0,
+        "width": 87.0,
+        "height": 13.0
+      },
+      "evidence_ids": [
+        "obs0.ocr3"
+      ]
+    },
+    {
+      "id": "landmark.section.obs0.obs0.candidate.ocr5._____1_._____1_",
+      "label": "收藏的歌单1へ",
+      "use": "section_assignment",
+      "bounds": {
+        "x": 34.0,
+        "y": 637.0,
+        "width": 88.0,
+        "height": 14.0
+      },
+      "evidence_ids": [
+        "obs0.ocr5"
+      ]
+    }
+  ],
+  "node_snapshots": {
+    "item.obs0.obs0.candidate.ocr0.____.____": {
+      "node_id": "item.obs0.obs0.candidate.ocr0.____.____",
+      "kind": "item",
+      "domain_kind": "netease.playlist_item",
+      "label": "最近播放",
+      "parent": "section.unassigned",
+      "section_hint": "netease.sidebar_section",
+      "bounds_window_local": {
+        "x": 59.0,
+        "y": 405.0,
+        "width": 58.0,
+        "height": 16.0
+      },
+      "viewport_fingerprint_hint": "最近播放",
+      "last_seen_observation_index": 0,
+      "confidence": "medium"
+    },
+    "item.obs0.obs0.candidate.ocr0.____.____.text": {
+      "node_id": "item.obs0.obs0.candidate.ocr0.____.____.text",
+      "kind": "text",
+      "domain_kind": null,
+      "label": "最近播放",
+      "parent": "item.obs0.obs0.candidate.ocr0.____.____",
+      "section_hint": "netease.sidebar_section",
+      "bounds_window_local": {
+        "x": 59.0,
+        "y": 405.0,
+        "width": 58.0,
+        "height": 16.0
+      },
+      "viewport_fingerprint_hint": "最近播放",
+      "last_seen_observation_index": 0,
+      "confidence": "medium"
+    },
+    "item.obs0.obs0.candidate.ocr1.___.___": {
+      "node_id": "item.obs0.obs0.candidate.ocr1.___.___",
+      "kind": "item",
+      "domain_kind": "netease.playlist_item",
+      "label": "我播客",
+      "parent": "section.unassigned",
+      "section_hint": "netease.sidebar_section",
+      "bounds_window_local": {
+        "x": 59.0,
+        "y": 445.0,
+        "width": 58.0,
+        "height": 17.0
+      },
+      "viewport_fingerprint_hint": "我播客",
+      "last_seen_observation_index": 0,
+      "confidence": "medium"
+    },
+    "item.obs0.obs0.candidate.ocr1.___.___.text": {
+      "node_id": "item.obs0.obs0.candidate.ocr1.___.___.text",
+      "kind": "text",
+      "domain_kind": null,
+      "label": "我播客",
+      "parent": "item.obs0.obs0.candidate.ocr1.___.___",
+      "section_hint": "netease.sidebar_section",
+      "bounds_window_local": {
+        "x": 59.0,
+        "y": 445.0,
+        "width": 58.0,
+        "height": 17.0
+      },
+      "viewport_fingerprint_hint": "我播客",
+      "last_seen_observation_index": 0,
+      "confidence": "medium"
+    },
+    "item.obs0.obs0.candidate.ocr2.__.__": {
+      "node_id": "item.obs0.obs0.candidate.ocr2.__.__",
+      "kind": "item",
+      "domain_kind": "netease.playlist_item",
+      "label": "更發",
+      "parent": "section.unassigned",
+      "section_hint": "netease.sidebar_section",
+      "bounds_window_local": {
+        "x": 59.0,
+        "y": 481.0,
+        "width": 24.0,
+        "height": 11.0
+      },
+      "viewport_fingerprint_hint": "更發",
+      "last_seen_observation_index": 0,
+      "confidence": "medium"
+    },
+    "item.obs0.obs0.candidate.ocr2.__.__.text": {
+      "node_id": "item.obs0.obs0.candidate.ocr2.__.__.text",
+      "kind": "text",
+      "domain_kind": null,
+      "label": "更發",
+      "parent": "item.obs0.obs0.candidate.ocr2.__.__",
+      "section_hint": "netease.sidebar_section",
+      "bounds_window_local": {
+        "x": 59.0,
+        "y": 481.0,
+        "width": 24.0,
+        "height": 11.0
+      },
+      "viewport_fingerprint_hint": "更發",
+      "last_seen_observation_index": 0,
+      "confidence": "medium"
+    },
+    "item.obs1.obs1.candidate.ocr0.____.____": {
+      "node_id": "item.obs1.obs1.candidate.ocr0.____.____",
+      "kind": "item",
+      "domain_kind": "netease.playlist_item",
+      "label": "最近播放",
+      "parent": "section.obs0.obs0.candidate.ocr5._____1_._____1_",
+      "section_hint": "netease.favorite_playlists",
+      "bounds_window_local": {
+        "x": 59.0,
+        "y": 405.0,
+        "width": 58.0,
+        "height": 16.0
+      },
+      "viewport_fingerprint_hint": "最近播放",
+      "last_seen_observation_index": 0,
+      "confidence": "medium"
+    },
+    "item.obs1.obs1.candidate.ocr0.____.____.text": {
+      "node_id": "item.obs1.obs1.candidate.ocr0.____.____.text",
+      "kind": "text",
+      "domain_kind": null,
+      "label": "最近播放",
+      "parent": "item.obs1.obs1.candidate.ocr0.____.____",
+      "section_hint": "netease.favorite_playlists",
+      "bounds_window_local": {
+        "x": 59.0,
+        "y": 405.0,
+        "width": 58.0,
+        "height": 16.0
+      },
+      "viewport_fingerprint_hint": "最近播放",
+      "last_seen_observation_index": 0,
+      "confidence": "medium"
+    },
+    "item.obs1.obs1.candidate.ocr1.___.___": {
+      "node_id": "item.obs1.obs1.candidate.ocr1.___.___",
+      "kind": "item",
+      "domain_kind": "netease.playlist_item",
+      "label": "我播客",
+      "parent": "section.obs0.obs0.candidate.ocr5._____1_._____1_",
+      "section_hint": "netease.favorite_playlists",
+      "bounds_window_local": {
+        "x": 59.0,
+        "y": 445.0,
+        "width": 58.0,
+        "height": 17.0
+      },
+      "viewport_fingerprint_hint": "我播客",
+      "last_seen_observation_index": 0,
+      "confidence": "medium"
+    },
+    "item.obs1.obs1.candidate.ocr1.___.___.text": {
+      "node_id": "item.obs1.obs1.candidate.ocr1.___.___.text",
+      "kind": "text",
+      "domain_kind": null,
+      "label": "我播客",
+      "parent": "item.obs1.obs1.candidate.ocr1.___.___",
+      "section_hint": "netease.favorite_playlists",
+      "bounds_window_local": {
+        "x": 59.0,
+        "y": 445.0,
+        "width": 58.0,
+        "height": 17.0
+      },
+      "viewport_fingerprint_hint": "我播客",
+      "last_seen_observation_index": 0,
+      "confidence": "medium"
+    },
+    "item.obs1.obs1.candidate.ocr2.__.__": {
+      "node_id": "item.obs1.obs1.candidate.ocr2.__.__",
+      "kind": "item",
+      "domain_kind": "netease.playlist_item",
+      "label": "更發",
+      "parent": "section.obs0.obs0.candidate.ocr5._____1_._____1_",
+      "section_hint": "netease.favorite_playlists",
+      "bounds_window_local": {
+        "x": 59.0,
+        "y": 481.0,
+        "width": 24.0,
+        "height": 11.0
+      },
+      "viewport_fingerprint_hint": "更發",
+      "last_seen_observation_index": 0,
+      "confidence": "medium"
+    },
+    "item.obs1.obs1.candidate.ocr2.__.__.text": {
+      "node_id": "item.obs1.obs1.candidate.ocr2.__.__.text",
+      "kind": "text",
+      "domain_kind": null,
+      "label": "更發",
+      "parent": "item.obs1.obs1.candidate.ocr2.__.__",
+      "section_hint": "netease.favorite_playlists",
+      "bounds_window_local": {
+        "x": 59.0,
+        "y": 481.0,
+        "width": 24.0,
+        "height": 11.0
+      },
+      "viewport_fingerprint_hint": "更發",
+      "last_seen_observation_index": 0,
+      "confidence": "medium"
+    },
+    "root.sidebar": {
+      "node_id": "root.sidebar",
+      "kind": "collection",
+      "domain_kind": "netease.sidebar_playlist_collection",
+      "label": null,
+      "parent": null,
+      "section_hint": null,
+      "bounds_window_local": {
+        "x": 0.0,
+        "y": 384.24,
+        "width": 238.26,
+        "height": 285.76
+      },
+      "viewport_fingerprint_hint": null,
+      "last_seen_observation_index": 0,
+      "confidence": "medium"
+    },
+    "section.obs0.obs0.candidate.ocr3._____1_._____1_": {
+      "node_id": "section.obs0.obs0.candidate.ocr3._____1_._____1_",
+      "kind": "section",
+      "domain_kind": "netease.my_playlists",
+      "label": "创建的歌单1へ",
+      "parent": "root.sidebar",
+      "section_hint": "netease.my_playlists",
+      "bounds_window_local": {
+        "x": 34.0,
+        "y": 535.0,
+        "width": 87.0,
+        "height": 13.0
+      },
+      "viewport_fingerprint_hint": "创建的歌单1へ",
+      "last_seen_observation_index": 0,
+      "confidence": "medium"
+    },
+    "section.obs0.obs0.candidate.ocr5._____1_._____1_": {
+      "node_id": "section.obs0.obs0.candidate.ocr5._____1_._____1_",
+      "kind": "section",
+      "domain_kind": "netease.favorite_playlists",
+      "label": "收藏的歌单1へ",
+      "parent": "root.sidebar",
+      "section_hint": "netease.favorite_playlists",
+      "bounds_window_local": {
+        "x": 34.0,
+        "y": 637.0,
+        "width": 88.0,
+        "height": 14.0
+      },
+      "viewport_fingerprint_hint": "收藏的歌单1へ",
+      "last_seen_observation_index": 0,
+      "confidence": "medium"
+    },
+    "section.unassigned": {
+      "node_id": "section.unassigned",
+      "kind": "section",
+      "domain_kind": "netease.sidebar_section",
+      "label": null,
+      "parent": "root.sidebar",
+      "section_hint": "netease.sidebar_section",
+      "bounds_window_local": {
+        "x": 0.0,
+        "y": 0.0,
+        "width": 0.0,
+        "height": 0.0
+      },
+      "viewport_fingerprint_hint": null,
+      "last_seen_observation_index": 0,
+      "confidence": "medium"
+    }
+  },
+  "scope_snapshot": {
+    "region_id": "playlist_sidebar",
+    "region_bounds_window_local": {
+      "x": 0.0,
+      "y": 384.24,
+      "width": 238.26,
+      "height": 285.76
+    },
+    "baseline_width": 238,
+    "schema_version_view_ir": "view-ir-v0"
+  },
+  "diagnostics": []
+}

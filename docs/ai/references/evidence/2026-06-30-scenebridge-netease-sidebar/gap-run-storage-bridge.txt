@@ -35,10 +35,15 @@ Landed for one consumer path (playlist ls + --store-root):
   - real source_run_id + view_memory_lineage_ref_wire when store-root used
   - inspect / trace read API → A8
 
-=== A8 trigger ===
+=== A8 landed (inspect read graduation) ===
 
-Owner names SceneBridge A8 when:
-  - Runtime::list_view_memory_writes / inspect read API needed, OR
-  - view.parse.memory_write trace spans required
+Landed:
+  - view_parser_read extractors (view-memory, select-result, reacquire spans)
+  - list_view_memory_writes / view_parser_inspect / inspect_run proof text
+  - inspect_server GET /runs/{id} always includes view_parser
+  - Controlled reacquire trace subset on playlist select --store-root persist
 
-Until A8: inspect/trace gap is intentional for NetEase CLI.
+Still deferred:
+  - Full six-stage reacquire span tree on all paths
+  - Implicit live-scan recording; default-on --store-root
+  - Second donor app / catalog registration

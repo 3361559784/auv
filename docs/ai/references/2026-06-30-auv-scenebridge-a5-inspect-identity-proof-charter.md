@@ -242,6 +242,22 @@ Source: [`crates/auv-view/src/memory/mod.rs`](../../crates/auv-view/src/memory/m
 - [A4 closure](2026-06-30-auv-scenebridge-a4-closure.md)
 - [anchor-reacquisition-v0](2026-05-29-view-parser-anchor-reacquisition-v0.md)
 - [inspect-viewer-v0](2026-05-29-view-parser-inspect-viewer-v0.md)
+
+## A8 addendum (2026-06-30)
+
+[A8 proof graduation](2026-06-30-auv-scenebridge-a8-proof-graduation.md) landed the
+deferred inspect surfaces for the NetEase playlist sidebar lane:
+
+| Surface | A5 status | A8 status |
+| --- | --- | --- |
+| `view.reacquire.*` spans (controlled subset) | deferred | **shipped** via `persist_playlist_select_proof` |
+| `list_view_memory_writes` | deferred | **shipped** on root inspect + `auv-view` memory read helpers |
+| `view_parser` inspect (`ViewParserInspect` / resolution summaries) | deferred | **shipped** on CLI `inspect run`, inspect_server `GET /runs/{id}` |
+
+A5 proof tiers (I–IV) remain the vocabulary for field classification; A8 wires
+those tiers to durable run storage and read-side inspect without changing tier
+definitions in this charter.
+
 - [A7-min graduation](2026-06-30-auv-scenebridge-a7-run-storage-graduation.md)
 - [view-memory-v0](2026-05-29-view-parser-view-memory-v0.md)
 - [Evidence folder](evidence/2026-06-30-scenebridge-netease-sidebar/)

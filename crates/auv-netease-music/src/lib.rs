@@ -1037,4 +1037,69 @@ mod tests {
     assert_eq!(target.observation_index, Some(6));
     assert_eq!(target.bounds, Some(bounds));
   }
+
+  #[test]
+  fn playlist_select_target_prefers_exact_numeric_label() {
+    let scan = PlaylistSidebarScan::from_projection_for_tests(PlaylistSidebarProjection {
+      sections: vec![SidebarSection {
+        id: "section-created".to_string(),
+        kind: SidebarSectionKind::MyPlaylists,
+        label: Some("创建的歌单".to_string()),
+        items: vec![
+          PlaylistSidebarItem {
+            id: "item-43".to_string(),
+            label: "43".to_string(),
+            section_hint: Some(SidebarSectionKind::MyPlaylists),
+            confidence: Confidence::High,
+            candidate_id: None,
+            anchor_id: None,
+          },
+          PlaylistSidebarItem {
+            id: "item-3".to_string(),
+            label: "3".to_string(),
+            section_hint: Some(SidebarSectionKind::MyPlaylists),
+            confidence: Confidence::High,
+            candidate_id: None,
+            anchor_id: None,
+          },
+        ],
+      }],
+    });
+
+    let target = scan.select_target("3").expect("exact numeric match");
+    assert_eq!(target.label, "3");
+    assert_eq!(target.item_id, "item-3");
+  }
+
+  #[test]
+  fn playlist_select_target_reports_ambiguous_contains_numeric_query() {
+    let scan = PlaylistSidebarScan::from_projection_for_tests(PlaylistSidebarProjection {
+      sections: vec![SidebarSection {
+        id: "section-created".to_string(),
+        kind: SidebarSectionKind::MyPlaylists,
+        label: Some("创建的歌单".to_string()),
+        items: vec![
+          PlaylistSidebarItem {
+            id: "item-43".to_string(),
+            label: "43".to_string(),
+            section_hint: Some(SidebarSectionKind::MyPlaylists),
+            confidence: Confidence::High,
+            candidate_id: None,
+            anchor_id: None,
+          },
+          PlaylistSidebarItem {
+            id: "item-13".to_string(),
+            label: "13".to_string(),
+            section_hint: Some(SidebarSectionKind::MyPlaylists),
+            confidence: Confidence::High,
+            candidate_id: None,
+            anchor_id: None,
+          },
+        ],
+      }],
+    });
+
+    let error = scan.select_target("3").expect_err("ambiguous contains");
+    assert!(error.contains("matched 2 items"));
+  }
 }

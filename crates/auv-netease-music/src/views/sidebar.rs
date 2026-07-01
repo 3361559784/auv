@@ -1,6 +1,11 @@
 use auv_view::{Confidence, normalize_identity};
 use serde::{Deserialize, Serialize};
 
+use crate::views::query_match::{
+  PlaylistLabelMatchTier, PlaylistQueryMatchMode, PlaylistQueryResolution,
+  playlist_label_match_tier, resolve_playlist_query_from_labels,
+};
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PlaylistSidebarProjection {
   pub sections: Vec<SidebarSection>,
@@ -136,49 +141,101 @@ impl SidebarView {
     self.state == SidebarState::Present
   }
 
-  /// Find the first created/favorite playlist whose normalized label contains `keyword`.
+  /// Find the first created/favorite playlist that uniquely matches `keyword`
+  /// using exact-first query resolution.
   pub fn find_playlist(&self, keyword: &str) -> Option<&PlaylistSidebarItem> {
-    let needle = normalize_identity(keyword);
-    if needle.is_empty() {
-      return None;
+    let matches = self.playlists(Some(keyword));
+    if matches.len() == 1 {
+      Some(matches[0].item)
+    } else {
+      None
     }
-
-    let projection = self.projection.as_ref()?;
-    self
-      .playlist_lookup
-      .iter()
-      .find(|entry| entry.normalized_label.contains(needle.as_str()))
-      .and_then(|entry| {
-        projection
-          .sections
-          .get(entry.section_index)
-          .and_then(|section| section.items.get(entry.item_index))
-      })
   }
 
-  /// Return created/favorite playlists whose normalized labels contain `keyword`.
+  /// Return created/favorite playlists that match `keyword` with exact-first
+  /// resolution (unique exact, else unique contains, else none or all ambiguous).
   ///
   /// `keyword == None` returns every playlist item in playlist collection sections.
   pub fn playlists(&self, keyword: Option<&str>) -> Vec<PlaylistRef<'_>> {
-    let needle = keyword.map(normalize_identity);
     let Some(projection) = self.projection.as_ref() else {
       return Vec::new();
     };
 
+    let all_refs = self.collect_playlist_refs(projection);
+    let Some(keyword) = keyword else {
+      return all_refs;
+    };
+
+    let (resolution, normalized_query) = Self::resolve_query(&all_refs, keyword);
+
+    all_refs
+      .into_iter()
+      .filter(|playlist| {
+        playlist_label_matches_resolution(
+          &normalize_identity(&playlist.item.label),
+          &normalized_query,
+          resolution,
+        )
+      })
+      .collect()
+  }
+
+  /// Report the exact-first resolution for `keyword` without filtering the
+  /// underlying items, so a caller can tell "matched exactly one" apart from
+  /// "several labels contain the query" instead of inferring it from the
+  /// match count alone.
+  pub(crate) fn playlist_query_resolution(&self, keyword: &str) -> PlaylistQueryResolution {
+    let Some(projection) = self.projection.as_ref() else {
+      return PlaylistQueryResolution::NotFound;
+    };
+    let all_refs = self.collect_playlist_refs(projection);
+    Self::resolve_query(&all_refs, keyword).0
+  }
+
+  fn resolve_query(refs: &[PlaylistRef<'_>], keyword: &str) -> (PlaylistQueryResolution, String) {
+    let labels: Vec<&str> = refs
+      .iter()
+      .map(|playlist| playlist.item.label.as_str())
+      .collect();
+    (
+      resolve_playlist_query_from_labels(&labels, keyword),
+      normalize_identity(keyword),
+    )
+  }
+
+  fn collect_playlist_refs<'a>(
+    &self,
+    projection: &'a PlaylistSidebarProjection,
+  ) -> Vec<PlaylistRef<'a>> {
     self
       .playlist_lookup
       .iter()
-      .filter(|entry| {
-        needle
-          .as_ref()
-          .is_none_or(|needle| entry.normalized_label.contains(needle.as_str()))
-      })
       .filter_map(|entry| {
         let section = projection.sections.get(entry.section_index)?;
         let item = section.items.get(entry.item_index)?;
         Some(PlaylistRef { section, item })
       })
       .collect()
+  }
+}
+
+fn playlist_label_matches_resolution(
+  normalized_label: &str,
+  normalized_query: &str,
+  resolution: PlaylistQueryResolution,
+) -> bool {
+  let tier = playlist_label_match_tier(normalized_label, normalized_query);
+  match resolution {
+    PlaylistQueryResolution::Unique {
+      mode: PlaylistQueryMatchMode::Exact,
+    } => tier == PlaylistLabelMatchTier::Exact,
+    PlaylistQueryResolution::Unique {
+      mode: PlaylistQueryMatchMode::Contains,
+    } => tier == PlaylistLabelMatchTier::Contains,
+    PlaylistQueryResolution::Ambiguous => {
+      tier == PlaylistLabelMatchTier::Exact || tier == PlaylistLabelMatchTier::Contains
+    }
+    PlaylistQueryResolution::NotFound => false,
   }
 }
 
@@ -338,6 +395,48 @@ mod tests {
 
     assert!(view.exists());
     assert!(view.find_playlist("daily").is_none());
+  }
+
+  #[test]
+  fn playlists_exact_beats_contains_for_numeric_query() {
+    let view = SidebarView::from_projection(projection(vec![playlist_section(
+      SidebarSectionKind::MyPlaylists,
+      vec![
+        playlist_item("p43", "43", None),
+        playlist_item("p39", "39", None),
+        playlist_item("p3", "3", None),
+      ],
+    )]));
+
+    let matches = view.playlists(Some("3"));
+    assert_eq!(matches.len(), 1);
+    assert_eq!(matches[0].item.id, "p3");
+  }
+
+  #[test]
+  fn playlists_contains_fallback_for_partial_label() {
+    let view = SidebarView::from_projection(projection(vec![playlist_section(
+      SidebarSectionKind::MyPlaylists,
+      vec![playlist_item("human-machine", "人造器械", None)],
+    )]));
+
+    let matches = view.playlists(Some("人造"));
+    assert_eq!(matches.len(), 1);
+    assert_eq!(matches[0].item.id, "human-machine");
+  }
+
+  #[test]
+  fn playlists_returns_all_ambiguous_contains_matches() {
+    let view = SidebarView::from_projection(projection(vec![playlist_section(
+      SidebarSectionKind::MyPlaylists,
+      vec![
+        playlist_item("p43", "43", None),
+        playlist_item("p13", "13", None),
+      ],
+    )]));
+
+    let matches = view.playlists(Some("3"));
+    assert_eq!(matches.len(), 2);
   }
 
   fn projection(sections: Vec<SidebarSection>) -> PlaylistSidebarProjection {

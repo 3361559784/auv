@@ -291,7 +291,7 @@ fn scan_with_collection_policy_impl(
     let observation = policy.apply(observation);
     if !query_seen {
       if let Some(query) = normalized_query {
-        query_seen = observation_contains_query(&observation, query);
+        query_seen = observation_satisfies_query(&observation, query);
       }
     }
     let introduced_new_semantic_candidates =
@@ -411,18 +411,16 @@ fn scan_with_collection_policy_impl(
   }
 }
 
-fn observation_contains_query(
-  observation: &SidebarViewportObservation,
-  normalized_query: &str,
-) -> bool {
-  observation.candidates.iter().any(|candidate| {
-    candidate.kind == SidebarCandidateKind::PlaylistItem
-      && candidate.label.as_deref().is_some_and(|label| {
-        let normalized_label = normalize_identity(label);
-        normalized_label.contains(normalized_query)
-          || normalized_query.contains(normalized_label.as_str())
-      })
-  })
+fn observation_satisfies_query(observation: &SidebarViewportObservation, query: &str) -> bool {
+  let labels: Vec<&str> = observation
+    .candidates
+    .iter()
+    .filter(|candidate| candidate.kind == SidebarCandidateKind::PlaylistItem)
+    .filter_map(|candidate| candidate.label.as_deref())
+    .collect();
+  crate::views::query_match::playlist_query_resolution_is_unique_exact(
+    crate::views::query_match::resolve_playlist_query_from_labels(&labels, query),
+  )
 }
 
 pub(crate) fn successful_scroll_delivery_path(path: Option<&str>) -> bool {
@@ -653,5 +651,44 @@ pub(crate) fn apply_bottom_boundary(scan: &mut PlaylistSidebarScan, bottom: Boun
   scan.boundary.bottom = bottom;
   if let Some(scrollable) = scan.reconstruction.root.scrollable.as_mut() {
     scrollable.boundary.bottom = bottom;
+  }
+}
+
+#[cfg(test)]
+mod query_seen_tests {
+  use super::*;
+  use crate::{
+    Confidence, SidebarCandidateKind, SidebarViewportCandidate, SidebarViewportObservation,
+  };
+
+  fn playlist_observation(labels: &[&str]) -> SidebarViewportObservation {
+    SidebarViewportObservation {
+      observation_index: 0,
+      candidates: labels
+        .iter()
+        .enumerate()
+        .map(|(index, label)| SidebarViewportCandidate {
+          id: format!("obs0.candidate.{index}"),
+          kind: SidebarCandidateKind::PlaylistItem,
+          label: Some((*label).to_string()),
+          bounds: None,
+          evidence_ids: Vec::new(),
+          confidence: Confidence::High,
+        })
+        .collect(),
+      ..SidebarViewportObservation::default()
+    }
+  }
+
+  #[test]
+  fn query_seen_false_when_viewport_only_contains_substring_match() {
+    let observation = playlist_observation(&["43"]);
+    assert!(!observation_satisfies_query(&observation, "3"));
+  }
+
+  #[test]
+  fn query_seen_true_when_viewport_has_unique_exact_match() {
+    let observation = playlist_observation(&["43", "3"]);
+    assert!(observation_satisfies_query(&observation, "3"));
   }
 }

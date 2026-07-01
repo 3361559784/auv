@@ -1,5 +1,5 @@
-SceneBridge A3 — artifact-dir vs run-storage bridge gap card
-Date: 2026-06-30
+SceneBridge A7-min — artifact-dir vs run-storage bridge gap card
+Date: 2026-06-30 (updated after A7-min)
 Proof class: curated spec + code inventory (hermetic)
 
 === Spec position ===
@@ -8,29 +8,37 @@ view-parser-view-memory-v0.md §Storage location:
   - ViewMemory artifacts live in run storage with role view-memory
   - Follow-up command scans recent runs for matching memory_id
 
-=== Shipped NetEase CLI position ===
+=== Shipped NetEase CLI position (A7-min one-consumer path) ===
 
-crates/auv-netease-music:
-  - Uses --artifact-dir local directory (default /tmp paths)
-  - playlist-scan-cache.json = full PlaylistSidebarScan JSON
-  - No RunId, no implicit run recording in product crate
-  - cli.rs write_playlist_scan_cache after playlist ls
+crates/auv-netease-music with optional --store-root:
+  - playlist ls: live scan unchanged; post-hoc durable write stages
+      netease-playlist-sidebar-scan + view-memory under real RunId
+  - view-memory-run-lineage.json manifest beside --artifact-dir (required when store-root set)
+  - select / play / play --candidate-id: manifest → store read-first when store-root set
+  - Without --store-root: A6 artifact-dir bridge unchanged (ARTIFACT_DIR_BRIDGE_RUN_ID)
 
-=== A3-min bridge (Package A3-min accepted) ===
+=== A3-min bridge (compatibility, still default without --store-root) ===
 
 Write view-memory-{scope_id}.json beside scan cache under same artifact-dir.
 
-Fields bridged:
+Fields when store-root absent:
   - source_run_id = "artifact-dir-bridge-a3" (synthetic placeholder)
   - source_reconstruction_ref = path to playlist-scan-cache.json
 
-Read path:
-  - load_latest from artifact-dir file, not run storage scan
+=== A7-min landed (narrow durable write/read graduation) ===
 
-=== A4 trigger ===
+NOT landed: trace spans, list_view_memory_writes, implicit live-scan recording, default-on store-root.
 
-Owner names SceneBridge A4 run-storage migration when:
-  - NetEase adopts implicit run recording, OR
-  - Cross-frontend consumer needs inspect list_view_memory_writes
+Landed for one consumer path (playlist ls + --store-root):
+  - VIEW_MEMORY_ARTIFACT_ROLE in auv-view
+  - persist_playlist_ls_artifacts post-hoc store write
+  - real source_run_id + view_memory_lineage_ref_wire when store-root used
+  - inspect / trace read API → A8
 
-Until A4: gap is intentional, not a bug.
+=== A8 trigger ===
+
+Owner names SceneBridge A8 when:
+  - Runtime::list_view_memory_writes / inspect read API needed, OR
+  - view.parse.memory_write trace spans required
+
+Until A8: inspect/trace gap is intentional for NetEase CLI.

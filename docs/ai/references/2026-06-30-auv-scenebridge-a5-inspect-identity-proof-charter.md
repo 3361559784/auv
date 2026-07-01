@@ -22,7 +22,8 @@ cross-app scope.
 ```text
 proof tiers：I durable identity keys | II memory/freshness | III run resolution | IV ephemeral geometry
 shipped：playlist ls --json → MatchRef + scan；playlist select → PlaylistSelectResult JSON；artifact-dir view-memory-*.json
-deferred：view.reacquire.* spans；Runtime::list_view_memory_writes；run-storage view-memory role
+deferred：view.reacquire.* spans；Runtime::list_view_memory_writes
+landed (A7-min, one consumer)：`view-memory` run-storage artifact role when `playlist ls --store-root`
 Q5：cross-app scope continues defer — com.netease.163music + playlist_sidebar only
 ```
 
@@ -182,7 +183,7 @@ Source: [`crates/auv-view/src/memory/mod.rs`](../../crates/auv-view/src/memory/m
 | `view.reacquire.attempt` / `view.reacquire.outcome` spans | **Not shipped** | II–III | Names should mirror `PlaylistReacquireSummary` when implemented |
 | `view.memory.write` / `view.memory.read` spans | **Not shipped** | II | Deferred per A3 P7 |
 | `Runtime::list_view_memory_writes` | **Not shipped** | II | [inspect-viewer-v0](2026-05-29-view-parser-inspect-viewer-v0.md) |
-| Run artifact `view-memory` role | **Not shipped** | I–II | Run-storage migration → future slice |
+| Run artifact `view-memory` role | **Landed (A7-min, one consumer)** | I–II | `playlist ls --store-root` only; inspect read API → A8 |
 
 **Alignment table (future spans ↔ shipped JSON):**
 
@@ -201,7 +202,7 @@ Source: [`crates/auv-view/src/memory/mod.rs`](../../crates/auv-view/src/memory/m
 4. **`known_limits` strings alone are not structured identity proof** — human-readable supplements only.
 5. **Command JSON proof ≠ run trace proof** — `PlaylistSelectResult` is shipped; `.auv` trace spans are deferred.
 6. **Hermetic test JSON ≠ `proof_class: live`** — curated fixtures do not substitute for owner-labeled desktop proof (A3 #10).
-7. **`source_run_id` bridge value is not a real run id** — `ARTIFACT_DIR_BRIDGE_RUN_ID` until run-storage lands.
+7. **`source_run_id` bridge value is not a real run id** — `ARTIFACT_DIR_BRIDGE_RUN_ID` when `--store-root` absent; real `RunId` when A7-min store path used.
 8. **Q5 cross-app comparison is out of A5 scope** — vocabulary frozen for NetEase `playlist_sidebar` only; no QQ Music table.
 9. **`anchor_id` alone is not sufficient** — label + `section_kind` / section hint is the primary cross-run key (A3 #9).
 10. **`verification.status` proves semantic play success, not scene identity** — separate concern from tiers I–III.
@@ -241,5 +242,6 @@ Source: [`crates/auv-view/src/memory/mod.rs`](../../crates/auv-view/src/memory/m
 - [A4 closure](2026-06-30-auv-scenebridge-a4-closure.md)
 - [anchor-reacquisition-v0](2026-05-29-view-parser-anchor-reacquisition-v0.md)
 - [inspect-viewer-v0](2026-05-29-view-parser-inspect-viewer-v0.md)
+- [A7-min graduation](2026-06-30-auv-scenebridge-a7-run-storage-graduation.md)
 - [view-memory-v0](2026-05-29-view-parser-view-memory-v0.md)
 - [Evidence folder](evidence/2026-06-30-scenebridge-netease-sidebar/)

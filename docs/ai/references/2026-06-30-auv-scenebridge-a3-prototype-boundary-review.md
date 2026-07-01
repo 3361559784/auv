@@ -215,7 +215,7 @@ This note does **not** approve:
 - `CandidateRef` / surface-analyze promotion wiring
 - QQ Music second donor
 - Full 6-stage reacquire + `view.reacquire.*` trace spans (A3-full)
-- Run-storage `view-memory` artifact role (A4)
+- Run-storage `view-memory` artifact role for **one consumer** (`playlist ls --store-root`) — **landed A7-min**; inspect/trace read API → **A8**
 - Content-derived `ViewNodeId` migration (A4)
 - `TERMS_AND_CONCEPTS.md` update (unless owner names TERMS slice)
 
@@ -223,7 +223,8 @@ This note does **not** approve:
 
 | Trigger | Unlocks | Does **not** auto-unlock |
 | --- | --- | --- |
-| Owner names **SceneBridge A4** run-storage migration | `view-memory` artifact role, real `source_run_id`, inspect `list_view_memory_writes` | Catalog, session API |
+| Owner names **SceneBridge A8** inspect/trace slice | `list_view_memory_writes`, `view.parse.memory_write` spans | Catalog, session API |
+| **A7-min landed** (`playlist ls --store-root`) | `view-memory` artifact role + real `source_run_id` for one consumer | Default-on store-root, full invoke graduation |
 | Owner names **content-derived ViewNodeId** slice | ir-shapes ID migration + stage 1 id stability | Promotion gate |
 | Owner names **promotion / CandidateRef** slice | surface-analyze wiring from view memory | Root catalog without consumer |
 | Owner signs **Package A3-full** fork | Revisit P1/P4/P7 | A4 by itself |

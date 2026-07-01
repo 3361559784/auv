@@ -593,6 +593,7 @@ dependencies = [
  "auv-driver-macos",
  "auv-driver-windows",
  "auv-media-macos",
+ "auv-tracing-driver",
  "auv-view",
  "clap",
  "comfy-table",
@@ -648,6 +649,7 @@ dependencies = [
 name = "auv-tracing-driver"
 version = "0.0.1"
 dependencies = [
+ "auv-view",
  "axum",
  "reqwest 0.12.28",
  "serde",

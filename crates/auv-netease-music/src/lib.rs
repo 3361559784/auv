@@ -5,6 +5,7 @@ pub mod cli;
 pub mod commands;
 pub mod interaction;
 pub mod output;
+pub mod recording;
 pub mod scroll;
 pub mod view_memory;
 pub mod view_parsers;
@@ -120,6 +121,7 @@ pub struct Inputs {
   pub sidebar_region: Option<RatioRect>,
   pub ocr_options: TextRecognitionOptions,
   pub category: PlaylistCategory,
+  pub store_root: Option<PathBuf>,
 }
 
 impl Inputs {
@@ -133,6 +135,7 @@ impl Inputs {
       sidebar_region: None,
       ocr_options: TextRecognitionOptions::default(),
       category: PlaylistCategory::All,
+      store_root: None,
     }
   }
 }

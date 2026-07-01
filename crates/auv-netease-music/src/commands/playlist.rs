@@ -3,10 +3,7 @@ use std::fmt;
 use auv_view::{ParserDiagnostic, ScanAppContext, ScanWindowContext, ViewBounds};
 use serde::{Deserialize, Serialize};
 
-use crate::{
-  Inputs, PlaybackControlState, PlaylistSelectTarget, decode_playlist_sidebar_scan_json,
-  run_live_scan_until_query,
-};
+use crate::{Inputs, PlaybackControlState, PlaylistSelectTarget, run_live_scan_until_query};
 
 const PLAYLIST_SELECT_BOTTOM_SAFE_PADDING: f64 = 128.0;
 
@@ -76,7 +73,13 @@ fn playlist_select_target_resolve_source(
 ) -> PlaylistSelectTargetResolveSource {
   if gate_enabled {
     if let Some(scan) = cache {
-      if scan.select_target(query).is_ok() {
+      let sidebar = crate::views::sidebar::SidebarView::from_projection(scan.projection().clone());
+      let resolution = sidebar.playlist_query_resolution(query);
+      // NOTICE(a7b-cache-resolve-v1): run-storage/store-backed query resolve only
+      // trusts a cached sidebar when the query is unique-exact. Unique-contains
+      // cache hits still fall back to live scan so A7 does not silently widen
+      // `playlist select/play <query>` semantics relative to `playlist ls`.
+      if crate::views::query_match::playlist_query_resolution_is_unique_exact(resolution) {
         return PlaylistSelectTargetResolveSource::ScanCache;
       }
     }
@@ -84,10 +87,10 @@ fn playlist_select_target_resolve_source(
   PlaylistSelectTargetResolveSource::LiveScan
 }
 
-fn try_load_playlist_scan_cache_optional(inputs: &Inputs) -> Option<crate::PlaylistSidebarScan> {
-  let cache_path = inputs.artifact_dir.join(crate::PLAYLIST_SCAN_CACHE_FILE);
-  let json = std::fs::read_to_string(&cache_path).ok()?;
-  decode_playlist_sidebar_scan_json(&json).ok()
+fn try_load_playlist_scan_cache_optional(
+  inputs: &Inputs,
+) -> (Option<crate::PlaylistSidebarScan>, Vec<String>) {
+  crate::recording::try_load_scan_cache_with_limits(inputs)
 }
 
 pub struct PlaylistSelectHumanSummary<'a> {
@@ -1028,6 +1031,15 @@ mod tests {
   }
 
   #[test]
+  fn playlist_select_target_resolve_source_live_scan_when_unique_contains_only() {
+    let scan = scan_with_playlist_labels(&["43"]);
+    assert_eq!(
+      playlist_select_target_resolve_source(true, Some(&scan), "3"),
+      PlaylistSelectTargetResolveSource::LiveScan
+    );
+  }
+
+  #[test]
   fn playlist_select_target_resolve_source_live_scan_when_select_target_miss() {
     let scan = scan_with_playlist_labels(&["43", "13"]);
     assert_eq!(
@@ -1068,15 +1080,31 @@ pub fn run_playlist_play_candidate_id(
 
 #[cfg(target_os = "macos")]
 pub fn run_playlist_select(inputs: &Inputs, query: &str) -> Result<PlaylistSelectResult, String> {
-  let (scan, target, target_from_scan_cache) = resolve_playlist_target_for_query(inputs, query)?;
-  run_playlist_select_resolved(inputs, query, scan, target, target_from_scan_cache)
+  let (scan, target, target_from_scan_cache, store_read_limits) =
+    resolve_playlist_target_for_query(inputs, query)?;
+  run_playlist_select_resolved(
+    inputs,
+    query,
+    scan,
+    target,
+    target_from_scan_cache,
+    store_read_limits,
+  )
 }
 
 #[cfg(target_os = "macos")]
 fn resolve_playlist_target_for_query(
   inputs: &Inputs,
   query: &str,
-) -> Result<(crate::PlaylistSidebarScan, PlaylistSelectTarget, bool), String> {
+) -> Result<
+  (
+    crate::PlaylistSidebarScan,
+    PlaylistSelectTarget,
+    bool,
+    Vec<String>,
+  ),
+  String,
+> {
   std::fs::create_dir_all(&inputs.artifact_dir).map_err(|error| {
     format!(
       "failed to create {}: {error}",
@@ -1085,17 +1113,17 @@ fn resolve_playlist_target_for_query(
   })?;
 
   let gate_enabled = crate::view_memory::enabled();
-  let cache = try_load_playlist_scan_cache_optional(inputs);
+  let (cache, store_read_limits) = try_load_playlist_scan_cache_optional(inputs);
   match playlist_select_target_resolve_source(gate_enabled, cache.as_ref(), query) {
     PlaylistSelectTargetResolveSource::ScanCache => {
       let scan = cache.expect("ScanCache path requires loaded cache");
       let target = scan.select_target(query)?;
-      Ok((scan, target, true))
+      Ok((scan, target, true, store_read_limits))
     }
     PlaylistSelectTargetResolveSource::LiveScan => {
       let scan = run_live_scan_until_query(inputs, query)?;
       let target = scan.select_target(query)?;
-      Ok((scan, target, false))
+      Ok((scan, target, false, store_read_limits))
     }
   }
 }
@@ -1107,6 +1135,7 @@ fn run_playlist_select_resolved(
   scan: crate::PlaylistSidebarScan,
   target: PlaylistSelectTarget,
   target_from_scan_cache: bool,
+  store_read_limits: Vec<String>,
 ) -> Result<PlaylistSelectResult, String> {
   use crate::LIVE_TOP_SEEK_SCROLL_DELTA_MULTIPLIER;
   use crate::delivery_path_label;
@@ -1150,6 +1179,7 @@ fn run_playlist_select_resolved(
   let mut steps = Vec::new();
   let mut diagnostics = scan.diagnostics().to_vec();
   let mut known_limits = scan.known_limits().to_vec();
+  known_limits.extend(store_read_limits);
   if target_from_scan_cache {
     known_limits.insert(0, PLAYLIST_SELECT_TARGET_FROM_SCAN_CACHE_MARKER.to_string());
   }
@@ -1706,8 +1736,16 @@ fn verify_playlist_select_title(
 
 #[cfg(target_os = "macos")]
 pub fn run_playlist_play(inputs: &Inputs, query: &str) -> Result<PlaylistPlayResult, String> {
-  let (scan, target, target_from_scan_cache) = resolve_playlist_target_for_query(inputs, query)?;
-  run_playlist_play_resolved(inputs, query, scan, target, target_from_scan_cache)
+  let (scan, target, target_from_scan_cache, store_read_limits) =
+    resolve_playlist_target_for_query(inputs, query)?;
+  run_playlist_play_resolved(
+    inputs,
+    query,
+    scan,
+    target,
+    target_from_scan_cache,
+    store_read_limits,
+  )
 }
 
 #[cfg(target_os = "macos")]
@@ -1715,21 +1753,23 @@ pub fn run_playlist_play_candidate_id(
   inputs: &Inputs,
   candidate_id: &str,
 ) -> Result<PlaylistPlayResult, String> {
-  let scan = load_playlist_scan_cache(inputs)?;
+  let (scan, store_read_limits) = load_playlist_scan_cache(inputs)?;
   let target = scan.select_target_by_candidate_id(candidate_id)?;
-  run_playlist_play_resolved(inputs, candidate_id, scan, target, true)
+  run_playlist_play_resolved(inputs, candidate_id, scan, target, true, store_read_limits)
 }
 
 #[cfg(target_os = "macos")]
-fn load_playlist_scan_cache(inputs: &Inputs) -> Result<crate::PlaylistSidebarScan, String> {
-  let cache_path = inputs.artifact_dir.join(crate::PLAYLIST_SCAN_CACHE_FILE);
-  let json = std::fs::read_to_string(&cache_path).map_err(|error| {
+fn load_playlist_scan_cache(
+  inputs: &Inputs,
+) -> Result<(crate::PlaylistSidebarScan, Vec<String>), String> {
+  let (scan, store_read_limits) = crate::recording::try_load_scan_cache_with_limits(inputs);
+  scan.ok_or_else(|| {
     format!(
-      "failed to read playlist scan cache {}: {error}; run `playlist ls <query> --json` first with the same --artifact-dir",
-      cache_path.display()
+      "failed to read playlist scan cache from store or {}; run `playlist ls <query> --json` first with the same --artifact-dir and --store-root",
+      inputs.artifact_dir.join(crate::PLAYLIST_SCAN_CACHE_FILE).display()
     )
-  })?;
-  decode_playlist_sidebar_scan_json(&json)
+  })
+  .map(|scan| (scan, store_read_limits))
 }
 
 #[cfg(target_os = "macos")]
@@ -1739,6 +1779,7 @@ fn run_playlist_play_resolved(
   scan: crate::PlaylistSidebarScan,
   target: PlaylistSelectTarget,
   target_from_scan_cache: bool,
+  store_read_limits: Vec<String>,
 ) -> Result<PlaylistPlayResult, String> {
   use crate::commands::daily_recommended::best_text_match;
   use crate::delivery_path_label;
@@ -1748,7 +1789,14 @@ fn run_playlist_play_resolved(
   };
   use auv_driver_macos::MacosDriver;
 
-  let select = run_playlist_select_resolved(inputs, query, scan, target, target_from_scan_cache)?;
+  let select = run_playlist_select_resolved(
+    inputs,
+    query,
+    scan,
+    target,
+    target_from_scan_cache,
+    store_read_limits,
+  )?;
   if select.verification.status != "passed" {
     return Err(format!(
       "playlist select verification failed before play: observed_title={:?}",

@@ -411,6 +411,8 @@ struct PlaylistPlayArgs {
   app_id: Option<String>,
   #[arg(long = "artifact-dir")]
   artifact_dir: Option<PathBuf>,
+  #[arg(long = "store-root")]
+  store_root: Option<PathBuf>,
   #[arg(long = "max-scrolls")]
   max_scrolls: Option<NonZeroUsize>,
   #[arg(long = "scroll-amount", value_parser = positive_scroll_amount)]
@@ -461,6 +463,8 @@ struct PlaylistLsArgs {
   app_id: Option<String>,
   #[arg(long = "artifact-dir")]
   artifact_dir: Option<PathBuf>,
+  #[arg(long = "store-root")]
+  store_root: Option<PathBuf>,
   #[arg(long = "max-scrolls")]
   max_scrolls: Option<NonZeroUsize>,
   #[arg(long = "scroll-amount", value_parser = positive_scroll_amount)]
@@ -493,6 +497,8 @@ struct PlaylistSelectArgs {
   app_id: Option<String>,
   #[arg(long = "artifact-dir")]
   artifact_dir: Option<PathBuf>,
+  #[arg(long = "store-root")]
+  store_root: Option<PathBuf>,
   #[arg(long = "max-scrolls")]
   max_scrolls: Option<NonZeroUsize>,
   #[arg(long = "scroll-amount", value_parser = positive_scroll_amount)]
@@ -608,6 +614,12 @@ fn parse_playlist(args: PlaylistArgs) -> Result<Command, String> {
   }
 }
 
+fn apply_store_root(inputs: &mut Inputs, store_root: Option<PathBuf>) {
+  if let Some(store_root) = store_root {
+    inputs.store_root = Some(store_root);
+  }
+}
+
 fn parse_playlist_ls(args: PlaylistLsArgs) -> Result<PlaylistCommand, String> {
   let mut inputs = Inputs::with_defaults();
   let query = args.keyword;
@@ -618,6 +630,7 @@ fn parse_playlist_ls(args: PlaylistLsArgs) -> Result<PlaylistCommand, String> {
   if let Some(artifact_dir) = args.artifact_dir {
     inputs.artifact_dir = artifact_dir;
   }
+  apply_store_root(&mut inputs, args.store_root);
   if let Some(max_scrolls) = args.max_scrolls {
     inputs.max_scrolls = max_scrolls.get();
   }
@@ -671,6 +684,7 @@ fn parse_playlist_select(args: PlaylistSelectArgs) -> Result<PlaylistSelectComma
   if let Some(artifact_dir) = args.artifact_dir {
     inputs.artifact_dir = artifact_dir;
   }
+  apply_store_root(&mut inputs, args.store_root);
   if let Some(max_scrolls) = args.max_scrolls {
     inputs.max_scrolls = max_scrolls.get();
   }
@@ -747,6 +761,7 @@ fn parse_playlist_play_query(args: PlaylistPlayArgs) -> Result<PlaylistPlayComma
   if let Some(artifact_dir) = args.artifact_dir {
     inputs.artifact_dir = artifact_dir;
   }
+  apply_store_root(&mut inputs, args.store_root);
   if let Some(max_scrolls) = args.max_scrolls {
     inputs.max_scrolls = max_scrolls.get();
   }
@@ -995,6 +1010,7 @@ mod tests {
       json_out: None,
       app_id: None,
       artifact_dir: None,
+      store_root: None,
       max_scrolls: None,
       scroll_amount: None,
       scroll_settle_ms: None,
@@ -1509,27 +1525,129 @@ fn run_playlist(cmd: PlaylistCommand) -> ExitCode {
       return ExitCode::from(1);
     }
   };
-  if let Err(error) = write_playlist_scan_cache(&cmd.inputs, &scan) {
-    eprintln!("{error}");
-    return ExitCode::from(1);
-  }
-  let view_memory_write = if crate::view_memory::enabled() {
-    match crate::view_memory::write_from_scan(&cmd.inputs, &scan) {
-      Ok(()) => Ok(()),
+
+  let mut ls_known_limits = Vec::new();
+  let mut run_id = None;
+  let gate_enabled = crate::view_memory::enabled();
+  let mut view_memory_write = Ok(());
+
+  if let Some(store_root) = &cmd.inputs.store_root {
+    match crate::recording::persist_playlist_ls_artifacts(
+      store_root,
+      &scan,
+      &cmd.inputs,
+      gate_enabled,
+    ) {
+      Ok(persisted) => {
+        match crate::recording::write_lineage_manifest(&cmd.inputs.artifact_dir, &persisted.lineage)
+        {
+          Ok(()) => run_id = Some(persisted.lineage.run_id.clone()),
+          Err(error) => {
+            crate::recording::remove_lineage_manifest(&cmd.inputs.artifact_dir);
+            let message = format!(
+              "lineage manifest write failed; store read may require fallback scan: {error}"
+            );
+            eprintln!("warning: {message}");
+            ls_known_limits.push(message);
+          }
+        }
+        if let Err(error) = write_playlist_scan_cache(&cmd.inputs, &scan) {
+          let message = format!(
+            "artifact-dir mirror incomplete; durable source is store run {}",
+            persisted.lineage.run_id
+          );
+          eprintln!("warning: {message}: {error}");
+          ls_known_limits.push(message);
+        }
+        if gate_enabled {
+          match persisted.memory.as_ref() {
+            Some(memory) => {
+              if let Err(error) = crate::view_memory::write_memory_mirror(&cmd.inputs, memory) {
+                let message = format!(
+                  "artifact-dir view-memory mirror incomplete; durable source is store run {}",
+                  persisted.lineage.run_id
+                );
+                eprintln!("warning: {message}: {error}");
+                ls_known_limits.push(message);
+                view_memory_write = Err(error);
+              } else {
+                view_memory_write = Ok(());
+              }
+            }
+            None => {
+              if let Err(error) = crate::recording::clear_artifact_dir_view_memory(&cmd.inputs) {
+                let message =
+                  format!("failed to clear stale artifact-dir view-memory before skip: {error}");
+                eprintln!("warning: {message}");
+                ls_known_limits.push(message);
+              }
+              ls_known_limits.push(format!(
+                "view-memory not written; durable store run {} has no memory artifact",
+                persisted.lineage.run_id
+              ));
+              view_memory_write = Err("scan did not produce writable ViewMemory".to_string());
+            }
+          }
+        }
+      }
       Err(error) => {
-        eprintln!("view memory write skipped: {error}");
-        Err(error)
+        let message = format!("store write failed; using artifact-dir bridge only: {error}");
+        eprintln!("warning: {message}");
+        ls_known_limits.push(message);
+        if let Err(error) = write_playlist_scan_cache(&cmd.inputs, &scan) {
+          eprintln!("{error}");
+          return ExitCode::from(1);
+        }
+        if gate_enabled {
+          view_memory_write = match crate::view_memory::write_from_scan(&cmd.inputs, &scan) {
+            Ok(()) => Ok(()),
+            Err(error) => {
+              eprintln!("view memory write skipped: {error}");
+              Err(error)
+            }
+          };
+        }
       }
     }
   } else {
-    Ok(())
-  };
-  let view_memory = playlist_view_memory_report(crate::view_memory::enabled(), view_memory_write);
-  let output = build_playlist_json_output(&scan, cmd.query.as_deref(), view_memory);
+    if let Err(error) = write_playlist_scan_cache(&cmd.inputs, &scan) {
+      eprintln!("{error}");
+      return ExitCode::from(1);
+    }
+    if gate_enabled {
+      view_memory_write = match crate::view_memory::write_from_scan(&cmd.inputs, &scan) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+          eprintln!("view memory write skipped: {error}");
+          Err(error)
+        }
+      };
+    }
+  }
+
+  let view_memory = playlist_view_memory_report(gate_enabled, view_memory_write);
+  let output = build_playlist_json_output(
+    &scan,
+    cmd.query.as_deref(),
+    view_memory,
+    run_id.clone(),
+    ls_known_limits.clone(),
+  );
 
   match &cmd.output {
     OutputMode::Human => {
       println!("{}", scan.to_human_readable());
+      if let Some(run_id) = &run_id {
+        println!("run_id: {run_id}");
+      }
+      if ls_known_limits.is_empty() {
+        println!("known_limits: (none)");
+      } else {
+        println!("known_limits:");
+        for limit in &ls_known_limits {
+          println!("  - {limit}");
+        }
+      }
       ExitCode::SUCCESS
     }
     OutputMode::Json => match serde_json::to_string_pretty(&output) {

@@ -87,6 +87,10 @@ pub struct PlaylistJsonOutput<'a> {
   pub scan: &'a PlaylistSidebarScan,
   #[serde(skip_serializing_if = "Option::is_none")]
   pub view_memory: Option<ViewMemoryWriteReport>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub run_id: Option<String>,
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub known_limits: Vec<String>,
 }
 
 /// Build the agent-facing JSON output without performing any live scan work.
@@ -94,6 +98,8 @@ pub fn build_playlist_json_output<'a>(
   scan: &'a PlaylistSidebarScan,
   keyword: Option<&str>,
   view_memory: Option<ViewMemoryWriteReport>,
+  run_id: Option<String>,
+  known_limits: Vec<String>,
 ) -> PlaylistJsonOutput<'a> {
   let sidebar = SidebarView::from_projection(scan.projection().clone());
   let item_count = collect_matches_from_sidebar(&sidebar, None).len();
@@ -109,6 +115,8 @@ pub fn build_playlist_json_output<'a>(
     matches,
     scan,
     view_memory,
+    run_id,
+    known_limits,
   }
 }
 
@@ -278,7 +286,7 @@ mod tests {
   fn build_playlist_json_output_counts_all_items_and_matches() {
     let scan = PlaylistSidebarScan::from_projection_for_tests(projection());
 
-    let output = build_playlist_json_output(&scan, Some("daily"), None);
+    let output = build_playlist_json_output(&scan, Some("daily"), None, None, Vec::new());
 
     assert_eq!(output.command, "playlist");
     assert_eq!(output.query.as_deref(), Some("daily"));
@@ -297,7 +305,7 @@ mod tests {
   fn build_playlist_json_output_has_no_query_resolution_without_keyword() {
     let scan = PlaylistSidebarScan::from_projection_for_tests(projection());
 
-    let output = build_playlist_json_output(&scan, None, None);
+    let output = build_playlist_json_output(&scan, None, None, None, Vec::new());
 
     assert_eq!(output.query_resolution, None);
   }
@@ -352,7 +360,7 @@ mod tests {
   fn build_playlist_json_output_reports_unique_exact_resolution() {
     let scan = PlaylistSidebarScan::from_projection_for_tests(numeric_playlist_projection());
 
-    let output = build_playlist_json_output(&scan, Some("3"), None);
+    let output = build_playlist_json_output(&scan, Some("3"), None, None, Vec::new());
 
     assert_eq!(output.match_count, 1);
     assert_eq!(output.matches[0].item_id, "p3");
@@ -366,7 +374,7 @@ mod tests {
   fn build_playlist_json_output_reports_unique_contains_resolution() {
     let scan = PlaylistSidebarScan::from_projection_for_tests(projection());
 
-    let output = build_playlist_json_output(&scan, Some("daily"), None);
+    let output = build_playlist_json_output(&scan, Some("daily"), None, None, Vec::new());
 
     assert_eq!(output.match_count, 1);
     assert_eq!(
@@ -404,7 +412,7 @@ mod tests {
     };
     let scan = PlaylistSidebarScan::from_projection_for_tests(projection);
 
-    let output = build_playlist_json_output(&scan, Some("3"), None);
+    let output = build_playlist_json_output(&scan, Some("3"), None, None, Vec::new());
 
     assert_eq!(output.match_count, 2);
     assert_eq!(
@@ -417,7 +425,7 @@ mod tests {
   fn build_playlist_json_output_reports_not_found_resolution() {
     let scan = PlaylistSidebarScan::from_projection_for_tests(projection());
 
-    let output = build_playlist_json_output(&scan, Some("zzz"), None);
+    let output = build_playlist_json_output(&scan, Some("zzz"), None, None, Vec::new());
 
     assert_eq!(output.match_count, 0);
     assert_eq!(output.query_resolution, Some(QueryResolutionKind::NotFound));
@@ -511,7 +519,8 @@ mod tests {
     assert!(view_memory.written);
     assert!(view_memory.skip_reason.is_none());
 
-    let output = build_playlist_json_output(&scan, Some("Test"), Some(view_memory));
+    let output =
+      build_playlist_json_output(&scan, Some("Test"), Some(view_memory), None, Vec::new());
     let json: serde_json::Value = serde_json::to_value(&output).expect("serialize output");
     assert_eq!(json["view_memory"]["written"], true);
     assert!(json["view_memory"].get("skip_reason").is_none());
@@ -537,7 +546,8 @@ mod tests {
       Some(fail_result.as_str())
     );
 
-    let fail_output = build_playlist_json_output(&blocking_scan, None, Some(fail_report));
+    let fail_output =
+      build_playlist_json_output(&blocking_scan, None, Some(fail_report), None, Vec::new());
     let fail_json: serde_json::Value = serde_json::to_value(&fail_output).expect("serialize fail");
     assert_eq!(fail_json["view_memory"]["written"], false);
     assert_eq!(
@@ -545,11 +555,62 @@ mod tests {
       Some(fail_result.as_str())
     );
 
-    let gate_off =
-      build_playlist_json_output(&scan, None, playlist_view_memory_report(false, Ok(())));
+    let gate_off = build_playlist_json_output(
+      &scan,
+      None,
+      playlist_view_memory_report(false, Ok(())),
+      None,
+      Vec::new(),
+    );
     let gate_off_json: serde_json::Value = serde_json::to_value(&gate_off).expect("gate off json");
     assert!(gate_off_json.get("view_memory").is_none());
 
     let _ = std::fs::remove_dir_all(&artifact_dir);
+  }
+
+  #[test]
+  fn build_playlist_json_output_includes_run_id_and_known_limits() {
+    let scan = {
+      let json = serde_json::json!({
+        "schema_version": "view-ir-v0",
+        "app": {},
+        "window": {},
+        "sidebar_region": {"bounds": {"x": 0.0, "y": 220.0, "width": 240.0, "height": 400.0}},
+        "observations": [],
+        "reconstruction": {
+          "root": {
+            "id": "root.sidebar",
+            "kind": "collection",
+            "bounds": {"x": 0.0, "y": 0.0, "width": 240.0, "height": 400.0},
+            "anchors": [],
+            "landmarks": [],
+            "actions": [],
+            "evidence": [],
+            "children": []
+          },
+          "anchor_index": [],
+          "landmark_index": []
+        },
+        "projection": {"sections": []},
+        "boundary": {"top": "unknown", "bottom": "unknown", "left": "unknown", "right": "unknown"},
+        "diagnostics": [],
+        "known_limits": []
+      });
+      crate::decode_playlist_sidebar_scan_json(&json.to_string()).expect("scan")
+    };
+    let limits =
+      vec!["artifact-dir mirror incomplete; durable source is store run run_abc".to_string()];
+    let output = build_playlist_json_output(
+      &scan,
+      None,
+      None,
+      Some("run_abc".to_string()),
+      limits.clone(),
+    );
+    assert_eq!(output.run_id.as_deref(), Some("run_abc"));
+    assert_eq!(output.known_limits, limits);
+    let json = serde_json::to_string(&output).expect("json");
+    assert!(json.contains("known_limits"));
+    assert!(json.contains("run_abc"));
   }
 }

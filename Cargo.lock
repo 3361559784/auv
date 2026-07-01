@@ -384,6 +384,7 @@ dependencies = [
  "auv-overlay-macos",
  "auv-steam",
  "auv-tracing-driver",
+ "auv-view",
  "axum",
  "image",
  "libc",

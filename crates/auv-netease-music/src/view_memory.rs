@@ -1,10 +1,13 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use auv_view::memory::{
-  ARTIFACT_DIR_BRIDGE_RUN_ID, MemoryReadConfig, MemoryWriteInput, ReacquireConfig,
-  ReacquireDriverAdapter, ReacquireOutcome, ReacquireTarget, StaleReason, ViewMemory,
-  ViewMemoryScopeSnapshot, memory_file_path, outcome_label, reacquire, strategy_name,
-  try_build_memory, view_memory_lineage_ref_wire, write_memory_file,
+  ARTIFACT_DIR_BRIDGE_RUN_ID, ATTR_REACQUIRE_FATAL_DIAGNOSTIC_KIND,
+  ATTR_REACQUIRE_OBSERVATION_COUNT, ATTR_REACQUIRE_OUTCOME, ATTR_REACQUIRE_SCOPE_ID,
+  ATTR_REACQUIRE_SKIPPED_RESCAN_REPLAY, ATTR_REACQUIRE_STAGE_USED, ATTR_REACQUIRE_TARGET_KIND,
+  MemoryReadConfig, MemoryWriteInput, ReacquireConfig, ReacquireDriverAdapter, ReacquireOutcome,
+  ReacquireTarget, StaleReason, ViewMemory, ViewMemoryScopeSnapshot, memory_file_path,
+  outcome_label, reacquire, reacquire_stage_span_name, strategy_name, try_build_memory,
+  view_memory_lineage_ref_wire, write_memory_file,
 };
 use auv_view::{ParserDiagnostic, VIEW_IR_SCHEMA_VERSION, ViewBounds};
 use serde::{Deserialize, Serialize};
@@ -20,6 +23,101 @@ pub struct PlaylistReacquireSummary {
   pub stale_reason: Option<String>,
   pub observation_count: usize,
   pub skipped_rescan_replay: bool,
+}
+
+/// NetEase-side trace evidence for controlled `view.reacquire.*` span emission (A8a).
+#[derive(Clone, Debug, PartialEq)]
+pub struct ReacquireTraceEvidence {
+  pub scope_id: String,
+  pub target_kind: String,
+  pub outcome: String,
+  pub stage_used: String,
+  pub observation_count: usize,
+  pub skipped_rescan_replay: bool,
+  pub stale_reason: Option<String>,
+  pub strategy_used: Option<String>,
+}
+
+impl ReacquireTraceEvidence {
+  pub fn from_select_parts(
+    scope_id: &str,
+    target: &PlaylistSelectTarget,
+    reacquire: Option<&PlaylistReacquireSummary>,
+  ) -> Option<Self> {
+    let summary = reacquire?;
+    Some(Self {
+      scope_id: scope_id.to_string(),
+      target_kind: reacquire_target_kind(target).to_string(),
+      outcome: summary.outcome.clone(),
+      stage_used: summary
+        .strategy_used
+        .clone()
+        .unwrap_or_else(|| "none".to_string()),
+      observation_count: summary.observation_count,
+      skipped_rescan_replay: summary.skipped_rescan_replay,
+      stale_reason: summary.stale_reason.clone(),
+      strategy_used: summary.strategy_used.clone(),
+    })
+  }
+
+  pub fn to_reacquire_root_attributes(&self) -> Vec<(String, String)> {
+    let mut attrs = vec![
+      (ATTR_REACQUIRE_SCOPE_ID.to_string(), self.scope_id.clone()),
+      (
+        ATTR_REACQUIRE_TARGET_KIND.to_string(),
+        self.target_kind.clone(),
+      ),
+      (ATTR_REACQUIRE_OUTCOME.to_string(), self.outcome.clone()),
+      (
+        ATTR_REACQUIRE_STAGE_USED.to_string(),
+        self.stage_used.clone(),
+      ),
+      (
+        ATTR_REACQUIRE_OBSERVATION_COUNT.to_string(),
+        self.observation_count.to_string(),
+      ),
+      (
+        ATTR_REACQUIRE_SKIPPED_RESCAN_REPLAY.to_string(),
+        self.skipped_rescan_replay.to_string(),
+      ),
+    ];
+    if self.outcome == "not_found" {
+      if let Some(reason) = &self.stale_reason {
+        attrs.push((
+          ATTR_REACQUIRE_FATAL_DIAGNOSTIC_KIND.to_string(),
+          reason.clone(),
+        ));
+      }
+    }
+    attrs
+  }
+
+  /// NOTICE(a8-controlled-subset): only the winning stage span is emitted in A8 v1.
+  pub fn winning_stage_span_name(&self) -> Option<String> {
+    let strategy = self.strategy_used.as_deref()?;
+    let stage = reacquire_strategy_stage_index(strategy)?;
+    Some(reacquire_stage_span_name(stage, strategy))
+  }
+}
+
+fn reacquire_target_kind(target: &PlaylistSelectTarget) -> &'static str {
+  if target.anchor_id.is_some() {
+    "anchor"
+  } else {
+    "label"
+  }
+}
+
+// NOTICE(a8-controlled-subset): stage index mapping aligns with anchor-reacquisition-v0
+// cascade ordering; only the winning stage span is recorded in A8 v1.
+fn reacquire_strategy_stage_index(strategy: &str) -> Option<u8> {
+  match strategy {
+    "direct_id" => Some(1),
+    "label_current_viewport" => Some(3),
+    "viewport_fingerprint" => Some(4),
+    "label_plus_section" => Some(5),
+    _ => None,
+  }
 }
 
 #[derive(Clone, Debug, PartialEq)]

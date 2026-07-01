@@ -1511,6 +1511,74 @@ mod tests {
 
     assert_eq!(error.kind(), clap::error::ErrorKind::UnknownArgument);
   }
+  #[test]
+  fn select_store_proof_failure_records_known_limit_and_clears_run_id() {
+    use super::apply_playlist_select_store_proof;
+    use crate::commands::playlist::{
+      PlaylistSelectResult, PlaylistSelectStep, PlaylistSelectVerification,
+    };
+    use crate::{Inputs, PlaylistSelectTarget, SidebarSectionKind};
+    use auv_view::{ScanAppContext, ScanWindowContext};
+
+    let root = std::env::temp_dir().join(format!("auv-select-store-fail-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("temp root");
+    let blocker = root.join("not-a-directory");
+    std::fs::write(&blocker, "blocker").expect("blocker file");
+
+    let mut inputs = Inputs::with_defaults();
+    inputs.store_root = Some(blocker);
+
+    let mut result = PlaylistSelectResult {
+      command: "playlist.select".into(),
+      query: "Test".into(),
+      app: ScanAppContext::default(),
+      window: ScanWindowContext::default(),
+      target: PlaylistSelectTarget {
+        label: "Test".into(),
+        section_id: "section.test".into(),
+        section_kind: SidebarSectionKind::MyPlaylists,
+        item_id: "item.test".into(),
+        anchor_id: None,
+        candidate_id: None,
+        observation_index: None,
+        bounds: None,
+      },
+      steps: vec![PlaylistSelectStep {
+        name: "reacquire-target".into(),
+        target_bounds: None,
+        delivery_path: None,
+        fallback_reason: None,
+      }],
+      verification: PlaylistSelectVerification {
+        status: "passed".into(),
+        method: "main_title_ocr_full_window_v1".into(),
+        observed_title: None,
+        artifact: None,
+        recognition_artifact: None,
+        sidebar_echo_recognition_artifact: None,
+        note: None,
+      },
+      diagnostics: Vec::new(),
+      known_limits: Vec::new(),
+      reacquire: None,
+      run_id: Some("partial-run-id".into()),
+    };
+
+    apply_playlist_select_store_proof(&inputs, &mut result);
+
+    assert!(result.run_id.is_none());
+    assert!(
+      result
+        .known_limits
+        .iter()
+        .any(|limit| limit.contains("store select proof failed")),
+      "expected known_limits entry, got {:?}",
+      result.known_limits
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+  }
 }
 
 fn run_playlist(cmd: PlaylistCommand) -> ExitCode {
@@ -1737,14 +1805,52 @@ fn run_open_window_command(cmd: OpenWindowCommand) -> ExitCode {
   }
 }
 
+fn apply_playlist_select_store_proof(
+  inputs: &Inputs,
+  result: &mut crate::commands::playlist::PlaylistSelectResult,
+) {
+  let Some(store_root) = &inputs.store_root else {
+    return;
+  };
+  let memory = crate::view_memory::load_memory_raw(inputs);
+  let evidence = crate::view_memory::ReacquireTraceEvidence::from_select_parts(
+    crate::view_memory::PLAYLIST_SIDEBAR_SCOPE_ID,
+    &result.target,
+    result.reacquire.as_ref(),
+  );
+  match crate::recording::persist_playlist_select_proof(
+    store_root,
+    evidence.as_ref(),
+    memory.as_ref(),
+    |run_id| {
+      result.run_id = Some(run_id.to_string());
+      serde_json::to_vec_pretty(result)
+        .map_err(|error| format!("failed to serialize playlist select result: {error}"))
+    },
+  ) {
+    Ok(run_id) => result.run_id = Some(run_id),
+    Err(error) => {
+      eprintln!("warning: store select proof failed: {error}");
+      result
+        .known_limits
+        .push(format!("store select proof failed: {error}"));
+      result.run_id = None;
+    }
+  }
+}
+
 fn run_playlist_select_command(cmd: PlaylistSelectCommand) -> ExitCode {
-  let result = match run_playlist_select(&cmd.inputs, &cmd.query) {
+  let mut result = match run_playlist_select(&cmd.inputs, &cmd.query) {
     Ok(result) => result,
     Err(error) => {
       eprintln!("playlist select failed: {error}");
       return ExitCode::from(1);
     }
   };
+
+  if cmd.inputs.store_root.is_some() {
+    apply_playlist_select_store_proof(&cmd.inputs, &mut result);
+  }
 
   match &cmd.output {
     OutputMode::Human => {

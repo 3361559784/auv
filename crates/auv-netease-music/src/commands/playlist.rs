@@ -20,6 +20,8 @@ pub struct PlaylistSelectResult {
   pub known_limits: Vec<String>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub reacquire: Option<crate::view_memory::PlaylistReacquireSummary>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub run_id: Option<String>,
 }
 
 impl PlaylistSelectResult {
@@ -145,6 +147,9 @@ impl fmt::Display for PlaylistSelectHumanSummary<'_> {
     writeln!(f, "NetEase playlist select")?;
     writeln!(f, "query: {}", result.query)?;
     writeln!(f, "target: {}", result.target.label)?;
+    if let Some(run_id) = &result.run_id {
+      writeln!(f, "run_id: {run_id}")?;
+    }
     writeln!(
       f,
       "verification: {}{}",
@@ -1587,6 +1592,7 @@ fn run_playlist_select_resolved(
     diagnostics,
     known_limits,
     reacquire: reacquire_summary,
+    run_id: None,
   })
 }
 

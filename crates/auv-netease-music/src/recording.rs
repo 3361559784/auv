@@ -3,16 +3,21 @@
 use std::path::{Path, PathBuf};
 
 use auv_tracing_driver::recorded_operation::RecordedOperationContext;
+use auv_tracing_driver::run_builder::Attributes;
 use auv_tracing_driver::{LocalStore, RunRecordingBackend, RunSpec, RunType};
 use auv_view::memory::{
-  ARTIFACT_DIR_BRIDGE_RUN_ID, VIEW_MEMORY_ARTIFACT_ROLE, ViewMemory, memory_file_path,
+  ARTIFACT_DIR_BRIDGE_RUN_ID, PLAYLIST_SELECT_RESULT_ARTIFACT_ROLE, SPAN_MEMORY_WRITE,
+  SPAN_REACQUIRE_MEMORY_LOAD, VIEW_MEMORY_ARTIFACT_ROLE, ViewMemory, memory_file_path,
+  memory_write_span_attributes, reacquire_memory_load_span_attributes, reacquire_root_span_name,
   serialize_memory_bytes,
 };
 use serde::{Deserialize, Serialize};
 
+use crate::view_memory::ReacquireTraceEvidence;
 use crate::{Inputs, PlaylistSidebarScan};
 
 pub const NETEASE_PLAYLIST_SIDEBAR_SCAN_ROLE: &str = "netease-playlist-sidebar-scan";
+pub const NETEASE_PLAYLIST_SELECT_RESULT_ROLE: &str = PLAYLIST_SELECT_RESULT_ARTIFACT_ROLE;
 pub const VIEW_MEMORY_RUN_LINEAGE_FILE: &str = "view-memory-run-lineage.json";
 pub const VIEW_MEMORY_LINEAGE_SCHEMA_VERSION: &str = "view-memory-lineage-v0";
 
@@ -162,16 +167,22 @@ fn persist_in_recorded_context(
     None
   };
   let memory_artifact_id = if let Some(memory) = &memory {
-    let bytes = serialize_memory_bytes(memory).map_err(|error| error.to_string())?;
-    let (_, memory_ref) = ctx
-      .stage_artifact_bytes_with_ref(
-        VIEW_MEMORY_ARTIFACT_ROLE,
-        bytes,
-        "view-memory-playlist_sidebar.json",
-        Some("view memory".to_string()),
-      )
-      .map_err(|error| error.to_string())?;
-    Some(memory_ref.artifact_id.as_str().to_string())
+    let run_id_for_attrs = ctx.run_id().as_str();
+    let attrs = span_attributes_from_pairs(memory_write_span_attributes(memory, run_id_for_attrs));
+    ctx
+      .in_span_with_attributes(SPAN_MEMORY_WRITE, attrs, |ctx| {
+        let bytes = serialize_memory_bytes(memory).map_err(|error| error.to_string())?;
+        let (_, memory_ref) = ctx
+          .stage_artifact_bytes_with_ref(
+            VIEW_MEMORY_ARTIFACT_ROLE,
+            bytes,
+            "view-memory-playlist_sidebar.json",
+            Some("view memory".to_string()),
+          )
+          .map_err(|error| error.to_string())?;
+        Ok::<_, String>(memory_ref.artifact_id.as_str().to_string())
+      })?
+      .into()
   } else {
     None
   };
@@ -344,6 +355,90 @@ fn read_artifact_bytes(store_root: &Path, run_id: &str, artifact_id: &str) -> Op
   let store = LocalStore::new(store_root.to_path_buf()).ok()?;
   let (_, path) = store.artifact_file(run_id, artifact_id).ok()?;
   std::fs::read(&path).ok()
+}
+
+fn span_attributes_from_pairs(pairs: Vec<(String, String)>) -> Attributes {
+  pairs
+    .into_iter()
+    .map(|(key, value)| (key, serde_json::Value::String(value)))
+    .collect()
+}
+
+/// Post-hoc durable proof run for `playlist select --store-root` (A8a).
+pub fn persist_playlist_select_proof(
+  store_root: &Path,
+  evidence: Option<&ReacquireTraceEvidence>,
+  memory: Option<&ViewMemory>,
+  build_result_json: impl FnOnce(&str) -> Result<Vec<u8>, String>,
+) -> Result<String, String> {
+  let store = LocalStore::new(store_root.to_path_buf()).map_err(|error| error.to_string())?;
+  let recording = RunRecordingBackend::local_only(store).handle();
+
+  let output = recording
+    .run_recorded_operation(
+      RunSpec::new(RunType::Command, "auv.netease.playlist.select"),
+      "playlist select store proof",
+      |ctx| persist_select_proof_in_recorded_context(ctx, evidence, memory, build_result_json),
+    )
+    .map_err(|error| error.to_string())?;
+
+  Ok(output.run_id.as_str().to_string())
+}
+
+fn persist_select_proof_in_recorded_context<F>(
+  ctx: &mut RecordedOperationContext<'_>,
+  evidence: Option<&ReacquireTraceEvidence>,
+  memory: Option<&ViewMemory>,
+  build_result_json: F,
+) -> Result<String, String>
+where
+  F: FnOnce(&str) -> Result<Vec<u8>, String>,
+{
+  let run_id = ctx.run_id().as_str().to_string();
+  if let Some(evidence) = evidence {
+    let root_name = reacquire_root_span_name(&evidence.scope_id);
+    let root_attrs = span_attributes_from_pairs(evidence.to_reacquire_root_attributes());
+
+    ctx.in_span_with_attributes(&root_name, root_attrs, |ctx| {
+      // NOTICE(a8-controlled-subset): root + memory_load + winning stage only — not full 6-stage tree.
+      if let Some(memory) = memory {
+        let load_attrs = span_attributes_from_pairs(reacquire_memory_load_span_attributes(memory));
+        ctx.in_span_with_attributes(SPAN_REACQUIRE_MEMORY_LOAD, load_attrs, |ctx| {
+          emit_winning_reacquire_stage_span(ctx, evidence)?;
+          Ok::<_, String>(())
+        })?;
+      } else {
+        emit_winning_reacquire_stage_span(ctx, evidence)?;
+      }
+      Ok::<_, String>(())
+    })?;
+  }
+
+  let result_json = build_result_json(&run_id)?;
+  ctx
+    .stage_artifact_bytes_with_ref(
+      NETEASE_PLAYLIST_SELECT_RESULT_ROLE,
+      result_json,
+      "netease-playlist-select-result.json",
+      Some("playlist select proof".to_string()),
+    )
+    .map_err(|error| error.to_string())?;
+
+  Ok(run_id)
+}
+
+fn emit_winning_reacquire_stage_span(
+  ctx: &mut RecordedOperationContext<'_>,
+  evidence: &ReacquireTraceEvidence,
+) -> Result<(), String> {
+  if let Some(stage_name) = evidence.winning_stage_span_name() {
+    // NOTICE(a8-controlled-subset): only the winning stage span is recorded in A8 v1.
+    ctx.in_span(&stage_name, |ctx| {
+      ctx.record_event("reacquire.stage.completed", None);
+      Ok::<_, String>(())
+    })?;
+  }
+  Ok(())
 }
 
 #[cfg(test)]
@@ -678,6 +773,298 @@ mod tests {
         .any(|limit| limit.contains("lineage manifest missing"))
     );
 
+    let _ = std::fs::remove_dir_all(&root);
+  }
+  fn sample_select_result_json(run_id: &str) -> Result<Vec<u8>, String> {
+    let json = serde_json::json!({
+      "command": "playlist.select",
+      "query": "Test",
+      "app": {},
+      "window": {},
+      "target": {
+        "label": "Test Playlist",
+        "section_id": "section.created",
+        "section_kind": "my_playlists",
+        "item_id": "item.test",
+        "anchor_id": null,
+        "candidate_id": "item.test",
+        "observation_index": 0,
+        "bounds": {"x": 32.0, "y": 74.0, "width": 120.0, "height": 20.0}
+      },
+      "steps": [{"name": "reacquire-target", "target_bounds": null, "delivery_path": null, "fallback_reason": null}],
+      "verification": {"status": "passed", "method": "main_title_ocr_full_window_v1", "observed_title": "Test Playlist", "artifact": null, "note": null},
+      "diagnostics": [],
+      "known_limits": [],
+      "reacquire": {
+        "outcome": "reacquired",
+        "strategy_used": "label_current_viewport",
+        "observation_count": 1,
+        "skipped_rescan_replay": true
+      },
+      "run_id": run_id
+    });
+    serde_json::to_vec_pretty(&json).map_err(|error| error.to_string())
+  }
+
+  fn sample_reacquire_evidence() -> crate::view_memory::ReacquireTraceEvidence {
+    crate::view_memory::ReacquireTraceEvidence {
+      scope_id: "playlist_sidebar".into(),
+      target_kind: "label".into(),
+      outcome: "reacquired".into(),
+      stage_used: "label_current_viewport".into(),
+      observation_count: 1,
+      skipped_rescan_replay: true,
+      stale_reason: None,
+      strategy_used: Some("label_current_viewport".into()),
+    }
+  }
+
+  fn sample_store_memory(run_id: &str) -> ViewMemory {
+    ViewMemory {
+      schema_version: VIEW_MEMORY_SCHEMA_VERSION.to_string(),
+      memory_id: build_memory_id("com.netease.163music", "playlist_sidebar"),
+      app_bundle_id: "com.netease.163music".into(),
+      scope_id: "playlist_sidebar".into(),
+      last_reconstructed_at_millis: 1_719_744_000_000,
+      source_run_id: run_id.into(),
+      source_reconstruction_ref: view_memory_lineage_ref_wire(run_id, "artifact_0001"),
+      anchors: Vec::new(),
+      landmarks: Vec::new(),
+      node_snapshots: Default::default(),
+      scope_snapshot: ViewMemoryScopeSnapshot {
+        region_id: "playlist_sidebar".into(),
+        region_bounds_window_local: ViewBounds::new(0.0, 0.0, 240.0, 400.0),
+        baseline_width: 240,
+        schema_version_view_ir: "view-ir-v0".into(),
+      },
+      diagnostics: Vec::new(),
+    }
+  }
+
+  #[test]
+  fn memory_write_span_on_store_persist() {
+    let root = std::env::temp_dir().join(format!("auv-a8-mem-span-{}", std::process::id()));
+    let store_root = root.join("store");
+    let _ = std::fs::remove_dir_all(&root);
+    let scan = crate::decode_playlist_sidebar_scan_json(&minimal_scan_json()).expect("scan");
+    let mut inputs = Inputs::with_defaults();
+    inputs.app_id = "com.netease.163music".to_string();
+    let persisted =
+      persist_playlist_ls_artifacts(&store_root, &scan, &inputs, true).expect("persist");
+    let store = LocalStore::new(store_root.clone()).expect("store");
+    let run = store.read_run(&persisted.lineage.run_id).expect("run");
+    let span = run
+      .spans
+      .iter()
+      .find(|span| span.name == auv_view::memory::SPAN_MEMORY_WRITE)
+      .expect("memory_write span");
+    assert_eq!(span.attributes.len(), 6);
+    assert_eq!(
+      span
+        .attributes
+        .get(auv_view::memory::ATTR_MEMORY_MEMORY_ID)
+        .and_then(|value| value.as_str()),
+      Some("com.netease.163music:playlist_sidebar")
+    );
+    let _ = std::fs::remove_dir_all(&root);
+  }
+
+  #[test]
+  fn no_memory_write_span_when_gate_off() {
+    let root = std::env::temp_dir().join(format!("auv-a8-gate-off-{}", std::process::id()));
+    let store_root = root.join("store");
+    let _ = std::fs::remove_dir_all(&root);
+    let scan = crate::decode_playlist_sidebar_scan_json(&minimal_scan_json()).expect("scan");
+    let mut inputs = Inputs::with_defaults();
+    inputs.app_id = "com.netease.163music".to_string();
+    let persisted =
+      persist_playlist_ls_artifacts(&store_root, &scan, &inputs, false).expect("persist");
+    let store = LocalStore::new(store_root.clone()).expect("store");
+    let run = store.read_run(&persisted.lineage.run_id).expect("run");
+    assert!(
+      !run
+        .spans
+        .iter()
+        .any(|span| span.name == auv_view::memory::SPAN_MEMORY_WRITE)
+    );
+    let _ = std::fs::remove_dir_all(&root);
+  }
+
+  #[test]
+  fn no_durable_spans_without_store_root() {
+    let root = std::env::temp_dir().join(format!("auv-a8-no-store-{}", std::process::id()));
+    let store_root = root.join("store");
+    let _ = std::fs::remove_dir_all(&root);
+    let store = LocalStore::new(store_root.clone()).expect("store");
+    assert_eq!(store.list_runs().expect("list runs").len(), 0);
+
+    // CLI contract: default inputs omit store_root, so persist is never invoked.
+    let inputs = Inputs::with_defaults();
+    assert!(inputs.store_root.is_none());
+    assert_eq!(store.list_runs().expect("list runs").len(), 0);
+
+    // Contrast: explicit store_root + persist creates durable reacquire spans.
+    let evidence = sample_reacquire_evidence();
+    let memory = sample_store_memory("run_no_store_contrast");
+    let run_id = persist_playlist_select_proof(
+      &store_root,
+      Some(&evidence),
+      Some(&memory),
+      sample_select_result_json,
+    )
+    .expect("persist select proof");
+    let runs = store.list_runs().expect("list runs");
+    assert_eq!(runs.len(), 1);
+    let run = store.read_run(&run_id).expect("run");
+    assert!(
+      run
+        .spans
+        .iter()
+        .any(|span| span.name.starts_with("view.reacquire"))
+    );
+    let _ = std::fs::remove_dir_all(&root);
+  }
+
+  #[test]
+  fn select_proof_run_emits_reacquire_root() {
+    let root = std::env::temp_dir().join(format!("auv-a8-select-root-{}", std::process::id()));
+    let store_root = root.join("store");
+    let _ = std::fs::remove_dir_all(&root);
+    let evidence = sample_reacquire_evidence();
+    let memory = sample_store_memory("run_ls");
+    let run_id = persist_playlist_select_proof(
+      &store_root,
+      Some(&evidence),
+      Some(&memory),
+      sample_select_result_json,
+    )
+    .expect("persist select proof");
+    let store = LocalStore::new(store_root.clone()).expect("store");
+    let run = store.read_run(&run_id).expect("run");
+    let root_span = run
+      .spans
+      .iter()
+      .find(|span| span.name == "view.reacquire.playlist_sidebar")
+      .expect("reacquire root span");
+    assert_eq!(
+      root_span
+        .attributes
+        .get(auv_view::memory::ATTR_REACQUIRE_OUTCOME)
+        .and_then(|value| value.as_str()),
+      Some("reacquired")
+    );
+    assert_eq!(
+      root_span
+        .attributes
+        .get(auv_view::memory::ATTR_REACQUIRE_STAGE_USED)
+        .and_then(|value| value.as_str()),
+      Some("label_current_viewport")
+    );
+    assert!(
+      run
+        .spans
+        .iter()
+        .any(|span| span.name == auv_view::memory::SPAN_REACQUIRE_MEMORY_LOAD)
+    );
+    assert!(
+      run
+        .spans
+        .iter()
+        .any(|span| { span.name == "view.reacquire.stage.3.label_current_viewport" })
+    );
+    let _ = std::fs::remove_dir_all(&root);
+  }
+
+  #[test]
+  fn select_result_artifact_staged() {
+    let root = std::env::temp_dir().join(format!("auv-a8-select-artifact-{}", std::process::id()));
+    let store_root = root.join("store");
+    let _ = std::fs::remove_dir_all(&root);
+    let evidence = sample_reacquire_evidence();
+    let run_id = persist_playlist_select_proof(
+      &store_root,
+      Some(&evidence),
+      None,
+      sample_select_result_json,
+    )
+    .expect("persist");
+    let store = LocalStore::new(store_root.clone()).expect("store");
+    let run = store.read_run(&run_id).expect("run");
+    let artifact = run
+      .artifacts
+      .iter()
+      .find(|artifact| artifact.role == NETEASE_PLAYLIST_SELECT_RESULT_ROLE)
+      .expect("select result artifact");
+    let bytes = read_artifact_bytes(&store_root, &run_id, artifact.artifact_id.as_str())
+      .expect("artifact bytes");
+    let value: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
+    assert_eq!(
+      value["verification"]["method"],
+      "main_title_ocr_full_window_v1"
+    );
+    assert!(
+      value["steps"]
+        .as_array()
+        .is_some_and(|steps| !steps.is_empty())
+    );
+    let _ = std::fs::remove_dir_all(&root);
+  }
+
+  #[test]
+  fn select_run_id_in_json() {
+    let root = std::env::temp_dir().join(format!("auv-a8-run-id-{}", std::process::id()));
+    let store_root = root.join("store");
+    let _ = std::fs::remove_dir_all(&root);
+    let evidence = sample_reacquire_evidence();
+    let run_id = persist_playlist_select_proof(
+      &store_root,
+      Some(&evidence),
+      None,
+      sample_select_result_json,
+    )
+    .expect("persist");
+    let store = LocalStore::new(store_root.clone()).expect("store");
+    let run = store.read_run(&run_id).expect("run");
+    let artifact = run
+      .artifacts
+      .iter()
+      .find(|artifact| artifact.role == NETEASE_PLAYLIST_SELECT_RESULT_ROLE)
+      .expect("artifact");
+    let bytes =
+      read_artifact_bytes(&store_root, &run_id, artifact.artifact_id.as_str()).expect("bytes");
+    let decoded: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
+    assert_eq!(decoded["run_id"].as_str(), Some(run_id.as_str()));
+    let _ = std::fs::remove_dir_all(&root);
+  }
+
+  #[test]
+  fn select_proof_without_reacquire_summary_emits_no_reacquire_spans() {
+    let root =
+      std::env::temp_dir().join(format!("auv-a8-no-reacquire-span-{}", std::process::id()));
+    let store_root = root.join("store");
+    let _ = std::fs::remove_dir_all(&root);
+    let run_id = persist_playlist_select_proof(&store_root, None, None, sample_select_result_json)
+      .expect("persist");
+    let store = LocalStore::new(store_root.clone()).expect("store");
+    let run = store.read_run(&run_id).expect("run");
+    assert!(
+      !run
+        .spans
+        .iter()
+        .any(|span| span.name.starts_with("view.reacquire")),
+      "unexpected reacquire spans: {:?}",
+      run
+        .spans
+        .iter()
+        .map(|span| span.name.as_str())
+        .collect::<Vec<_>>()
+    );
+    assert!(
+      run
+        .artifacts
+        .iter()
+        .any(|artifact| artifact.role == NETEASE_PLAYLIST_SELECT_RESULT_ROLE)
+    );
     let _ = std::fs::remove_dir_all(&root);
   }
 }

@@ -1,7 +1,7 @@
 # SceneBridge B1: Inspect viewer view-parser consumption
 
 Date: 2026-06-30
-Status: **B1a landed** (run detail proof panel)
+Status: **B1a + B1b landed** (run detail proof panel + drill-down)
 
 ## Summary
 
@@ -48,16 +48,19 @@ the user's current span / artifact / surface-node selection.
 
 If proof is still empty after finish, the panel stays hidden.
 
-## B1b follow-on (not in B1a)
+## B1b scope (shipped)
 
-Artifact / lineage drill-down must **not** join `select_results` to
-`resolution_summaries` by `query` — duplicate queries in one run are ambiguous
-and summaries carry no stable artifact key.
+| Area | Detail |
+|------|--------|
+| Lineage | Each card shows `memory_id · source_run_id · run_id` (current run) |
+| Known limits | `pairViewParserProofCards` index-pairs `resolution_summaries[i]` with `select_results[i]` in one render pass — **never** join by `query` |
+| Artifact drill-down | Chip shortcuts call `jumpToViewParserArtifactRole` for `view-memory` and `netease-playlist-select-result`; sets `activeArtifactRoleFilter` and selects matching artifact via existing `renderArtifactList` |
 
-**Recommended (viewer-only):** during a single render pass, before any
-sort/filter, pair `resolution_summaries[i]` with `select_results[i]` by array
-index for `known_limits` and artifact shortcuts. Do not sort summaries
-independently without re-pairing.
+### Index-pairing constraint
+
+Duplicate queries in one run are ambiguous and summaries carry no stable
+artifact key. B1b pairs by array index only, before any sort/filter. Do not
+sort `resolution_summaries` independently without re-pairing.
 
 Alternate path (separate read slice): add a stable key on the wire — requires
 owner approval beyond viewer-only scope.
@@ -79,7 +82,7 @@ Pick one in a separate slice before implementing B1c.
 ## Key files
 
 - `src/inspect_server_viewer.html` — panel, render helpers, narrow refresh
-- `src/inspect_server/mod.rs` — `viewer_renders_view_parser_proof_hooks` contract test
+- `src/inspect_server/mod.rs` — `viewer_renders_view_parser_proof_hooks` contract test (B1a + B1b hooks)
 - [A8 proof graduation](2026-06-30-auv-scenebridge-a8-proof-graduation.md)
 
 ## Validation

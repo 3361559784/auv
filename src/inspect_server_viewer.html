@@ -1008,6 +1008,9 @@
   }
 
 
+  const VIEW_MEMORY_ARTIFACT_ROLE = "view-memory";
+  const PLAYLIST_SELECT_RESULT_ARTIFACT_ROLE = "netease-playlist-select-result";
+
   function clearViewParserProof() {
     const panel = document.getElementById("view-parser-proof");
     if (!panel) return;
@@ -1046,7 +1049,33 @@
     ]);
   }
 
-  function renderResolutionSummaryCard(summary) {
+  function pairViewParserProofCards(run) {
+    const viewParser = run && run.view_parser;
+    if (!viewParser) return [];
+    const summaries = Array.isArray(viewParser.resolution_summaries)
+      ? viewParser.resolution_summaries
+      : [];
+    const selectResults = Array.isArray(viewParser.select_results)
+      ? viewParser.select_results
+      : [];
+    const pairs = [];
+    for (let index = 0; index < summaries.length; index++) {
+      pairs.push({
+        summary: summaries[index],
+        selectResult: index < selectResults.length ? selectResults[index] : null,
+      });
+    }
+    return pairs;
+  }
+
+  function formatViewParserLineageRow(memory, runId) {
+    const memoryId = memory && memory.memory_id ? memory.memory_id : "—";
+    const sourceRunId = memory && memory.source_run_id ? memory.source_run_id : "—";
+    const currentRunId = runId || "—";
+    return memoryId + " · " + sourceRunId + " · " + currentRunId;
+  }
+
+  function renderResolutionSummaryCard(summary, selectResult, runId) {
     const identity = summary.identity || {};
     const memory = summary.memory || {};
     const resolution = summary.resolution || {};
@@ -1054,6 +1083,9 @@
     const verification = summary.verification || {};
     const geometry = summary.geometry_note || {};
     const stepNames = Array.isArray(replay.step_names) ? replay.step_names.join(", ") : "";
+    const knownLimits = selectResult && Array.isArray(selectResult.known_limits)
+      ? selectResult.known_limits
+      : [];
 
     const header = el("div", { className: "view-parser-proof-card-head" }, [
       el("span", { className: "view-parser-proof-query" }, [summary.query || "—"]),
@@ -1066,6 +1098,14 @@
         el("div", { className: "view-parser-proof-section-label" }, [title]),
         card,
       ]);
+    }
+
+    function artifactShortcut(label, role) {
+      return el("button", {
+        className: "chip",
+        type: "button",
+        onClick: function () { jumpToViewParserArtifactRole(role); },
+      }, [label]);
     }
 
     const sections = [
@@ -1100,8 +1140,25 @@
         ["method", verification.method],
       ])),
     ];
+    if (knownLimits.length) {
+      sections.push(section("Known limits", el("div", { className: "view-parser-proof-geometry" }, [
+        knownLimits.join(" · "),
+      ])));
+    }
+    sections.push(section("Artifacts", el("div", { className: "filter-chips" }, [
+      artifactShortcut(VIEW_MEMORY_ARTIFACT_ROLE, VIEW_MEMORY_ARTIFACT_ROLE),
+      artifactShortcut(
+        PLAYLIST_SELECT_RESULT_ARTIFACT_ROLE,
+        PLAYLIST_SELECT_RESULT_ARTIFACT_ROLE
+      ),
+    ])));
 
-    const children = [header].concat(sections);
+    const children = [
+      header,
+      el("div", { className: "view-parser-proof-geometry" }, [
+        formatViewParserLineageRow(memory, runId),
+      ]),
+    ].concat(sections);
     if (geometry.note || geometry.has_ephemeral_target_bounds != null) {
       children.push(el("div", { className: "view-parser-proof-geometry" }, [
         "geometry: ephemeral_bounds="
@@ -1121,8 +1178,9 @@
     }
     panel.innerHTML = "";
     panel.hidden = false;
-    for (const summary of run.view_parser.resolution_summaries) {
-      panel.appendChild(renderResolutionSummaryCard(summary));
+    const runId = run.run_id || "";
+    for (const pair of pairViewParserProofCards(run)) {
+      panel.appendChild(renderResolutionSummaryCard(pair.summary, pair.selectResult, runId));
     }
   }
 
@@ -1182,6 +1240,7 @@
     artifacts: [],
     activeSpanId: null,
     activeArtifactKey: null,
+    activeArtifactRoleFilter: null,
     activeSurfaceNodeArtifactKey: null,
     activeSurfaceNodeKey: null,
     activeEvidenceRequestId: 0,
@@ -1237,6 +1296,7 @@
     state.artifacts = [];
     state.activeSpanId = null;
     state.activeArtifactKey = null;
+    state.activeArtifactRoleFilter = null;
     state.activeSurfaceNodeArtifactKey = null;
     state.activeSurfaceNodeKey = null;
     const active = state.runs.find(function (r) { return r.run_id === runId; });
@@ -2401,6 +2461,36 @@
     }) || null;
   }
 
+  function findArtifactByRole(artifacts, role) {
+    return (artifacts || []).find(function (artifact) {
+      return artifact && artifact.role === role;
+    }) || null;
+  }
+
+  function visibleArtifacts(artifacts) {
+    const list = Array.isArray(artifacts) ? artifacts : [];
+    if (!state.activeArtifactRoleFilter) return list;
+    return list.filter(function (artifact) {
+      return artifact && artifact.role === state.activeArtifactRoleFilter;
+    });
+  }
+
+  function jumpToViewParserArtifactRole(role) {
+    if (!role) return;
+    showArtifactPanel(true);
+    state.activeArtifactRoleFilter = role;
+    const target = findArtifactByRole(state.artifacts, role);
+    if (target) state.activeArtifactKey = artifactKey(target);
+    renderArtifactList(state.artifacts);
+    renderArtifactPreview(findArtifact(state.activeArtifactKey), state.artifacts);
+    const list = document.getElementById("artifact-list");
+    if (!list || !state.activeArtifactKey) return;
+    const row = list.querySelector(
+      '[data-artifact-key="' + state.activeArtifactKey + '"]'
+    );
+    if (row && row.scrollIntoView) row.scrollIntoView({ block: "nearest" });
+  }
+
   function artifactUrl(artifact) {
     if (!artifact) return "";
     const params = new URLSearchParams();
@@ -2414,13 +2504,20 @@
   function renderArtifactList(artifacts) {
     const list = document.getElementById("artifact-list");
     const counter = document.getElementById("artifact-count");
+    const all = Array.isArray(artifacts) ? artifacts : [];
+    const visible = visibleArtifacts(all);
     list.innerHTML = "";
-    counter.textContent = artifacts.length.toString();
-    if (!artifacts.length) {
-      list.appendChild(el("div", { className: "artifact-empty" }, ["no artifacts recorded for this run."]));
+    counter.textContent = state.activeArtifactRoleFilter
+      ? visible.length + " · " + state.activeArtifactRoleFilter
+      : visible.length.toString();
+    if (!visible.length) {
+      const emptyMessage = state.activeArtifactRoleFilter
+        ? "no artifacts with role " + state.activeArtifactRoleFilter + " on this run."
+        : "no artifacts recorded for this run.";
+      list.appendChild(el("div", { className: "artifact-empty" }, [emptyMessage]));
       return;
     }
-    for (const artifact of artifacts) {
+    for (const artifact of visible) {
       const icon = el("img", {
         className: "mime-icon",
         src: "/assets/" + mimeIconAssetName(artifact.mime_type),

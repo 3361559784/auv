@@ -2405,6 +2405,27 @@ mod tests {
       super::VIEWER_HTML.contains("refreshViewParserProofFromRunDetail"),
       "viewer payload should narrow-refetch proof on run_finished without full loadRunDetail"
     );
+    assert!(
+      super::VIEWER_HTML.contains("pairViewParserProofCards"),
+      "viewer payload should index-pair resolution_summaries with select_results"
+    );
+    assert!(
+      super::VIEWER_HTML.contains("select_results"),
+      "viewer payload should read select_results for known_limits pairing"
+    );
+    assert!(
+      super::VIEWER_HTML.contains("jumpToViewParserArtifactRole"),
+      "viewer payload should jump artifact list by view-parser proof roles"
+    );
+    assert!(
+      super::VIEWER_HTML.contains("view-memory")
+        && super::VIEWER_HTML.contains("netease-playlist-select-result"),
+      "viewer payload should reference view-memory and playlist-select artifact roles"
+    );
+    assert!(
+      super::VIEWER_HTML.contains("formatViewParserLineageRow"),
+      "viewer payload should render memory_id · source_run_id · run_id lineage row"
+    );
   }
 
   #[tokio::test]

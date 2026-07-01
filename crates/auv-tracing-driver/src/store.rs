@@ -984,6 +984,80 @@ mod tests {
   }
 
   #[test]
+  fn local_store_stages_view_memory_artifact_role() {
+    use auv_view::ViewBounds;
+    use auv_view::memory::{
+      VIEW_MEMORY_ARTIFACT_ROLE, VIEW_MEMORY_SCHEMA_VERSION, ViewMemory, ViewMemoryScopeSnapshot,
+      serialize_memory_bytes,
+    };
+
+    let root = temp_dir("store-view-memory-role");
+    let store = LocalStore::new(root.clone()).expect("should initialize");
+    let run = dummy_run("run_view_memory_role");
+    let span = dummy_span(&run.root_span_id);
+    let memory = ViewMemory {
+      schema_version: VIEW_MEMORY_SCHEMA_VERSION.to_string(),
+      memory_id: "com.example.app:playlist_sidebar".into(),
+      app_bundle_id: "com.example.app".into(),
+      scope_id: "playlist_sidebar".into(),
+      last_reconstructed_at_millis: 1,
+      source_run_id: run.run_id.as_str().to_string(),
+      source_reconstruction_ref: "run_id=run_view_memory_role artifact_id=artifact_0001".into(),
+      anchors: Vec::new(),
+      landmarks: Vec::new(),
+      node_snapshots: Default::default(),
+      scope_snapshot: ViewMemoryScopeSnapshot {
+        region_id: "playlist_sidebar".into(),
+        region_bounds_window_local: ViewBounds::new(0.0, 0.0, 240.0, 400.0),
+        baseline_width: 240,
+        schema_version_view_ir: "view-ir-v0".into(),
+      },
+      diagnostics: Vec::new(),
+    };
+    let bytes = serialize_memory_bytes(&memory).expect("serialize view memory");
+
+    let artifact = store
+      .stage_artifact_bytes(
+        &run.run_id,
+        0,
+        &span.span_id,
+        None,
+        ArtifactBytesSource {
+          role: VIEW_MEMORY_ARTIFACT_ROLE.to_string(),
+          bytes,
+          preferred_name: "view-memory-playlist_sidebar.json".to_string(),
+          summary: Some("view memory".to_string()),
+        },
+      )
+      .expect("artifact should stage");
+
+    store
+      .write_run_snapshot(&CanonicalRun {
+        run,
+        spans: vec![span],
+        events: Vec::new(),
+        artifacts: vec![artifact.clone()],
+      })
+      .expect("run should persist after artifact staging");
+
+    let loaded = store
+      .read_run("run_view_memory_role")
+      .expect("persisted run should read");
+    assert_eq!(loaded.artifacts.len(), 1);
+    assert_eq!(loaded.artifacts[0].role, VIEW_MEMORY_ARTIFACT_ROLE);
+
+    let artifact_path = root
+      .join("runs")
+      .join("run_view_memory_role")
+      .join(&artifact.path);
+    let decoded: ViewMemory =
+      serde_json::from_slice(&fs::read(&artifact_path).expect("read artifact")).expect("decode");
+    assert_eq!(decoded.memory_id, memory.memory_id);
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
   fn local_store_requires_span_id_for_duplicate_artifact_ids() {
     let root = temp_dir("store-duplicate-artifact-id");
     let store = LocalStore::new(root.clone()).expect("should initialize");

@@ -20,4 +20,5 @@ tracing = "0.1"
 
 [dev-dependencies]
 axum = "0.8"
+auv-view = { path = "../auv-view" }
 tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "sync"] }

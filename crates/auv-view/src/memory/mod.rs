@@ -1,7 +1,9 @@
 //! ViewMemory persistence and anchor reacquisition (SceneBridge A3-min).
 //!
-//! NOTICE(artifact-dir-bridge-a3): A3-min reads/writes JSON under product
-//! `--artifact-dir` paths. Run-storage `view-memory` artifact role is A4.
+//! NOTICE(artifact-dir-bridge-a3): Without `--store-root`, reads/writes JSON under
+//! product `--artifact-dir` paths with a compatibility placeholder run id.
+//! Run-storage `view-memory` artifact role lands in A7-min when store recording
+//! is enabled.
 
 mod reacquire;
 mod reacquire_adapter;
@@ -16,7 +18,8 @@ pub use reacquire::{
 pub use reacquire_adapter::{ReacquireDriverAdapter, outcome_label, strategy_name};
 pub use read::{MemoryReadConfig, MemoryReadOutcome, StaleReason, read_memory};
 pub use store::{
-  load_memory_file, memory_file_name, memory_file_path, parse_memory_file, write_memory_file,
+  load_memory_file, memory_file_name, memory_file_path, parse_memory_file, serialize_memory_bytes,
+  view_memory_lineage_ref_wire, write_memory_file,
 };
 pub use write::{ARTIFACT_DIR_BRIDGE_RUN_ID, MemoryWriteInput, build_memory_id, try_build_memory};
 
@@ -30,6 +33,9 @@ use crate::{
 };
 
 pub const VIEW_MEMORY_SCHEMA_VERSION: &str = "view-memory-v0";
+
+/// Donor-neutral run artifact role for persisted [`ViewMemory`] payloads.
+pub const VIEW_MEMORY_ARTIFACT_ROLE: &str = "view-memory";
 
 pub const DEFAULT_MEMORY_TTL_MILLIS: u64 = 24 * 60 * 60 * 1000;
 

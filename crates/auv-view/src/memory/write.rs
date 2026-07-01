@@ -1,6 +1,8 @@
 use super::ViewMemoryScopeSnapshot;
 use crate::ViewNodeRecord;
 
+/// Compatibility placeholder when product commands write under `--artifact-dir`
+/// without `--store-root`. Not a real persisted run id.
 pub const ARTIFACT_DIR_BRIDGE_RUN_ID: &str = "artifact-dir-bridge-a3";
 
 pub fn build_memory_id(app_bundle_id: &str, scope_id: &str) -> String {

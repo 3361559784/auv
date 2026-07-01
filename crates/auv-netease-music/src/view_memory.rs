@@ -54,17 +54,27 @@ pub fn system_time_millis() -> u64 {
     .unwrap_or(0)
 }
 
-// NOTICE: NetEase ViewMemory write treats `deduplicated_item` as non-blocking
-// (dedup-only scans are writable). Any other diagnostic code still blocks write.
-// Relaxing additional codes requires an owner-approved slice.
+// NOTICE: NetEase ViewMemory write treats selected diagnostics as non-blocking
+// when reconstruction is still trustworthy: `deduplicated_item` (A6c-3) and the
+// paired sidebar fallback path (`sidebar_region_not_found` only when
+// `sidebar_region_fallback_used` is present). Any other diagnostic still blocks.
 fn diagnostics_allow_memory_write(diagnostics: &[ParserDiagnostic]) -> bool {
-  diagnostics.is_empty()
-    || diagnostics
-      .iter()
-      .all(|diagnostic| diagnostic.code == "deduplicated_item")
+  if diagnostics.is_empty() {
+    return true;
+  }
+  let used_fallback = diagnostics
+    .iter()
+    .any(|diagnostic| diagnostic.code == "sidebar_region_fallback_used");
+  diagnostics
+    .iter()
+    .all(|diagnostic| match diagnostic.code.as_str() {
+      "deduplicated_item" | "sidebar_region_fallback_used" => true,
+      "sidebar_region_not_found" if used_fallback => true,
+      _ => false,
+    })
 }
 
-fn write_from_scan_when_enabled(
+pub(crate) fn write_from_scan_when_enabled(
   enabled: bool,
   inputs: &crate::Inputs,
   scan: &PlaylistSidebarScan,
@@ -333,6 +343,38 @@ mod tests {
     }
   }
 
+  #[test]
+  fn diagnostics_allow_memory_write_allows_fallback_pair() {
+    let diagnostics = vec![
+      ParserDiagnostic {
+        code: "deduplicated_item".into(),
+        message: "dedup".into(),
+        node_id: Some("item.3".into()),
+      },
+      ParserDiagnostic {
+        code: "sidebar_region_not_found".into(),
+        message: "markers missing after restore".into(),
+        node_id: None,
+      },
+      ParserDiagnostic {
+        code: "sidebar_region_fallback_used".into(),
+        message: "using conservative playlist sidebar bounds".into(),
+        node_id: None,
+      },
+    ];
+    assert!(diagnostics_allow_memory_write(&diagnostics));
+  }
+
+  #[test]
+  fn diagnostics_allow_memory_write_rejects_unpaired_sidebar_region_not_found() {
+    let diagnostics = vec![ParserDiagnostic {
+      code: "sidebar_region_not_found".into(),
+      message: "blocking".into(),
+      node_id: None,
+    }];
+    assert!(!diagnostics_allow_memory_write(&diagnostics));
+  }
+
   fn minimal_writable_scan_json(diagnostics: serde_json::Value) -> String {
     serde_json::json!({
       "schema_version": VIEW_IR_SCHEMA_VERSION,
@@ -503,6 +545,47 @@ mod tests {
     assert!(error.contains("scan did not produce writable ViewMemory"));
     let path = memory_file_path(&inputs.artifact_dir, PLAYLIST_SIDEBAR_SCOPE_ID);
     assert!(!path.exists());
+    let _ = std::fs::remove_dir_all(&inputs.artifact_dir);
+  }
+
+  #[test]
+  fn write_from_scan_when_enabled_allows_fallback_diagnostics() {
+    let diagnostics = serde_json::json!([
+      {
+        "code": "deduplicated_item",
+        "message": "deduplicated repeated sidebar item \"44\"",
+        "node_id": "obs1.candidate.ocr3.44"
+      },
+      {
+        "code": "sidebar_region_not_found",
+        "message": "sidebar markers were not recognized after default screen restore",
+        "node_id": null
+      },
+      {
+        "code": "sidebar_region_fallback_used",
+        "message": "using conservative playlist sidebar bounds",
+        "node_id": null
+      }
+    ]);
+    let scan = decode_minimal_scan(diagnostics);
+    assert!(diagnostics_allow_memory_write(scan.diagnostics()));
+
+    let artifact_dir = std::env::temp_dir().join(format!(
+      "auv-netease-view-memory-fallback-test-{}",
+      std::process::id()
+    ));
+    std::fs::create_dir_all(&artifact_dir).expect("artifact dir");
+    let inputs = crate::Inputs {
+      artifact_dir,
+      ..crate::Inputs::with_defaults()
+    };
+
+    write_from_scan_when_enabled(true, &inputs, &scan).expect("fallback diagnostics should write");
+
+    let path = memory_file_path(&inputs.artifact_dir, PLAYLIST_SIDEBAR_SCOPE_ID);
+    let memory = parse_memory_file(&path).expect("memory file should parse");
+    assert_eq!(memory.scope_id, PLAYLIST_SIDEBAR_SCOPE_ID);
+    assert!(!memory.node_snapshots.is_empty());
     let _ = std::fs::remove_dir_all(&inputs.artifact_dir);
   }
 

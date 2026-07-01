@@ -45,8 +45,21 @@ pub struct PlaylistSelectVerification {
   pub method: String,
   pub observed_title: Option<String>,
   pub artifact: Option<String>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub recognition_artifact: Option<String>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub sidebar_echo_recognition_artifact: Option<String>,
   pub note: Option<String>,
 }
+
+const PLAYLIST_SELECT_VERIFICATION_OCR_TITLE_BAND: &str = "main_title_ocr_title_band_v1";
+const PLAYLIST_SELECT_VERIFICATION_OCR_HERO_HEADER: &str = "main_title_ocr_hero_header_v1";
+const PLAYLIST_SELECT_VERIFICATION_OCR_MAIN_BAND: &str = "main_title_ocr_main_band_v1";
+const PLAYLIST_SELECT_VERIFICATION_OCR_FULL_WINDOW: &str = "main_title_ocr_full_window_v1";
+const PLAYLIST_SELECT_VERIFICATION_METHOD_SIDEBAR_ECHO: &str = "sidebar_row_echo_detail_chrome_v1";
+const PLAYLIST_SELECT_VERIFICATION_SIDEBAR_ECHO_LIMIT: &str =
+  "verification_used_sidebar_row_echo_for_numeric_title";
+const PLAYLIST_SELECT_VERIFICATION_ROW_ECHO_MARGIN: f64 = 16.0;
 
 pub struct PlaylistSelectHumanSummary<'a> {
   result: &'a PlaylistSelectResult,
@@ -225,13 +238,29 @@ fn playlist_select_verification_main_pane_guard(
   bounds.x >= main_pane_min_x && bounds.y > nav_band_max_y && bounds.y < main_content_max_y
 }
 
+fn playlist_select_verification_region_matches_target(
+  target_label: &str,
+  region_text: &str,
+) -> bool {
+  use crate::views::query_match::{PlaylistLabelMatchTier, playlist_label_match_tier};
+
+  let target_identity = crate::normalize_identity(target_label);
+  let label_identity = crate::normalize_identity(region_text);
+  match playlist_label_match_tier(&label_identity, &target_identity) {
+    PlaylistLabelMatchTier::Exact => true,
+    PlaylistLabelMatchTier::Contains => {
+      !crate::view_parsers::sidebar::parse::is_single_ascii_digit_query(target_label)
+    }
+    PlaylistLabelMatchTier::None => false,
+  }
+}
+
 fn playlist_select_verification_title(
   recognition: &auv_driver::vision::TextRecognition,
   window_size: auv_driver::Size,
   sidebar_bounds: ViewBounds,
   target_label: &str,
 ) -> Option<String> {
-  let target_identity = crate::normalize_identity(target_label);
   recognition
     .regions
     .iter()
@@ -247,10 +276,7 @@ fn playlist_select_verification_title(
         window_size,
       )
     })
-    .filter(|region| {
-      let label_identity = crate::normalize_identity(&region.text);
-      label_identity.contains(&target_identity) || target_identity.contains(&label_identity)
-    })
+    .filter(|region| playlist_select_verification_region_matches_target(target_label, &region.text))
     .min_by(|left, right| {
       left
         .bounds
@@ -262,15 +288,224 @@ fn playlist_select_verification_title(
     .map(|region| region.text.trim().to_string())
 }
 
-#[cfg(target_os = "macos")]
-fn playlist_select_verification_ocr_ratio(
+fn build_playlist_select_verification_ocr_options(
+  inputs: &Inputs,
+  target_label: &str,
+) -> auv_driver::vision::TextRecognitionOptions {
+  if crate::view_parsers::sidebar::parse::is_single_ascii_digit_query(target_label) {
+    crate::view_parsers::sidebar::target_probe::build_sidebar_target_probe_ocr_options(
+      &inputs.ocr_options,
+      target_label,
+      target_label,
+    )
+  } else {
+    inputs.ocr_options.clone()
+  }
+}
+
+fn playlist_select_verification_horizontal_ratio(
   sidebar_bounds: ViewBounds,
   window_size: auv_driver::Size,
-) -> auv_driver::RatioRect {
+) -> (f64, f64) {
   let window_width = window_size.width.max(1.0);
   let x_start = ((sidebar_bounds.x + sidebar_bounds.width) / window_width).clamp(0.24, 0.45);
   let width = (1.0 - x_start - 0.02).clamp(0.40, 0.76);
+  (x_start, width)
+}
+
+fn playlist_select_verification_title_band_ratio(
+  sidebar_bounds: ViewBounds,
+  window_size: auv_driver::Size,
+) -> auv_driver::RatioRect {
+  let (x_start, width) = playlist_select_verification_horizontal_ratio(sidebar_bounds, window_size);
+  // NOTICE(a6c-11): narrow band aligned with main_pane_guard nav floor (12% height).
+  auv_driver::RatioRect::new(x_start, 0.12, width, 0.22)
+}
+
+fn playlist_select_verification_hero_header_ratio(
+  sidebar_bounds: ViewBounds,
+  window_size: auv_driver::Size,
+) -> auv_driver::RatioRect {
+  let (x_start, width) = playlist_select_verification_horizontal_ratio(sidebar_bounds, window_size);
+  // NOTICE(a6c-12): hero header above metadata line (1812 live y≈139 on 890px window).
+  auv_driver::RatioRect::new(x_start, 0.08, width, 0.10)
+}
+
+fn playlist_select_verification_main_band_ratio(
+  sidebar_bounds: ViewBounds,
+  window_size: auv_driver::Size,
+) -> auv_driver::RatioRect {
+  let (x_start, width) = playlist_select_verification_horizontal_ratio(sidebar_bounds, window_size);
   auv_driver::RatioRect::new(x_start, 0.10, width, 0.45)
+}
+
+fn playlist_select_verification_full_window_ratio(
+  _sidebar_bounds: ViewBounds,
+  _window_size: auv_driver::Size,
+) -> auv_driver::RatioRect {
+  auv_driver::RatioRect::new(0.0, 0.0, 1.0, 1.0)
+}
+
+fn playlist_select_verification_recognition_artifact_path(
+  verification_png: &std::path::Path,
+) -> std::path::PathBuf {
+  let stem = verification_png
+    .file_stem()
+    .map(|stem| stem.to_string_lossy().into_owned())
+    .unwrap_or_else(|| "playlist-select-post-click".to_string());
+  verification_png.with_file_name(format!("{stem}-recognition.json"))
+}
+
+fn playlist_select_verification_sidebar_echo_recognition_artifact_path(
+  verification_png: &std::path::Path,
+) -> std::path::PathBuf {
+  let stem = verification_png
+    .file_stem()
+    .map(|stem| stem.to_string_lossy().into_owned())
+    .unwrap_or_else(|| "playlist-select-post-click".to_string());
+  verification_png.with_file_name(format!("{stem}-sidebar-echo-recognition.json"))
+}
+
+fn playlist_select_verification_view_bounds_to_ratio(
+  bounds: ViewBounds,
+  window_size: auv_driver::Size,
+) -> auv_driver::RatioRect {
+  let window_width = window_size.width.max(1.0);
+  let window_height = window_size.height.max(1.0);
+  auv_driver::RatioRect::new(
+    bounds.x / window_width,
+    bounds.y / window_height,
+    bounds.width / window_width,
+    bounds.height / window_height,
+  )
+}
+
+fn playlist_select_verification_region_overlaps_row_bounds(
+  region_bounds: ViewBounds,
+  row_bounds: ViewBounds,
+  margin: f64,
+) -> bool {
+  let expanded = ViewBounds::new(
+    row_bounds.x - margin,
+    row_bounds.y - margin,
+    row_bounds.width + margin * 2.0,
+    row_bounds.height + margin * 2.0,
+  );
+  region_bounds.x < expanded.x + expanded.width
+    && region_bounds.x + region_bounds.width > expanded.x
+    && region_bounds.y < expanded.y + expanded.height
+    && region_bounds.y + region_bounds.height > expanded.y
+}
+
+fn playlist_select_verification_detail_chrome_present(
+  recognition: &auv_driver::vision::TextRecognition,
+  window_size: auv_driver::Size,
+  sidebar_bounds: ViewBounds,
+) -> bool {
+  let play_all = crate::normalize_identity("播放全部");
+  let song = crate::normalize_identity("歌曲");
+  let comment = crate::normalize_identity("评论");
+  let mut has_song = false;
+  let mut has_comment = false;
+  let mut has_play_all = false;
+
+  for region in &recognition.regions {
+    let region_bounds = ViewBounds::new(
+      region.bounds.origin.x,
+      region.bounds.origin.y,
+      region.bounds.size.width,
+      region.bounds.size.height,
+    );
+    if !playlist_select_verification_main_pane_guard(region_bounds, sidebar_bounds, window_size) {
+      continue;
+    }
+    let normalized = crate::normalize_identity(&region.text);
+    if normalized.contains(&play_all) {
+      has_play_all = true;
+    }
+    if normalized.contains(&song) {
+      has_song = true;
+    }
+    if normalized.contains(&comment) {
+      has_comment = true;
+    }
+  }
+
+  has_play_all || (has_song && has_comment)
+}
+
+fn playlist_select_verification_count_main_pane_guard_regions(
+  recognition: &auv_driver::vision::TextRecognition,
+  window_size: auv_driver::Size,
+  sidebar_bounds: ViewBounds,
+) -> usize {
+  recognition
+    .regions
+    .iter()
+    .filter(|region| {
+      playlist_select_verification_main_pane_guard(
+        ViewBounds::new(
+          region.bounds.origin.x,
+          region.bounds.origin.y,
+          region.bounds.size.width,
+          region.bounds.size.height,
+        ),
+        sidebar_bounds,
+        window_size,
+      )
+    })
+    .count()
+}
+
+fn playlist_select_verification_sidebar_row_echo_from_recognition(
+  sidebar_recognition: &auv_driver::vision::TextRecognition,
+  main_recognition: &auv_driver::vision::TextRecognition,
+  row_bounds: ViewBounds,
+  target_label: &str,
+  window_size: auv_driver::Size,
+  sidebar_bounds: ViewBounds,
+) -> Option<String> {
+  if !crate::view_parsers::sidebar::parse::is_single_ascii_digit_query(target_label) {
+    return None;
+  }
+  if !playlist_select_verification_detail_chrome_present(
+    main_recognition,
+    window_size,
+    sidebar_bounds,
+  ) {
+    return None;
+  }
+
+  sidebar_recognition
+    .regions
+    .iter()
+    .filter(|region| {
+      playlist_select_verification_region_overlaps_row_bounds(
+        ViewBounds::new(
+          region.bounds.origin.x,
+          region.bounds.origin.y,
+          region.bounds.size.width,
+          region.bounds.size.height,
+        ),
+        row_bounds,
+        PLAYLIST_SELECT_VERIFICATION_ROW_ECHO_MARGIN,
+      )
+    })
+    .find(|region| playlist_select_verification_region_matches_target(target_label, &region.text))
+    .map(|region| region.text.trim().to_string())
+}
+
+fn playlist_select_verification_note(
+  ocr_tiers_tried: &str,
+  final_tier: &str,
+  region_count: usize,
+  main_pane_guard_pass: usize,
+  sidebar_echo_attempted: bool,
+  sidebar_echo_pass: bool,
+) -> String {
+  format!(
+    "ocr_tiers_tried={ocr_tiers_tried}; final_tier={final_tier}; region_count={region_count}; main_pane_guard_pass={main_pane_guard_pass}; sidebar_echo_attempted={sidebar_echo_attempted}; sidebar_echo_pass={sidebar_echo_pass}"
+  )
 }
 
 #[cfg(test)]
@@ -392,6 +627,316 @@ mod tests {
     );
 
     assert_eq!(title.as_deref(), Some("最近播放"));
+  }
+
+  #[test]
+  fn playlist_select_verification_title_matches_single_digit_exact() {
+    use crate::view_parsers::sidebar::test_support::fake_recognition;
+
+    let recognition = fake_recognition(vec![
+      ("曲。播客。有声书。歌单。专辑。", 380.0, 48.0, 280.0, 18.0),
+      ("3", 420.0, 198.0, 12.0, 28.0),
+    ]);
+
+    let title = playlist_select_verification_title(
+      &recognition,
+      sample_playlist_select_window(),
+      sample_playlist_select_sidebar(),
+      "3",
+    );
+
+    assert_eq!(title.as_deref(), Some("3"));
+  }
+
+  #[test]
+  fn playlist_select_verification_title_rejects_only_contains_digit_collision() {
+    use crate::view_parsers::sidebar::test_support::fake_recognition;
+
+    let recognition = fake_recognition(vec![("43", 420.0, 198.0, 24.0, 28.0)]);
+
+    let title = playlist_select_verification_title(
+      &recognition,
+      sample_playlist_select_window(),
+      sample_playlist_select_sidebar(),
+      "3",
+    );
+
+    assert!(title.is_none());
+  }
+
+  #[test]
+  fn playlist_select_verification_title_prefers_exact_digit_when_collision_present() {
+    use crate::view_parsers::sidebar::test_support::fake_recognition;
+
+    let recognition = fake_recognition(vec![
+      ("43", 420.0, 198.0, 24.0, 28.0),
+      ("3", 420.0, 240.0, 12.0, 28.0),
+    ]);
+
+    let title = playlist_select_verification_title(
+      &recognition,
+      sample_playlist_select_window(),
+      sample_playlist_select_sidebar(),
+      "3",
+    );
+
+    assert_eq!(title.as_deref(), Some("3"));
+  }
+
+  #[test]
+  fn playlist_select_verification_title_rejects_nav_band_single_digit() {
+    use crate::view_parsers::sidebar::test_support::fake_recognition;
+
+    let recognition = fake_recognition(vec![("3", 380.0, 48.0, 12.0, 18.0)]);
+
+    let title = playlist_select_verification_title(
+      &recognition,
+      sample_playlist_select_window(),
+      sample_playlist_select_sidebar(),
+      "3",
+    );
+
+    assert!(title.is_none());
+  }
+
+  #[test]
+  fn build_playlist_select_verification_ocr_options_boosts_single_digit_target() {
+    let inputs = Inputs {
+      artifact_dir: std::path::PathBuf::from("/tmp/artifacts"),
+      ..Inputs::with_defaults()
+    };
+    let options = build_playlist_select_verification_ocr_options(&inputs, "3");
+
+    assert!(options.custom_words.iter().any(|word| word == "3"));
+    assert_eq!(
+      options.recognition_languages,
+      Some(vec!["zh-Hans".to_string(), "en-US".to_string()])
+    );
+  }
+
+  #[test]
+  fn build_playlist_select_verification_ocr_options_leaves_non_digit_unchanged() {
+    let base =
+      auv_driver::vision::TextRecognitionOptions::default().with_recognition_languages(["ja-JP"]);
+    let inputs = Inputs {
+      ocr_options: base.clone(),
+      artifact_dir: std::path::PathBuf::from("/tmp/artifacts"),
+      ..Inputs::with_defaults()
+    };
+    let options = build_playlist_select_verification_ocr_options(&inputs, "最近播放");
+
+    assert_eq!(options, base);
+  }
+
+  #[test]
+  fn playlist_select_verification_recognition_artifact_path_uses_png_stem() {
+    let path = playlist_select_verification_recognition_artifact_path(std::path::Path::new(
+      "/tmp/artifacts/playlist-select-post-click.png",
+    ));
+
+    assert_eq!(
+      path,
+      std::path::PathBuf::from("/tmp/artifacts/playlist-select-post-click-recognition.json")
+    );
+  }
+
+  #[test]
+  fn playlist_select_verification_sidebar_echo_artifact_path_uses_png_stem() {
+    let path = playlist_select_verification_sidebar_echo_recognition_artifact_path(
+      std::path::Path::new("/tmp/artifacts/playlist-select-post-click.png"),
+    );
+
+    assert_eq!(
+      path,
+      std::path::PathBuf::from(
+        "/tmp/artifacts/playlist-select-post-click-sidebar-echo-recognition.json"
+      )
+    );
+  }
+
+  fn sample_playlist_select_window_1812() -> auv_driver::Size {
+    auv_driver::Size::new(1512.0, 890.0)
+  }
+
+  fn sample_playlist_select_sidebar_1812() -> ViewBounds {
+    ViewBounds::new(0.0, 267.0, 362.88, 541.0)
+  }
+
+  #[test]
+  fn playlist_select_verification_hero_header_ratio_covers_metadata_line() {
+    let window = sample_playlist_select_window_1812();
+    let sidebar = sample_playlist_select_sidebar_1812();
+    let ratio = playlist_select_verification_hero_header_ratio(sidebar, window);
+
+    let y_start = ratio.y * window.height;
+    let y_end = y_start + ratio.height * window.height;
+    assert!(y_start < 139.0);
+    assert!(y_end > 139.0);
+    assert!(y_end <= 165.0);
+  }
+
+  #[test]
+  fn playlist_select_verification_detail_chrome_passes_with_play_all() {
+    use crate::view_parsers::sidebar::test_support::fake_recognition;
+
+    let recognition = fake_recognition(vec![("▶ 播放全部", 446.0, 233.0, 73.0, 19.0)]);
+
+    assert!(playlist_select_verification_detail_chrome_present(
+      &recognition,
+      sample_playlist_select_window_1812(),
+      sample_playlist_select_sidebar_1812(),
+    ));
+  }
+
+  #[test]
+  fn playlist_select_verification_detail_chrome_passes_with_song_and_comment() {
+    use crate::view_parsers::sidebar::test_support::fake_recognition;
+
+    let recognition = fake_recognition(vec![
+      ("歌曲", 400.0, 290.0, 35.0, 18.0),
+      ("评论 收藏者", 460.0, 288.0, 108.0, 21.0),
+    ]);
+
+    assert!(playlist_select_verification_detail_chrome_present(
+      &recognition,
+      sample_playlist_select_window_1812(),
+      sample_playlist_select_sidebar_1812(),
+    ));
+  }
+
+  #[test]
+  fn playlist_select_verification_detail_chrome_fails_with_song_only() {
+    use crate::view_parsers::sidebar::test_support::fake_recognition;
+
+    let recognition = fake_recognition(vec![("歌曲", 242.0, 290.0, 35.0, 18.0)]);
+
+    assert!(!playlist_select_verification_detail_chrome_present(
+      &recognition,
+      sample_playlist_select_window_1812(),
+      sample_playlist_select_sidebar_1812(),
+    ));
+  }
+
+  #[test]
+  fn playlist_select_verification_sidebar_row_echo_passes_with_play_all_chrome() {
+    use crate::view_parsers::sidebar::test_support::fake_recognition;
+
+    let sidebar = fake_recognition(vec![("3", 70.0, 657.0, 10.0, 13.0)]);
+    let main = fake_recognition(vec![("▶ 播放全部", 446.0, 233.0, 73.0, 19.0)]);
+    let row_bounds = ViewBounds::new(70.0, 657.0, 10.0, 13.0);
+
+    let title = playlist_select_verification_sidebar_row_echo_from_recognition(
+      &sidebar,
+      &main,
+      row_bounds,
+      "3",
+      sample_playlist_select_window_1812(),
+      sample_playlist_select_sidebar_1812(),
+    );
+
+    assert_eq!(title.as_deref(), Some("3"));
+  }
+
+  #[test]
+  fn playlist_select_verification_sidebar_row_echo_passes_with_song_comment_chrome() {
+    use crate::view_parsers::sidebar::test_support::fake_recognition;
+
+    let sidebar = fake_recognition(vec![("3", 70.0, 657.0, 10.0, 13.0)]);
+    let main = fake_recognition(vec![
+      ("歌曲", 400.0, 290.0, 35.0, 18.0),
+      ("评论 收藏者", 460.0, 288.0, 108.0, 21.0),
+    ]);
+    let row_bounds = ViewBounds::new(70.0, 657.0, 10.0, 13.0);
+
+    let title = playlist_select_verification_sidebar_row_echo_from_recognition(
+      &sidebar,
+      &main,
+      row_bounds,
+      "3",
+      sample_playlist_select_window_1812(),
+      sample_playlist_select_sidebar_1812(),
+    );
+
+    assert_eq!(title.as_deref(), Some("3"));
+  }
+
+  #[test]
+  fn playlist_select_verification_sidebar_row_echo_fails_with_song_only() {
+    use crate::view_parsers::sidebar::test_support::fake_recognition;
+
+    let sidebar = fake_recognition(vec![("3", 70.0, 657.0, 10.0, 13.0)]);
+    let main = fake_recognition(vec![("歌曲", 242.0, 290.0, 35.0, 18.0)]);
+    let row_bounds = ViewBounds::new(70.0, 657.0, 10.0, 13.0);
+
+    let title = playlist_select_verification_sidebar_row_echo_from_recognition(
+      &sidebar,
+      &main,
+      row_bounds,
+      "3",
+      sample_playlist_select_window_1812(),
+      sample_playlist_select_sidebar_1812(),
+    );
+
+    assert!(title.is_none());
+  }
+
+  #[test]
+  fn playlist_select_verification_sidebar_row_echo_uses_row_bounds_not_stale_target() {
+    use crate::view_parsers::sidebar::test_support::fake_recognition;
+
+    let sidebar = fake_recognition(vec![("3", 70.0, 500.0, 10.0, 13.0)]);
+    let main = fake_recognition(vec![("▶ 播放全部", 446.0, 233.0, 73.0, 19.0)]);
+    let click_bounds = ViewBounds::new(70.0, 657.0, 10.0, 13.0);
+
+    let title = playlist_select_verification_sidebar_row_echo_from_recognition(
+      &sidebar,
+      &main,
+      click_bounds,
+      "3",
+      sample_playlist_select_window_1812(),
+      sample_playlist_select_sidebar_1812(),
+    );
+
+    assert!(title.is_none());
+  }
+
+  #[test]
+  fn playlist_select_verification_sidebar_row_echo_skipped_for_cjk() {
+    use crate::view_parsers::sidebar::test_support::fake_recognition;
+
+    let sidebar = fake_recognition(vec![("最近播放", 70.0, 657.0, 80.0, 13.0)]);
+    let main = fake_recognition(vec![("▶ 播放全部", 446.0, 233.0, 73.0, 19.0)]);
+    let row_bounds = ViewBounds::new(70.0, 657.0, 80.0, 13.0);
+
+    let title = playlist_select_verification_sidebar_row_echo_from_recognition(
+      &sidebar,
+      &main,
+      row_bounds,
+      "最近播放",
+      sample_playlist_select_window_1812(),
+      sample_playlist_select_sidebar_1812(),
+    );
+
+    assert!(title.is_none());
+  }
+
+  #[test]
+  fn playlist_select_verification_note_includes_tiers_and_echo_flags() {
+    let note = playlist_select_verification_note(
+      "title,hero,main,full",
+      PLAYLIST_SELECT_VERIFICATION_METHOD_SIDEBAR_ECHO,
+      13,
+      4,
+      true,
+      true,
+    );
+
+    assert!(note.contains("ocr_tiers_tried=title,hero,main,full"));
+    assert!(note.contains("final_tier=sidebar_row_echo_detail_chrome_v1"));
+    assert!(note.contains("region_count=13"));
+    assert!(note.contains("main_pane_guard_pass=4"));
+    assert!(note.contains("sidebar_echo_attempted=true"));
+    assert!(note.contains("sidebar_echo_pass=true"));
   }
 }
 
@@ -818,6 +1363,7 @@ fn run_playlist_select_resolved(
     &window,
     window_size,
     sidebar_bounds,
+    click_bounds,
     inputs,
     &verification_artifact,
     &target.label,
@@ -866,10 +1412,15 @@ fn run_playlist_select_resolved(
       &window,
       window_size,
       sidebar_bounds,
+      click_bounds,
       inputs,
       &verification_artifact,
       &target.label,
     )?;
+  }
+
+  if verification.method == PLAYLIST_SELECT_VERIFICATION_METHOD_SIDEBAR_ECHO {
+    known_limits.push(PLAYLIST_SELECT_VERIFICATION_SIDEBAR_ECHO_LIMIT.to_string());
   }
 
   Ok(PlaylistSelectResult {
@@ -892,6 +1443,7 @@ fn verify_playlist_select_title(
   window: &auv_driver::Window,
   window_size: auv_driver::Size,
   sidebar_bounds: ViewBounds,
+  row_bounds: ViewBounds,
   inputs: &Inputs,
   verification_artifact: &std::path::Path,
   target_label: &str,
@@ -906,25 +1458,126 @@ fn verify_playlist_select_title(
       verification_artifact.display()
     )
   })?;
-  let ocr_ratio = playlist_select_verification_ocr_ratio(sidebar_bounds, window_size);
-  let recognition = session
-    .vision()
-    .recognize_text_in_capture_with_options(&capture, ocr_ratio, inputs.ocr_options.clone())
-    .map_err(|error| format!("playlist select verification OCR failed: {error}"))?;
-  let recognition = crate::recognition_in_window_space(recognition, &capture);
-  // NOTICE(a6c-4b): top-nav OCR in the upper band is not playlist detail title.
-  let observed_title =
-    playlist_select_verification_title(&recognition, window_size, sidebar_bounds, target_label);
+
+  let recognition_json =
+    playlist_select_verification_recognition_artifact_path(verification_artifact);
+  let sidebar_echo_json =
+    playlist_select_verification_sidebar_echo_recognition_artifact_path(verification_artifact);
+  let ocr_options = build_playlist_select_verification_ocr_options(inputs, target_label);
+  let ocr_tiers: [(
+    &str,
+    fn(ViewBounds, auv_driver::Size) -> auv_driver::RatioRect,
+  ); 4] = [
+    (
+      PLAYLIST_SELECT_VERIFICATION_OCR_TITLE_BAND,
+      playlist_select_verification_title_band_ratio,
+    ),
+    (
+      PLAYLIST_SELECT_VERIFICATION_OCR_HERO_HEADER,
+      playlist_select_verification_hero_header_ratio,
+    ),
+    (
+      PLAYLIST_SELECT_VERIFICATION_OCR_MAIN_BAND,
+      playlist_select_verification_main_band_ratio,
+    ),
+    (
+      PLAYLIST_SELECT_VERIFICATION_OCR_FULL_WINDOW,
+      playlist_select_verification_full_window_ratio,
+    ),
+  ];
+
+  let mut method = PLAYLIST_SELECT_VERIFICATION_OCR_FULL_WINDOW;
+  let mut observed_title = None;
+  let mut last_recognition = None;
+
+  for (tier_method, ratio_for_tier) in ocr_tiers {
+    method = tier_method;
+    let ocr_ratio = ratio_for_tier(sidebar_bounds, window_size);
+    let recognition = session
+      .vision()
+      .recognize_text_in_capture_with_options(&capture, ocr_ratio, ocr_options.clone())
+      .map_err(|error| format!("playlist select verification OCR failed: {error}"))?;
+    let recognition = crate::recognition_in_window_space(recognition, &capture);
+    last_recognition = Some(recognition.clone());
+    // NOTICE(a6c-4b): top-nav OCR in the upper band is not playlist detail title.
+    observed_title =
+      playlist_select_verification_title(&recognition, window_size, sidebar_bounds, target_label);
+    if observed_title.is_some() {
+      break;
+    }
+  }
+
+  let recognition = last_recognition.ok_or_else(|| {
+    "playlist select verification OCR produced no recognition payload".to_string()
+  })?;
+  let mut sidebar_echo_recognition_artifact = None;
+  let mut sidebar_echo_attempted = false;
+  let mut sidebar_echo_pass = false;
+
+  if observed_title.is_none()
+    && crate::view_parsers::sidebar::parse::is_single_ascii_digit_query(target_label)
+  {
+    sidebar_echo_attempted = true;
+    let sidebar_ratio =
+      playlist_select_verification_view_bounds_to_ratio(sidebar_bounds, window_size);
+    let sidebar_recognition = session
+      .vision()
+      .recognize_text_in_capture_with_options(&capture, sidebar_ratio, ocr_options.clone())
+      .map_err(|error| format!("playlist select verification sidebar echo OCR failed: {error}"))?;
+    let sidebar_recognition = crate::recognition_in_window_space(sidebar_recognition, &capture);
+    std::fs::write(
+      &sidebar_echo_json,
+      serde_json::to_string_pretty(&sidebar_recognition)
+        .map_err(|error| format!("failed to serialize sidebar echo recognition: {error}"))?,
+    )
+    .map_err(|error| format!("failed to write {}: {error}", sidebar_echo_json.display()))?;
+    sidebar_echo_recognition_artifact = Some(sidebar_echo_json.display().to_string());
+
+    if let Some(echo_title) = playlist_select_verification_sidebar_row_echo_from_recognition(
+      &sidebar_recognition,
+      &recognition,
+      row_bounds,
+      target_label,
+      window_size,
+      sidebar_bounds,
+    ) {
+      observed_title = Some(echo_title);
+      method = PLAYLIST_SELECT_VERIFICATION_METHOD_SIDEBAR_ECHO;
+      sidebar_echo_pass = true;
+    }
+  }
+
+  std::fs::write(
+    &recognition_json,
+    serde_json::to_string_pretty(&recognition)
+      .map_err(|error| format!("failed to serialize recognition: {error}"))?,
+  )
+  .map_err(|error| format!("failed to write {}: {error}", recognition_json.display()))?;
+
   let verified = observed_title.is_some();
+  let region_count = recognition.regions.len();
+  let main_pane_guard_pass = playlist_select_verification_count_main_pane_guard_regions(
+    &recognition,
+    window_size,
+    sidebar_bounds,
+  );
+  let note = playlist_select_verification_note(
+    "title,hero,main,full",
+    method,
+    region_count,
+    main_pane_guard_pass,
+    sidebar_echo_attempted,
+    sidebar_echo_pass,
+  );
 
   Ok(PlaylistSelectVerification {
     status: if verified { "passed" } else { "failed" }.to_string(),
-    method: "main_title_ocr".to_string(),
+    method: method.to_string(),
     observed_title,
     artifact: Some(verification_artifact.display().to_string()),
-    note: Some(
-      "verification checks the main content title after opening the sidebar playlist".to_string(),
-    ),
+    recognition_artifact: Some(recognition_json.display().to_string()),
+    sidebar_echo_recognition_artifact,
+    note: Some(note),
   })
 }
 

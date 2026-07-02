@@ -776,6 +776,15 @@
     color: var(--fg);
     word-break: break-word;
   }
+  #view-parser-proof .view-parser-diagnostic-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  #view-parser-proof .view-parser-proof-section-highlight {
+    outline: 2px solid var(--brand);
+    outline-offset: 2px;
+  }
 </style>
 </head>
 <body>
@@ -1074,6 +1083,201 @@
     return pairs;
   }
 
+  function artifactsWithRole(role) {
+    return (state.artifacts || []).filter(function (artifact) {
+      return artifact && artifact.role === role;
+    });
+  }
+
+  function reacquireRecordCompositeKey(record) {
+    if (!record) return "";
+    return [
+      record.scope_id || "",
+      record.outcome || "",
+      String(record.observation_count != null ? record.observation_count : 0),
+      record.strategy_used || "",
+      record.stale_reason || "",
+    ].join("|");
+  }
+
+  function resolutionReacquireCompositeKey(summary, selectResult) {
+    const resolution = summary && summary.resolution ? summary.resolution : {};
+    return reacquireRecordCompositeKey({
+      scope_id: resolution.span_scope_id || "",
+      outcome: resolution.outcome || "",
+      observation_count: resolution.observation_count != null
+        ? resolution.observation_count
+        : 0,
+      strategy_used: resolution.strategy_used || null,
+      stale_reason: resolution.stale_reason || null,
+    });
+  }
+
+  function resolveSelectResultArtifactForPair(pairIndex) {
+    const artifacts = artifactsWithRole(PLAYLIST_SELECT_RESULT_ARTIFACT_ROLE);
+    if (pairIndex < 0 || pairIndex >= artifacts.length) return null;
+    return artifacts[pairIndex];
+  }
+
+  function resolveUniqueViewMemoryArtifact(summary) {
+    const viewMemoryArtifacts = artifactsWithRole(VIEW_MEMORY_ARTIFACT_ROLE);
+    if (!viewMemoryArtifacts.length) return null;
+
+    const memory = summary && summary.memory ? summary.memory : {};
+    const resolution = summary && summary.resolution ? summary.resolution : {};
+    const memoryId = memory.memory_id;
+    const scopeId = resolution.span_scope_id;
+
+    if (memoryId && scopeId) {
+      const run = state.activeRun;
+      const memoryWrites = run && run.view_parser && Array.isArray(run.view_parser.memory_writes)
+        ? run.view_parser.memory_writes
+        : [];
+      const matches = memoryWrites.filter(function (write) {
+        return write && write.memory_id === memoryId && write.scope_id === scopeId;
+      });
+      if (matches.length !== 1) return null;
+      const writeIndex = memoryWrites.indexOf(matches[0]);
+      if (writeIndex < 0
+        || writeIndex >= viewMemoryArtifacts.length
+        || memoryWrites.length !== viewMemoryArtifacts.length) {
+        return null;
+      }
+      return viewMemoryArtifacts[writeIndex];
+    }
+
+    if (viewMemoryArtifacts.length === 1) return viewMemoryArtifacts[0];
+    return null;
+  }
+
+  function resolveUniqueSpanIdByName(spanName) {
+    if (!spanName) return null;
+    const matches = (state.spans || []).filter(function (span) {
+      return span && span.name === spanName;
+    });
+    if (matches.length !== 1) return null;
+    return matches[0].span_id;
+  }
+
+  function resolveUniqueReacquireSpanId(summary, selectResult, run) {
+    const viewParser = run && run.view_parser;
+    const reacquisitions = viewParser && Array.isArray(viewParser.reacquisitions)
+      ? viewParser.reacquisitions
+      : [];
+    const key = resolutionReacquireCompositeKey(summary, selectResult);
+    if (!key) return null;
+    const matches = reacquisitions.filter(function (record) {
+      return reacquireRecordCompositeKey(record) === key;
+    });
+    if (matches.length !== 1) return null;
+    return resolveUniqueSpanIdByName(matches[0].span_name);
+  }
+
+  function jumpToArtifactTarget(artifact) {
+    if (!artifact) return;
+    showArtifactPanel(true);
+    state.activeArtifactRoleFilter = artifact.role || null;
+    state.activeArtifactKey = artifactKey(artifact);
+    renderArtifactList(state.artifacts);
+    renderArtifactPreview(findArtifact(state.activeArtifactKey), state.artifacts);
+    const list = document.getElementById("artifact-list");
+    if (!list || !state.activeArtifactKey) return;
+    const row = list.querySelector(
+      '[data-artifact-key="' + state.activeArtifactKey + '"]'
+    );
+    if (row && row.scrollIntoView) row.scrollIntoView({ block: "nearest" });
+  }
+
+  function jumpToSelectResultArtifactForPair(pairIndex) {
+    jumpToArtifactTarget(resolveSelectResultArtifactForPair(pairIndex));
+  }
+
+  function jumpToUniqueViewMemoryArtifact(summary) {
+    jumpToArtifactTarget(resolveUniqueViewMemoryArtifact(summary));
+  }
+
+  function jumpToSpanId(spanId) {
+    if (!spanId) return;
+    state.activeSpanId = spanId;
+    const span = findSpan(spanId);
+    const preferredArtifactKey = preferredArtifactKeyForSpan(spanId, state.artifacts);
+    if (preferredArtifactKey) state.activeArtifactKey = preferredArtifactKey;
+    renderSpanTree(state.activeRun, state.spans);
+    renderSpanDetail(span);
+    renderArtifactList(state.artifacts);
+    renderArtifactPreview(findArtifact(state.activeArtifactKey), state.artifacts);
+    const body = document.getElementById("main-body");
+    if (!body) return;
+    const row = body.querySelector('[data-span-id="' + spanId + '"]');
+    if (row && row.scrollIntoView) row.scrollIntoView({ block: "nearest" });
+  }
+
+  function scrollToProofCardSection(cardEl, sectionKey) {
+    if (!cardEl || !sectionKey) return;
+    const section = cardEl.querySelector('[data-proof-section="' + sectionKey + '"]');
+    if (!section) return;
+    if (section.scrollIntoView) section.scrollIntoView({ block: "nearest" });
+    section.classList.add("view-parser-proof-section-highlight");
+    window.setTimeout(function () {
+      section.classList.remove("view-parser-proof-section-highlight");
+    }, 1200);
+  }
+
+  function renderViewParserDiagnosticLinks(summary, selectResult, pairIndex, run, cardEl) {
+    const chips = [];
+
+    const knownLimits = selectResult && Array.isArray(selectResult.known_limits)
+      ? selectResult.known_limits
+      : [];
+    if (knownLimits.length > 0) {
+      chips.push(el("button", {
+        className: "chip",
+        type: "button",
+        onClick: function () { scrollToProofCardSection(cardEl, "known_limits"); },
+      }, ["known limits"]));
+    }
+
+    if (resolveSelectResultArtifactForPair(pairIndex)) {
+      chips.push(el("button", {
+        className: "chip",
+        type: "button",
+        onClick: function () { jumpToSelectResultArtifactForPair(pairIndex); },
+      }, [PLAYLIST_SELECT_RESULT_ARTIFACT_ROLE]));
+    }
+
+    if (resolveUniqueViewMemoryArtifact(summary)) {
+      chips.push(el("button", {
+        className: "chip",
+        type: "button",
+        onClick: function () { jumpToUniqueViewMemoryArtifact(summary); },
+      }, [VIEW_MEMORY_ARTIFACT_ROLE]));
+    }
+
+    const reacquireSpanId = resolveUniqueReacquireSpanId(summary, selectResult, run);
+    if (reacquireSpanId) {
+      chips.push(el("button", {
+        className: "chip",
+        type: "button",
+        onClick: function () { jumpToSpanId(reacquireSpanId); },
+      }, ["reacquire span"]));
+    }
+
+    const replay = summary && summary.replay ? summary.replay : {};
+    const stepNames = Array.isArray(replay.step_names) ? replay.step_names : [];
+    for (const stepName of stepNames) {
+      const stepSpanId = resolveUniqueSpanIdByName(stepName);
+      if (!stepSpanId) continue;
+      chips.push(el("button", {
+        className: "chip",
+        type: "button",
+        onClick: function () { jumpToSpanId(stepSpanId); },
+      }, ["replay: " + stepName]));
+    }
+
+    if (!chips.length) return null;
+    return el("div", { className: "view-parser-diagnostic-links" }, chips);
+  }
+
   function formatViewParserLineageRow(memory, runId) {
     const memoryId = memory && memory.memory_id ? memory.memory_id : "—";
     const sourceRunId = memory && memory.source_run_id ? memory.source_run_id : "—";
@@ -1081,7 +1285,8 @@
     return memoryId + " · " + sourceRunId + " · " + currentRunId;
   }
 
-  function renderResolutionSummaryCard(summary, selectResult, runId) {
+  function renderResolutionSummaryCard(summary, selectResult, pairIndex, run) {
+    const runId = (run && run.run_id) || "";
     const identity = summary.identity || {};
     const memory = summary.memory || {};
     const resolution = summary.resolution || {};
@@ -1099,19 +1304,28 @@
       makeProofPill(verification.status || "—", verificationPillClass(verification.status)),
     ]);
 
-    function section(title, card) {
-      return el("div", { className: "view-parser-proof-section" }, [
+    const cardEl = el("div", { className: "view-parser-proof-card" }, [header]);
+
+    const diagnosticLinks = renderViewParserDiagnosticLinks(
+      summary,
+      selectResult,
+      pairIndex,
+      run,
+      cardEl
+    );
+    if (diagnosticLinks) cardEl.appendChild(diagnosticLinks);
+
+    cardEl.appendChild(el("div", { className: "view-parser-proof-geometry" }, [
+      formatViewParserLineageRow(memory, runId),
+    ]));
+
+    function section(title, card, proofSection) {
+      const sectionEl = el("div", { className: "view-parser-proof-section" }, [
         el("div", { className: "view-parser-proof-section-label" }, [title]),
         card,
       ]);
-    }
-
-    function artifactShortcut(label, role) {
-      return el("button", {
-        className: "chip",
-        type: "button",
-        onClick: function () { jumpToViewParserArtifactRole(role); },
-      }, [label]);
+      if (proofSection) sectionEl.dataset.proofSection = proofSection;
+      return sectionEl;
     }
 
     const sections = [
@@ -1149,30 +1363,39 @@
     if (knownLimits.length) {
       sections.push(section("Known limits", el("div", { className: "view-parser-proof-geometry" }, [
         knownLimits.join(" · "),
-      ])));
+      ]), "known_limits"));
     }
-    sections.push(section("Artifacts", el("div", { className: "filter-chips" }, [
-      artifactShortcut(VIEW_MEMORY_ARTIFACT_ROLE, VIEW_MEMORY_ARTIFACT_ROLE),
-      artifactShortcut(
-        PLAYLIST_SELECT_RESULT_ARTIFACT_ROLE,
-        PLAYLIST_SELECT_RESULT_ARTIFACT_ROLE
-      ),
-    ])));
 
-    const children = [
-      header,
-      el("div", { className: "view-parser-proof-geometry" }, [
-        formatViewParserLineageRow(memory, runId),
-      ]),
-    ].concat(sections);
+    const artifactChips = [];
+    if (resolveSelectResultArtifactForPair(pairIndex)) {
+      artifactChips.push(el("button", {
+        className: "chip",
+        type: "button",
+        onClick: function () {
+          jumpToSelectResultArtifactForPair(pairIndex);
+        },
+      }, [PLAYLIST_SELECT_RESULT_ARTIFACT_ROLE]));
+    }
+    if (resolveUniqueViewMemoryArtifact(summary)) {
+      artifactChips.push(el("button", {
+        className: "chip",
+        type: "button",
+        onClick: function () { jumpToUniqueViewMemoryArtifact(summary); },
+      }, [VIEW_MEMORY_ARTIFACT_ROLE]));
+    }
+    if (artifactChips.length) {
+      sections.push(section("Artifacts", el("div", { className: "filter-chips" }, artifactChips)));
+    }
+
+    for (const sec of sections) cardEl.appendChild(sec);
     if (geometry.note || geometry.has_ephemeral_target_bounds != null) {
-      children.push(el("div", { className: "view-parser-proof-geometry" }, [
+      cardEl.appendChild(el("div", { className: "view-parser-proof-geometry" }, [
         "geometry: ephemeral_bounds="
           + String(!!geometry.has_ephemeral_target_bounds)
           + (geometry.note ? " · " + geometry.note : ""),
       ]));
     }
-    return el("div", { className: "view-parser-proof-card" }, children);
+    return cardEl;
   }
 
   function renderViewParserProof(run) {
@@ -1184,9 +1407,12 @@
     }
     panel.innerHTML = "";
     panel.hidden = false;
-    const runId = run.run_id || "";
+    let pairIndex = 0;
     for (const pair of pairViewParserProofCards(run)) {
-      panel.appendChild(renderResolutionSummaryCard(pair.summary, pair.selectResult, runId));
+      panel.appendChild(
+        renderResolutionSummaryCard(pair.summary, pair.selectResult, pairIndex, run)
+      );
+      pairIndex++;
     }
   }
 

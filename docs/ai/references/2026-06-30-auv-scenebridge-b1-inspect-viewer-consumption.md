@@ -125,6 +125,7 @@ if (!merged.view_parser_summary && previous && previous.view_parser_summary) {
 - `src/inspect_server/mod.rs` — `GET /runs` / `GET /runs/{id}` wiring + route tests
 - `src/inspect_server_viewer.html` — panel, list badges, narrow refresh
 - [A8 proof graduation](2026-06-30-auv-scenebridge-a8-proof-graduation.md)
+- [B2a diagnostic links](2026-06-30-auv-scenebridge-b2a-inspect-diagnostic-links.md) — in-run proof card navigation (viewer-only)
 
 ## Validation
 

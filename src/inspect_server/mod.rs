@@ -2573,6 +2573,44 @@ mod tests {
     );
   }
 
+  #[test]
+  fn viewer_renders_view_parser_diagnostic_links_hooks() {
+    assert!(
+      super::VIEWER_HTML.contains("renderViewParserDiagnosticLinks"),
+      "viewer payload should render view-parser diagnostic link chips"
+    );
+    assert!(
+      super::VIEWER_HTML.contains("scrollToProofCardSection"),
+      "viewer payload should scroll and highlight proof card sections"
+    );
+    assert!(
+      super::VIEWER_HTML.contains("sectionEl.dataset.proofSection = proofSection")
+        && super::VIEWER_HTML.contains("scrollToProofCardSection(cardEl, \"known_limits\")"),
+      "viewer payload should tag known limits section for in-card navigation"
+    );
+    assert!(
+      super::VIEWER_HTML
+        .contains("renderResolutionSummaryCard(pair.summary, pair.selectResult, pairIndex, run)"),
+      "viewer payload should pass pairIndex and run into proof cards"
+    );
+    assert!(
+      super::VIEWER_HTML.contains("resolveUniqueReacquireSpanId"),
+      "viewer payload should resolve reacquire spans by composite key"
+    );
+    assert!(
+      super::VIEWER_HTML.contains("jumpToSelectResultArtifactForPair"),
+      "viewer payload should jump to pair-indexed select-result artifacts"
+    );
+    assert!(
+      super::VIEWER_HTML.contains("resolveUniqueViewMemoryArtifact"),
+      "viewer payload should resolve view-memory artifacts without pair index"
+    );
+    assert!(
+      !super::VIEWER_HTML.contains("jumpToViewParserSpanByName"),
+      "viewer should not rely on first-match span-by-name navigation"
+    );
+  }
+
   #[tokio::test]
   async fn assets_route_serves_known_design_svgs_with_svg_mime() {
     let root = temp_dir("inspect-server-assets-route");

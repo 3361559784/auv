@@ -1,6 +1,6 @@
 # AUV Reference Index
 
-`docs/ai/references/` 下 **244** 篇 reference 的归类索引（不含本文件）。
+`docs/ai/references/` 下 **246** 篇 reference 的归类索引（不含本文件）。
 文件仍保持扁平路径（避免破坏代码与文档互链）；本索引负责导航。
 
 维护：新增 reference 时按命名规范落盘，并在本文件对应 lane 补一行。
@@ -306,7 +306,7 @@ view-parser IR 与 inspect 消费
 - [`2026-05-29-view-parser-v0-overview.md`](2026-05-29-view-parser-v0-overview.md)
 - [`2026-05-29-view-parser-view-memory-v0.md`](2026-05-29-view-parser-view-memory-v0.md)
 
-#### scan line (S) — note entry (2)
+#### scan line (S) — note entry (5)
 
 Single-viewport **2D temporal scan**; complements
 [`scroll-scan` design](2026-05-21-scroll-scan-design.md) page-loop evidence. **Not** a
@@ -315,6 +315,9 @@ separate INDEX lane — taxonomy deferred until S1/S2 lands. SceneBridge inspect
 - [`2026-07-02-auv-scan-s0-charter.md`](2026-07-02-auv-scan-s0-charter.md) — design charter
 - [`2026-07-02-auv-scan-s1-temporal-core-plan.md`](2026-07-02-auv-scan-s1-temporal-core-plan.md) — implementation plan (step 1 landed)
 - [`2026-07-02-auv-scan-s1-slice1-frame-contract-handoff.md`](2026-07-02-auv-scan-s1-slice1-frame-contract-handoff.md) — slice 1 handoff (`crates/auv-scan`, `scan-frame-v0`)
+- [`2026-07-02-auv-scan-s1-s2-s4-producer-read-temporal-plan.md`](2026-07-02-auv-scan-s1-s2-s4-producer-read-temporal-plan.md) — S1-2/3/4 engineering plan (producer → reader → temporal outline)
+- [`2026-07-02-auv-scan-s1-s2-s4-gan-spec.md`](2026-07-02-auv-scan-s1-s2-s4-gan-spec.md) — S1-2/3/4 GAN spec (sprints, rubric, risks; producer Option A in-crate)
+- [`2026-07-02-auv-scan-s1-slice2-producer-handoff.md`](2026-07-02-auv-scan-s1-slice2-producer-handoff.md) — slice 2 handoff (producer wiring)
 
 ### `core/recognition` — Active
 

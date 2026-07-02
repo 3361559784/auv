@@ -45,6 +45,12 @@ Card **Artifacts** shortcut chips use the same resolution rules as the diagnosti
 - No `source_run_id` navigation to another run
 - No inspect-viewer-v0 full tab reopen
 
+## Deferred
+
+| Topic | Direction |
+|-------|-----------|
+| Cross-run compare | → [B2c deferred doc](2026-06-30-auv-scenebridge-b2c-inspect-cross-run-compare-deferred.md) |
+
 ## No server API
 
 B2a is **viewer-only**. It consumes `GET /runs/{id}` payload already loaded

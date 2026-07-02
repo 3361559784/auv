@@ -56,6 +56,13 @@ finding failed / stale / limits is slow.” In-run navigation is B2a.
 - No URL persistence for filter state
 - No A-line producer changes
 
+## Deferred
+
+| Topic | Direction |
+|-------|-----------|
+| Cross-run compare | → [B2c deferred doc](2026-06-30-auv-scenebridge-b2c-inspect-cross-run-compare-deferred.md) |
+| List sort | Separate future slice (not B2c) |
+
 ## Key files
 
 - [`src/inspect_server_viewer.html`](../../../src/inspect_server_viewer.html) — filters, banner, self-test

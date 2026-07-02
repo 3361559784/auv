@@ -127,6 +127,7 @@ if (!merged.view_parser_summary && previous && previous.view_parser_summary) {
 - [A8 proof graduation](2026-06-30-auv-scenebridge-a8-proof-graduation.md)
 - [B2a diagnostic links](2026-06-30-auv-scenebridge-b2a-inspect-diagnostic-links.md) — in-run proof card navigation (viewer-only)
 - [B2b list filter](2026-06-30-auv-scenebridge-b2b-inspect-list-filter.md) — client-side run list filters (viewer-only)
+- [B2c cross-run compare](2026-06-30-auv-scenebridge-b2c-inspect-cross-run-compare-deferred.md) — **deferred** (evidence gate)
 
 ## Validation
 

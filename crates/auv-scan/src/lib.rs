@@ -1,4 +1,4 @@
-//! Temporal scan contracts — `scan-frame-v0` wire, artifact IO, and slice-2 producers.
+//! Temporal scan contracts — `scan-frame-v0` wire, artifact IO, producers, and read-side loader.
 
 #[cfg(test)]
 mod fixture;
@@ -6,6 +6,7 @@ mod fixture;
 pub mod artifact;
 pub mod frame;
 pub mod producer;
+pub mod reader;
 
 pub use artifact::{
   ScanArtifactError, frame_artifact_file_name, read_frame_artifact, write_frame_artifact,
@@ -17,4 +18,8 @@ pub use producer::{
   FrameCaptureMeta, ProducedFrame, ScanProducerError, bounds_to_scan_bounds,
   bounds_to_scan_bounds_f64, build_scan_frame, frame_from_capture, produce_frame_from_fixture_dir,
   write_frame_with_image,
+};
+pub use reader::{
+  ScanFrameBundle, ScanInspectError, load_scan_frames_from_dir, summarize_scan_frame_text,
+  verify_frame_image_dimensions,
 };

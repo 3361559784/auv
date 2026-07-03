@@ -320,6 +320,7 @@ separate INDEX lane — taxonomy deferred until S1/S2 lands. SceneBridge inspect
 - [`2026-07-02-auv-scan-s1-slice2-producer-handoff.md`](2026-07-02-auv-scan-s1-slice2-producer-handoff.md) — slice 2 handoff (producer wiring)
 - [`2026-07-02-auv-scan-s1-slice3-read-side-handoff.md`](2026-07-02-auv-scan-s1-slice3-read-side-handoff.md) — slice 3 handoff (crate-local reader)
 - [`2026-07-02-auv-scan-s1-s4a-multi-frame-handoff.md`](2026-07-02-auv-scan-s1-s4a-multi-frame-handoff.md) — S1-4a handoff (two-frame artifacts + replay)
+- [`2026-07-03-auv-scan-s1-s4b-motion-timeline-handoff.md`](2026-07-03-auv-scan-s1-s4b-motion-timeline-handoff.md) — S1-4b two-frame adjacent timeline (`scan-timeline-v0` crate-local JSON)
 - [`2026-07-03-auv-scan-s4-anchor-lifecycle-charter.md`](2026-07-03-auv-scan-s4-anchor-lifecycle-charter.md) — S4 lifecycle charter (evidence-first; docs-only)
 - [`2026-07-02-auv-scan-s4-lifecycle-evaluator-handoff.md`](2026-07-02-auv-scan-s4-lifecycle-evaluator-handoff.md) — S4 evaluator v1 handoff (motion/association/coverage read-models)
 - [`2026-07-03-auv-scan-s5-scene-state-charter.md`](2026-07-03-auv-scan-s5-scene-state-charter.md) — S5 scene state charter (L2 draft answers; docs-only)

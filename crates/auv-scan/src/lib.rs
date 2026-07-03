@@ -15,6 +15,7 @@ pub mod producer;
 pub mod reader;
 pub mod scene_state;
 pub mod scene_state_inspect;
+pub mod timeline;
 
 pub use artifact::{
   ScanArtifactError, frame_artifact_file_name, read_frame_artifact, write_frame_artifact,
@@ -51,4 +52,10 @@ pub use scene_state::{
 pub use scene_state_inspect::{
   SceneStateInspect, SceneStateListSummary, build_scene_state_inspect,
   format_scene_state_inspect_text, summarize_scene_state_inspect,
+};
+pub use timeline::{
+  DIAG_INSUFFICIENT_FRAMES, DIAG_UNSUPPORTED_FRAME_COUNT, SCAN_TIMELINE_ARTIFACT_FILE_NAME,
+  SCAN_TIMELINE_SCHEMA_VERSION, ScanTimelineWire, TimelineDiagnosticWire, TimelineError,
+  TimelineMotionWire, TimelineSegmentWire, build_scan_timeline_from_bundle,
+  format_scan_timeline_text, read_timeline_artifact, write_timeline_artifact,
 };

@@ -35,3 +35,11 @@
 ## Validation
 
 `cargo test -p auv-scan`
+
+## Deferred
+
+| Item | Status |
+|------|--------|
+| S1-4b two-frame timeline (`scan-timeline-v0`) | **landed** — [S1-4b handoff](2026-07-03-auv-scan-s1-s4b-motion-timeline-handoff.md) |
+| S1-4c+ N-1 multi-segment timeline | candidate |
+| Motion wire in `run_read` / viewer | out of scope |

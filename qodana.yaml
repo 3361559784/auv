@@ -3,8 +3,12 @@
 ####################################################################################################################
 
 version: "1.0"
-linter: qodana-ruby
+linter: qodana-rust
 profile:
   name: qodana.recommended
 include:
   - name: CheckDependencyLicenses
+exclude:
+  - name: All
+    paths:
+      - .cursor

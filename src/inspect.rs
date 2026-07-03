@@ -356,6 +356,7 @@ pub fn inspect_run(store: &LocalStore, run_id: &str) -> AuvResult<String> {
     &canonical,
     &mut output,
   )?;
+  crate::inspect_scene_state::append_scene_state_text_from_run(store, &canonical, &mut output)?;
   Ok(output)
 }
 

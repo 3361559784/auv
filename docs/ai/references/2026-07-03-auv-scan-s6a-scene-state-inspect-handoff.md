@@ -71,7 +71,8 @@ Merge gate: `inspect_product_matches_direct_build`.
 
 | Slice | Status |
 |-------|--------|
-| **S6b** | **Candidate** — `src/scene_state_read.rs` + `inspect_run` text; artifact drill-down; **requires owner sign-off** |
+| **S6b-1** | **Landed** — `src/scene_state_read.rs` + `inspect_scene_state.rs` + `inspect_run` text; provisional `scan-scene-state-input-v0` staging |
+| **S6b+** | **Candidate** — runtime producer, `inspect_server`/viewer, bundle-dir artifacts, `scan-scene-state-v0` durable wire |
 
 ## Related
 
